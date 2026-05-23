@@ -72,6 +72,12 @@ class SidecarStatus:
     state: str = ""
 
 
+@dataclass
+class SubprocessEnvContribution:
+    env_vars: dict[str, str] = field(default_factory=dict)
+    extra_path_dirs: list[str] = field(default_factory=list)
+
+
 class DiscoveryContext(Protocol):
     host_id: str
     platform_id: str
@@ -196,3 +202,6 @@ class DriverPackAdapter(Protocol):
 
     async def telemetry(self, ctx: TelemetryContext) -> HardwareTelemetry:
         raise NotImplementedError
+
+    def subprocess_env(self) -> SubprocessEnvContribution:
+        return SubprocessEnvContribution()

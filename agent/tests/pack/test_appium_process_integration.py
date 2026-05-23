@@ -51,8 +51,6 @@ def test_resolve_raises_when_pack_not_installed() -> None:
 
 def test_build_env_prepends_pack_runtime_bin_dir_and_sets_appium_home() -> None:
     env = _build_env(
-        platform_name="android_mobile",
-        device_type="real_device",
         appium_bin="/var/lib/gridfleet-agent/runtimes/abc123/node_modules/.bin/appium",
         appium_home="/var/lib/gridfleet-agent/runtimes/abc123",
     )
@@ -63,9 +61,7 @@ def test_build_env_prepends_pack_runtime_bin_dir_and_sets_appium_home() -> None:
 
 
 def test_build_env_without_appium_bin_still_produces_valid_env() -> None:
-    # When no appium_bin is supplied, _build_env still runs (no appium dir is added to PATH).
-    # The caller (resolve_appium_invocation_for_pack) is responsible for providing the binary.
-    env = _build_env(platform_name="android_mobile", device_type="real_device")
+    env = _build_env()
     assert "PATH" in env
 
 

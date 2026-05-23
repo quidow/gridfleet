@@ -31,7 +31,7 @@ from agent_app.appium.process import (
 )
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.adapter_types import LifecycleActionResult
+from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
@@ -188,21 +188,23 @@ def test_build_env_adds_paths() -> None:
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium.process.os.path.isfile", return_value=True),
         patch("agent_app.appium.process.os.access", return_value=True),
-        patch("agent_app.appium.process._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.appium.process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
+        adapter_env = SubprocessEnvContribution(
+            env_vars={"ANDROID_HOME": "/opt/android", "ANDROID_SDK_ROOT": "/opt/android"},
+            extra_path_dirs=["/opt/android/platform-tools"],
+        )
         env = _build_env(
-            platform_name="tvos",
-            device_type="real_device",
             appium_bin="/usr/local/bin/appium",
+            adapter_env=adapter_env,
         )
 
     assert env["ANDROID_HOME"] == "/opt/android"
     assert env["ANDROID_SDK_ROOT"] == "/opt/android"
     assert env["JAVA_HOME"] == "/usr/lib/jvm/java-21"
     assert "APPIUM_XCUITEST_PREFER_DEVICECTL" not in env
-    assert env["PATH"].startswith("/opt/android/platform-tools:/usr/bin:/usr/local/bin")
+    assert "/usr/local/bin" in env["PATH"]
+    assert "/opt/android/platform-tools" in env["PATH"]
 
 
 def test_build_env_applies_workaround_env() -> None:
@@ -211,13 +213,9 @@ def test_build_env_applies_workaround_env() -> None:
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium.process.os.path.isfile", return_value=True),
         patch("agent_app.appium.process.os.access", return_value=True),
-        patch("agent_app.appium.process._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.appium.process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
         env = _build_env(
-            platform_name="tvos",
-            device_type="real_device",
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
             workaround_env={"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
@@ -231,13 +229,9 @@ def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> 
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
         patch("agent_app.appium.process.os.path.isfile", return_value=True),
         patch("agent_app.appium.process.os.access", return_value=True),
-        patch("agent_app.appium.process._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.appium.process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
         env = _build_env(
-            platform_name="tvos",
-            device_type="real_device",
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
             workaround_env=None,
@@ -248,8 +242,6 @@ def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> 
 def test_build_env_does_not_derive_java_home_from_fallback_command() -> None:
     with (
         patch("agent_app.appium.process._find_java", return_value="java"),
-        patch("agent_app.appium.process._find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch("agent_app.appium.process.find_android_home", return_value="/opt/android"),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
         env = _build_env(appium_bin="/usr/local/bin/appium")
@@ -2085,3 +2077,80 @@ async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
     args = create_proc.await_args_list[0].args
     assert "--use-plugins" not in args
     await manager.shutdown()
+
+
+def test_subprocess_env_contribution_defaults() -> None:
+    c = SubprocessEnvContribution()
+    assert c.env_vars == {}
+    assert c.extra_path_dirs == []
+
+
+def test_build_env_applies_adapter_env() -> None:
+    with (
+        patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
+        patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
+        patch("agent_app.appium.process.os.path.isfile", return_value=True),
+        patch("agent_app.appium.process.os.access", return_value=True),
+        patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
+    ):
+        adapter_env = SubprocessEnvContribution(
+            env_vars={"ANDROID_HOME": "/opt/android", "ANDROID_SDK_ROOT": "/opt/android"},
+            extra_path_dirs=["/opt/android/platform-tools"],
+        )
+        env = _build_env(
+            appium_bin="/usr/local/bin/appium",
+            adapter_env=adapter_env,
+        )
+
+    assert env["ANDROID_HOME"] == "/opt/android"
+    assert env["ANDROID_SDK_ROOT"] == "/opt/android"
+    assert "/opt/android/platform-tools" in env["PATH"]
+
+
+def test_build_env_adapter_env_uses_setdefault() -> None:
+    with (
+        patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
+        patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
+        patch("agent_app.appium.process.os.path.isfile", return_value=True),
+        patch("agent_app.appium.process.os.access", return_value=True),
+        patch.dict("os.environ", {"PATH": "/usr/local/bin", "ANDROID_HOME": "/host/android"}, clear=True),
+    ):
+        adapter_env = SubprocessEnvContribution(
+            env_vars={"ANDROID_HOME": "/adapter/android"},
+        )
+        env = _build_env(adapter_env=adapter_env)
+
+    assert env["ANDROID_HOME"] == "/host/android"
+
+
+def test_build_env_workaround_env_overrides_adapter_env() -> None:
+    with (
+        patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
+        patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
+        patch("agent_app.appium.process.os.path.isfile", return_value=True),
+        patch("agent_app.appium.process.os.access", return_value=True),
+        patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
+    ):
+        adapter_env = SubprocessEnvContribution(
+            env_vars={"ANDROID_HOME": "/adapter/android"},
+        )
+        env = _build_env(
+            adapter_env=adapter_env,
+            workaround_env={"ANDROID_HOME": "/operator/android"},
+        )
+
+    assert env["ANDROID_HOME"] == "/operator/android"
+
+
+def test_build_env_no_adapter_env() -> None:
+    with (
+        patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
+        patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
+        patch("agent_app.appium.process.os.path.isfile", return_value=True),
+        patch("agent_app.appium.process.os.access", return_value=True),
+        patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
+    ):
+        env = _build_env(appium_bin="/usr/local/bin/appium")
+
+    assert "ANDROID_HOME" not in env
+    assert "/usr/local/bin" in env["PATH"]

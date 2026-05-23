@@ -25,7 +25,6 @@ from agent_app.tools.manager import (
     detect_node_provider,
 )
 from agent_app.tools.paths import _parse_node_version, find_appium
-from agent_app.tools.utils import _find_adb, find_android_home
 
 if TYPE_CHECKING:
     import pytest
@@ -252,49 +251,6 @@ def test_find_appium_returns_name_when_not_found(monkeypatch: pytest.MonkeyPatch
 # ---------------------------------------------------------------------------
 # tool_utils coverage
 # ---------------------------------------------------------------------------
-
-
-def test_find_android_home_env_set_but_not_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANDROID_HOME", "/invalid")
-    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
-    with patch("agent_app.tools.utils.os.path.isdir", return_value=False):
-        assert find_android_home() is None
-
-
-def test_find_android_home_no_env_no_valid_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANDROID_HOME", raising=False)
-    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
-    with patch("agent_app.tools.utils.os.path.isdir", return_value=False):
-        assert find_android_home() is None
-
-
-def test_find_android_home_fallback_sdk_with_platform_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANDROID_HOME", raising=False)
-    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
-    sdk = os.path.expanduser("~/Library/Android/sdk")
-    with patch(
-        "agent_app.tools.utils.os.path.isdir",
-        side_effect=lambda p: p in {sdk, os.path.join(sdk, "platform-tools")},
-    ):
-        assert find_android_home() == sdk
-
-
-def test_find_adb_no_which_no_valid_fallback() -> None:
-    with (
-        patch("agent_app.tools.utils.shutil.which", return_value=None),
-        patch("agent_app.tools.utils.os.path.isfile", return_value=False),
-    ):
-        assert _find_adb() == "adb"
-
-
-def test_find_adb_fallback_to_valid_path() -> None:
-    adb = os.path.expanduser("~/Library/Android/sdk/platform-tools/adb")
-    with (
-        patch("agent_app.tools.utils.shutil.which", return_value=None),
-        patch("agent_app.tools.utils.os.path.isfile", side_effect=lambda p: p == adb),
-        patch("agent_app.tools.utils.os.access", side_effect=lambda p, m: p == adb),
-    ):
-        assert _find_adb() == adb
 
 
 # ---------------------------------------------------------------------------

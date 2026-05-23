@@ -21,6 +21,7 @@ from agent_app.pack.adapter_types import (
     SessionOutcome,
     SessionSpec,
     SidecarStatus,
+    SubprocessEnvContribution,
     TelemetryContext,
 )
 
@@ -102,3 +103,23 @@ class Adapter:
 
             return await sidecar_lifecycle(action)
         return SidecarStatus(ok=False, detail=f"Unknown feature: {feature_id}")
+
+    def subprocess_env(self) -> SubprocessEnvContribution:
+        import os
+
+        from adapter.tools import find_adb, find_android_home
+
+        extra_path_dirs: list[str] = []
+        env_vars: dict[str, str] = {}
+
+        adb_path = find_adb()
+        adb_dir = os.path.dirname(adb_path)
+        if adb_dir and adb_path != "adb":
+            extra_path_dirs.append(adb_dir)
+
+        home = find_android_home()
+        if home:
+            env_vars["ANDROID_HOME"] = home
+            env_vars["ANDROID_SDK_ROOT"] = home
+
+        return SubprocessEnvContribution(env_vars=env_vars, extra_path_dirs=extra_path_dirs)
