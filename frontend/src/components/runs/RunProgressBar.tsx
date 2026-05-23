@@ -7,7 +7,7 @@ export default function RunProgressBar({ counts }: Props) {
 
   if (counts.total === 0) {
     return (
-      <div role="status" className="font-mono text-xs text-text-3" data-testid="run-progress-empty">
+      <div className="font-mono text-xs text-text-3" data-testid="run-progress-empty">
         no sessions yet
       </div>
     );

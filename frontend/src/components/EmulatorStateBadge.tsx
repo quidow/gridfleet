@@ -22,7 +22,6 @@ export function EmulatorStateBadge({ state, className }: Props) {
 
   return (
     <Badge
-      role="status"
       aria-label={`Emulator ${config.label}`}
       data-testid="emulator-state-badge"
       tone={config.tone}

@@ -46,7 +46,6 @@ export default function StatCard({
 }) {
   return (
     <div
-      role="status"
       aria-label={`${label} ${value}`}
       data-testid="stat-card"
       className={`card card-padding hover-lift border-l-4 ${TONE_BORDER[tone]}`}
