@@ -38,8 +38,10 @@ describe('ImportReviewStep', () => {
       />,
     );
     expect(screen.getByRole('heading', { name: /step 2.*review/i })).toBeInTheDocument();
+    // "valid" appears once in the row badge column ("valid" for valid_new).
     expect(screen.getByText('valid')).toBeInTheDocument();
-    expect(screen.getByText('invalid')).toBeInTheDocument();
+    // "invalid" appears twice — summary badge "1 invalid" and row badge "invalid".
+    expect(screen.getAllByText(/invalid/i).length).toBeGreaterThanOrEqual(2);
   });
 
   it('disables commit when included rows are missing a target host', () => {

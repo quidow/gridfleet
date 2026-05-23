@@ -127,7 +127,7 @@ export function ImportReviewStep({
         <Badge tone="success" size="sm">{counts.valid_new ?? 0} new</Badge>
         <Badge tone="warning" size="sm">{counts.conflict_skip ?? 0} skip</Badge>
         <Badge tone="warning" size="sm">{counts.duplicate_in_bundle ?? 0} duplicates</Badge>
-        <Badge tone="critical" size="sm">{counts.invalid ?? 0} bad</Badge>
+        <Badge tone="critical" size="sm">{counts.invalid ?? 0} invalid</Badge>
       </div>
       <DataTable<PreviewRow>
         columns={columns}
