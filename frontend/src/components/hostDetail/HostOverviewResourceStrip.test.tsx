@@ -74,6 +74,30 @@ test('reserves detail row height when a gauge has no detail', () => {
   });
 });
 
+test('renders CPU busy/total cores when totalCpuCores is provided', () => {
+  useHostResourceTelemetryMock.mockReturnValue({ data: { samples: [sampleWithTotals] } });
+
+  renderStrip({ hostId: 'host-1', totalCpuCores: 8, totalMemoryMb: 32768, totalDiskGb: 1024 });
+
+  expect(screen.getByText(/5\.0\s*\/\s*8\s*cores/i)).toBeInTheDocument();
+});
+
+test('CPU detail is absent (but row reserved) when totalCpuCores is null', () => {
+  useHostResourceTelemetryMock.mockReturnValue({ data: { samples: [sampleWithTotals] } });
+
+  const { container } = renderStrip({
+    hostId: 'host-1',
+    totalCpuCores: null,
+    totalMemoryMb: 32768,
+    totalDiskGb: 1024,
+  });
+
+  expect(screen.queryByText(/cores/i)).not.toBeInTheDocument();
+  const detailRows = container.querySelectorAll('[data-testid="gauge-detail"]');
+  expect(detailRows).toHaveLength(3);
+  detailRows.forEach((row) => expect(row.className).toMatch(/\bh-4\b/));
+});
+
 describe('formatCpuUsage', () => {
   test('returns busy/total cores for valid inputs', () => {
     expect(formatCpuUsage(28, 8)).toBe('2.2 / 8 cores');

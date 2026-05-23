@@ -58,6 +58,7 @@ export default function HostOverviewPanel({
         <div className="flex flex-col gap-6">
           <HostOverviewResourceStrip
             hostId={host.id}
+            totalCpuCores={host.cpu_cores ?? null}
             totalMemoryMb={host.total_memory_mb ?? null}
             totalDiskGb={host.total_disk_gb ?? null}
           />

@@ -3,6 +3,7 @@ import type { HostResourceSample } from '../../types';
 
 type Props = {
   hostId: string;
+  totalCpuCores: number | null;
   totalMemoryMb: number | null;
   totalDiskGb: number | null;
 };
@@ -75,10 +76,16 @@ function Gauge({ label, percent, detail }: { label: string; percent: number | nu
   );
 }
 
-// totalMemoryMb/totalDiskGb are static host-registration metadata used as fallbacks
-// when telemetry samples omit memory_total_mb / disk_total_gb (older agent versions
-// that emit percent-only telemetry).
-export default function HostOverviewResourceStrip({ hostId, totalMemoryMb, totalDiskGb }: Props) {
+// totalCpuCores / totalMemoryMb / totalDiskGb are static host-registration metadata used
+// alongside live telemetry: CPU busy-cores is derived from cpu_percent * cores, and the
+// memory/disk totals act as fallbacks when telemetry samples omit memory_total_mb /
+// disk_total_gb (older agent versions that emit percent-only telemetry).
+export default function HostOverviewResourceStrip({
+  hostId,
+  totalCpuCores,
+  totalMemoryMb,
+  totalDiskGb,
+}: Props) {
   const { data } = useHostResourceTelemetry(hostId);
   const latest = data ? pickLatestSample(data.samples) : null;
 
@@ -89,7 +96,11 @@ export default function HostOverviewResourceStrip({ hostId, totalMemoryMb, total
     >
       <h2 className="mb-3 text-sm font-medium text-text-3">Resource Usage</h2>
       <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
-        <Gauge label="CPU" percent={latest?.cpu_percent ?? null} detail={null} />
+        <Gauge
+          label="CPU"
+          percent={latest?.cpu_percent ?? null}
+          detail={formatCpuUsage(latest?.cpu_percent ?? null, totalCpuCores)}
+        />
         <Gauge
           label="Memory"
           percent={memoryPercent(latest)}
