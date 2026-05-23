@@ -13,6 +13,7 @@ export function useDriverDetail(packId: string) {
     queryFn: () => fetchDriverPack(packId),
     enabled: packId.length > 0,
     refetchInterval: 15_000,
+    staleTime: 7_500,
   });
 }
 
@@ -22,6 +23,7 @@ export function useDriverReleases(packId: string) {
     queryFn: () => fetchDriverPackReleases(packId),
     enabled: packId.length > 0,
     refetchInterval: 15_000,
+    staleTime: 7_500,
   });
 }
 
@@ -31,6 +33,7 @@ export function useDriverPackHosts(packId: string) {
     queryFn: () => fetchDriverPackHosts(packId),
     enabled: packId.length > 0,
     refetchInterval: 15_000,
+    staleTime: 7_500,
   });
 }
 

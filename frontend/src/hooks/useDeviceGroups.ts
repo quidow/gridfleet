@@ -29,6 +29,7 @@ export function useDeviceGroups() {
     queryKey: ['device-groups'],
     queryFn: fetchDeviceGroups,
     refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
 
@@ -38,6 +39,7 @@ export function useDeviceGroup(id: string) {
     queryFn: () => fetchDeviceGroup(id),
     enabled: !!id,
     refetchInterval: 15_000,
+    staleTime: 7_500,
   });
 }
 

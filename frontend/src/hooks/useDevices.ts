@@ -69,6 +69,7 @@ export function useDevices(params?: {
     queryKey: ['devices', params],
     queryFn: () => fetchDevices(params),
     refetchInterval: connected ? 60_000 : 10_000,
+    staleTime: connected ? 30_000 : 5_000,
   });
 }
 
@@ -94,6 +95,7 @@ export function useDevicesPaginated(params: {
     queryKey: ['devices', params],
     queryFn: () => fetchDevicesPaginated(params),
     refetchInterval: connected ? 60_000 : 10_000,
+    staleTime: connected ? 30_000 : 5_000,
     placeholderData: keepPreviousData,
   });
 }
@@ -104,6 +106,7 @@ export function useDevice(id: string) {
     queryKey: ['device', id],
     queryFn: () => fetchDevice(id),
     refetchInterval: connected ? 60_000 : 5_000,
+    staleTime: connected ? 30_000 : 2_500,
     placeholderData: keepPreviousData,
   });
 }
@@ -114,6 +117,7 @@ export function useDeviceSessionOutcomeHeatmap(id: string, days = 90) {
     queryKey: ['device-session-outcome-heatmap', id, days],
     queryFn: () => fetchDeviceSessionOutcomeHeatmap(id, days),
     refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
     enabled: !!id,
   });
 }
@@ -297,6 +301,7 @@ export function useDeviceHealth(id: string) {
     queryKey: ['device-health', id],
     queryFn: () => fetchDeviceHealth(id),
     refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
   });
 }
 
@@ -357,6 +362,7 @@ export function useDeviceLogs(id: string, lines = 200) {
     queryKey: ['device-logs', id, lines],
     queryFn: () => fetchDeviceLogs(id, lines),
     refetchInterval: 5_000,
+    staleTime: 2_500,
   });
 }
 

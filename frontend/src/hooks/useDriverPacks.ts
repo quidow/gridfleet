@@ -49,6 +49,7 @@ export function useDriverPackCatalog() {
     queryKey: ['driver-pack-catalog'],
     queryFn: fetchDriverPackCatalog,
     refetchInterval: 5000,
+    staleTime: 2_500,
   }, contextClient ?? fallbackQueryClient);
 }
 
@@ -76,5 +77,6 @@ export function useHostDriverPacks(hostId: string) {
     queryFn: () => fetchHostDriverPacks(hostId),
     enabled: !!hostId,
     refetchInterval: 5000,
+    staleTime: 2_500,
   });
 }

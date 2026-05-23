@@ -10,6 +10,7 @@ export function useSessions(params?: SessionListParams) {
     queryKey: ['sessions', 'cursor', params],
     queryFn: () => fetchSessions(params),
     refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
+    staleTime: isHistorical ? Infinity : (connected ? 30_000 : 5_000),
     refetchOnWindowFocus: false,
   });
 }

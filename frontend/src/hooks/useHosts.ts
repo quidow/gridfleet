@@ -25,6 +25,7 @@ export function useHosts() {
     queryKey: ['hosts'],
     queryFn: fetchHosts,
     refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
   });
 }
 
@@ -34,6 +35,7 @@ export function useHost(id: string) {
     queryKey: ['host', id],
     queryFn: () => fetchHost(id),
     refetchInterval: connected ? 60_000 : 10_000,
+    staleTime: connected ? 30_000 : 5_000,
   });
 }
 
@@ -43,6 +45,7 @@ export function useHostDiagnostics(id: string) {
     queryKey: ['host-diagnostics', id],
     queryFn: () => fetchHostDiagnostics(id),
     refetchInterval: connected ? 60_000 : 10_000,
+    staleTime: connected ? 30_000 : 5_000,
     enabled: !!id,
   });
 }
@@ -53,6 +56,7 @@ export function useHostResourceTelemetry(id: string) {
     queryKey: ['host-resource-telemetry', id],
     queryFn: () => fetchHostResourceTelemetry(id),
     refetchInterval: connected ? 60_000 : 30_000,
+    staleTime: connected ? 30_000 : 15_000,
     enabled: !!id,
   });
 }
@@ -63,6 +67,7 @@ export function useHostToolStatus(id: string, enabled = true) {
     queryKey: ['host-tools-status', id],
     queryFn: () => fetchHostToolStatus(id),
     refetchInterval: connected ? 60_000 : 15_000,
+    staleTime: connected ? 30_000 : 7_500,
     enabled: !!id && enabled,
   });
 }

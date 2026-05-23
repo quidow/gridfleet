@@ -13,6 +13,7 @@ export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
     queryKey: ['lifecycle', 'incidents', params],
     queryFn: () => fetchLifecycleIncidents(params),
     refetchInterval: isHistorical ? false : connected ? 60_000 : 10_000,
+    staleTime: isHistorical ? Infinity : connected ? 30_000 : 5_000,
     placeholderData: keepPreviousData,
   });
 }

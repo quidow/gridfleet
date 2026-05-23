@@ -10,6 +10,7 @@ export function useRuns(params?: RunListParams) {
     queryKey: ['runs', 'cursor', params],
     queryFn: () => fetchRuns(params),
     refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
+    staleTime: isHistorical ? Infinity : (connected ? 30_000 : 5_000),
     refetchOnWindowFocus: false,
   });
 }
@@ -20,6 +21,7 @@ export function useRun(id: string) {
     queryKey: ['run', id],
     queryFn: () => fetchRun(id),
     refetchInterval: connected ? 60_000 : 5_000,
+    staleTime: connected ? 30_000 : 2_500,
     refetchOnWindowFocus: false,
   });
 }

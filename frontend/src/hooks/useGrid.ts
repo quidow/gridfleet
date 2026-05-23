@@ -8,6 +8,7 @@ export function useGridStatus() {
     queryKey: ['grid-status'],
     queryFn: fetchGridStatus,
     refetchInterval: connected ? 60_000 : 10_000,
+    staleTime: connected ? 30_000 : 5_000,
     refetchOnWindowFocus: false,
   });
 }
@@ -17,5 +18,6 @@ export function useHealth() {
     queryKey: ['health'],
     queryFn: fetchHealth,
     refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 }
