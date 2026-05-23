@@ -35,7 +35,6 @@ CATEGORY_DISPLAY_NAMES: dict[str, str] = {
     "general": "General",
     "grid": "Appium & Grid",
     "notifications": "Notifications",
-    "devices": "Device Defaults",
     "agent": "Agent",
     "reservations": "Reservations",
     "retention": "Data Retention",
