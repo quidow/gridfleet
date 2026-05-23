@@ -31,6 +31,7 @@ import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import PageHeader from '../components/ui/PageHeader';
 import Button from '../components/ui/Button';
 import ListPageSubheader from '../components/ui/ListPageSubheader';
+import { DeviceExportButton } from '../components/devices/DeviceExportButton';
 import Pagination from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
 
@@ -215,9 +216,12 @@ export default function Devices() {
           title={showingLabel}
           meta={subheaderMeta}
           action={
-            <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
-              Add Device
-            </Button>
+            <div className="flex items-center gap-2">
+              <DeviceExportButton />
+              <Button onClick={() => controller.setShowAdd(true)} leadingIcon={<Plus size={16} />}>
+                Add Device
+              </Button>
+            </div>
           }
         />
 
