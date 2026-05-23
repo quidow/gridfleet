@@ -21,6 +21,7 @@ from agent_app import observability as agent_observability
 from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings, secret_value
 from agent_app.host.capabilities import capabilities_refresh_loop, refresh_capabilities_snapshot
+from agent_app.host.capabilities import set_adapter_registry as set_capabilities_adapter_registry
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.logs.shipper import LogShipperTask
@@ -248,6 +249,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
     runtime_registry = RuntimeRegistry()
     adapter_registry = AdapterRegistry()
+    set_capabilities_adapter_registry(adapter_registry)
     sidecar_supervisor = SidecarSupervisor()
     boot_id = uuid4()
     app.state.host_identity = host_identity

@@ -4,19 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_app.pack.adapter_registry import AdapterRegistry
 
 logger = logging.getLogger(__name__)
 
 _CAPABILITIES_REFRESH_INTERVAL_SEC = 600
-_TOOL_CHECKS: list[tuple[str, str | None, list[str], str]] = [
-    ("adb", None, ["--version"], r"Android Debug Bridge.*?(\d+\.\d+\.\d+)"),
-    ("xcodebuild", "xcodebuild", ["-version"], r"Xcode\s+(\d+\.\d+(?:\.\d+)?)"),
-    ("go_ios", "ios", ["--version"], r"v?(\d+\.\d+\.\d+)"),
-]
 ORCHESTRATION_CONTRACT_VERSION = 2
 _DEFAULT_CAPABILITIES: dict[str, Any] = {
     "platforms": [],
@@ -27,56 +24,32 @@ _DEFAULT_CAPABILITIES: dict[str, Any] = {
 _capabilities_snapshot: dict[str, Any] | None = None
 _capabilities_snapshot_at: float | None = None
 _capabilities_lock = asyncio.Lock()
+_adapter_registry: AdapterRegistry | None = None
 
 
-async def _run_cmd(*args: str) -> str | None:
-    """Run a command and return stdout, or None on failure."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-        output = stdout.decode().strip() or stderr.decode().strip()
-        return output if proc.returncode == 0 else None
-    except (FileNotFoundError, TimeoutError, OSError):
-        return None
+def set_adapter_registry(registry: AdapterRegistry | None) -> None:
+    global _adapter_registry
+    _adapter_registry = registry
 
 
-async def _get_tool_version(cmd: str, args: list[str], pattern: str) -> str | None:
-    """Run a tool command and extract version via regex pattern."""
-    output = await _run_cmd(cmd, *args)
-    if output is None:
-        return None
-    match = re.search(pattern, output)
-    return match.group(1) if match else output.split("\n")[0].strip()
-
-
-def _resolve_tool_command(name: str, configured_cmd: str | None) -> str:
-    if configured_cmd:
-        return configured_cmd
-    return name
+def _collect_adapter_tool_versions() -> dict[str, str]:
+    """Gather tool versions from all loaded adapters."""
+    if _adapter_registry is None:
+        return {}
+    tools: dict[str, str] = {}
+    for pack_id in _adapter_registry.pack_ids():
+        adapter = _adapter_registry.get_current(pack_id)
+        if adapter is not None and hasattr(adapter, "tool_versions"):
+            for name, version in adapter.tool_versions().items():
+                if version is not None and name not in tools:
+                    tools[name] = version
+    return tools
 
 
 async def detect_capabilities() -> dict[str, Any]:
     """Detect installed tools and infer supported platforms."""
-    tools: dict[str, str] = {}
-
-    checks = [(_resolve_tool_command(name, cmd), args, pattern) for name, cmd, args, pattern in _TOOL_CHECKS]
-
-    # Run all tool version checks in parallel
-    results = await asyncio.gather(
-        *(_get_tool_version(cmd, args, pattern) for cmd, args, pattern in checks),
-        return_exceptions=True,
-    )
-
-    for (name, _, _, _), result in zip(_TOOL_CHECKS, results, strict=True):
-        if isinstance(result, str):
-            tools[name] = result
-
+    tools = _collect_adapter_tool_versions()
     platforms: list[str] = []
-
     missing_prerequisites: list[str] = []
 
     return {
