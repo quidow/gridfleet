@@ -19,6 +19,7 @@ import {
 import { resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { Select } from '../../components/ui/Select';
+import { TextField } from '../../components/ui/TextField';
 
 type Props = {
   packIdFilter: string;
@@ -107,12 +108,11 @@ export function DevicesFiltersBar({
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-3"
             aria-hidden="true"
           />
-          <input
-            type="text"
+          <TextField
             placeholder="Search by name, identity, or target..."
             value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            className="h-9 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-sm text-text-1 outline-none transition placeholder:text-text-3 focus:border-accent focus:ring-2 focus:ring-accent"
+            onChange={onSearchChange}
+            className="h-9 pl-9 pr-3"
           />
         </label>
 

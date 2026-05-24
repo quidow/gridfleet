@@ -2,6 +2,7 @@ import { Clock } from 'lucide-react';
 import { useSessions } from '../hooks/useSessions';
 import { useDevices } from '../hooks/useDevices';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
+import { Checkbox } from '../components/ui/Checkbox';
 import { EmptyState } from '../components/ui/EmptyState';
 import { DataTable } from '../components/ui/DataTable';
 import { FilterBar } from '../components/ui/FilterBar';
@@ -144,17 +145,14 @@ function SessionsTableSection() {
               size="sm"
             />
           </label>
-          <label className="flex items-center gap-2 text-sm text-text-2">
-            <input
-              type="checkbox"
-              checked={includeProbes}
-              onChange={(e) =>
-                updateParams({ include_probes: e.target.checked ? '1' : null }, { resetCursor: true })
-              }
-              aria-label="Include probe sessions"
-            />
-            <span>Include probes</span>
-          </label>
+          <Checkbox
+            checked={includeProbes}
+            onChange={(checked) =>
+              updateParams({ include_probes: checked ? '1' : null }, { resetCursor: true })
+            }
+            label="Include probes"
+            aria-label="Include probe sessions"
+          />
         </FilterBar>
 
         <ListPageSubheader title={showingLabel} />

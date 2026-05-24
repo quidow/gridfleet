@@ -20,7 +20,7 @@ export function Checkbox({
   const checkboxId = id ?? autoId;
 
   return (
-    <label className={['flex items-start gap-2 text-sm text-text-2', className].filter(Boolean).join(' ')}>
+    <label className={['flex cursor-pointer items-start gap-2 text-sm text-text-2', className].filter(Boolean).join(' ')}>
       <input
         id={checkboxId}
         type="checkbox"

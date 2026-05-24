@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useHostEvents } from '../../hooks/useHosts';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { Select } from '../ui/Select';
+import { TextField } from '../ui/TextField';
 
 type RangeKey = '1h' | '6h' | '24h' | '7d';
 
@@ -51,12 +52,13 @@ export function HostEventsPanel({ hostId }: Props) {
             size="sm"
           />
         </label>
-        <input
+        <TextField
           aria-label="Event types"
           placeholder="host.status_changed,host.heartbeat_lost"
           value={typesText}
-          onChange={(event) => setTypesText(event.target.value)}
-          className="min-w-72 flex-1 rounded-md border border-border-subtle bg-surface-1 px-2 py-1 text-sm text-text-1"
+          onChange={setTypesText}
+          size="sm"
+          className="min-w-72 flex-1"
         />
       </div>
 

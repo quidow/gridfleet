@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2, Pencil, Play, RotateCcw, Trash2 } from 'lucide-react';
+import { Checkbox } from '../ui/Checkbox';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { Modal } from '../ui/Modal';
+import { TextField } from '../ui/TextField';
 import { useEventCatalog } from '../../hooks/useEventCatalog';
 import { useRetryWebhookDelivery, useWebhookDeliveries, useWebhooks } from '../../hooks/useWebhooks';
 import { useWebhookAdmin } from './useWebhookAdmin';
@@ -72,22 +74,20 @@ export function WebhookRegistryPanel() {
         <form onSubmit={admin.handleWebhookSubmit} className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-text-2">Name</label>
-            <input
+            <TextField
               value={admin.webhookForm.name}
-              onChange={(event) => admin.setWebhookForm({ ...admin.webhookForm, name: event.target.value })}
+              onChange={(value) => admin.setWebhookForm({ ...admin.webhookForm, name: value })}
               required
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
               placeholder="e.g. Slack #device-alerts"
             />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-text-2">URL</label>
-            <input
+            <TextField
               value={admin.webhookForm.url}
-              onChange={(event) => admin.setWebhookForm({ ...admin.webhookForm, url: event.target.value })}
+              onChange={(value) => admin.setWebhookForm({ ...admin.webhookForm, url: value })}
               required
               type="url"
-              className="w-full rounded-md border border-border-strong px-3 py-2 text-sm"
               placeholder="https://hooks.slack.com/services/..."
             />
           </div>
@@ -95,15 +95,12 @@ export function WebhookRegistryPanel() {
             <label className="mb-1 block text-sm font-medium text-text-2">Event Types</label>
             <div className="mt-1 grid grid-cols-2 gap-2">
               {eventTypeOptions.map((eventType) => (
-                <label key={eventType} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={admin.webhookForm.event_types.includes(eventType)}
-                    onChange={() => admin.toggleEventType(eventType)}
-                    className="rounded border-border-strong"
-                  />
-                  {eventType}
-                </label>
+                <Checkbox
+                  key={eventType}
+                  checked={admin.webhookForm.event_types.includes(eventType)}
+                  onChange={() => admin.toggleEventType(eventType)}
+                  label={eventType}
+                />
               ))}
             </div>
           </div>

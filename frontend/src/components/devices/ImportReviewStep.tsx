@@ -1,5 +1,6 @@
 import { Badge, type BadgeTone } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { Checkbox } from '../ui/Checkbox';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';
 import { SectionHeader } from '../ui/SectionHeader';
 import { Select } from '../ui/Select';
@@ -61,11 +62,11 @@ export function ImportReviewStep({
         const includable = row.status === 'valid_new';
         const mapping = mappings[row.index];
         return (
-          <input
-            type="checkbox"
+          <Checkbox
             disabled={!includable}
             checked={mapping?.included ?? false}
             onChange={() => onToggleIncluded(row.index)}
+            label=""
             aria-label={`include-${row.index}`}
           />
         );
