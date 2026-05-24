@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import glob
+import inspect
 import logging
 import os
 import re
@@ -241,18 +242,21 @@ async def get_tool_status(
         _prepend_process_path(provider.bin_paths)
     node_version = await _get_node_version(provider)
 
-    def _collect() -> dict[str, str | None]:
+    async def _collect() -> dict[str, str | None]:
         tools: dict[str, str | None] = {}
         if adapter_registry is not None:
             for pack_id in adapter_registry.pack_ids():
                 adapter = adapter_registry.get_current(pack_id)
                 if adapter is not None and hasattr(adapter, "tool_versions"):
-                    for name, version in adapter.tool_versions().items():
+                    result = adapter.tool_versions()
+                    if inspect.isawaitable(result):
+                        result = await result
+                    for name, version in result.items():
                         if name not in tools:
                             tools[name] = version
         return tools
 
-    adapter_tools = await asyncio.to_thread(_collect)
+    adapter_tools = await _collect()
 
     result: dict[str, Any] = {
         "node": node_version,
