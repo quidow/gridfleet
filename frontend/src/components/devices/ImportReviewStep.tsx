@@ -66,7 +66,8 @@ export function ImportReviewStep({
             disabled={!includable}
             checked={mapping?.included ?? false}
             onChange={() => onToggleIncluded(row.index)}
-            label={<span className="sr-only">{`include-${row.index}`}</span>}
+            label=""
+            aria-label={`include-${row.index}`}
           />
         );
       },

@@ -150,6 +150,7 @@ export function DeviceInventoryExportModal({ isOpen, onClose, filters }: Props) 
                     checked={selected.has(col)}
                     onChange={() => toggle(col)}
                     label={<span className="font-mono">{col}</span>}
+                    aria-label={col}
                   />
                 ))}
               </div>
