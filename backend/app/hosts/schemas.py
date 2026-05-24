@@ -149,11 +149,15 @@ class HostResourceTelemetryResponse(BaseModel):
     bucket_minutes: int
 
 
+class ToolEntry(BaseModel):
+    name: str
+    version: str | None = None
+    description: str
+
+
 class HostToolStatusRead(BaseModel):
-    node: str | None = None
-    node_provider: str | None = None
-    node_error: str | None = None
-    go_ios: str | None = None
+    host: dict[str, ToolEntry]
+    packs: dict[str, list[ToolEntry]]
 
 
 class DiscoveredDevice(BaseModel):
