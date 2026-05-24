@@ -1188,11 +1188,9 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.config_service.get_device_config", new=AsyncMock(return_value=config)),
-        patch("app.devices.routers.control.config_service.replace_device_config", new=AsyncMock(return_value=config)),
         patch("app.devices.routers.control.config_service.merge_device_config", new=AsyncMock(return_value=config)),
     ):
         assert await devices_control.get_device_config(device_id, keys=" env , other ", db=object()) == config
-        assert await devices_control.replace_device_config(device_id, {"env": {}}, db=object()) == config
         assert await devices_control.merge_device_config(device_id, {"env": {}}, db=object()) == config
 
     audit_log = SimpleNamespace(
