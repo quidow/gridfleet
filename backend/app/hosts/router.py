@@ -43,6 +43,7 @@ from app.hosts.service_host_events import query_host_events
 from app.packs import schemas as pack_schemas
 from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
+from app.packs.services.status import persist_doctor_results
 from app.plugins import service as plugin_service
 from app.settings import settings_service
 
@@ -269,6 +270,37 @@ async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> pack_schemas.HostD
     if host is None:
         raise HTTPException(status_code=404, detail="host not found")
     return pack_schemas.HostDriverPacksOut.model_validate(await get_host_driver_pack_status(db, host_id))
+
+
+@router.post(
+    "/{host_id}/driver-packs/{pack_id}/doctor",
+    response_model=list[pack_schemas.HostPackDoctorOut],
+)
+async def trigger_driver_doctor(
+    host_id: uuid.UUID,
+    pack_id: str,
+    db: DbDep,
+) -> list[pack_schemas.HostPackDoctorOut]:
+    host = await db.get(Host, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="host not found")
+    if host.status.value != "online":
+        raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
+
+    checks = await agent_operations.pack_doctor(host.ip, host.agent_port, pack_id)
+
+    await persist_doctor_results(db, host_id, pack_id, checks)
+    await db.commit()
+
+    return [
+        pack_schemas.HostPackDoctorOut(
+            pack_id=pack_id,
+            check_id=c["check_id"],
+            ok=c["ok"],
+            message=c.get("message", ""),
+        )
+        for c in checks
+    ]
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)

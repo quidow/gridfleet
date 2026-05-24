@@ -771,6 +771,31 @@ async def pack_device_lifecycle_action(
     return raw
 
 
+async def pack_doctor(
+    host: str,
+    agent_port: int,
+    pack_id: str,
+    *,
+    http_client_factory: AgentClientFactory = httpx.AsyncClient,
+    timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+) -> list[dict[str, Any]]:
+    response = await _send_request(
+        "POST",
+        f"{agent_base_url(host, agent_port)}/agent/pack/{quote(pack_id, safe='')}/doctor",
+        endpoint="pack_doctor",
+        host=host,
+        agent_port=agent_port,
+        http_client_factory=http_client_factory,
+        timeout=timeout,
+    )
+    _raise_for_status(response, host=host, action="pack doctor")
+    try:
+        raw = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(host, f"Agent pack doctor failed on host {host} (invalid JSON payload)") from exc
+    return list(raw.get("checks", []))
+
+
 def response_json_dict(response: httpx.Response) -> dict[str, Any]:
     payload = _as_dict(response.json())
     return payload if payload is not None else {}
