@@ -44,9 +44,9 @@ export default defineConfig([
     },
   },
   {
-    // Allowlist is technical debt — shrink, do not grow.
-    // UI primitives need the raw underlying element; non-primitive entries
-    // are tracked migration debt.
+    // UI primitives define the raw elements and card class strings that
+    // the no-restricted-syntax rules enforce. No non-primitive file should
+    // appear here — if a consumer needs an exception, wrap in a primitive.
     files: [
       'src/components/ui/**/*.{ts,tsx}',
     ],
