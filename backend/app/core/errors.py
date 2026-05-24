@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -135,54 +137,6 @@ class InvalidTransitionError(AppError):
         )
         self.event = event
         self.current_state = current_state
-
-
-def request_id_from_scope(scope: Mapping[str, Any]) -> str | None:
-    state = scope.get("state")
-    if not isinstance(state, Mapping):
-        return None
-    request_id = state.get("request_id")
-    return request_id if isinstance(request_id, str) and request_id else None
-
-
-def request_id_from_request(request: Request) -> str | None:
-    request_id = getattr(request.state, "request_id", None)
-    return request_id if isinstance(request_id, str) and request_id else None
-
-
-def build_error_body(
-    *,
-    code: str,
-    message: str,
-    request_id: str | None,
-    details: object | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "error": {
-            "code": code,
-            "message": message,
-            "request_id": request_id,
-        }
-    }
-    if details is not None:
-        payload["error"]["details"] = jsonable_encoder(details)
-    return payload
-
-
-def error_response(
-    *,
-    status_code: int,
-    code: str,
-    message: str,
-    request_id: str | None,
-    details: object | None = None,
-    headers: Mapping[str, str] | None = None,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content=build_error_body(code=code, message=message, request_id=request_id, details=details),
-        headers=headers,
-    )
 
 
 def envelope_response(
