@@ -10,6 +10,7 @@ import type {
   HostResourceTelemetry,
   HostRead,
   HostDiagnostics,
+  HostToolEnvRead,
   HostToolStatus,
   IntakeCandidate,
 } from '../types';
@@ -115,8 +116,6 @@ export async function approveHost(id: string): Promise<HostRead> {
 export async function rejectHost(id: string): Promise<void> {
   await api.post(`/hosts/${id}/reject`);
 }
-
-type HostToolEnvRead = components['schemas']['HostToolEnvRead'];
 
 export async function fetchHostToolEnv(id: string): Promise<HostToolEnvRead> {
   const { data } = await api.get(`/hosts/${id}/tool-env`);

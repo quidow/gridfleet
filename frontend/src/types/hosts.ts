@@ -70,6 +70,7 @@ export type ToolEntry = Schemas['ToolEntry'];
 export type HostEventEntry = Schemas['HostEventEntry'];
 export type AgentLogPage = Schemas['AgentLogPage'];
 export type HostEventsPage = Schemas['HostEventsPage'];
+export type HostToolEnvRead = Schemas['HostToolEnvRead'];
 export type HostCreate = Schemas['HostCreate'];
 export type DiscoveredDevice = Omit<Schemas['DiscoveredDevice'], 'platform_label' | 'readiness_state'> & {
   platform_label: string | null;
