@@ -2,6 +2,31 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.20.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.19.2...gridfleet-agent-v0.20.0) (2026-05-24)
+
+
+### Features
+
+* **agent:** add POST /agent/pack/{pack_id}/doctor endpoint ([71c4e72](https://github.com/quidow/gridfleet/commit/71c4e72dc7b815d3ca5f1e58023dc06a19781e29))
+* **agent:** auto-run doctor checks on driver install or update ([a17a050](https://github.com/quidow/gridfleet/commit/a17a050e225fa7897caeadeee1a5de69bef8089d))
+* **agent:** parse tool_dependencies from desired pack payload ([9339b46](https://github.com/quidow/gridfleet/commit/9339b46c6c837e629e67c02dfd63cc1b867ccc1e))
+* **agent:** restructure tool status response with host/packs grouping ([689b205](https://github.com/quidow/gridfleet/commit/689b20518cef2e8fd3b26d18d9b664742753e987))
+* **agent:** update ToolsStatusResponse schema for structured tool status ([0c29392](https://github.com/quidow/gridfleet/commit/0c2939224120edec788c69c6a3343beee9eccf0b))
+* data-driven driver pack tool dependencies on host overview ([225adc5](https://github.com/quidow/gridfleet/commit/225adc56c475f5ef606b1cacfb61c9715cee57d7))
+* on-demand Appium doctor checks ([221256d](https://github.com/quidow/gridfleet/commit/221256d16983974a0324774d85a6cfca99c78ee7))
+
+
+### Bug Fixes
+
+* **agent:** address code review feedback ([c6be98c](https://github.com/quidow/gridfleet/commit/c6be98c7ff212e37076af03a276fef48b0a02793))
+* **agent:** sanitize exception detail in doctor endpoint response ([f5ffc7c](https://github.com/quidow/gridfleet/commit/f5ffc7cf93179d5c419ef5cdfa67f6c6145fec61))
+* **agent:** sanitize pack_id before logging in doctor route ([eb13401](https://github.com/quidow/gridfleet/commit/eb13401d8cd4565e043780ebc1b96723266fa86c))
+* **agent:** update golden tests for new doctor endpoint ([79ad238](https://github.com/quidow/gridfleet/commit/79ad2380080fe0bd06f73ef460ea799fe578b197))
+* **agent:** update remaining tests for structured tool status response ([bbdf675](https://github.com/quidow/gridfleet/commit/bbdf67520254261bff83f0a55bb4ab86bcb19942))
+* **agent:** use human-readable display names for host tools ([67f48be](https://github.com/quidow/gridfleet/commit/67f48bed99faec5f142cf2cba23edebad9db6a69))
+* **main:** address code review feedback ([701fd5c](https://github.com/quidow/gridfleet/commit/701fd5c1d85e792f766efc188c927bf919fc66bf))
+* **main:** truncate pack_id in log and add type guard on agent checks response ([d7f4503](https://github.com/quidow/gridfleet/commit/d7f4503cb37695579c91b65b4310b0dd452080d8))
+
 ## [0.19.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.19.1...gridfleet-agent-v0.19.2) (2026-05-24)
 
 
