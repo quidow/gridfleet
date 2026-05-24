@@ -311,7 +311,7 @@ async def test_runtime_entry_includes_blocked_reason_key() -> None:
 
 @pytest.mark.asyncio
 async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
-    """PackStateLoop posts only adapter-sourced doctor entries; the generic appium driver doctor is gone."""
+    """Without a runtime change, adapter doctor does not run on every iteration."""
     client = _FakeClient(_make_desired([_android_pack()]))
     registry = AdapterRegistry()
     registry.set("appium-uiautomator2", "2026.04.0", _DoctorAdapter())  # type: ignore[arg-type]
@@ -325,14 +325,7 @@ async def test_installed_pack_posts_only_adapter_doctor_results() -> None:
     await loop.run_once()
 
     payload = client.posted[-1]
-    assert payload["doctor"] == [
-        {
-            "pack_id": "appium-uiautomator2",
-            "check_id": "adb",
-            "ok": True,
-            "message": "host=00000000-0000-0000-0000-000000000099",
-        },
-    ]
+    assert payload["doctor"] == []
 
 
 @pytest.mark.asyncio

@@ -223,8 +223,6 @@ class PackStateLoop:
                                 }
                             )
 
-            doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
-
             pack_entries.append(
                 {
                     "pack_id": pack.id,
