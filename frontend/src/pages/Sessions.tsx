@@ -151,6 +151,7 @@ function SessionsTableSection() {
               updateParams({ include_probes: checked ? '1' : null }, { resetCursor: true })
             }
             label="Include probes"
+            aria-label="Include probe sessions"
           />
         </FilterBar>
 
