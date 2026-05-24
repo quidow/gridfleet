@@ -50,8 +50,6 @@ export default defineConfig([
     files: [
       'src/components/ui/**/*.{ts,tsx}',
       // Pending Card-primitive migration:
-      'src/components/SettingsSection.tsx',
-      'src/components/settings/WebhookRegistryPanel.tsx',
       'src/pages/Devices.tsx',
     ],
     rules: {

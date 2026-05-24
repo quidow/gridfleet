@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { Card } from './ui/Card';
 import { SettingField } from './SettingField';
 import type { SettingsSectionGroup } from './settings/settingsSections';
 import type { SettingRead } from '../types';
@@ -92,7 +93,7 @@ function SettingsSectionEditor({ sections, settings, onSave, onReset }: EditorPr
     <div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {sections.map((section) => (
-          <section key={section.id} className="rounded-lg border border-border bg-surface-1 p-5">
+          <Card key={section.id} padding="none" as="section" className="p-5">
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-text-1">{section.title}</h2>
               {section.description ? (
@@ -110,7 +111,7 @@ function SettingsSectionEditor({ sections, settings, onSave, onReset }: EditorPr
                 />
               ))}
             </div>
-          </section>
+          </Card>
         ))}
       </div>
       <div className="flex justify-end mt-4">
