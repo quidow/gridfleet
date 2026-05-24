@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration } from './dateFormatting';
+import { formatDuration, formatWaitTime } from './dateFormatting';
 
 describe('formatDuration', () => {
   const start = '2026-04-20T10:00:00Z';
@@ -27,5 +27,39 @@ describe('formatDuration', () => {
 
   it('returns "-" for invalid start', () => {
     expect(formatDuration('not-a-date', null)).toBe('-');
+  });
+});
+
+describe('formatWaitTime', () => {
+  it('returns "—" for undefined input', () => {
+    expect(formatWaitTime(undefined)).toBe('—');
+  });
+
+  it('returns "—" for invalid ISO string', () => {
+    expect(formatWaitTime('not-a-date')).toBe('—');
+  });
+
+  it('formats seconds when under 60s', () => {
+    const now = Date.now();
+    const thirtySecsAgo = new Date(now - 30_000).toISOString();
+    expect(formatWaitTime(thirtySecsAgo, now)).toBe('30s');
+  });
+
+  it('formats minutes and seconds', () => {
+    const now = Date.now();
+    const twoMinAgo = new Date(now - 150_000).toISOString();
+    expect(formatWaitTime(twoMinAgo, now)).toBe('2m 30s');
+  });
+
+  it('formats hours and minutes', () => {
+    const now = Date.now();
+    const oneHourFiveMin = new Date(now - 3_900_000).toISOString();
+    expect(formatWaitTime(oneHourFiveMin, now)).toBe('1h 5m');
+  });
+
+  it('returns "0s" for future timestamps', () => {
+    const now = Date.now();
+    const future = new Date(now + 10_000).toISOString();
+    expect(formatWaitTime(future, now)).toBe('0s');
   });
 });
