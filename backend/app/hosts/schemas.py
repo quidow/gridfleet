@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -268,6 +269,9 @@ class HostToolEnvRead(BaseModel):
     env: dict[str, str]
 
 
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 class HostToolEnvUpdate(BaseModel):
     env: dict[str, str]
 
@@ -275,12 +279,12 @@ class HostToolEnvUpdate(BaseModel):
     @classmethod
     def validate_env_entries(cls, v: dict[str, str]) -> dict[str, str]:
         for key, value in v.items():
-            if not key or not key.strip():
-                raise ValueError("env var name must not be empty")
+            if not _ENV_KEY_RE.match(key):
+                raise ValueError(f"invalid env var name (must be POSIX-safe): {key!r}")
             if len(key) > 256:
                 raise ValueError(f"env var name exceeds 256 chars: {key[:32]}...")
             if len(value) > 4096:
                 raise ValueError(f"env var value exceeds 4096 chars for key: {key}")
-            if "\x00" in key or "\x00" in value:
-                raise ValueError(f"env var must not contain null bytes: {key}")
+            if "\x00" in value:
+                raise ValueError(f"env var value must not contain null bytes: {key}")
         return v
