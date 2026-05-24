@@ -108,7 +108,7 @@ function DriversContent() {
         subtitle="Appium driver packs available to this fleet"
         actions={
           <Button size="sm" leadingIcon={<Package size={14} />} onClick={() => setUploadOpen(true)}>
-            Upload Driver
+            Add Driver Pack
           </Button>
         }
       />
