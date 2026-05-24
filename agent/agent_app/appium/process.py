@@ -1,6 +1,7 @@
 import asyncio
 import collections
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -674,7 +675,11 @@ class AppiumProcessManager:
 
         invocation = resolve_appium_invocation_for_pack(pack_id=spec.pack_id, registry=self._runtime_registry)
         adapter = self._adapter_registry.get_current(spec.pack_id) if self._adapter_registry is not None else None
-        adapter_env = adapter.subprocess_env() if adapter is not None and hasattr(adapter, "subprocess_env") else None
+        adapter_env = None
+        if adapter is not None and hasattr(adapter, "subprocess_env"):
+            adapter_env = adapter.subprocess_env()
+            if inspect.isawaitable(adapter_env):
+                adapter_env = await adapter_env
         env = _build_env(
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
