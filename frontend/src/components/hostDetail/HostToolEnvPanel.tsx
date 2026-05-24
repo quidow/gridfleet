@@ -30,18 +30,15 @@ function rowsToEnvRecord(rows: EnvRow[]): Record<string, string> {
 }
 
 export function HostToolEnvPanel({ hostId }: Props) {
-  const { data: rawData, isLoading } = useHostToolEnv(hostId);
+  const { data: rawData, isLoading, isError } = useHostToolEnv(hostId);
   const envData = rawData?.env;
   const updateMutation = useUpdateHostToolEnv(hostId);
 
-  // Sync server data into local edit state using the derived-state pattern:
-  // store the last seen server snapshot in state alongside the edit rows so
-  // we can reset rows whenever the server data changes (e.g. after refetch).
   const [syncedData, setSyncedData] = useState<Record<string, string> | undefined>(undefined);
   const [rows, setRows] = useState<EnvRow[]>([]);
   const [dirty, setDirty] = useState(false);
 
-  if (envData !== undefined && envData !== syncedData) {
+  if (envData !== undefined && envData !== syncedData && !dirty) {
     setSyncedData(envData);
     setRows(envRecordToRows(envData));
     setDirty(false);
@@ -95,7 +92,9 @@ export function HostToolEnvPanel({ hostId }: Props) {
         </div>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <p className="px-5 py-8 text-center text-sm text-danger-foreground">Failed to load environment variables.</p>
+      ) : isLoading ? (
         <p className="px-5 py-8 text-center text-sm text-text-3">Loading environment variables...</p>
       ) : rows.length === 0 ? (
         <div className="px-5 py-8 text-center">
