@@ -27,30 +27,6 @@ async def test_catalog_lists_pack(client: AsyncClient, db_session: AsyncSession)
 
 
 @pytest.mark.asyncio
-async def test_platforms_for_pack(client: AsyncClient, db_session: AsyncSession) -> None:
-    await seed_test_packs(db_session)
-    await db_session.commit()
-
-    resp = await client.get("/api/driver-packs/appium-uiautomator2/platforms")
-    assert resp.status_code == 200
-    body = resp.json()
-    ids = {p["id"] for p in body["platforms"]}
-    assert ids == {
-        "android_mobile",
-        "android_tv",
-        "firetv_real",
-    }
-    for entry in body["platforms"]:
-        assert entry["automation_name"] == "UiAutomator2"
-
-
-@pytest.mark.asyncio
-async def test_platforms_for_unknown_pack_returns_404(client: AsyncClient) -> None:
-    resp = await client.get("/api/driver-packs/nonexistent/platforms")
-    assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
 async def test_get_single_pack(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     await db_session.commit()

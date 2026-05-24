@@ -173,12 +173,6 @@ class PackCatalog(BaseModel):
     packs: list[PackOut]
 
 
-class PackPlatforms(BaseModel):
-    pack_id: str
-    release: str
-    platforms: list[PlatformOut]
-
-
 class PackReleaseOut(BaseModel):
     release: str
     is_current: bool
