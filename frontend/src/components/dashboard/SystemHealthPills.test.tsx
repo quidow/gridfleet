@@ -33,7 +33,7 @@ describe('SystemHealthPills', () => {
         <SystemHealthPills />
       </MemoryRouter>,
     );
-    const pills = screen.getAllByTestId('system-health-pill');
+    const pills = screen.getAllByLabelText(/^(Stream|DB|Grid) /);
     expect(pills).toHaveLength(3);
     expect(screen.getByText('Stream')).toBeInTheDocument();
     expect(screen.getByText('DB')).toBeInTheDocument();

@@ -19,7 +19,6 @@ export function DeviceDetailStatusPills({ device }: Props) {
             to={pill.to}
             title={pill.title}
             aria-label={ariaLabel}
-            data-testid="device-detail-status-pill"
             className="rounded-full transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface-0"
           >
             {node}
@@ -29,7 +28,6 @@ export function DeviceDetailStatusPills({ device }: Props) {
             key={pill.key}
             title={pill.title}
             aria-label={ariaLabel}
-            data-testid="device-detail-status-pill"
           >
             {node}
           </span>

@@ -90,7 +90,7 @@ export function FleetByPlatformCard() {
   const total = fleet.total;
   const platformChips = Object.keys(fleet.platformCounts)
     .filter((platform) => fleet.platformCounts[platform] > 0)
-    .sort((a, b) => {
+    .toSorted((a, b) => {
       const aOrder = platformCatalog.order.get(a);
       const bOrder = platformCatalog.order.get(b);
       if (aOrder !== undefined && bOrder !== undefined) return aOrder - bOrder;

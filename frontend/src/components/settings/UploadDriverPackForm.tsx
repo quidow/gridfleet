@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { uploadDriverPack } from '../../api/driverPackAuthoring';
@@ -35,13 +36,13 @@ export function UploadDriverPackForm({ onSuccess, onClose }: UploadDriverPackFor
 
   const canSubmit = file !== null && confirmed && !upload.isPending;
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const selected = e.target.files?.[0] ?? null;
     setFile(selected);
     setErrorMessage(null);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setErrorMessage(null);

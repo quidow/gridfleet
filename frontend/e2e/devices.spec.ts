@@ -1318,7 +1318,7 @@ test.describe('Devices page', () => {
     // Only Hardware and Connectivity pills remain (Readiness and Lifecycle were removed).
     await expect(page.getByText('Hardware', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Connectivity', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('device-detail-status-pill')).toHaveCount(2);
+    await expect(page.getByLabel(/^(Hardware|Connectivity) /)).toHaveCount(2);
 
     await page.getByRole('link', { name: /Connectivity.*OK/i }).click();
     await expect(page).toHaveURL(/\/devices\/device-default\?tab=triage(#device-health)?$/);
@@ -2481,7 +2481,7 @@ test.describe('Devices page', () => {
     await expect(page.locator('h1.heading-page')).toBeVisible();
 
     const header = page.locator('header').first();
-    const pills = header.locator('[data-testid="device-detail-status-pill"]');
+    const pills = header.getByLabel(/^(Hardware|Connectivity) /);
     // Only Hardware and Connectivity pills remain (Readiness and Lifecycle were removed).
     await expect(pills).toHaveCount(2);
     await expect(header.getByText('Hardware', { exact: true })).toBeVisible();

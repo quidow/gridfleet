@@ -5,6 +5,10 @@ import { Button } from '../ui/Button';
 import { formatDate, formatViabilityStatus, getCheckLabels } from './utils';
 import { usePlatformDescriptor } from '../../hooks/usePlatformDescriptor';
 
+const EXCLUDED_HEALTH_KEYS = new Set([
+  'check_id', 'connected', 'ok', 'responsive', 'visible', 'reachable', 'booted', 'healthy', 'status',
+]);
+
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span className={`inline-block h-2.5 w-2.5 rounded-full ${ok ? 'bg-success-strong' : 'bg-danger-strong'}`} />
@@ -31,7 +35,7 @@ function HealthCheckRow({ label, check }: { label: string; check: Record<string,
     check.healthy === true ||
     check.status === 'ok';
   const detail = Object.entries(check)
-    .filter(([key]) => !['check_id', 'connected', 'ok', 'responsive', 'visible', 'reachable', 'booted', 'healthy', 'status'].includes(key))
+    .filter(([key]) => !EXCLUDED_HEALTH_KEYS.has(key))
     .filter(([, value]) => value !== '' && value !== null && value !== undefined)
     .map(([key, value]) => `${key}: ${value}`)
     .join(', ');

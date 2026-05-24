@@ -79,7 +79,7 @@ function DeviceGroupsContent() {
   }
 
   const hostOptions = hosts.map((host) => ({ id: host.id, name: host.hostname }));
-  const osVersionOptions = Array.from(new Set(allDevices.map((device) => device.os_version))).sort();
+  const osVersionOptions = Array.from(new Set(allDevices.map((device) => device.os_version))).toSorted();
 
   if (isLoading) {
     return <LoadingSpinner />;

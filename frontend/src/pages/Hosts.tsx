@@ -91,7 +91,7 @@ function HostsTableSection({
     return deviceCountMap.get(hostId) ?? 0;
   }
 
-  const sortedHosts = [...filteredHosts].sort((leftHost, rightHost) => {
+  const sortedHosts = filteredHosts.toSorted((leftHost, rightHost) => {
     const direction = sort.direction === 'asc' ? 1 : -1;
     const valueFor = (host: HostRead) => {
       switch (sort.key) {

@@ -95,11 +95,11 @@ export function useDevicesPageController() {
     [hosts],
   );
   const osVersions = useMemo(
-    () => [...new Set(triageBase.map((device) => device.os_version))].sort(),
+    () => [...new Set(triageBase.map((device) => device.os_version))].toSorted(),
     [triageBase],
   );
   const osDisplayVersions = useMemo(
-    () => [...new Set(triageBase.map((device) => device.os_version_display ?? device.os_version))].sort(),
+    () => [...new Set(triageBase.map((device) => device.os_version_display ?? device.os_version))].toSorted(),
     [triageBase],
   );
 

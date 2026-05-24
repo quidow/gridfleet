@@ -136,7 +136,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
   const candidateSignature = useMemo(
     () => filteredCandidates
       .map((candidate) => `${candidate.identity_value}:${candidate.connection_target ?? ''}:${candidate.already_registered}`)
-      .sort()
+      .toSorted()
       .join('|'),
     [filteredCandidates],
   );
