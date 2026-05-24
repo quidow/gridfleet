@@ -559,7 +559,6 @@ async def test_get_device(client: AsyncClient, db_session: AsyncSession, default
     assert data["identity_scheme"] == "android_serial"
     assert data["identity_scope"] == "host"
     assert data["appium_node"] is None
-    assert data["sessions"] == []
     assert data["lifecycle_policy_summary"]["label"] == "Idle"
     assert data["emulator_state"] is None
     assert data["hardware_health_status"] == "unknown"

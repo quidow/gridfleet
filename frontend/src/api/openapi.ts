@@ -2677,8 +2677,6 @@ export interface components {
             review_required: boolean;
             /** Review Set At */
             review_set_at?: string | null;
-            /** Sessions */
-            sessions?: components["schemas"]["SessionRead"][];
             /** Software Versions */
             software_versions: {
                 [key: string]: unknown;

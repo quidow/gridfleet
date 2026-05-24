@@ -9,21 +9,9 @@ export type DeviceRead = Omit<Schemas['DeviceRead'], 'platform_label' | 'readine
   readiness_state: DeviceReadinessState;
 };
 export type AppiumNodeRead = Schemas['AppiumNodeRead'];
-export type SessionRead = Omit<
-  Schemas['SessionRead'],
-  'device_platform_label' | 'error_message' | 'error_type' | 'requested_pack_id' | 'requested_platform_id' | 'run_id'
-> & {
-  device_platform_label: string | null;
-  error_message: string | null;
-  error_type: string | null;
-  requested_pack_id: string | null;
-  requested_platform_id: string | null;
-  run_id: string | null;
-};
-export type DeviceDetail = Omit<Schemas['DeviceDetail'], 'platform_label' | 'readiness_state' | 'sessions'> & {
+export type DeviceDetail = Omit<Schemas['DeviceDetail'], 'platform_label' | 'readiness_state'> & {
   platform_label: string | null;
   readiness_state: DeviceReadinessState;
-  sessions: SessionRead[];
 };
 export type DeviceVerificationJob = Omit<
   Schemas['DeviceVerificationJobRead'],

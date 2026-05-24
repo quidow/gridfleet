@@ -398,7 +398,6 @@ class DeviceListRead(BaseModel):
 
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
-    sessions: list[SessionRead] = Field(default_factory=list)
     orchestration: DeviceOrchestrationRead
 
 
