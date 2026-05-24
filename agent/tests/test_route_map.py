@@ -30,6 +30,7 @@ EXPECTED_HTTP_ROUTES = {
     ("POST", "/agent/pack/devices/{connection_target}/lifecycle/{action}"),
     ("POST", "/agent/pack/devices/normalize"),
     ("POST", "/agent/pack/features/{feature_id}/actions/{action_id}"),
+    ("POST", "/agent/pack/{pack_id}/doctor"),
     ("POST", "/grid/node/{node_id}/reregister"),
     ("GET", "/agent/plugins"),
     ("POST", "/agent/plugins/sync"),

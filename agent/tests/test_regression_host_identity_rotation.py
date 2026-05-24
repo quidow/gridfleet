@@ -16,6 +16,7 @@ import pytest
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
+from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateLoop
 
 if TYPE_CHECKING:
@@ -157,23 +158,30 @@ def _doctor_pack_payload() -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_pack_state_loop_doctor_ctx_picks_up_rotated_host_id() -> None:
     """The DoctorCtx passed into dispatched adapter.doctor() must carry the
-    live host_id, not the value captured at PackStateLoop construction."""
+    live host_id, not the value captured at PackStateLoop construction.
+
+    Doctor now only auto-runs on runtime change (not every iteration), so we
+    clear the runtime_registry between runs to force a fresh install each time.
+    """
 
     identity = HostIdentity()
     identity.set("host-a")
     registry = AdapterRegistry()
     adapter = _DoctorRecordingAdapter()
     registry.set("vendor-doctor", "0.1.0", adapter)  # type: ignore[arg-type]
+    runtime_registry = RuntimeRegistry()
 
     loop = PackStateLoop(
         client=_RotationFakeClient({"host_id": "desired-placeholder", "packs": [_doctor_pack_payload()]}),
         runtime_mgr=_SucceedingRuntimeMgr(),
         host_identity=identity,
         adapter_registry=registry,
+        runtime_registry=runtime_registry,
     )
 
     await loop.run_once()
     identity.set("host-b")
+    runtime_registry.purge_except(set())
     await loop.run_once()
 
     assert adapter.host_ids_seen == ["host-a", "host-b"]

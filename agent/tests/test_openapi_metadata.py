@@ -16,6 +16,8 @@ _OPS_WITHOUT_REQUIRED_4XX: set[tuple[str, str]] = {
     ("POST", "/agent/plugins/sync"),
     # Enumeration endpoint: always returns 200 (empty list when no pack is loaded)
     ("GET", "/agent/pack/devices"),
+    # Doctor endpoint: always returns 200 (empty checks list when no adapter loaded)
+    ("POST", "/agent/pack/{pack_id}/doctor"),
     # Idempotent stop and soft-state probes: unknown port is treated as success
     ("POST", "/agent/appium/stop"),
     ("GET", "/agent/appium/{port}/status"),
