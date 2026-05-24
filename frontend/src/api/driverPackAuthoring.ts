@@ -1,5 +1,5 @@
 import api from './client';
-import type { DriverPack } from '../types/driverPacks';
+import type { DriverPack, TemplateDescriptor } from '../types/driverPacks';
 
 export async function uploadDriverPack(file: File, displayHint?: string): Promise<DriverPack> {
   const form = new FormData();
@@ -17,6 +17,22 @@ export async function forkDriverPack(
 ): Promise<DriverPack> {
   const { data } = await api.post<DriverPack>(
     `/driver-packs/${encodeURIComponent(sourcePackId)}/fork`,
+    body,
+  );
+  return data;
+}
+
+export async function fetchTemplates(): Promise<TemplateDescriptor[]> {
+  const { data } = await api.get<{ templates: TemplateDescriptor[] }>('/driver-packs/templates');
+  return data.templates;
+}
+
+export async function createFromTemplate(
+  templateId: string,
+  body: { pack_id: string; release: string; display_name?: string },
+): Promise<DriverPack> {
+  const { data } = await api.post<DriverPack>(
+    `/driver-packs/from-template/${encodeURIComponent(templateId)}`,
     body,
   );
   return data;
