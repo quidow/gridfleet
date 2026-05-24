@@ -183,7 +183,9 @@ async def test_pack_start_default_caps_use_appium_platform_name(
 @pytest.mark.asyncio
 async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
-    lifecycle_action = AsyncMock(return_value=LifecycleActionResult(ok=True, state="emulator-5554"))
+    lifecycle_action = AsyncMock(
+        return_value=LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
+    )
 
     class FakeAdapter:
         pack_id = "appium-uiautomator2"
@@ -193,7 +195,10 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
             return await lifecycle_action(*args, **kwargs)
 
         async def pre_session(self, spec: object) -> dict[str, object]:
-            return {}
+            from typing import Any, cast
+
+            spec_any = cast("Any", spec)
+            return {"appium:udid": spec_any.device_identity_value}
 
     class FakeProcess:
         pid = 1234

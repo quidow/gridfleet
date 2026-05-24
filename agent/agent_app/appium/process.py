@@ -667,7 +667,7 @@ class AppiumProcessManager:
         appium_platform = spec.appium_platform_name or spec.platform_id
         extra_caps = dict(spec.extra_caps) if spec.extra_caps is not None else None
 
-        caps = {"appium:udid": spec.connection_target, "platformName": appium_platform}
+        caps = {"platformName": appium_platform}
         if extra_caps:
             caps.update(extra_caps)
         caps = sanitize_appium_driver_capabilities(caps)
@@ -788,11 +788,7 @@ class AppiumProcessManager:
         _validate_appium_port_in_range(port)
         self._cancel_task(self._appium_restart_tasks, port)
         resolved_connection_target = connection_target
-        if (
-            device_type in {"emulator", "simulator"}
-            and self._adapter_registry is not None
-            and _has_lifecycle_action(lifecycle_actions or [], "boot")
-        ):
+        if self._adapter_registry is not None and _has_lifecycle_action(lifecycle_actions or [], "boot"):
             adapter = self._adapter_registry.get_current(pack_id)
             pack_release = getattr(adapter, "pack_release", "") if adapter is not None else ""
             result = await adapter_lifecycle_action(
@@ -804,10 +800,10 @@ class AppiumProcessManager:
                 action="boot",
                 args={"headless": headless},
             )
-            if result and result.get("state") and result.get("state") not in {"booting", "booted"}:
-                resolved_connection_target = str(result["state"])
+            if result and result.get("resolved_connection_target"):
+                resolved_connection_target = str(result["resolved_connection_target"])
             elif result and result.get("success") is False:
-                raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be booted"))
+                raise DeviceNotFoundError(str(result.get("detail") or f"{connection_target!r} could not be started"))
         merged_extra_caps = dict(extra_caps) if extra_caps else {}
         if self._adapter_registry is not None:
             adapter = self._adapter_registry.get_current(pack_id)
@@ -910,7 +906,7 @@ class AppiumProcessManager:
             return existing
 
         appium_platform = spec.appium_platform_name or spec.platform_id
-        caps: dict[str, Any] = {"appium:udid": spec.connection_target, "platformName": appium_platform}
+        caps: dict[str, Any] = {"platformName": appium_platform}
         if spec.stereotype_caps:
             caps.update(spec.stereotype_caps)
         elif spec.extra_caps:

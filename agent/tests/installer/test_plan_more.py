@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 from agent_app.installer.plan import (
     ToolDiscovery,
-    _find_android_home,
     _find_node_bin_dir,
     _node_version_key,
     _parse_config_env_values,
@@ -44,25 +43,15 @@ def test_find_node_bin_dir_missing_everything(tmp_path: Path, monkeypatch: pytes
     assert _find_node_bin_dir({}, tmp_path) is None
 
 
-def test_find_android_home_checks_directories(tmp_path: Path) -> None:
-    sdk = tmp_path / "android-sdk"
-    (sdk / "platform-tools").mkdir(parents=True)
-    assert _find_android_home({}, tmp_path) is None  # env empty, no home/Library/Android/sdk
-
-    # Now with ANDROID_HOME set
-    assert _find_android_home({"ANDROID_HOME": str(sdk)}, tmp_path) == str(sdk)
-
-
 def test_discover_tools_warns_when_tools_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: None)
     discovery = discover_tools(env={}, home=tmp_path, os_name="Linux")
-    assert len(discovery.warnings) == 2
+    assert len(discovery.warnings) == 1
     assert "Node.js not found" in discovery.warnings[0]
-    assert "Android SDK" in discovery.warnings[1]
 
 
 def test_build_service_path_with_none_values() -> None:
-    discovery = ToolDiscovery(node_bin_dir=None, android_home=None)
+    discovery = ToolDiscovery(node_bin_dir=None)
     assert build_service_path(discovery) == "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 

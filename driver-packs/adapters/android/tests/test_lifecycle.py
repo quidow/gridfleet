@@ -35,7 +35,8 @@ async def test_boot_running_avd_returns_active_adb_serial() -> None:
         result = await lifecycle_action("boot", {}, _AvdCtx())
 
     assert result.ok is True
-    assert result.state == "emulator-5554"
+    assert result.state == "running"
+    assert result.resolved_connection_target == "emulator-5554"
     create_proc.assert_not_called()
 
 

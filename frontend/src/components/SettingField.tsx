@@ -1,5 +1,8 @@
 import { RotateCcw } from 'lucide-react';
+import { Checkbox } from './ui/Checkbox';
+import { NumberField } from './ui/NumberField';
 import { Select } from './ui/Select';
+import { TextField } from './ui/TextField';
 import type { SettingRead } from '../types';
 
 interface Props {
@@ -68,14 +71,14 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
   switch (setting.type) {
     case 'int':
       return (
-        <input
-          type="number"
+        <NumberField
           name={setting.key}
-          value={value as number}
-          onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+          value={typeof value === 'number' ? value : null}
+          onChange={(v) => onChange(v === null ? '' : v)}
           min={setting.validation?.min ?? undefined}
           max={setting.validation?.max ?? undefined}
-          className="w-48 border border-border-strong rounded-md px-3 py-1.5 text-sm"
+          fullWidth={false}
+          className="w-48"
         />
       );
     case 'string':
@@ -91,12 +94,12 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
         );
       }
       return (
-        <input
-          type="text"
+        <TextField
           name={setting.key}
           value={value as string}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-80 border border-border-strong rounded-md px-3 py-1.5 text-sm"
+          onChange={(v) => onChange(v)}
+          fullWidth={false}
+          className="w-80"
         />
       );
     case 'bool':
@@ -121,20 +124,17 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
         return (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {setting.validation.item_allowed_values.map((option) => (
-              <label key={option} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(option)}
-                  onChange={() => {
-                    const nextValue = selected.includes(option)
-                      ? selected.filter((entry) => entry !== option)
-                      : [...selected, option];
-                    onChange(nextValue);
-                  }}
-                  className="rounded border-border-strong"
-                />
-                <span className="font-mono text-xs text-text-2">{option}</span>
-              </label>
+              <Checkbox
+                key={option}
+                checked={selected.includes(option)}
+                onChange={() => {
+                  const nextValue = selected.includes(option)
+                    ? selected.filter((entry) => entry !== option)
+                    : [...selected, option];
+                  onChange(nextValue);
+                }}
+                label={<span className="font-mono text-xs text-text-2">{option}</span>}
+              />
             ))}
           </div>
         );

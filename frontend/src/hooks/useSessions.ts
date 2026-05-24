@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchSessions } from '../api/sessions';
 import type { SessionListParams } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useSessions(params?: SessionListParams) {
   const { connected } = useEventStreamStatus();
@@ -9,8 +10,7 @@ export function useSessions(params?: SessionListParams) {
   return useQuery({
     queryKey: ['sessions', 'cursor', params],
     queryFn: () => fetchSessions(params),
-    refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
-    staleTime: isHistorical ? Infinity : (connected ? 30_000 : 5_000),
+    ...(isHistorical ? { refetchInterval: false as const, staleTime: Infinity } : sseAdaptivePolling(connected, 10_000)),
     refetchOnWindowFocus: false,
   });
 }

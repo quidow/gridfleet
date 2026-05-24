@@ -15,6 +15,7 @@ import {
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { Select } from '../../components/ui/Select';
+import { TextField } from '../../components/ui/TextField';
 
 interface Props {
   filters: DeviceGroupFilterDraft;
@@ -156,20 +157,18 @@ export function FilterBuilder({
         </label>
         <label className="space-y-1">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Identity Value</span>
-          <input
+          <TextField
             value={filters.identity_value}
-            onChange={(event) => updateOptionalField(filters, onChange, 'identity_value', event.target.value)}
+            onChange={(value) => updateOptionalField(filters, onChange, 'identity_value', value)}
             placeholder="Exact identity match"
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
         <label className="space-y-1 md:col-span-2">
           <span className="block text-xs font-medium uppercase tracking-wide text-text-3">Connection Target</span>
-          <input
+          <TextField
             value={filters.connection_target}
-            onChange={(event) => updateOptionalField(filters, onChange, 'connection_target', event.target.value)}
+            onChange={(value) => updateOptionalField(filters, onChange, 'connection_target', value)}
             placeholder="Exact connection target match"
-            className="w-full rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </label>
       </div>
@@ -194,17 +193,18 @@ export function FilterBuilder({
         ) : (
           filters.tags.map((row, index) => (
             <div key={index} className="flex items-center gap-2">
-              <input
+              <TextField
                 value={row.key}
-                onChange={(event) => updateTagRow(index, { key: event.target.value })}
+                onChange={(value) => updateTagRow(index, { key: value })}
                 placeholder="Tag key"
-                className="w-40 rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                fullWidth={false}
+                className="w-40"
               />
-              <input
+              <TextField
                 value={row.value}
-                onChange={(event) => updateTagRow(index, { value: event.target.value })}
+                onChange={(value) => updateTagRow(index, { value })}
                 placeholder="Tag value"
-                className="flex-1 rounded-md border border-border-strong px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                className="flex-1"
               />
               <button type="button" onClick={() => removeTagRow(index)} className="p-1 text-text-3 hover:text-danger-foreground">
                 <Trash2 size={16} />

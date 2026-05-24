@@ -23,23 +23,25 @@ import type {
   DeviceGroupCreate,
   DeviceGroupUpdate,
 } from '../types';
+import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useDeviceGroups() {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-groups'],
     queryFn: fetchDeviceGroups,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }
 
 export function useDeviceGroup(id: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-group', id],
     queryFn: () => fetchDeviceGroup(id),
     enabled: !!id,
-    refetchInterval: 15_000,
-    staleTime: 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 

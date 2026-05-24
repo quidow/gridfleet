@@ -56,6 +56,7 @@ class LifecycleActionResult:
     ok: bool
     state: str = ""
     detail: str = ""
+    resolved_connection_target: str | None = None
 
 
 @dataclass

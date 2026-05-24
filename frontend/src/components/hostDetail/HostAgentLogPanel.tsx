@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useHostAgentLogs } from '../../hooks/useHosts';
 import { LoadingSpinner } from '../LoadingSpinner';
 import { Select } from '../ui/Select';
+import { TextField } from '../ui/TextField';
 
 type Level = 'INFO' | 'WARNING' | 'ERROR';
 type LineCount = 100 | 500 | 1000 | 2000;
@@ -47,12 +48,13 @@ export function HostAgentLogPanel({ hostId }: Props) {
             size="sm"
           />
         </label>
-        <input
+        <TextField
           aria-label="Search"
           placeholder="Search messages"
           value={q}
-          onChange={(event) => setQ(event.target.value)}
-          className="min-w-52 flex-1 rounded-md border border-border-subtle bg-surface-1 px-2 py-1 text-sm text-text-1"
+          onChange={setQ}
+          size="sm"
+          className="min-w-52 flex-1"
         />
         <label className="flex items-center gap-2 text-sm text-text-2">
           Lines

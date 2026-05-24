@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { BulkActionToolbar } from './devices/BulkActionToolbar';
+import { Checkbox } from '../components/ui/Checkbox';
 import { EmptyState } from '../components/ui/EmptyState';
 import { FilterBuilder } from './devices/FilterBuilder';
 import { LoadingSpinner } from '../components/LoadingSpinner';
@@ -240,25 +241,21 @@ export function DeviceGroupDetail() {
             <p className="py-4 text-center text-sm text-text-3">All devices are already in this group.</p>
           ) : (
             nonMembers.map((device) => (
-              <label key={device.id} className="flex cursor-pointer items-center gap-3 rounded px-3 py-2 hover:bg-surface-2">
-                <input
-                  type="checkbox"
-                  checked={addSelection.has(device.id)}
-                  onChange={() => {
-                    setAddSelection((previous) => {
-                      const next = new Set(previous);
-                      if (next.has(device.id)) next.delete(device.id);
-                      else next.add(device.id);
-                      return next;
-                    });
-                  }}
-                  className="h-4 w-4 rounded border-border-strong text-accent focus:ring-accent"
-                />
-                <span className="text-sm">{device.name}</span>
-                <span className="text-xs text-text-3">
-                  {resolvePlatformLabel(device.platform_id, device.platform_label)} - {device.os_version}
-                </span>
-              </label>
+              <Checkbox
+                key={device.id}
+                checked={addSelection.has(device.id)}
+                onChange={() => {
+                  setAddSelection((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(device.id)) next.delete(device.id);
+                    else next.add(device.id);
+                    return next;
+                  });
+                }}
+                className="rounded px-3 py-2 hover:bg-surface-2"
+                label={device.name}
+                description={`${resolvePlatformLabel(device.platform_id, device.platform_label)} - ${device.os_version}`}
+              />
             ))
           )}
         </div>

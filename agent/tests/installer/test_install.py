@@ -636,7 +636,7 @@ def test_install_no_start_does_not_chown(monkeypatch: pytest.MonkeyPatch, tmp_pa
         bin_path=str(tmp_path / "agent/venv/bin/gridfleet-agent"),
         manager_url="https://manager.example.com",
     )
-    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    discovery = ToolDiscovery(node_bin_dir=None, warnings=[])
     operator = _make_operator(config, login="anyone", uid=4242, home=tmp_path / "home")
 
     install_no_start(config, discovery, operator=operator, os_name="Linux")
@@ -659,7 +659,7 @@ def test_install_no_start_creates_darwin_log_dir(monkeypatch: pytest.MonkeyPatch
         bin_path=str(home / "Library/Application Support/gridfleet-agent/venv/bin/gridfleet-agent"),
         manager_url="https://manager.example.com",
     )
-    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    discovery = ToolDiscovery(node_bin_dir=None, warnings=[])
     operator = _make_operator(config, login="anyone", uid=4242, home=home)
 
     install_no_start(config, discovery, operator=operator, os_name="Darwin")

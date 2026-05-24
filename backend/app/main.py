@@ -206,36 +206,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
-        tasks = [
-            asyncio.create_task(control_plane_leader_keepalive_loop(), name="control_plane_leader_keepalive"),
-            asyncio.create_task(heartbeat_loop(), name="heartbeat_loop"),
-            asyncio.create_task(session_sync_loop(), name="session_sync_loop"),
-            asyncio.create_task(event_bus_subscriber_loop(), name="grid_event_bus_subscriber_loop"),
-            asyncio.create_task(node_health_loop(), name="node_health_loop"),
-            asyncio.create_task(device_connectivity_loop(), name="device_connectivity_loop"),
-            asyncio.create_task(property_refresh_loop(), name="property_refresh_loop"),
-            asyncio.create_task(hardware_telemetry_loop(), name="hardware_telemetry_loop"),
-            asyncio.create_task(host_resource_telemetry_loop(), name="host_resource_telemetry_loop"),
-            asyncio.create_task(job_queue.durable_job_worker_loop(session_factory), name="durable_job_worker_loop"),
-            asyncio.create_task(
-                webhook_dispatcher.webhook_delivery_loop(session_factory),
-                name="webhook_dispatcher.webhook_delivery_loop",
-            ),
-            asyncio.create_task(run_reaper_loop(), name="run_reaper_loop"),
-            asyncio.create_task(data_cleanup_loop(), name="data_cleanup_loop"),
-            asyncio.create_task(session_viability_loop(), name="session_viability_loop"),
-            asyncio.create_task(fleet_capacity_collector_loop(), name="fleet_capacity_collector_loop"),
-            asyncio.create_task(pack_drain_loop(), name="pack_drain_loop"),
-            asyncio.create_task(
-                appium_reconciler_loop(),
-                name="appium_reconciler_loop",
-            ),
-            asyncio.create_task(device_intent_reconciler_loop(), name="device_intent_reconciler_loop"),
-            asyncio.create_task(
-                background_loop_flush_loop(session_factory),
-                name="background_loop_flush_loop",
-            ),
+        _leader_loops: list[tuple[Any, str]] = [
+            (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
+            (heartbeat_loop(), "heartbeat_loop"),
+            (session_sync_loop(), "session_sync_loop"),
+            (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
+            (node_health_loop(), "node_health_loop"),
+            (device_connectivity_loop(), "device_connectivity_loop"),
+            (property_refresh_loop(), "property_refresh_loop"),
+            (hardware_telemetry_loop(), "hardware_telemetry_loop"),
+            (host_resource_telemetry_loop(), "host_resource_telemetry_loop"),
+            (job_queue.durable_job_worker_loop(session_factory), "durable_job_worker_loop"),
+            (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
+            (run_reaper_loop(), "run_reaper_loop"),
+            (data_cleanup_loop(), "data_cleanup_loop"),
+            (session_viability_loop(), "session_viability_loop"),
+            (fleet_capacity_collector_loop(), "fleet_capacity_collector_loop"),
+            (pack_drain_loop(), "pack_drain_loop"),
+            (appium_reconciler_loop(), "appium_reconciler_loop"),
+            (device_intent_reconciler_loop(), "device_intent_reconciler_loop"),
+            (background_loop_flush_loop(session_factory), "background_loop_flush_loop"),
         ]
+        tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
         control_plane_leader_watcher_loop(),
         name="control_plane_leader_watcher",

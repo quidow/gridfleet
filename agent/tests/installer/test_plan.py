@@ -31,7 +31,6 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
     )
     discovery = ToolDiscovery(
         node_bin_dir="/opt/node/bin",
-        android_home="/opt/android-sdk",
         warnings=[],
     )
 
@@ -39,11 +38,11 @@ def test_render_config_env_includes_detected_paths_and_optional_auth() -> None:
 
     assert "AGENT_MANAGER_URL=https://manager.example.com" in rendered
     assert "AGENT_SELENIUM_SERVER_JAR" not in rendered
-    assert "ANDROID_HOME=/opt/android-sdk" in rendered
-    assert "ANDROID_SDK_ROOT=/opt/android-sdk" in rendered
+    assert "ANDROID_HOME" not in rendered
+    assert "ANDROID_SDK_ROOT" not in rendered
     assert "AGENT_MANAGER_AUTH_USERNAME=machine" in rendered
     assert "AGENT_MANAGER_AUTH_PASSWORD=secret" in rendered
-    assert "PATH=/opt/node/bin:/opt/android-sdk/platform-tools:" in rendered
+    assert "PATH=/opt/node/bin:" in rendered
 
 
 def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None:
@@ -92,7 +91,7 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
             manager_auth_username="machine",
             manager_auth_password="secret",
         ),
-        ToolDiscovery(node_bin_dir="/opt/node/bin", android_home="/opt/android-sdk"),
+        ToolDiscovery(node_bin_dir="/opt/node/bin"),
     )
 
     assert "<string>com.gridfleet.agent</string>" in rendered
@@ -102,7 +101,7 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
     assert "<key>PATH</key>" in rendered
     assert "<key>AGENT_GRID_HUB_URL</key>" in rendered
     assert "<key>AGENT_SELENIUM_SERVER_JAR</key>" not in rendered
-    assert "<key>ANDROID_HOME</key>" in rendered
+    assert "<key>ANDROID_HOME</key>" not in rendered
     assert "<key>AGENT_MANAGER_AUTH_USERNAME</key>" in rendered
     assert "<key>AGENT_MANAGER_AUTH_PASSWORD</key>" in rendered
     assert "/opt/node/bin" in rendered
@@ -150,9 +149,9 @@ def test_dry_run_output_names_generated_artifacts_and_warnings() -> None:
 
 
 def test_build_service_path_prioritizes_node_before_system_dirs() -> None:
-    discovery = ToolDiscovery(node_bin_dir="/opt/node/bin", android_home="/opt/sdk")
+    discovery = ToolDiscovery(node_bin_dir="/opt/node/bin")
 
-    assert build_service_path(discovery).startswith("/opt/node/bin:/opt/sdk/platform-tools:")
+    assert build_service_path(discovery).startswith("/opt/node/bin:")
 
 
 def test_find_node_bin_dir_prefers_home_nvm_over_system_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -363,7 +362,7 @@ def test_render_launchd_plist_uses_library_logs(monkeypatch: pytest.MonkeyPatch,
         config_dir=str(tmp_path / "Library/Application Support/gridfleet-agent/config"),
         bin_path=str(tmp_path / "Library/Application Support/gridfleet-agent/venv/bin/gridfleet-agent"),
     )
-    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    discovery = ToolDiscovery(node_bin_dir=None, warnings=[])
 
     rendered = render_launchd_plist(config, discovery)
 

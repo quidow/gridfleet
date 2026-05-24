@@ -234,7 +234,7 @@ def test_install_no_start_aborts_on_legacy_paths(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))  # type: ignore[arg-type]
 
     config = default_install_config("Linux")
-    discovery = ToolDiscovery(node_bin_dir=None, android_home=None, warnings=[])
+    discovery = ToolDiscovery(node_bin_dir=None, warnings=[])
     operator = OperatorIdentity(login="anyone", uid=4242, home=tmp_path / "home")
 
     with pytest.raises(LegacyInstallDetectedError, match="Legacy root-scope install"):

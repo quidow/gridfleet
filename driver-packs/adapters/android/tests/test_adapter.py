@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
 from adapter import Adapter
 
 REQUIRED_METHODS = {
@@ -76,6 +77,19 @@ def test_tool_versions_returns_adb_version() -> None:
         result = Adapter().tool_versions()
 
     assert result == {"adb": "1.0.41"}
+
+
+@pytest.mark.asyncio
+async def test_pre_session_returns_appium_udid() -> None:
+    from agent_app.pack.adapter_types import SessionSpec
+
+    spec = SessionSpec(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        device_identity_value="device-123",
+    )
+    result = await Adapter().pre_session(spec)
+    assert result == {"appium:udid": "device-123"}
 
 
 def test_tool_versions_returns_none_when_adb_missing() -> None:
