@@ -12,9 +12,11 @@ vi.mock('../../hooks/useHosts', () => ({
   }),
   useHostToolStatus: () => ({
     data: {
-      node: '24.14.1',
-      node_provider: 'fnm',
-      go_ios: '1.0.188',
+      host: {
+        node: { name: 'node', version: '24.14.1', description: 'JavaScript runtime for Appium server' },
+        node_provider: { name: 'node_provider', version: 'fnm', description: 'Node.js version manager' },
+      },
+      packs: {},
     },
     isLoading: false,
     error: null,
@@ -73,12 +75,11 @@ function renderOverview() {
 test('renders live tool versions on overview instead of static capabilities', () => {
   renderOverview();
 
-  expect(screen.getByText('Tool Versions')).toBeInTheDocument();
-  expect(screen.getByText('Node')).toBeInTheDocument();
+  expect(screen.getByText('Host Tools')).toBeInTheDocument();
+  expect(screen.getByText('node')).toBeInTheDocument();
   expect(screen.getByText('24.14.1')).toBeInTheDocument();
   expect(screen.queryByText('Capabilities')).not.toBeInTheDocument();
   expect(screen.queryByText('legacy-platform')).not.toBeInTheDocument();
-  expect(screen.queryByText('adb')).not.toBeInTheDocument();
 });
 
 test('falls back to os_type and empty-glyph when hardware metadata is absent', () => {

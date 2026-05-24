@@ -1,70 +1,99 @@
 import { AlertTriangle } from 'lucide-react';
 import { useHostToolStatus } from '../../hooks/useHosts';
-import { describeHostPrerequisite } from '../../lib/hostPrerequisites';
 import { Card } from '../ui/Card';
 import type { HostRead } from '../../types';
 
-function formatToolValue(value: string | null | undefined) {
-  return value && value.trim() ? value : '-';
-}
+type ToolEntry = {
+  name: string;
+  version: string | null;
+  description: string;
+};
 
 type Props = {
   host: HostRead;
 };
 
+function ToolCell({ tool }: { tool: ToolEntry }) {
+  const missing = !tool.version;
+  return (
+    <div className="px-5 py-4">
+      <div className="text-xs font-medium uppercase text-text-3">{tool.name}</div>
+      <div className={`mt-1 font-mono text-sm ${missing ? 'flex items-center gap-1 text-warning-foreground' : 'text-text-1'}`}>
+        {missing ? (
+          <>
+            <AlertTriangle size={14} />
+            <span>not found</span>
+          </>
+        ) : (
+          tool.version
+        )}
+      </div>
+      <div className="mt-1 text-xs text-text-3">{tool.description}</div>
+    </div>
+  );
+}
+
 export function HostToolVersionsPanel({ host }: Props) {
   const hostId = host.id;
   const hostOnline = host.status === 'online';
-  const missingPrerequisites = host.missing_prerequisites ?? [];
   const { data: toolStatus, isLoading: toolsLoading } = useHostToolStatus(hostId, hostOnline);
+
+  const offlineMessage = (
+    <p className="px-5 py-8 text-center text-sm text-text-3">Host must be online to read tool versions.</p>
+  );
+
+  const hostTools = toolStatus?.host ? Object.values(toolStatus.host) : [];
+  const packEntries = toolStatus?.packs ? Object.entries(toolStatus.packs) : [];
+  const hasPackDeps = packEntries.some(([, tools]) => tools.length > 0);
 
   return (
     <div className="space-y-6">
       <Card padding="none">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-sm font-medium text-text-2">Tool Versions</h2>
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-medium text-text-2">Host Tools</h2>
         </div>
-        {!hostOnline ? (
-          <p className="px-5 py-8 text-center text-sm text-text-3">Host must be online to read tool versions.</p>
-        ) : toolsLoading ? (
+        {!hostOnline ? offlineMessage : toolsLoading ? (
           <p className="px-5 py-8 text-center text-sm text-text-3">Loading tool versions...</p>
         ) : !toolStatus ? (
           <p className="px-5 py-8 text-center text-sm text-text-3">Tool versions are currently unavailable.</p>
         ) : (
-          <div className="grid grid-cols-1 divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
-            {[
-              ['Node', toolStatus.node],
-              ['Node Provider', toolStatus.node_provider ?? toolStatus.node_error],
-              ['go-ios', toolStatus.go_ios],
-            ].map(([label, value]) => (
-              <div key={label} className="px-5 py-4">
-                <div className="text-xs font-medium uppercase text-text-3">{label}</div>
-                <div className="mt-1 font-mono text-sm text-text-1">{formatToolValue(value)}</div>
-              </div>
+          <div className="grid grid-cols-1 divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+            {hostTools.map((tool) => (
+              <ToolCell key={tool.name} tool={tool} />
             ))}
           </div>
         )}
       </Card>
 
-      {missingPrerequisites.length > 0 ? (
-        <div className="rounded-lg border border-warning-strong/30 bg-warning-soft">
-          <div className="flex items-center gap-2 border-b border-warning-strong/30 px-5 py-4">
-            <AlertTriangle size={16} className="text-warning-foreground" />
-            <h2 className="text-sm font-medium text-warning-foreground">Missing Prerequisites</h2>
-          </div>
-          <div className="divide-y divide-warning-strong/30">
-            {missingPrerequisites.map((name) => (
-              <div
-                key={name}
-                className="flex flex-col gap-1 px-5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
-              >
-                <span className="font-mono font-medium text-warning-foreground">{name}</span>
-                <span className="text-warning-foreground">{describeHostPrerequisite(name)}</span>
-              </div>
-            ))}
-          </div>
+      <Card padding="none">
+        <div className="border-b border-border px-5 py-4">
+          <h2 className="text-sm font-medium text-text-2">Driver Pack Dependencies</h2>
         </div>
-      ) : null}
+        {!hostOnline ? offlineMessage : toolsLoading ? (
+          <p className="px-5 py-8 text-center text-sm text-text-3">Loading tool versions...</p>
+        ) : !toolStatus ? (
+          <p className="px-5 py-8 text-center text-sm text-text-3">Tool versions are currently unavailable.</p>
+        ) : !hasPackDeps ? (
+          <p className="px-5 py-8 text-center text-sm text-text-3">No driver packs installed.</p>
+        ) : (
+          <div className="divide-y divide-border">
+            {packEntries.map(([packId, tools]) =>
+              tools.length > 0 ? (
+                <div key={packId}>
+                  <div className="px-5 pt-4 pb-2">
+                    <span className="font-mono text-sm font-medium text-text-2">{packId}</span>
+                  </div>
+                  <div className="grid grid-cols-1 divide-y divide-border/50 md:grid-cols-2 md:divide-x md:divide-y-0">
+                    {tools.map((tool) => (
+                      <ToolCell key={tool.name} tool={tool} />
+                    ))}
+                  </div>
+                </div>
+              ) : null,
+            )}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
