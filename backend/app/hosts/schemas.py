@@ -62,6 +62,7 @@ class HostRead(BaseModel):
     agent_update_available: bool = False
     agent_version_status: AgentVersionStatus = AgentVersionStatus.disabled
     capabilities: dict[str, Any] | None = None
+    tool_env: dict[str, str] | None = None
     missing_prerequisites: list[str] = []
     last_heartbeat: datetime | None
     created_at: datetime
@@ -261,3 +262,11 @@ class HostEventsPage(BaseModel):
     events: list[HostEventEntry]
     total: int
     has_more: bool = False
+
+
+class HostToolEnvRead(BaseModel):
+    env: dict[str, str]
+
+
+class HostToolEnvUpdate(BaseModel):
+    env: dict[str, str]
