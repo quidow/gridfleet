@@ -65,15 +65,17 @@ export function HostDetail() {
 
       <div className="fade-in-stagger flex flex-col gap-6">
       {tab === 'overview' && (
-        <HostOverviewPanel
-          host={host}
-          approvePending={approveMut.isPending}
-          rejectPending={rejectMut.isPending}
-          discoverPending={discoveryFlow.discoverMut.isPending}
-          onApprove={() => approveMut.mutate(id!)}
-          onReject={() => rejectMut.mutate(id!)}
-          onDiscover={() => discoveryFlow.handleDiscover()}
-        />
+        <SectionErrorBoundary scope="host-overview">
+          <HostOverviewPanel
+            host={host}
+            approvePending={approveMut.isPending}
+            rejectPending={rejectMut.isPending}
+            discoverPending={discoveryFlow.discoverMut.isPending}
+            onApprove={() => approveMut.mutate(id!)}
+            onReject={() => rejectMut.mutate(id!)}
+            onDiscover={() => discoveryFlow.handleDiscover()}
+          />
+        </SectionErrorBoundary>
       )}
 
       {tab === 'diagnostics' && (
@@ -89,7 +91,11 @@ export function HostDetail() {
         </div>
       )}
 
-      {tab === 'logs' && <HostLogsPanel hostId={id!} />}
+      {tab === 'logs' && (
+        <SectionErrorBoundary scope="host-logs">
+          <HostLogsPanel hostId={id!} />
+        </SectionErrorBoundary>
+      )}
 
       {tab === 'devices' && (
         <SectionErrorBoundary scope="host-devices">
