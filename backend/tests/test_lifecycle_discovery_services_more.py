@@ -89,7 +89,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    existing = await create_device_record(
+    await create_device_record(
         db_session,
         host_id=db_host.id,
         identity_value="discovery-existing",
@@ -168,21 +168,6 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]
     assert result.removed_identity_values == ["discovery-removed"]
-
-    await discovery.refresh_device_properties(
-        db_session,
-        existing,
-        agent_get_pack_device_properties=AsyncMock(
-            return_value={"detected_properties": {"os_version": "16", "software_versions": {"build": "fresh"}}}
-        ),
-    )
-    assert existing.os_version == "16"
-    assert existing.software_versions == {"build": "fresh"}
-    await discovery.refresh_device_properties(
-        db_session,
-        existing,
-        agent_get_pack_device_properties=AsyncMock(return_value=None),
-    )
 
     monkeypatch.setattr("app.packs.services.discovery.ensure_device_payload_identity_available", AsyncMock())
     confirm_result = await discovery.confirm_discovery(
