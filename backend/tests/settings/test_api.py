@@ -73,17 +73,23 @@ async def test_host_resource_telemetry_settings_are_registered(client: AsyncClie
     interval = await client.get("/api/settings/general.host_resource_telemetry_interval_sec")
     assert interval.status_code == 200
     assert interval.json()["value"] == 60
-    assert interval.json()["validation"] == {"min": 15, "max": 3600}
+    v = interval.json()["validation"]
+    assert v["min"] == 15
+    assert v["max"] == 3600
 
     window = await client.get("/api/settings/general.host_resource_telemetry_window_minutes")
     assert window.status_code == 200
     assert window.json()["value"] == 60
-    assert window.json()["validation"] == {"min": 5, "max": 1440}
+    v = window.json()["validation"]
+    assert v["min"] == 5
+    assert v["max"] == 1440
 
     retention = await client.get("/api/settings/retention.host_resource_telemetry_hours")
     assert retention.status_code == 200
     assert retention.json()["value"] == 24
-    assert retention.json()["validation"] == {"min": 1, "max": 720}
+    v = retention.json()["validation"]
+    assert v["min"] == 1
+    assert v["max"] == 720
 
 
 async def test_get_unknown_setting(client: AsyncClient) -> None:

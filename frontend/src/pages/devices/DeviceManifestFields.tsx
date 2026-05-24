@@ -9,7 +9,7 @@ export function defaultsForDeviceFields(fields: PlatformDeviceField[]): DeviceCo
   const defaults: DeviceConfigDraft = {};
   for (const field of fields) {
     if (field.id === 'no_os_version') continue;
-    if (field.default !== undefined) {
+    if (field.default != null) {
       defaults[field.id] = field.default;
     }
   }

@@ -75,8 +75,8 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
           name={setting.key}
           value={typeof value === 'number' ? value : null}
           onChange={(v) => onChange(v === null ? '' : v)}
-          min={setting.validation?.min}
-          max={setting.validation?.max}
+          min={setting.validation?.min ?? undefined}
+          max={setting.validation?.max ?? undefined}
           fullWidth={false}
           className="w-48"
         />

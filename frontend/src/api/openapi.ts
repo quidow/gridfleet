@@ -2521,6 +2521,30 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** ConnectionBehaviorOut */
+        ConnectionBehaviorOut: {
+            /**
+             * Allow Transport Identity Until Host Resolution
+             * @default false
+             */
+            allow_transport_identity_until_host_resolution: boolean;
+            /** Default Connection Type */
+            default_connection_type?: ("usb" | "network" | "virtual") | null;
+            /** Default Device Type */
+            default_device_type?: ("real_device" | "emulator" | "simulator") | null;
+            /** Host Resolution Action */
+            host_resolution_action?: string | null;
+            /**
+             * Requires Connection Target
+             * @default true
+             */
+            requires_connection_target: boolean;
+            /**
+             * Requires Ip Address
+             * @default false
+             */
+            requires_ip_address: boolean;
+        };
         /**
          * ConnectionType
          * @enum {string}
@@ -2621,8 +2645,11 @@ export interface components {
             platform_id: string;
             /** Platform Label */
             platform_label?: string | null;
-            /** Readiness State */
-            readiness_state: string;
+            /**
+             * Readiness State
+             * @enum {string}
+             */
+            readiness_state: "setup_required" | "verification_required" | "verified";
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
             /** Review Reason */
             review_reason?: string | null;
@@ -2661,11 +2688,8 @@ export interface components {
             /** Description */
             description?: string | null;
             filters?: components["schemas"]["DeviceGroupFilters"] | null;
-            /**
-             * Group Type
-             * @default static
-             */
-            group_type: string;
+            /** @default static */
+            group_type: components["schemas"]["GroupType"];
             /** Name */
             name: string;
         };
@@ -2686,8 +2710,7 @@ export interface components {
             /** Devices */
             devices?: components["schemas"]["DeviceRead"][];
             filters: components["schemas"]["DeviceGroupFilters"] | null;
-            /** Group Type */
-            group_type: string;
+            group_type: components["schemas"]["GroupType"];
             /**
              * Id
              * Format: uuid
@@ -2745,8 +2768,7 @@ export interface components {
              */
             device_count: number;
             filters: components["schemas"]["DeviceGroupFilters"] | null;
-            /** Group Type */
-            group_type: string;
+            group_type: components["schemas"]["GroupType"];
             /**
              * Id
              * Format: uuid
@@ -2963,8 +2985,11 @@ export interface components {
             platform_id: string;
             /** Platform Label */
             platform_label?: string | null;
-            /** Readiness State */
-            readiness_state: string;
+            /**
+             * Readiness State
+             * @enum {string}
+             */
+            readiness_state: "setup_required" | "verification_required" | "verified";
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
             /** Review Reason */
             review_reason?: string | null;
@@ -3138,7 +3163,7 @@ export interface components {
             /** Current Stage */
             current_stage?: string | null;
             /** Current Stage Status */
-            current_stage_status?: string | null;
+            current_stage_status?: ("pending" | "running" | "failed" | "passed" | "skipped") | null;
             /** Detail */
             detail?: string | null;
             /** Device Id */
@@ -3151,8 +3176,11 @@ export interface components {
             job_id: string;
             /** Started At */
             started_at: string;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed";
         };
         /** DeviceVerificationUpdate */
         DeviceVerificationUpdate: {
@@ -3589,6 +3617,39 @@ export interface components {
             /** Display Name */
             display_name: string;
         };
+        /** FieldSchemaOut */
+        FieldSchemaOut: {
+            /** Capability Name */
+            capability_name?: string | null;
+            /** Default */
+            default?: string | number | boolean | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Required For */
+            required_for?: string[];
+            /**
+             * Required For Discovery
+             * @default false
+             */
+            required_for_discovery: boolean;
+            /**
+             * Required For Session
+             * @default false
+             */
+            required_for_session: boolean;
+            /**
+             * Sensitive
+             * @default false
+             */
+            sensitive: boolean;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "string" | "int" | "bool" | "path" | "network_endpoint" | "file_upload";
+        };
         /** FleetCapacityTimeline */
         FleetCapacityTimeline: {
             /** Bucket Minutes */
@@ -3765,6 +3826,11 @@ export interface components {
             /** Device Ids */
             device_ids: string[];
         };
+        /**
+         * GroupType
+         * @enum {string}
+         */
+        GroupType: "static" | "dynamic";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3785,6 +3851,24 @@ export interface components {
          * @enum {string}
          */
         HardwareTelemetryState: "unknown" | "fresh" | "stale" | "unsupported";
+        /** HealthCheckAppliesWhenOut */
+        HealthCheckAppliesWhenOut: {
+            /** Connection Types */
+            connection_types: ("usb" | "network" | "virtual")[];
+            /**
+             * Requires Ip Address
+             * @default false
+             */
+            requires_ip_address: boolean;
+        };
+        /** HealthCheckLabelOut */
+        HealthCheckLabelOut: {
+            applies_when?: components["schemas"]["HealthCheckAppliesWhenOut"] | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+        };
         /** HealthStatusRead */
         HealthStatusRead: {
             /** Checks */
@@ -4073,6 +4157,17 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** HostPluginStatusOut */
+        HostPluginStatusOut: {
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: string;
+        };
         /** HostRead */
         HostRead: {
             /** Agent Port */
@@ -4259,9 +4354,7 @@ export interface components {
                 [key: string]: unknown;
             }[];
             /** Plugins */
-            plugins?: {
-                [key: string]: unknown;
-            }[];
+            plugins?: components["schemas"]["HostPluginStatusOut"][];
             /** Runtime Id */
             runtime_id: string;
             /** Status */
@@ -4306,6 +4399,19 @@ export interface components {
             node_error?: string | null;
             /** Node Provider */
             node_provider?: string | null;
+        };
+        /**
+         * Identity
+         * @description Device identity scheme and scope for a platform.
+         */
+        Identity: {
+            /** Scheme */
+            scheme: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "global" | "host";
         };
         /** ImportCommitCreatedRow */
         ImportCommitCreatedRow: {
@@ -4454,6 +4560,16 @@ export interface components {
          * @enum {string}
          */
         InventoryFormat: "csv" | "json";
+        /** LifecycleActionOut */
+        LifecycleActionOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "state" | "reconnect" | "boot" | "shutdown";
+            /** Label */
+            label?: string | null;
+        };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
             /** Items */
@@ -4667,6 +4783,19 @@ export interface components {
              */
             installed_hosts: number;
         };
+        /** PlatformDeviceTypeOverrideOut */
+        PlatformDeviceTypeOverrideOut: {
+            connection_behavior?: components["schemas"]["ConnectionBehaviorOut"] | null;
+            /** Default Capabilities */
+            default_capabilities?: {
+                [key: string]: string | number | boolean;
+            } | null;
+            /** Device Fields Schema */
+            device_fields_schema?: components["schemas"]["FieldSchemaOut"][] | null;
+            identity?: components["schemas"]["Identity"] | null;
+            /** Lifecycle Actions */
+            lifecycle_actions?: components["schemas"]["LifecycleActionOut"][] | null;
+        };
         /** PlatformOut */
         PlatformOut: {
             /** Appium Platform Name */
@@ -4677,10 +4806,7 @@ export interface components {
             capabilities: {
                 [key: string]: unknown;
             };
-            /** Connection Behavior */
-            connection_behavior?: {
-                [key: string]: unknown;
-            };
+            connection_behavior?: components["schemas"]["ConnectionBehaviorOut"];
             /** Connection Types */
             connection_types: string[];
             /** Default Capabilities */
@@ -4688,14 +4814,10 @@ export interface components {
                 [key: string]: unknown;
             };
             /** Device Fields Schema */
-            device_fields_schema: {
-                [key: string]: unknown;
-            }[];
+            device_fields_schema: components["schemas"]["FieldSchemaOut"][];
             /** Device Type Overrides */
             device_type_overrides?: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
+                [key: string]: components["schemas"]["PlatformDeviceTypeOverrideOut"];
             };
             /** Device Types */
             device_types: string[];
@@ -4708,9 +4830,7 @@ export interface components {
             /** Grid Slots */
             grid_slots: string[];
             /** Health Checks */
-            health_checks?: {
-                [key: string]: unknown;
-            }[];
+            health_checks?: components["schemas"]["HealthCheckLabelOut"][];
             /** Id */
             id: string;
             /** Identity Scheme */
@@ -4718,9 +4838,7 @@ export interface components {
             /** Identity Scope */
             identity_scope: string;
             /** Lifecycle Actions */
-            lifecycle_actions?: {
-                [key: string]: unknown;
-            }[];
+            lifecycle_actions?: components["schemas"]["LifecycleActionOut"][];
             /** Parallel Resources */
             parallel_resources?: {
                 [key: string]: unknown;
@@ -5322,10 +5440,7 @@ export interface components {
             key: string;
             /** Type */
             type: string;
-            /** Validation */
-            validation?: {
-                [key: string]: unknown;
-            } | null;
+            validation?: components["schemas"]["SettingValidation"] | null;
             /** Value */
             value: unknown;
         };
@@ -5333,6 +5448,19 @@ export interface components {
         SettingUpdate: {
             /** Value */
             value: unknown;
+        };
+        /** SettingValidation */
+        SettingValidation: {
+            /** Allowed Values */
+            allowed_values?: string[] | null;
+            /** Item Allowed Values */
+            item_allowed_values?: string[] | null;
+            /** Item Type */
+            item_type?: string | null;
+            /** Max */
+            max?: number | null;
+            /** Min */
+            min?: number | null;
         };
         /** SettingsBulkUpdate */
         SettingsBulkUpdate: {

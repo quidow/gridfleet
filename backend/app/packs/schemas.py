@@ -6,6 +6,48 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.packs.manifest import (
+    ConnectionBehavior,
+    FieldSchema,
+    HealthCheckAppliesWhen,
+    HealthCheckLabel,
+    LifecycleAction,
+    PlatformDeviceTypeOverride,
+)
+
+# Response-safe subclasses: manifest models use extra="forbid" for strict ingestion
+# validation. When used as FastAPI response_model the serialiser may see extra keys
+# from DB-stored JSON blobs, so we relax to extra="ignore" here.
+
+
+class FieldSchemaOut(FieldSchema):
+    model_config = ConfigDict(extra="ignore")
+
+
+class ConnectionBehaviorOut(ConnectionBehavior):
+    model_config = ConfigDict(extra="ignore")
+
+
+class HealthCheckAppliesWhenOut(HealthCheckAppliesWhen):
+    model_config = ConfigDict(extra="ignore")
+
+
+class HealthCheckLabelOut(HealthCheckLabel):
+    model_config = ConfigDict(extra="ignore")
+    applies_when: HealthCheckAppliesWhenOut | None = None
+
+
+class LifecycleActionOut(LifecycleAction):
+    model_config = ConfigDict(extra="ignore")
+    label: str | None = None
+
+
+class PlatformDeviceTypeOverrideOut(PlatformDeviceTypeOverride):
+    model_config = ConfigDict(extra="ignore")
+    device_fields_schema: list[FieldSchemaOut] | None = None  # type: ignore[assignment]
+    lifecycle_actions: list[LifecycleActionOut] | None = None  # type: ignore[assignment]
+    connection_behavior: ConnectionBehaviorOut | None = None
+
 
 class RuntimePolicy(BaseModel):
     strategy: Literal["recommended", "latest_patch", "exact"] = "recommended"
@@ -55,15 +97,15 @@ class PlatformOut(BaseModel):
     grid_slots: list[str]
     identity_scheme: str
     identity_scope: str
-    lifecycle_actions: list[dict[str, Any]] = Field(default_factory=list)
-    health_checks: list[dict[str, Any]] = Field(default_factory=list)
-    device_fields_schema: list[dict[str, Any]]
+    lifecycle_actions: list[LifecycleActionOut] = Field(default_factory=list)
+    health_checks: list[HealthCheckLabelOut] = Field(default_factory=list)
+    device_fields_schema: list[FieldSchemaOut]
     capabilities: dict[str, Any]
     display_metadata: dict[str, Any] = Field(default_factory=dict)
     default_capabilities: dict[str, Any] = Field(default_factory=dict)
-    connection_behavior: dict[str, Any] = Field(default_factory=dict)
+    connection_behavior: ConnectionBehaviorOut = Field(default_factory=ConnectionBehaviorOut)
     parallel_resources: dict[str, Any] = Field(default_factory=dict)
-    device_type_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    device_type_overrides: dict[str, PlatformDeviceTypeOverrideOut] = Field(default_factory=dict)
 
 
 class AppiumInstallableOut(BaseModel):
@@ -154,6 +196,13 @@ class PackPatch(BaseModel):
     state: str
 
 
+class HostPluginStatusOut(BaseModel):
+    name: str
+    version: str
+    status: str
+    blocked_reason: str | None = None
+
+
 class HostRuntimeStatusOut(BaseModel):
     runtime_id: str
     appium_server_package: str
@@ -163,7 +212,7 @@ class HostRuntimeStatusOut(BaseModel):
     appium_home: str | None
     status: str
     blocked_reason: str | None
-    plugins: list[dict[str, Any]] = Field(default_factory=list)
+    plugins: list[HostPluginStatusOut] = Field(default_factory=list)
 
 
 class HostPackDoctorOut(BaseModel):

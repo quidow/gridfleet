@@ -53,8 +53,8 @@ def _platform() -> DriverPackPlatform:
         data={
             "identity": {"scheme": "serial", "scope": "host"},
             "lifecycle_actions": [{"id": "reconnect"}],
-            "health_checks": [{"id": "adb"}],
-            "device_fields_schema": [{"name": "serial"}],
+            "health_checks": [{"id": "adb", "label": "ADB"}],
+            "device_fields_schema": [{"id": "serial", "label": "Serial", "type": "string"}],
             "capabilities": {"platformName": "Android"},
             "display": {"icon": "phone"},
             "default_capabilities": {"automationName": "UiAutomator2"},

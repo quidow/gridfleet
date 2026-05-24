@@ -25,7 +25,7 @@ type HealthChecks = {
   [key: string]: unknown;
 };
 
-type DeviceGroupType = 'static' | 'dynamic';
+type DeviceGroupType = Schemas['GroupType'];
 
 export type GridStatus = Omit<Schemas['GridStatusRead'], 'grid'> & {
   grid: GridRuntimeStatus;

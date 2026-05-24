@@ -52,13 +52,7 @@ export type LifecycleIncidentRead = Omit<
   source: string | null;
 };
 
-export interface SettingValidation {
-  min?: number;
-  max?: number;
-  allowed_values?: string[];
-  item_type?: 'string';
-  item_allowed_values?: string[];
-}
+export type SettingValidation = Schemas['SettingValidation'];
 
 export type SettingRead = Omit<Schemas['SettingRead'], 'type' | 'validation'> & {
   type: 'int' | 'string' | 'bool' | 'json';

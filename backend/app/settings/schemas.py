@@ -5,6 +5,14 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class SettingValidation(BaseModel):
+    min: float | None = None
+    max: float | None = None
+    allowed_values: list[str] | None = None
+    item_type: str | None = None
+    item_allowed_values: list[str] | None = None
+
+
 class SettingRead(BaseModel):
     key: str
     value: Any
@@ -13,7 +21,7 @@ class SettingRead(BaseModel):
     category: str
     description: str
     type: str
-    validation: dict[str, Any] | None = None
+    validation: SettingValidation | None = None
 
 
 class SettingUpdate(BaseModel):
