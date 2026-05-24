@@ -29,7 +29,8 @@ function rowsToEnvRecord(rows: EnvRow[]): Record<string, string> {
 }
 
 export function HostToolEnvPanel({ hostId }: Props) {
-  const { data: envData, isLoading } = useHostToolEnv(hostId);
+  const { data: rawData, isLoading } = useHostToolEnv(hostId);
+  const envData = rawData?.env;
   const updateMutation = useUpdateHostToolEnv(hostId);
 
   // Sync server data into local edit state using the derived-state pattern:
