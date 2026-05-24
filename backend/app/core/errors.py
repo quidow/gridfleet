@@ -14,6 +14,23 @@ from app.core.observability import get_logger
 logger = get_logger(__name__)
 
 
+class AppError(Exception):
+    """Base for backend-raised, response-shaping exceptions.
+
+    Only useful for exceptions raised inside FastAPI's ExceptionMiddleware
+    (route handlers, services, dependencies). Middleware-level sites must
+    call ``envelope_response`` directly.
+    """
+
+    status_code: int = 500
+    code: str = "INTERNAL_ERROR"
+
+    def __init__(self, message: str, *, details: object | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.details = details
+
+
 class AgentCallError(Exception):
     error_code = "AGENT_UNREACHABLE"
     status_code = 502
@@ -164,6 +181,27 @@ def error_response(
         content=build_error_body(code=code, message=message, request_id=request_id, details=details),
         headers=headers,
     )
+
+
+def envelope_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    request_id: str | None,
+    details: object | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    body: dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "request_id": request_id if isinstance(request_id, str) and request_id else None,
+        }
+    }
+    if details is not None:
+        body["error"]["details"] = jsonable_encoder(details)
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 def _http_error_code(status_code: int) -> str:
