@@ -15,7 +15,6 @@ from app.devices.schemas.device import (
     DeviceRead,
     HardwareTelemetryState,
     SessionOutcomeHeatmapRow,
-    SessionRead,
 )
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters, DeviceSortBy, DeviceSortDir
 from app.devices.services import (
@@ -38,7 +37,6 @@ from app.devices.services import (
 )
 from app.runs import service as run_service
 from app.sessions import service as session_service
-from app.sessions.models import Session
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
@@ -196,17 +194,6 @@ async def delete_device(device_id: uuid.UUID, db: DbDep) -> None:
     deleted = await device_service.delete_device(db, device_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Device not found")
-
-
-@router.get("/{device_id}/sessions", response_model=list[SessionRead])
-async def device_sessions(
-    device_id: uuid.UUID,
-    db: DbDep,
-    limit: int = Query(50, le=200),
-    include_probes: bool = Query(False),
-) -> list[Session]:
-    await get_device_or_404(device_id, db)
-    return await session_service.get_device_sessions(db, device_id, limit=limit, include_probes=include_probes)
 
 
 @router.get("/{device_id}/session-outcome-heatmap", response_model=list[SessionOutcomeHeatmapRow])

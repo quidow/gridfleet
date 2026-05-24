@@ -89,23 +89,3 @@ async def test_list_sessions_cursor_includes_probes_when_requested(db_session: A
     ids = {s.id for s in page.items}
     assert real.id in ids
     assert probe.id in ids
-
-
-@pytest.mark.db
-async def test_get_device_sessions_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
-    real, _ = await _seed(db_session, db_host, "dev-default")
-    assert real.device_id is not None
-    sessions = await session_service.get_device_sessions(db_session, real.device_id)
-    ids = {s.id for s in sessions}
-    assert real.id in ids
-    assert all(s.test_name != PROBE_TEST_NAME for s in sessions)
-
-
-@pytest.mark.db
-async def test_get_device_sessions_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
-    real, probe = await _seed(db_session, db_host, "dev-include")
-    assert real.device_id is not None
-    sessions = await session_service.get_device_sessions(db_session, real.device_id, include_probes=True)
-    ids = {s.id for s in sessions}
-    assert real.id in ids
-    assert probe.id in ids

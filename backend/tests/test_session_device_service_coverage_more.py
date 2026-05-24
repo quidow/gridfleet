@@ -96,8 +96,6 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
         limit=10,
     )
     assert [session.session_id for session in filtered_page.items] == ["sess-old"]
-    device_sessions = await session_service.get_device_sessions(db_session, device.id)
-    assert [session.session_id for session in device_sessions] == ["sess-old"]
     heatmap_rows = await session_service.get_device_session_outcome_heatmap_rows(db_session, device.id, days=1)
     assert heatmap_rows == [(sessions[0].started_at, SessionStatus.passed)]
 
