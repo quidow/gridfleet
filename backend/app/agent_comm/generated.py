@@ -87,6 +87,12 @@ class AppiumStopResponse(BaseModel):
     stopped: Annotated[bool, Field(title="Stopped")]
 
 
+class DoctorCheckOut(BaseModel):
+    check_id: Annotated[str, Field(title="Check Id")]
+    message: Annotated[str | None, Field(title="Message")] = ""
+    ok: Annotated[bool, Field(title="Ok")]
+
+
 class ErrorEnvelopeDetail(BaseModel):
     code: Annotated[str, Field(title="Code")]
     message: Annotated[str, Field(title="Message")]
@@ -226,6 +232,10 @@ class PackDevicesResponse(BaseModel):
         extra="allow",
     )
     candidates: Annotated[list[PackDeviceCandidate] | None, Field(title="Candidates")] = None
+
+
+class PackDoctorResponse(BaseModel):
+    checks: Annotated[list[DoctorCheckOut] | None, Field(title="Checks")] = None
 
 
 class PluginConfig(BaseModel):

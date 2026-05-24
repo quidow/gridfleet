@@ -104,3 +104,13 @@ class _FeatureActionContext:
     def __init__(self, host_id: str, device_identity_value: str) -> None:
         self.host_id = host_id
         self.device_identity_value = device_identity_value
+
+
+class DoctorCheckOut(BaseModel):
+    check_id: str
+    ok: bool
+    message: str = ""
+
+
+class PackDoctorResponse(BaseModel):
+    checks: list[DoctorCheckOut] = Field(default_factory=list)
