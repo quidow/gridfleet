@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { HostDriversPanel } from './HostDriversPanel';
 
 const mockUseHostDriverPacks = vi.fn();
@@ -16,6 +18,10 @@ vi.mock('../../api/hostFeatureActions', () => ({
   invokeFeatureAction: (...args: unknown[]) => mockInvokeFeatureAction(...args),
 }));
 
+vi.mock('../../api/driverPacks', () => ({
+  triggerDriverDoctor: vi.fn(),
+}));
+
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -23,12 +29,17 @@ vi.mock('sonner', () => ({
   },
 }));
 
+function Wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
 describe('HostDriversPanel', () => {
   it('uses Drivers wording for empty host status', () => {
     mockUseHostDriverPacks.mockReturnValue({ data: { packs: [], runtimes: [], doctor: [] }, isLoading: false });
     mockUseDriverPackCatalog.mockReturnValue({ data: [] });
 
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
     expect(screen.getByText('No drivers installed. Enable drivers in Settings.')).toBeInTheDocument();
   });
@@ -80,7 +91,7 @@ describe('HostDriversPanel', () => {
       ],
     });
 
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
     expect(screen.getByRole('button', { name: 'Collect Bug Report' })).toBeInTheDocument();
   });
@@ -138,7 +149,7 @@ describe('HostDriversPanel', () => {
       ],
     });
 
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
     expect(screen.getByText('Tunnel')).toBeInTheDocument();
     expect(screen.getByText('tunnel down')).toBeInTheDocument();
@@ -189,7 +200,7 @@ describe('HostDriversPanel', () => {
       ],
     });
 
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
     expect(screen.queryByRole('button', { name: 'Collect Bug Report' })).not.toBeInTheDocument();
   });
@@ -241,7 +252,7 @@ describe('HostDriversPanel', () => {
     });
 
     const user = userEvent.setup();
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
     const btn = screen.getByRole('button', { name: 'Collect Bug Report' });
     await user.click(btn);
@@ -294,10 +305,10 @@ describe('HostDriversPanel', () => {
       ],
     });
 
-    render(<HostDriversPanel hostId="host-1" hostOnline={true} />);
+    render(<HostDriversPanel hostId="host-1" hostOnline={true} />, { wrapper: Wrapper });
 
-    // Only the pack_id text exists, no action buttons
+    // Only the pack_id text exists, no feature action buttons (Run Doctor button is expected)
     expect(screen.getByText('appium-xcuitest')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Collect|Restart/i })).not.toBeInTheDocument();
   });
 });
