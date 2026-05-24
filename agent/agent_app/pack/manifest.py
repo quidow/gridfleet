@@ -39,6 +39,12 @@ class DesiredFeature:
     actions: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ToolDependency:
+    name: str
+    description: str
+
+
 @dataclass
 class DesiredPack:
     id: str
@@ -49,6 +55,7 @@ class DesiredPack:
     features: list[DesiredFeature] = field(default_factory=list)
     runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)
     tarball_sha256: str | None = None
+    tool_dependencies: list[ToolDependency] = field(default_factory=list)
 
     @property
     def has_adapter_platform(self) -> bool:
@@ -79,6 +86,11 @@ class DesiredPayload:
 def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
     packs: list[DesiredPack] = []
     for raw in payload.get("packs", []):
+        requires = raw.get("requires") or {}
+        tool_deps = [
+            ToolDependency(name=td["name"], description=td["description"])
+            for td in (requires.get("tool_dependencies") or [])
+        ]
         packs.append(
             DesiredPack(
                 id=raw["id"],
@@ -89,6 +101,7 @@ def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
                 features=_features(raw.get("features") or {}),
                 runtime_policy=_runtime_policy(raw.get("runtime_policy") or {"strategy": "recommended"}),
                 tarball_sha256=raw.get("tarball_sha256"),
+                tool_dependencies=tool_deps,
             )
         )
     return DesiredPayload(
