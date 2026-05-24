@@ -81,12 +81,14 @@ async function copySessionId(sessionId: string): Promise<void> {
 interface SessionColumnsOptions {
   /** Omit the device column (use in run-scoped views where devices are shown separately). */
   hideDevice?: boolean;
+  /** Omit the platform column (use in device-scoped views where platform is already known). */
+  hidePlatform?: boolean;
 }
 
 export function buildSessionColumns(
   options: SessionColumnsOptions = {},
 ): DataTableColumn<SessionDetail, SessionSortKey>[] {
-  const { hideDevice = false } = options;
+  const { hideDevice = false, hidePlatform = false } = options;
 
   const cols: DataTableColumn<SessionDetail, SessionSortKey>[] = [
     {
@@ -148,32 +150,33 @@ export function buildSessionColumns(
     });
   }
 
-  cols.push(
-    {
-      key: 'test_name',
-      header: 'Test Name',
-      sortKey: 'test_name',
-      render: (s) => {
-        if (s.is_probe) {
-          return (
-            <div className="space-y-0.5">
-              <Badge tone="neutral" size="sm">probe</Badge>
-              {s.probe_checked_by && (
-                <p className="text-xs text-text-3">{s.probe_checked_by}</p>
-              )}
-            </div>
-          );
-        }
-        const failureSummary = isSetupFailureSession(s) ? buildFailureSummary(s) : null;
+  cols.push({
+    key: 'test_name',
+    header: 'Test Name',
+    sortKey: 'test_name',
+    render: (s) => {
+      if (s.is_probe) {
         return (
           <div className="space-y-0.5">
-            <p className="text-sm text-text-2">{s.test_name ?? '-'}</p>
-            {failureSummary && <p className="text-xs text-danger-foreground">{failureSummary}</p>}
+            <Badge tone="neutral" size="sm">probe</Badge>
+            {s.probe_checked_by && (
+              <p className="text-xs text-text-3">{s.probe_checked_by}</p>
+            )}
           </div>
         );
-      },
+      }
+      const failureSummary = isSetupFailureSession(s) ? buildFailureSummary(s) : null;
+      return (
+        <div className="space-y-0.5">
+          <p className="text-sm text-text-2">{s.test_name ?? '-'}</p>
+          {failureSummary && <p className="text-xs text-danger-foreground">{failureSummary}</p>}
+        </div>
+      );
     },
-    {
+  });
+
+  if (!hidePlatform) {
+    cols.push({
       key: 'platform',
       header: 'Platform',
       sortKey: 'platform',
@@ -182,7 +185,10 @@ export function buildSessionColumns(
         const platformLabel = s.device_platform_label ?? null;
         return platformId ? <PlatformIcon platformId={platformId} platformLabel={platformLabel} /> : <span className="text-text-3 text-sm">-</span>;
       },
-    },
+    });
+  }
+
+  cols.push(
     {
       key: 'started_at',
       header: 'Started',
