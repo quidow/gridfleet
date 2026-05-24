@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 async def pre_session(spec: SessionSpec) -> dict[str, Any]:
-    return {}
+    return {"appium:udid": spec.device_identity_value}
 
 
 async def post_session(spec: SessionSpec, outcome: SessionOutcome) -> None:
