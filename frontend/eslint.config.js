@@ -50,7 +50,6 @@ export default defineConfig([
     files: [
       'src/components/ui/**/*.{ts,tsx}',
       // Pending Card-primitive migration:
-      'src/components/RowActionsMenu.tsx',
       'src/components/SettingsSection.tsx',
       'src/components/analytics/FleetCapacityTab.tsx',
       'src/components/dashboard/OperationsSection.tsx',

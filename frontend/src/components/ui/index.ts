@@ -29,6 +29,9 @@ export { NumberField } from './NumberField';
 
 export { PageHeader } from './PageHeader';
 
+export { RowActionsMenu } from './RowActionsMenu';
+export type { RowActionItem } from './RowActionsMenu';
+
 export { SectionHeader } from './SectionHeader';
 
 export { Select } from './Select';
