@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from copy import deepcopy
@@ -32,7 +33,7 @@ def set_adapter_registry(registry: AdapterRegistry | None) -> None:
     _adapter_registry = registry
 
 
-def _collect_adapter_tool_versions() -> dict[str, str]:
+async def _collect_adapter_tool_versions() -> dict[str, str]:
     """Gather tool versions from all loaded adapters."""
     if _adapter_registry is None:
         return {}
@@ -40,7 +41,10 @@ def _collect_adapter_tool_versions() -> dict[str, str]:
     for pack_id in _adapter_registry.pack_ids():
         adapter = _adapter_registry.get_current(pack_id)
         if adapter is not None and hasattr(adapter, "tool_versions"):
-            for name, version in adapter.tool_versions().items():
+            result = adapter.tool_versions()
+            if inspect.isawaitable(result):
+                result = await result
+            for name, version in result.items():
                 if version is not None and name not in tools:
                     tools[name] = version
     return tools
@@ -48,7 +52,7 @@ def _collect_adapter_tool_versions() -> dict[str, str]:
 
 async def detect_capabilities() -> dict[str, Any]:
     """Detect installed tools and infer supported platforms."""
-    tools = await asyncio.to_thread(_collect_adapter_tool_versions)
+    tools = await _collect_adapter_tool_versions()
     platforms: list[str] = []
     missing_prerequisites: list[str] = []
 
