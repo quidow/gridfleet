@@ -119,8 +119,7 @@ async def test_serialize_orchestration_splits_intent_axes() -> None:
     assert "reservation" in payload["derived"]
 
 
-async def test_serialize_device_detail_adds_node_sessions_and_orchestration(monkeypatch) -> None:  # noqa: ANN001
-    real_session = SimpleNamespace(test_name="test_login")
+async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch) -> None:  # noqa: ANN001
     with state_write_guard.bypass():
         _node = AppiumNode(
             id=uuid.uuid4(),
@@ -132,7 +131,6 @@ async def test_serialize_device_detail_adds_node_sessions_and_orchestration(monk
     device = SimpleNamespace(
         appium_node=_node,
         lifecycle_policy_state={"last_action": "recovery_started"},
-        sessions=[real_session],
     )
     monkeypatch.setattr(device_presenter, "serialize_device", AsyncMock(return_value={"id": "device"}))
     monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
@@ -140,34 +138,4 @@ async def test_serialize_device_detail_adds_node_sessions_and_orchestration(monk
     payload = await device_presenter.serialize_device_detail(AsyncMock(), device)
 
     assert payload["appium_node"]["port"] == 4723
-    assert payload["sessions"] == [real_session]
     assert payload["orchestration"] == {"intents": []}
-
-
-async def test_serialize_device_detail_filters_probe_sessions(monkeypatch) -> None:  # noqa: ANN001
-    from app.sessions.probe_constants import PROBE_TEST_NAME
-
-    real_session = SimpleNamespace(test_name="test_login")
-    probe_session = SimpleNamespace(test_name=PROBE_TEST_NAME)
-    untyped_session = SimpleNamespace(test_name=None)
-    with state_write_guard.bypass():
-        _node = AppiumNode(
-            id=uuid.uuid4(),
-            device_id=uuid.uuid4(),
-            port=4723,
-            grid_url="http://grid",
-            desired_state=AppiumDesiredState.running,
-        )
-    device = SimpleNamespace(
-        appium_node=_node,
-        lifecycle_policy_state={"last_action": "recovery_started"},
-        sessions=[real_session, probe_session, untyped_session],
-    )
-    monkeypatch.setattr(device_presenter, "serialize_device", AsyncMock(return_value={"id": "device"}))
-    monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
-
-    payload = await device_presenter.serialize_device_detail(AsyncMock(), device)
-
-    assert probe_session not in payload["sessions"]
-    assert real_session in payload["sessions"]
-    assert untyped_session in payload["sessions"]

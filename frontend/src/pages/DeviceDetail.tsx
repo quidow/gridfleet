@@ -35,6 +35,7 @@ import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { Badge, Button, Card, PageHeader, Tabs, useTabParam } from '../components/ui';
 import { DeviceDetailStatusPills } from './deviceDetail/DeviceDetailStatusPills';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
+import { DeviceSessionsPanel } from './deviceDetail/DeviceSessionsPanel';
 import {
   deriveDeviceDetailTriage,
   type DeviceDetailTriage,
@@ -52,6 +53,7 @@ const TABS = [
   { id: 'triage', label: 'Triage' },
   { id: 'setup', label: 'Setup' },
   { id: 'logs', label: 'Logs' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'history', label: 'History' },
 ] as const;
 
@@ -378,6 +380,12 @@ export function DeviceDetail() {
               </div>
             </Card>
           </>
+        ) : null}
+
+        {tab === 'sessions' ? (
+          <SectionErrorBoundary scope="device-sessions-panel">
+            <DeviceSessionsPanel deviceId={deviceId} />
+          </SectionErrorBoundary>
         ) : null}
 
         {tab === 'history' ? (

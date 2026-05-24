@@ -482,18 +482,6 @@ async def register_session(
     return session
 
 
-async def get_device_sessions(
-    db: AsyncSession,
-    device_id: uuid.UUID,
-    limit: int = 50,
-    include_probes: bool = False,
-) -> list[Session]:
-    stmt = select(Session).where(Session.device_id == device_id).order_by(Session.started_at.desc()).limit(limit)
-    stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
-
-
 async def get_device_session_outcome_heatmap_rows(
     db: AsyncSession,
     device_id: uuid.UUID,

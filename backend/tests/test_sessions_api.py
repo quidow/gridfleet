@@ -584,49 +584,6 @@ async def test_list_sessions_filters_device_less_rows_by_requested_platform_id(
     assert [row["session_id"] for row in body["items"]] == ["device-less-android-error"]
 
 
-async def test_device_sessions_endpoint(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    s1 = Session(session_id="ds-1", device_id=device["id"], status=SessionStatus.running)
-    s2 = Session(session_id="ds-2", device_id=device["id"], status=SessionStatus.passed)
-    db_session.add_all([s1, s2])
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device['id']}/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 2
-
-
-async def test_device_sessions_endpoint_excludes_reserved_and_probe_rows(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    from app.sessions.models import Session, SessionStatus
-
-    device = await _create_device(db_session, default_host_id)
-
-    db_session.add_all(
-        [
-            Session(session_id="ds-real", device_id=device["id"], status=SessionStatus.running),
-            Session(session_id="reserved", device_id=device["id"], status=SessionStatus.passed),
-            Session(
-                session_id="probe-sess-2",
-                device_id=device["id"],
-                test_name=PROBE_TEST_NAME,
-                status=SessionStatus.passed,
-            ),
-        ]
-    )
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device['id']}/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert [row["session_id"] for row in data] == ["ds-real"]
-
-
 async def test_device_session_outcome_heatmap_404_unknown_device(client: AsyncClient) -> None:
     resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000001/session-outcome-heatmap")
 

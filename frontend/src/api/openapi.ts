@@ -1032,23 +1032,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/devices/{device_id}/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Device Sessions */
-        get: operations["device_sessions_api_devices__device_id__sessions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/devices/{device_id}/test_data": {
         parameters: {
             query?: never;
@@ -2677,8 +2660,6 @@ export interface components {
             review_required: boolean;
             /** Review Set At */
             review_set_at?: string | null;
-            /** Sessions */
-            sessions?: components["schemas"]["SessionRead"][];
             /** Software Versions */
             software_versions: {
                 [key: string]: unknown;
@@ -9600,76 +9581,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionViabilityRead"];
-                };
-            };
-            /** @description Validation error */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Authentication required */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description State conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    device_sessions_api_devices__device_id__sessions_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                include_probes?: boolean;
-            };
-            header?: never;
-            path: {
-                device_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionRead"][];
                 };
             };
             /** @description Validation error */
