@@ -206,7 +206,7 @@ async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any
             if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
                 attempt.retry_state.set_result(last_result)
     except RetryError:
-        pass
+        pass  # Exhausted attempts — return last_result below
     return last_result
 
 
