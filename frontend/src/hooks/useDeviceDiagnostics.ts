@@ -5,17 +5,17 @@ import {
   fetchDeviceDiagnosticSnapshot,
   listDeviceDiagnosticSnapshots,
 } from '../api/deviceDiagnostics';
-
-const DIAGNOSTIC_SNAPSHOTS_POLL_MS = 15_000;
+import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useDeviceDiagnosticSnapshots(deviceId: string, limit = 5) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-diagnostic-snapshots', deviceId, limit],
     queryFn: () => listDeviceDiagnosticSnapshots(deviceId, { limit }),
     enabled: Boolean(deviceId),
-    refetchInterval: DIAGNOSTIC_SNAPSHOTS_POLL_MS,
+    ...sseAdaptivePolling(connected, 15_000),
     refetchIntervalInBackground: false,
-    staleTime: DIAGNOSTIC_SNAPSHOTS_POLL_MS / 2,
   });
 }
 

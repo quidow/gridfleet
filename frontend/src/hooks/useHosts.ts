@@ -18,14 +18,14 @@ import {
 import type { AgentLogQuery, HostEventsQuery } from '../api/hosts';
 import type { DiscoveryConfirm, HostCreate } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useHosts() {
   const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['hosts'],
     queryFn: fetchHosts,
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 
@@ -34,8 +34,7 @@ export function useHost(id: string) {
   return useQuery({
     queryKey: ['host', id],
     queryFn: () => fetchHost(id),
-    refetchInterval: connected ? 60_000 : 10_000,
-    staleTime: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 10_000),
   });
 }
 
@@ -44,8 +43,7 @@ export function useHostDiagnostics(id: string) {
   return useQuery({
     queryKey: ['host-diagnostics', id],
     queryFn: () => fetchHostDiagnostics(id),
-    refetchInterval: connected ? 60_000 : 10_000,
-    staleTime: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 10_000),
     enabled: !!id,
   });
 }
@@ -55,8 +53,7 @@ export function useHostResourceTelemetry(id: string) {
   return useQuery({
     queryKey: ['host-resource-telemetry', id],
     queryFn: () => fetchHostResourceTelemetry(id),
-    refetchInterval: connected ? 60_000 : 30_000,
-    staleTime: connected ? 30_000 : 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
     enabled: !!id,
   });
 }
@@ -66,8 +63,7 @@ export function useHostToolStatus(id: string, enabled = true) {
   return useQuery({
     queryKey: ['host-tools-status', id],
     queryFn: () => fetchHostToolStatus(id),
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
     enabled: !!id && enabled,
   });
 }
@@ -77,9 +73,8 @@ export function useHostAgentLogs(hostId: string, filters: AgentLogQuery) {
   return useQuery({
     queryKey: ['host-agent-logs', hostId, filters],
     queryFn: () => fetchHostAgentLogs(hostId, filters),
-    refetchInterval: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 5_000, 30_000),
     refetchIntervalInBackground: false,
-    staleTime: 4_000,
     enabled: Boolean(hostId),
   });
 }
@@ -89,9 +84,8 @@ export function useHostEvents(hostId: string, filters: HostEventsQuery) {
   return useQuery({
     queryKey: ['host-events', hostId, filters],
     queryFn: () => fetchHostEvents(hostId, filters),
-    refetchInterval: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 5_000, 30_000),
     refetchIntervalInBackground: false,
-    staleTime: 4_000,
     enabled: Boolean(hostId),
   });
 }

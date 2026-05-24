@@ -41,6 +41,7 @@ import type {
   DeviceTestData,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 import { getErrorMessage } from '../lib/errors';
 import {
   invalidatePatchedDeviceQueries,
@@ -68,8 +69,7 @@ export function useDevices(params?: {
   return useQuery({
     queryKey: ['devices', params],
     queryFn: () => fetchDevices(params),
-    refetchInterval: connected ? 60_000 : 10_000,
-    staleTime: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 10_000),
   });
 }
 
@@ -94,8 +94,7 @@ export function useDevicesPaginated(params: {
   return useQuery({
     queryKey: ['devices', params],
     queryFn: () => fetchDevicesPaginated(params),
-    refetchInterval: connected ? 60_000 : 10_000,
-    staleTime: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 10_000),
     placeholderData: keepPreviousData,
   });
 }
@@ -105,8 +104,7 @@ export function useDevice(id: string) {
   return useQuery({
     queryKey: ['device', id],
     queryFn: () => fetchDevice(id),
-    refetchInterval: connected ? 60_000 : 5_000,
-    staleTime: connected ? 30_000 : 2_500,
+    ...sseAdaptivePolling(connected, 5_000),
     placeholderData: keepPreviousData,
   });
 }
@@ -116,8 +114,7 @@ export function useDeviceSessionOutcomeHeatmap(id: string, days = 90) {
   return useQuery({
     queryKey: ['device-session-outcome-heatmap', id, days],
     queryFn: () => fetchDeviceSessionOutcomeHeatmap(id, days),
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
     enabled: !!id,
   });
 }
@@ -300,17 +297,16 @@ export function useDeviceHealth(id: string) {
   return useQuery({
     queryKey: ['device-health', id],
     queryFn: () => fetchDeviceHealth(id),
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 
 export function useDeviceConfig(id: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-config', id],
     queryFn: () => fetchDeviceConfig(id),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }
 
@@ -324,12 +320,12 @@ export function useConfigHistory(id: string) {
 }
 
 export function useDeviceTestData(id: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-test-data', id],
     queryFn: () => getDeviceTestData(id),
     enabled: Boolean(id),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }
 
@@ -375,11 +371,11 @@ export function useDeviceLogs(id: string, lines = 200) {
 }
 
 export function useDeviceCapabilities(deviceId: string) {
+  const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['device-capabilities', deviceId],
     queryFn: () => fetchDeviceCapabilities(deviceId),
     enabled: !!deviceId,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }
