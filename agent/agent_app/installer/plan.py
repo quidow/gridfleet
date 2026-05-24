@@ -98,7 +98,6 @@ def default_install_config(os_name: str) -> InstallConfig:
 @dataclass(frozen=True)
 class ToolDiscovery:
     node_bin_dir: str | None = None
-    android_home: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -149,20 +148,6 @@ def _node_version_key(node_path: Path) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _find_android_home(env: Mapping[str, str], home: Path) -> str | None:
-    for candidate in (
-        env.get("ANDROID_HOME", ""),
-        env.get("ANDROID_SDK_ROOT", ""),
-        str(home / "Library/Android/sdk"),
-        str(home / "Android/Sdk"),
-        "/opt/android-sdk",
-        "/usr/local/android-sdk",
-    ):
-        if candidate and os.path.isdir(f"{candidate}/platform-tools"):
-            return candidate
-    return None
-
-
 def _operator_home(env: Mapping[str, str]) -> Path:
     """Return the home directory of the user running this process."""
     del env  # SUDO_USER no longer consulted; install runs as operator.
@@ -180,16 +165,12 @@ def discover_tools(
     warnings: list[str] = []
 
     node_bin_dir = _find_node_bin_dir(resolved_env, resolved_home)
-    android_home = _find_android_home(resolved_env, resolved_home)
 
     if node_bin_dir is None:
         warnings.append("Node.js not found. Appium commands may not be available to the service.")
-    if android_home is None:
-        warnings.append("Android SDK platform-tools not found. ADB-based devices may not be available.")
 
     return ToolDiscovery(
         node_bin_dir=node_bin_dir,
-        android_home=android_home,
         warnings=warnings,
     )
 
@@ -198,8 +179,6 @@ def build_service_path(discovery: ToolDiscovery) -> str:
     prefixes: list[str] = []
     if discovery.node_bin_dir:
         prefixes.append(discovery.node_bin_dir)
-    if discovery.android_home:
-        prefixes.append(f"{discovery.android_home}/platform-tools")
     return ":".join([*prefixes, DEFAULT_SERVICE_PATH])
 
 
@@ -216,13 +195,6 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
     ]
     if config.advertise_ip:
         lines.append(f"AGENT_ADVERTISE_IP={config.advertise_ip}")
-    if discovery.android_home:
-        lines.extend(
-            [
-                f"ANDROID_HOME={discovery.android_home}",
-                f"ANDROID_SDK_ROOT={discovery.android_home}",
-            ]
-        )
     if config.manager_auth_username:
         manager_password = "<redacted>" if redact_secrets else config.manager_auth_password
         lines.extend(
@@ -357,9 +329,6 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
     }
     if config.advertise_ip:
         entries["AGENT_ADVERTISE_IP"] = config.advertise_ip
-    if discovery.android_home:
-        entries["ANDROID_HOME"] = discovery.android_home
-        entries["ANDROID_SDK_ROOT"] = discovery.android_home
     if config.manager_auth_username:
         entries["AGENT_MANAGER_AUTH_USERNAME"] = config.manager_auth_username
         entries["AGENT_MANAGER_AUTH_PASSWORD"] = config.manager_auth_password or ""
@@ -389,7 +358,6 @@ def format_dry_run(config: InstallConfig, discovery: ToolDiscovery, *, os_name: 
     )
     warnings = "\n".join(f"  - {warning}" for warning in discovery.warnings) or "  - none"
     node_line = discovery.node_bin_dir or "missing"
-    android_line = discovery.android_home or "missing"
 
     return f"""GridFleet Agent install dry run
 
@@ -410,7 +378,6 @@ Settings:
 
 Detected tools:
   Node bin dir: {node_line}
-  Android SDK: {android_line}
 
 Warnings:
 {warnings}
