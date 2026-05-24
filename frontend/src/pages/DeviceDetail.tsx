@@ -271,7 +271,7 @@ export function DeviceDetail() {
                 </SectionErrorBoundary>
               </Card>
 
-              <div id="device-health"><Card padding="none" as="section" className="overflow-hidden">
+              <Card id="device-health" padding="none" as="section" className="overflow-hidden">
                 <div className="divide-y divide-border">
                   <div className="p-5">
                     <SectionErrorBoundary scope="device-health-panel">
@@ -291,7 +291,7 @@ export function DeviceDetail() {
                     <DeviceHardwareTelemetryCard device={device} />
                   </SectionErrorBoundary>
                 </div>
-              </Card></div>
+              </Card>
             </div>
 
             <Card padding="none" as="section" className="overflow-hidden">
@@ -351,7 +351,7 @@ export function DeviceDetail() {
               </SectionErrorBoundary>
             </Card>
 
-            <div aria-labelledby="device-danger-zone-heading"><Card padding="none" as="section" className="overflow-hidden">
+            <Card aria-labelledby="device-danger-zone-heading" padding="none" as="section" className="overflow-hidden">
               <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
@@ -376,7 +376,7 @@ export function DeviceDetail() {
                   Delete Device
                 </Button>
               </div>
-            </Card></div>
+            </Card>
           </>
         ) : null}
 

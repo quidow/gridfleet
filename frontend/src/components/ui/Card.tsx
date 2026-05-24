@@ -1,11 +1,10 @@
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 
 type CardPadding = 'none' | 'sm' | 'md' | 'lg';
 
-interface CardProps {
+interface CardProps extends Omit<HTMLAttributes<HTMLElement>, 'children'> {
   padding?: CardPadding;
   as?: 'div' | 'section' | 'article';
-  className?: string;
   children: ReactNode;
 }
 
@@ -16,7 +15,7 @@ const PADDING_CLASSES: Record<CardPadding, string> = {
   lg: 'p-6',
 };
 
-export function Card({ padding = 'md', as: Tag = 'div', className = '', children }: CardProps) {
+export function Card({ padding = 'md', as: Tag = 'div', className = '', children, ...rest }: CardProps) {
   return (
     <Tag
       className={[
@@ -26,6 +25,7 @@ export function Card({ padding = 'md', as: Tag = 'div', className = '', children
       ]
         .filter(Boolean)
         .join(' ')}
+      {...rest}
     >
       {children}
     </Tag>

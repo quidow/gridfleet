@@ -55,3 +55,10 @@ test('passes className through', () => {
   const { container } = render(<Card className="custom-class">content</Card>);
   expect(container.firstElementChild!.className).toMatch(/custom-class/);
 });
+
+test('passes HTML attributes through', () => {
+  const { container } = render(<Card id="test-id" aria-label="test label">content</Card>);
+  const el = container.firstElementChild!;
+  expect(el.id).toBe('test-id');
+  expect(el.getAttribute('aria-label')).toBe('test label');
+});

@@ -86,8 +86,7 @@ export function HostOverviewResourceStrip({
   const latest = data ? pickLatestSample(data.samples) : null;
 
   return (
-    <div aria-label="Host resource usage">
-      <Card padding="none" className="p-5">
+    <Card padding="none" className="p-5" aria-label="Host resource usage">
         <h2 className="mb-3 text-sm font-medium text-text-3">Resource Usage</h2>
         <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
           <Gauge
@@ -111,7 +110,6 @@ export function HostOverviewResourceStrip({
             No telemetry samples yet. See Diagnostics tab for history.
           </p>
         ) : null}
-      </Card>
-    </div>
+    </Card>
   );
 }
