@@ -28,3 +28,16 @@ async def test_pre_session_injects_simulator_running() -> None:
     )
     caps = await pre_session(spec)
     assert caps["appium:simulatorRunning"] is True
+
+
+@pytest.mark.asyncio
+async def test_pre_session_returns_appium_udid() -> None:
+    from adapter import Adapter
+
+    spec = SessionSpec(
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        device_identity_value="00008101-001234567890",
+    )
+    result = await Adapter().pre_session(spec)
+    assert result["appium:udid"] == "00008101-001234567890"

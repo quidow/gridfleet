@@ -54,13 +54,6 @@ BANNED_IMPORTS: set[tuple[str, str]] = {
 }
 
 KNOWN_VIOLATIONS: set[tuple[str, str]] = {
-    # appium/process.py — hardcoded capability key (audit 1.5)
-    ("agent_app/appium/process.py", "appium:udid"),
-    # appium/process.py — device type conditionals (audit 1.6)
-    ("agent_app/appium/process.py", "emulator"),
-    ("agent_app/appium/process.py", "simulator"),
-    ("agent_app/appium/process.py", "booting"),
-    ("agent_app/appium/process.py", "booted"),
     # installer/plan.py — Android SDK in service config (audit 1.10)
     ("agent_app/installer/plan.py", "ANDROID_HOME"),
     ("agent_app/installer/plan.py", "ANDROID_SDK_ROOT"),

@@ -49,7 +49,7 @@ async def _boot_avd(avd_name: str) -> LifecycleActionResult:
     adb = find_adb()
     serial = await _running_serial_for_avd(adb, avd_name)
     if serial:
-        return LifecycleActionResult(ok=True, state=serial)
+        return LifecycleActionResult(ok=True, state="running", resolved_connection_target=serial)
 
     emulator = find_emulator()
     if not emulator:

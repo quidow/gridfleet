@@ -8,7 +8,7 @@ from agent_app.pack.adapter_types import SessionOutcome, SessionSpec
 
 
 async def pre_session(spec: SessionSpec) -> dict[str, Any]:
-    caps: dict[str, Any] = {}
+    caps: dict[str, Any] = {"appium:udid": spec.device_identity_value}
     os_version = str(spec.capabilities.get("appium:os_version") or "")
     if os_version:
         caps["appium:platformVersion"] = os_version
