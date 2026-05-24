@@ -14,6 +14,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import DoctorCheckResult
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.pack.runtime import AppiumRuntimeManager, RuntimeEnv, RuntimeSpec
+from agent_app.pack.runtime_registry import RuntimeRegistry
 from agent_app.pack.state import PackStateLoop
 
 # ---------------------------------------------------------------------------
@@ -426,6 +427,41 @@ async def test_network_endpoint_pack_is_not_blocked_as_unsupported() -> None:
     payload = client.posted[-1]
     by_pack = {p["pack_id"]: p for p in payload["packs"]}
     assert by_pack["local-network"]["blocked_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_doctor_runs_on_first_install() -> None:
+    """When a pack's runtime is freshly installed, doctor runs automatically."""
+    client = _FakeClient(_make_desired([_android_pack()]))
+    registry = AdapterRegistry()
+    registry.set("appium-uiautomator2", "2026.04.0", _DoctorAdapter())  # type: ignore[arg-type]
+    runtime_registry = RuntimeRegistry()
+    loop = PackStateLoop(
+        client=client,
+        runtime_mgr=_SucceedingRuntimeMgr(),
+        host_identity=_host_identity("00000000-0000-0000-0000-000000000099"),
+        adapter_registry=registry,
+        runtime_registry=runtime_registry,
+    )
+
+    # First run: runtime is new, doctor should fire
+    await loop.run_once()
+
+    payload = client.posted[-1]
+    assert payload["doctor"] == [
+        {
+            "pack_id": "appium-uiautomator2",
+            "check_id": "adb",
+            "ok": True,
+            "message": "host=00000000-0000-0000-0000-000000000099",
+        },
+    ]
+
+    # Second run: same runtime, doctor should NOT fire
+    await loop.run_once()
+
+    payload = client.posted[-1]
+    assert payload["doctor"] == []
 
 
 @pytest.mark.asyncio
