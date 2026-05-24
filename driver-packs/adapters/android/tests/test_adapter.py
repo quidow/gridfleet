@@ -71,12 +71,12 @@ def test_tool_versions_returns_adb_version() -> None:
         patch("adapter.tools.find_adb", return_value="/opt/android/platform-tools/adb"),
         patch(
             "subprocess.run",
-            return_value=type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\nRevision 1234", "returncode": 0})(),
+            return_value=type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\nRevision 1234", "returncode": 0, "stderr": ""})(),
         ),
     ):
         result = Adapter().tool_versions()
 
-    assert result == {"adb": "1.0.41"}
+    assert result["adb"] == "1.0.41"
 
 
 @pytest.mark.asyncio
@@ -101,4 +101,29 @@ def test_tool_versions_returns_none_when_adb_missing() -> None:
     ):
         result = Adapter().tool_versions()
 
-    assert result == {"adb": None}
+    assert result["adb"] is None
+
+
+def test_tool_versions_returns_java_version() -> None:
+    from unittest.mock import patch
+
+    adb_result = type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\n...", "returncode": 0})()
+    java_result = type("R", (), {"stdout": 'openjdk version "17.0.9" 2023-10-17\n...', "returncode": 0, "stderr": ""})()
+
+    with patch("subprocess.run", side_effect=[adb_result, java_result]):
+        result = Adapter().tool_versions()
+
+    assert result["adb"] == "1.0.41"
+    assert result["java"] == "17.0.9"
+
+
+def test_tool_versions_returns_none_when_java_missing() -> None:
+    from unittest.mock import patch
+
+    adb_result = type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\n...", "returncode": 0})()
+
+    with patch("subprocess.run", side_effect=[adb_result, FileNotFoundError()]):
+        result = Adapter().tool_versions()
+
+    assert result["adb"] == "1.0.41"
+    assert result["java"] is None
