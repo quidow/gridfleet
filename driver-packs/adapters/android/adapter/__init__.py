@@ -121,7 +121,7 @@ class Adapter:
             if match:
                 versions["adb"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
+            pass  # version stays None from default
 
         try:
             result = subprocess.run(
@@ -132,7 +132,7 @@ class Adapter:
             if match:
                 versions["java"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
+            pass  # version stays None from default
 
         return versions
 
