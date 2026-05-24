@@ -57,7 +57,6 @@ export default defineConfig([
       'src/components/deviceDetail/DeviceLogsEmptyPanel.tsx',
       'src/components/deviceDetail/DeviceLogsPanel.tsx',
       'src/components/deviceDetail/DeviceSessionOutcomeHeatmapPanel.tsx',
-      'src/components/deviceDetail/DeviceStatStrip.tsx',
       'src/components/deviceDetail/StateHistoryPanel.tsx',
       'src/components/hostDetail/HostDevicesPanel.tsx',
       'src/components/hostDetail/HostDiagnosticsPanel.tsx',
@@ -66,14 +65,10 @@ export default defineConfig([
       'src/components/hostDetail/HostOverviewResourceStrip.tsx',
       'src/components/hostDetail/HostPluginsPanel.tsx',
       'src/components/hostDetail/HostResourceTelemetryPanel.tsx',
-      'src/components/hostDetail/HostTerminalPanel.tsx',
       'src/components/hostDetail/HostToolVersionsPanel.tsx',
       'src/components/settings/WebhookRegistryPanel.tsx',
       'src/pages/DeviceDetail.tsx',
       'src/pages/Devices.tsx',
-      // Pending TextField-primitive migration:
-      'src/pages/Login.tsx',
-      'src/pages/devices/FilterBuilder.tsx',
     ],
     rules: {
       'no-restricted-syntax': 'off',
