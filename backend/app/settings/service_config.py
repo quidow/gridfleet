@@ -41,38 +41,6 @@ async def get_device_config(
     return copy.deepcopy(config)
 
 
-async def replace_device_config(
-    db: AsyncSession,
-    device: Device,
-    new_config: dict[str, Any],
-    changed_by: str | None = None,
-) -> dict[str, Any]:
-    previous = device.device_config or {}
-    if device_readiness.payload_requires_reverification(device, {"device_config": new_config}):
-        device.verified_at = None
-    device.device_config = new_config
-
-    log_entry = ConfigAuditLog(
-        device_id=device.id,
-        previous_config=copy.deepcopy(previous),
-        new_config=copy.deepcopy(new_config),
-        changed_by=changed_by,
-    )
-    db.add(log_entry)
-    queue_event_for_session(
-        db,
-        "config.updated",
-        {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "changed_by": changed_by,
-        },
-    )
-    await db.commit()
-    await db.refresh(device)
-    return copy.deepcopy(device.device_config or {})
-
-
 async def merge_device_config(
     db: AsyncSession,
     device: Device,

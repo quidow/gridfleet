@@ -43,21 +43,9 @@ async def test_get_config_empty(client: AsyncClient, db_session: AsyncSession, d
     assert resp.json() == {}
 
 
-async def test_replace_config(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    device = await _create_device(db_session, default_host_id)
-    config = {"newCommandTimeout": 300, "noReset": True}
-    resp = await client.put(f"/api/devices/{device['id']}/config", json=config)
-    assert resp.status_code == 200
-    assert resp.json()["newCommandTimeout"] == 300
-    detail_resp = await client.get(f"/api/devices/{device['id']}")
-    assert detail_resp.status_code == 200
-    assert detail_resp.json()["verified_at"] is None
-    assert detail_resp.json()["readiness_state"] == "verification_required"
-
-
 async def test_merge_config(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
-    await client.put(
+    await client.patch(
         f"/api/devices/{device['id']}/config",
         json={"a": 1, "b": 2},
     )
@@ -79,11 +67,11 @@ async def test_get_config_returns_sensitive_values_verbatim(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_device(db_session, default_host_id)
-    put_resp = await client.put(
+    patch_resp = await client.patch(
         f"/api/devices/{device['id']}/config",
         json={"api_key": "super-secret", "timeout": 30},
     )
-    assert put_resp.status_code == 200
+    assert patch_resp.status_code == 200
     resp = await client.get(f"/api/devices/{device['id']}/config")
     assert resp.status_code == 200
     data = resp.json()
@@ -93,7 +81,7 @@ async def test_get_config_returns_sensitive_values_verbatim(
 
 async def test_config_filter_keys(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
-    await client.put(
+    await client.patch(
         f"/api/devices/{device['id']}/config",
         json={"a": 1, "b": 2, "c": 3},
     )
@@ -107,8 +95,8 @@ async def test_config_filter_keys(client: AsyncClient, db_session: AsyncSession,
 
 async def test_config_history(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
-    await client.put(f"/api/devices/{device['id']}/config", json={"v": 1})
-    await client.put(f"/api/devices/{device['id']}/config", json={"v": 2})
+    await client.patch(f"/api/devices/{device['id']}/config", json={"v": 1})
+    await client.patch(f"/api/devices/{device['id']}/config", json={"v": 2})
 
     resp = await client.get(f"/api/devices/{device['id']}/config/history")
     assert resp.status_code == 200

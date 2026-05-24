@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.devices.services.property_refresh import _refresh_all_properties, property_refresh_loop
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.services.discovery import refresh_device_properties
 from tests.helpers import create_device_record
 
 
@@ -137,54 +136,3 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         await property_refresh_loop()
 
     log_exception.assert_called_once_with("Property refresh cycle failed")
-
-
-async def test_refresh_device_properties_preserves_discovery_identity_fields(
-    db_session: AsyncSession,
-) -> None:
-    host = Host(
-        hostname="online-host",
-        ip="10.0.0.13",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.flush()
-
-    device = await create_device_record(
-        db_session,
-        host_id=host.id,
-        identity_value="avd:Pixel_6",
-        connection_target="Pixel_6",
-        name="Pixel 6",
-        platform_id="android_mobile",
-        device_type="emulator",
-        connection_type="virtual",
-        operational_state="available",
-    )
-
-    agent_properties = AsyncMock(
-        return_value={
-            "detected_properties": {
-                "os_version": "17",
-                "connection_target": "emulator-5554",
-                "connection_type": "usb",
-                "ip_address": "192.168.1.20",
-                "software_versions": {"android": "17"},
-            }
-        }
-    )
-
-    await refresh_device_properties(
-        db_session,
-        device,
-        agent_get_pack_device_properties=agent_properties,
-    )
-
-    await db_session.refresh(device)
-    assert device.os_version == "17"
-    assert device.software_versions == {"android": "17"}
-    assert device.connection_target == "Pixel_6"
-    assert str(device.connection_type) == "virtual"
-    assert device.ip_address is None

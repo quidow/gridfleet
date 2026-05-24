@@ -61,21 +61,6 @@ async def test_approve_host_queues_status_changed(
     assert changed[0]["new_status"] == "online"
 
 
-async def test_replace_device_config_queues_config_updated(
-    db_session: AsyncSession,
-    event_bus_capture: list[tuple[str, dict[str, Any]]],
-) -> None:
-    _, device = await seed_host_and_device(db_session, identity="config-replace-1")
-    event_bus_capture.clear()
-
-    await config_service.replace_device_config(db_session, device, {"pin": "1234"}, changed_by="tester")
-    await settle_after_commit_tasks()
-
-    updated = [p for n, p in event_bus_capture if n == "config.updated"]
-    assert len(updated) == 1
-    assert updated[0]["device_id"] == str(device.id)
-
-
 async def test_merge_device_config_queues_config_updated(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],

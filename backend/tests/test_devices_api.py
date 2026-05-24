@@ -767,34 +767,6 @@ async def test_get_device_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_device_properties_returns_serialized_device(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    device = await _create_device(db_session, default_host_id)
-    device_id = str(device.id)
-
-    async def fake_get_pack_device_properties(
-        host: str, agent_port: int, connection_target: str, pack_id: str, **kwargs: object
-    ) -> dict[str, object]:
-        return {
-            "detected_properties": {
-                "os_version": "15",
-                "connection_target": "emulator-5554",
-                "device_type": "emulator",
-                "connection_type": "virtual",
-            }
-        }
-
-    with patch("app.devices.routers.control.get_pack_device_properties", side_effect=fake_get_pack_device_properties):
-        resp = await client.post(f"/api/devices/{device_id}/refresh")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["os_version"] == "15"
-    assert data["lifecycle_policy_summary"]["state"] == "idle"
-
-
-@pytest.mark.asyncio
 async def test_update_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)

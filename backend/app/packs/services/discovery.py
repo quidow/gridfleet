@@ -13,11 +13,12 @@ from app.devices.services import presenter as device_presenter
 from app.devices.services import write as device_write
 from app.devices.services.identity import host_scoped_clause, is_host_scoped_identity, non_host_scoped_clause
 from app.devices.services.identity_conflicts import ensure_device_payload_identity_available
-from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.hosts.models import Host
 
 PackDevicesFetcher = Callable[[str, int], Awaitable[dict[str, object]]]
 
@@ -269,23 +270,6 @@ async def apply_pack_device_properties(
 
     if changed:
         await session.commit()
-
-
-async def refresh_device_properties(
-    session: AsyncSession,
-    device: Device,
-    *,
-    agent_get_pack_device_properties: Callable[[str, int, str, str], Awaitable[dict[str, object] | None]],
-) -> None:
-    host: Host | None = await session.get(Host, device.host_id)
-    if host is None:
-        return
-    data = await fetch_pack_device_properties(
-        host, device, agent_get_pack_device_properties=agent_get_pack_device_properties
-    )
-    if data is None:
-        return
-    await apply_pack_device_properties(session, device, data)
 
 
 def _build_discovery_create_request(discovered: DiscoveredDevice, host: Host) -> DeviceVerificationCreate:
