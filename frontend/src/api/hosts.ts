@@ -117,3 +117,16 @@ export async function approveHost(id: string): Promise<HostRead> {
 export async function rejectHost(id: string): Promise<void> {
   await api.post(`/hosts/${id}/reject`);
 }
+
+export async function fetchHostToolEnv(id: string): Promise<{ env: Record<string, string> }> {
+  const { data } = await api.get(`/hosts/${id}/tool-env`);
+  return data;
+}
+
+export async function updateHostToolEnv(
+  id: string,
+  env: Record<string, string>,
+): Promise<{ env: Record<string, string> }> {
+  const { data } = await api.put(`/hosts/${id}/tool-env`, { env });
+  return data;
+}
