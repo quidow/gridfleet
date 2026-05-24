@@ -34,7 +34,11 @@ export function platformDescriptorFromPack(
     healthChecks: platform.health_checks ?? [],
     deviceFieldsSchema: platform.device_fields_schema,
     defaultCapabilities: platform.default_capabilities ?? {},
-    connectionBehavior: platform.connection_behavior ?? {},
+    connectionBehavior: platform.connection_behavior ?? {
+      allow_transport_identity_until_host_resolution: false,
+      requires_connection_target: true,
+      requires_ip_address: false,
+    },
     deviceTypeOverrides: platform.device_type_overrides ?? {},
   };
 }
