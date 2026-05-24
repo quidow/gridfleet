@@ -9,7 +9,6 @@ from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.core.observability import get_logger
 from app.devices.models import DeviceEventType, DeviceIntent
 from app.devices.services.event import record_event
-from app.devices.services.intent_reconciler import reconcile_device
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +82,8 @@ async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
     if not affected:
         return
     await db.flush()
+    from app.devices.services.intent_reconciler import reconcile_device  # noqa: PLC0415
+
     for device_id in sorted(affected):
         await reconcile_device(db, device_id)
         await db.commit()

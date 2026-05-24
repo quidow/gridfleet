@@ -158,6 +158,7 @@ async def test_sweep_reconciles_affected_device_only(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.devices.services import intent_preconditions as module
+    from app.devices.services import intent_reconciler as reconciler_module
 
     reconciled: list[uuid.UUID] = []
 
@@ -167,7 +168,7 @@ async def test_sweep_reconciles_affected_device_only(
     async def fake_deliver(db: AsyncSession, device_id: uuid.UUID, *, limit: int = 5) -> None:
         return None
 
-    monkeypatch.setattr(module, "reconcile_device", fake_reconcile)
+    monkeypatch.setattr(reconciler_module, "reconcile_device", fake_reconcile)
     monkeypatch.setattr(module, "deliver_agent_reconfigures", fake_deliver)
 
     device_a = await create_device(db_session, host_id=db_host.id, name="sweep-a")
