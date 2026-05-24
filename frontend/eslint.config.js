@@ -66,7 +66,6 @@ export default defineConfig([
       'src/components/hostDetail/HostResourceTelemetryPanel.tsx',
       'src/components/hostDetail/HostToolVersionsPanel.tsx',
       'src/components/settings/WebhookRegistryPanel.tsx',
-      'src/pages/DeviceDetail.tsx',
       'src/pages/Devices.tsx',
     ],
     rules: {

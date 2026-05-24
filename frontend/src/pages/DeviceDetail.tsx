@@ -32,7 +32,7 @@ import { deviceChipStatus } from '../lib/deviceState';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
-import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
+import { Badge, Button, Card, PageHeader, Tabs, useTabParam } from '../components/ui';
 import { DeviceDetailStatusPills } from './deviceDetail/DeviceDetailStatusPills';
 import { buildDeviceDetailSubtitleNode } from './deviceDetail/deviceDetailSubtitle';
 import {
@@ -126,7 +126,7 @@ function TriageHero({
   const showVerifySecondary = Boolean(verificationLabel) && action.kind === 'start-node';
 
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+    <Card padding="none" as="section" className="overflow-hidden">
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3 sm:items-center">
           <Badge tone={TRIAGE_BADGE_TONE[triage.tone]} dot>{triage.eyebrow}</Badge>
@@ -154,7 +154,7 @@ function TriageHero({
           ) : null}
         </div>
       </div>
-    </section>
+    </Card>
   );
 }
 
@@ -200,9 +200,9 @@ export function DeviceDetail() {
   if (!device && isLoading) {
     return (
       <div>
-        <div className="rounded-lg border border-border bg-surface-1 py-12">
+        <Card padding="none" className="py-12">
           <LoadingSpinner />
-        </div>
+        </Card>
       </div>
     );
   }
@@ -261,7 +261,7 @@ export function DeviceDetail() {
         {tab === 'triage' ? (
           <>
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-start">
-              <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+              <Card padding="none" as="section" className="overflow-hidden">
                 <SectionErrorBoundary scope="device-info-panel">
                   <DeviceInfoPanel
                     device={device}
@@ -269,9 +269,9 @@ export function DeviceDetail() {
                     onEdit={() => setEditOpen(true)}
                   />
                 </SectionErrorBoundary>
-              </section>
+              </Card>
 
-              <section id="device-health" className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+              <div id="device-health"><Card padding="none" as="section" className="overflow-hidden">
                 <div className="divide-y divide-border">
                   <div className="p-5">
                     <SectionErrorBoundary scope="device-health-panel">
@@ -291,17 +291,17 @@ export function DeviceDetail() {
                     <DeviceHardwareTelemetryCard device={device} />
                   </SectionErrorBoundary>
                 </div>
-              </section>
+              </Card></div>
             </div>
 
-            <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+            <Card padding="none" as="section" className="overflow-hidden">
               <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-sm font-semibold text-text-1">Diagnostics</h2>
                 </div>
                 <DiagnosticBundleButton deviceId={device.id} />
               </div>
-            </section>
+            </Card>
 
             <DiagnosticHistoryPanel deviceId={device.id} />
           </>
@@ -316,20 +316,20 @@ export function DeviceDetail() {
         {tab === 'setup' ? (
           <>
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
-              <section className="overflow-hidden rounded-lg border border-border bg-surface-1 p-5 shadow-sm">
+              <Card padding="none" as="section" className="overflow-hidden p-5">
                 <SectionErrorBoundary scope="device-node-panel-setup">
                   <DeviceNodePanel device={device} />
                 </SectionErrorBoundary>
-              </section>
+              </Card>
 
-              <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+              <Card padding="none" as="section" className="overflow-hidden">
                 <SectionErrorBoundary scope="device-lifecycle-policy-panel">
                   <DeviceLifecyclePolicyPanel policy={health?.lifecycle_policy} />
                 </SectionErrorBoundary>
-              </section>
+              </Card>
             </div>
 
-            <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+            <Card padding="none" as="section" className="overflow-hidden">
               <SectionErrorBoundary scope="device-capabilities-panel">
                 <DeviceCapabilitiesPanel deviceId={deviceId} device={device} />
               </SectionErrorBoundary>
@@ -341,20 +341,17 @@ export function DeviceDetail() {
                   </Suspense>
                 </SectionErrorBoundary>
               </div>
-            </section>
+            </Card>
 
-            <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+            <Card padding="none" as="section" className="overflow-hidden">
               <SectionErrorBoundary scope="device-test-data-editor">
                 <Suspense fallback={<LoadingSpinner />}>
                   <DeviceTestDataEditor device={device} />
                 </Suspense>
               </SectionErrorBoundary>
-            </section>
+            </Card>
 
-            <section
-              aria-labelledby="device-danger-zone-heading"
-              className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm"
-            >
+            <div aria-labelledby="device-danger-zone-heading"><Card padding="none" as="section" className="overflow-hidden">
               <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex items-center gap-2">
@@ -379,7 +376,7 @@ export function DeviceDetail() {
                   Delete Device
                 </Button>
               </div>
-            </section>
+            </Card></div>
           </>
         ) : null}
 
