@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
-from app.agent_comm.operations import appium_logs, get_pack_device_properties, pack_device_lifecycle_action
+from app.agent_comm.operations import appium_logs, pack_device_lifecycle_action
 from app.agent_comm.operations import appium_status as fetch_appium_status
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.models import AppiumDesiredState
@@ -29,7 +29,6 @@ from app.devices.services import identity, lifecycle_policy
 from app.devices.services import intent as intent_service
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services import presenter as device_presenter
-from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions import service_viability as session_viability
@@ -315,20 +314,6 @@ async def device_lifecycle_action(
         await device_health_service.update_emulator_state(db, device, result["state"])
         await db.commit()
     return result
-
-
-@router.post("/{device_id}/refresh", response_model=DeviceRead)
-async def refresh_device_properties(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
-    if not device.host_id:
-        raise HTTPException(status_code=400, detail="Device has no host — cannot refresh properties")
-    await pack_discovery_service.refresh_device_properties(
-        db,
-        device,
-        agent_get_pack_device_properties=get_pack_device_properties,
-    )
-    await db.refresh(device)
-    return await device_presenter.serialize_device(db, device)
 
 
 @router.get("/{device_id}/logs")
