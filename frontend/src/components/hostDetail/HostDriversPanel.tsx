@@ -1,9 +1,11 @@
-import { AlertTriangle, CheckCircle2, MinusCircle } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import type { ReactNode } from 'react';
+import { AlertTriangle, CheckCircle2, MinusCircle, ChevronDown, ChevronRight, Activity, Loader2 } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverPacks';
-import { DataTable } from '../ui';
-import type { DataTableColumn } from '../ui';
+import { triggerDriverDoctor } from '../../api/driverPacks';
 import { Card } from '../ui/Card';
-import type { HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
+import type { HostPackDoctorStatus, HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
 import { HostFeatureActionButton } from './HostFeatureActionButton';
 
 function PackStatusBadge({ status, blockedReason }: { status: string; blockedReason: string | null }) {
@@ -42,6 +44,8 @@ function FeatureStatusBadge({ status }: { status: HostPackFeatureStatus | undefi
   );
 }
 
+type Column = { key: string; header: string; width?: string; render: (row: HostPackStatus, index: number) => ReactNode };
+
 type Props = {
   hostId: string;
   hostOnline: boolean;
@@ -61,7 +65,34 @@ export function HostDriversPanel({ hostId }: Props) {
     featureStatusByPack.set(status.pack_id, byFeature);
   }
 
-  const packColumns: DataTableColumn<HostPackStatus>[] = [
+  const queryClient = useQueryClient();
+
+  const doctorByPack = new Map<string, HostPackDoctorStatus[]>();
+  for (const d of hostPacks?.doctor ?? []) {
+    const list = doctorByPack.get(d.pack_id) ?? [];
+    list.push(d);
+    doctorByPack.set(d.pack_id, list);
+  }
+
+  const [expandedPacks, setExpandedPacks] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (packId: string) => {
+    setExpandedPacks((prev) => {
+      const next = new Set(prev);
+      if (next.has(packId)) next.delete(packId);
+      else next.add(packId);
+      return next;
+    });
+  };
+
+  const doctorMutation = useMutation({
+    mutationFn: (packId: string) => triggerDriverDoctor(hostId, packId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['host-driver-packs', hostId] });
+    },
+  });
+
+  const packColumns: Column[] = [
     {
       key: 'pack_id',
       header: 'Driver',
@@ -142,6 +173,73 @@ export function HostDriversPanel({ hostId }: Props) {
       header: 'Status',
       render: (p) => <PackStatusBadge status={p.status} blockedReason={p.blocked_reason} />,
     },
+    {
+      key: 'doctor',
+      header: 'Doctor',
+      render: (p) => {
+        const checks = doctorByPack.get(p.pack_id);
+        if (!checks || checks.length === 0) {
+          return <span className="text-xs text-text-3">No doctor checks</span>;
+        }
+        const allPassed = checks.every((c) => c.ok);
+        const failCount = checks.filter((c) => !c.ok).length;
+        const isExpanded = expandedPacks.has(p.pack_id);
+        return (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleExpanded(p.pack_id);
+            }}
+          >
+            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <span
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium ${
+                allPassed
+                  ? 'bg-success-soft text-success-foreground'
+                  : 'bg-danger-soft text-danger-foreground'
+              }`}
+            >
+              {allPassed ? (
+                <>
+                  <CheckCircle2 size={12} />
+                  passed ({checks.length})
+                </>
+              ) : (
+                <>
+                  <AlertTriangle size={12} />
+                  {failCount} failed
+                </>
+              )}
+            </span>
+          </button>
+        );
+      },
+    },
+    {
+      key: 'actions',
+      header: '',
+      width: '100px',
+      render: (p) => {
+        if (p.status !== 'installed') return null;
+        const isRunning = doctorMutation.isPending && doctorMutation.variables === p.pack_id;
+        return (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-text-2 hover:bg-surface-2 disabled:opacity-50"
+            disabled={isRunning}
+            onClick={(e) => {
+              e.stopPropagation();
+              doctorMutation.mutate(p.pack_id);
+            }}
+          >
+            {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Activity size={12} />}
+            Run Doctor
+          </button>
+        );
+      },
+    },
   ];
 
   return (
@@ -149,17 +247,67 @@ export function HostDriversPanel({ hostId }: Props) {
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Appium Drivers</h2>
       </div>
-      <DataTable<HostPackStatus>
-        columns={packColumns}
-        rows={rows}
-        rowKey={(p) => p.pack_id}
-        loading={isLoading}
-        emptyState={
-          <p className="px-5 py-8 text-center text-sm text-text-3">
-            No drivers installed. Enable drivers in Settings.
-          </p>
-        }
-      />
+      {isLoading ? (
+        <p className="px-5 py-8 text-center text-sm text-text-3">Loading...</p>
+      ) : rows.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-text-3">
+          No drivers installed. Enable drivers in Settings.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-surface-2">
+              <tr>
+                {packColumns.map((col) => (
+                  <th
+                    key={col.key}
+                    className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-3"
+                    style={col.width ? { width: col.width } : undefined}
+                  >
+                    {col.header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((row, index) => {
+                const checks = doctorByPack.get(row.pack_id);
+                const isExpanded = expandedPacks.has(row.pack_id) && checks && checks.length > 0;
+                return (
+                  <Fragment key={row.pack_id}>
+                    <tr className="hover:bg-surface-2">
+                      {packColumns.map((col) => (
+                        <td key={col.key} className="px-3 py-2 text-sm text-text-1">
+                          {col.render(row, index)}
+                        </td>
+                      ))}
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={packColumns.length} className="bg-surface-2 px-6 py-3">
+                          <div className="flex flex-col gap-1.5">
+                            {checks.map((c) => (
+                              <div key={c.check_id} className="flex items-start gap-2 text-xs">
+                                {c.ok ? (
+                                  <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-success-foreground" />
+                                ) : (
+                                  <AlertTriangle size={12} className="mt-0.5 shrink-0 text-danger-foreground" />
+                                )}
+                                <span className="font-medium text-text-2">{c.check_id}</span>
+                                <span className="text-text-3">{c.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }
