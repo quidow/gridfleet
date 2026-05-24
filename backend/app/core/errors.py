@@ -31,8 +31,8 @@ class AppError(Exception):
         self.details = details
 
 
-class AgentCallError(Exception):
-    error_code = "AGENT_UNREACHABLE"
+class AgentCallError(AppError):
+    code = "AGENT_UNREACHABLE"
     status_code = 502
 
     def __init__(
@@ -44,21 +44,22 @@ class AgentCallError(Exception):
         transport_outcome: str | None = None,
         error_category: str | None = None,
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, details=details or {"host": host})
         self.host = host
-        self.message = message
-        self.details = details or {"host": host}
         self.transport_outcome = transport_outcome
         self.error_category = error_category
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
 
 class AgentUnreachableError(AgentCallError):
-    error_code = "AGENT_UNREACHABLE"
-    status_code = 502
+    code = "AGENT_UNREACHABLE"
 
 
 class CircuitOpenError(AgentCallError):
-    error_code = "CIRCUIT_OPEN"
+    code = "CIRCUIT_OPEN"
     status_code = 503
 
     def __init__(self, host: str, *, retry_after_seconds: float | None = None) -> None:
@@ -69,8 +70,7 @@ class CircuitOpenError(AgentCallError):
 
 
 class AgentResponseError(AgentCallError):
-    error_code = "AGENT_RESPONSE_ERROR"
-    status_code = 502
+    code = "AGENT_RESPONSE_ERROR"
 
     def __init__(
         self,
@@ -122,17 +122,19 @@ class PlatformRemovedError(LookupError):
         self.platform_id = platform_id
 
 
-class InvalidTransitionError(Exception):
-    """Raised when a DeviceStateMachine transition is attempted from an invalid source state.
+class InvalidTransitionError(AppError):
+    """Raised when a DeviceStateMachine transition is attempted from an invalid source state."""
 
-    Mapped to HTTP 409 by ``register_exception_handlers``. The machine module imports
-    this class — do not re-declare it elsewhere.
-    """
+    status_code = 409
+    code = "INVALID_TRANSITION"
 
     def __init__(self, event: str, current_state: str) -> None:
+        super().__init__(
+            f"Cannot {event} from state {current_state}",
+            details={"event": event, "current_state": current_state},
+        )
         self.event = event
         self.current_state = current_state
-        super().__init__(f"Cannot {event} from state {current_state}")
 
 
 def request_id_from_scope(scope: Mapping[str, Any]) -> str | None:
@@ -254,54 +256,44 @@ def classify_httpx_transport(exc: Exception) -> tuple[str, str]:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    @app.exception_handler(AgentCallError)
-    async def handle_agent_call_error(request: Request, exc: AgentCallError) -> JSONResponse:
-        return error_response(
+    @app.exception_handler(AppError)
+    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
+        return envelope_response(
             status_code=exc.status_code,
-            code=exc.error_code,
+            code=exc.code,
             message=exc.message,
-            request_id=request_id_from_request(request),
+            request_id=getattr(request.state, "request_id", None),
             details=exc.details,
         )
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        return error_response(
+        return envelope_response(
             status_code=422,
             code="VALIDATION_ERROR",
             message="Request validation failed",
-            request_id=request_id_from_request(request),
+            request_id=getattr(request.state, "request_id", None),
             details=exc.errors(),
         )
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
         message, details = _http_error_payload(exc)
-        return error_response(
+        return envelope_response(
             status_code=exc.status_code,
             code=_http_error_code(exc.status_code),
             message=message,
-            request_id=request_id_from_request(request),
+            request_id=getattr(request.state, "request_id", None),
             details=details,
             headers=exc.headers,
-        )
-
-    @app.exception_handler(InvalidTransitionError)
-    async def handle_invalid_transition(request: Request, exc: InvalidTransitionError) -> JSONResponse:
-        return error_response(
-            status_code=409,
-            code="INVALID_TRANSITION",
-            message=str(exc),
-            request_id=request_id_from_request(request),
-            details={"event": exc.event, "current_state": exc.current_state},
         )
 
     @app.exception_handler(Exception)
     async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled request error", path=request.url.path)
-        return error_response(
+        return envelope_response(
             status_code=500,
             code="INTERNAL_ERROR",
             message="An unexpected error occurred",
-            request_id=request_id_from_request(request),
+            request_id=getattr(request.state, "request_id", None),
         )

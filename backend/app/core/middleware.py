@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from starlette.datastructures import Headers, MutableHeaders
 
 from app.core.config import settings
-from app.core.errors import error_response, request_id_from_scope
+from app.core.errors import envelope_response
 from app.core.metrics_recorders import record_http_request
 from app.core.observability import (
     REQUEST_ID_HEADER,
@@ -29,6 +29,14 @@ class RequestContextMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
         self._request_timeout_sec = float(settings.request_timeout_sec)
+
+    @staticmethod
+    def _scope_request_id(scope: Mapping[str, object]) -> str | None:
+        state = scope.get("state")
+        if not isinstance(state, dict):
+            return None
+        request_id = state.get("request_id")
+        return request_id if isinstance(request_id, str) and request_id else None
 
     @staticmethod
     def _is_health_path(path: str) -> bool:
@@ -87,7 +95,7 @@ class RequestContextMiddleware:
             await send(message)
 
         if shutdown_coordinator.is_shutting_down() and not self._is_health_path(path):
-            response = error_response(
+            response = envelope_response(
                 status_code=503,
                 code="SHUTTING_DOWN",
                 message="The backend is shutting down and not accepting new requests",
@@ -104,11 +112,11 @@ class RequestContextMiddleware:
                 await asyncio.wait_for(self.app(scope, receive, send_wrapper), timeout=self._request_timeout_sec)
         except TimeoutError:
             if not response_started:
-                response = error_response(
+                response = envelope_response(
                     status_code=504,
                     code="REQUEST_TIMEOUT",
                     message="The request exceeded the maximum execution time",
-                    request_id=request_id_from_scope(scope),
+                    request_id=self._scope_request_id(scope),
                 )
                 await response(scope, receive, send_wrapper)
                 return
