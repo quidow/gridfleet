@@ -456,11 +456,12 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
             grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             extra_caps={
+                "appium:udid": "device-002",
                 "appium:automationName": "UiAutomator2",
                 "appium:gridfleet:deviceId": "device-id",
                 "appium:platform": "android_mobile",
             },
-            stereotype_caps={"appium:platform": "android_mobile"},
+            stereotype_caps={"appium:udid": "device-002", "appium:platform": "android_mobile"},
         )
 
     # Appium server receives only driver-owned caps.
@@ -1297,7 +1298,8 @@ class _LifecycleAdapter:
         return self.result
 
     async def pre_session(self, spec: object) -> dict[str, object]:
-        return {}
+        spec_any = cast("Any", spec)
+        return {"appium:udid": spec_any.device_identity_value}
 
 
 async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provided() -> None:
@@ -1305,7 +1307,9 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5001)
     lifecycle_actions = [{"id": "boot", "timeout_sec": 120}]
-    adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="emulator-5554"))
+    adapter = _LifecycleAdapter(
+        LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
+    )
     adapter_registry = AdapterRegistry()
     adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
@@ -1343,7 +1347,7 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=5002)
     lifecycle_actions = [{"id": "boot"}]
-    adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="SIM-UUID"))
+    adapter = _LifecycleAdapter(LifecycleActionResult(ok=True, state="running", resolved_connection_target="SIM-UUID"))
     adapter_registry = AdapterRegistry()
     adapter_registry.set("appium-xcuitest", "2026.04.0", adapter)  # type: ignore[arg-type]
     manager.set_adapter_registry(adapter_registry)
@@ -1370,6 +1374,43 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
 
     assert adapter.calls == [("boot", {"headless": True}, "SIM-UUID")]
     assert info.connection_target == "SIM-UUID"
+    await manager.shutdown()
+
+
+async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
+    """Boot triggers when lifecycle_actions contains 'boot', regardless of device_type."""
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5010)
+    lifecycle_actions = [{"id": "boot"}]
+    adapter = _LifecycleAdapter(
+        LifecycleActionResult(ok=True, state="running", resolved_connection_target="device-serial")
+    )
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
+    manager.set_adapter_registry(adapter_registry)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            return_value=appium_proc,
+        ),
+    ):
+        info = await manager.start(
+            connection_target="MyAVD",
+            port=4760,
+            grid_url="http://grid:4444",
+            device_type="real_device",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            lifecycle_actions=lifecycle_actions,
+        )
+
+    assert info.connection_target == "device-serial"
+    assert adapter.calls == [("boot", {"headless": True}, "MyAVD")]
     await manager.shutdown()
 
 
