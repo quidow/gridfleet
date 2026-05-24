@@ -1,10 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { useHostToolStatus } from '../../hooks/useHosts';
 import { Card } from '../ui/Card';
-import type { HostRead } from '../../types';
-import type { components } from '../../api/openapi';
-
-type ToolEntry = components['schemas']['ToolEntry'];
+import type { HostRead, ToolEntry } from '../../types';
 
 type Props = {
   host: HostRead;
