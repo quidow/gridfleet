@@ -82,16 +82,6 @@ async def get_device_config(
     return await config_service.get_device_config(db, device, keys=key_list)
 
 
-@router.put("/{device_id}/config", response_model=DeviceConfigRead)
-async def replace_device_config(
-    device_id: uuid.UUID,
-    body: dict[str, Any],
-    db: DbDep,
-) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
-    return await config_service.replace_device_config(db, device, body)
-
-
 @router.patch("/{device_id}/config", response_model=DeviceConfigRead)
 async def merge_device_config(
     device_id: uuid.UUID,
