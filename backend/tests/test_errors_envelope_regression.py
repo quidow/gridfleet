@@ -70,7 +70,7 @@ async def test_error_envelope_matches_fixture(
         actual["error"].pop("details", None)
 
     if not fixture_path.exists():
-        fixture_path.write_text(json.dumps(actual, indent=2, sort_keys=True))
+        fixture_path.write_text(json.dumps(actual, indent=2, sort_keys=True) + "\n")
         pytest.fail(f"Created fixture {fixture_path} — re-run to verify")
 
     expected = json.loads(fixture_path.read_text())
