@@ -6,6 +6,11 @@ maintainer: gridfleet-team
 license: Apache-2.0
 requires:
   host_os: [macos]
+  tool_dependencies:
+    - name: xcodebuild
+      description: "Builds and tests iOS/tvOS apps via Xcode"
+    - name: go_ios
+      description: "iOS real-device battery and hardware telemetry"
 appium_server:
   source: npm
   package: appium

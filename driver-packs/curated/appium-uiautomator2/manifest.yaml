@@ -4,6 +4,12 @@ release: 2026.05.3
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0
+requires:
+  tool_dependencies:
+    - name: adb
+      description: "Communicates with Android devices over USB and TCP"
+    - name: java
+      description: "Required by UIAutomator2 test server build tools"
 appium_server:
   source: npm
   package: appium
