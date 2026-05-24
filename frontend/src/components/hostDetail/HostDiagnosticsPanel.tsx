@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { formatHostTimestamp } from '../hosts/hostFormatting';
 import { useHostDiagnostics } from '../../hooks/useHosts';
+import { Card } from '../ui/Card';
 import type { HostRead, HostRecoveryEvent } from '../../types';
 
 function formatBreakerStatus(status: string) {
@@ -88,7 +89,7 @@ export function HostDiagnosticsPanel({ host }: Props) {
   const { data: hostDiagnostics, isLoading: diagnosticsLoading } = useHostDiagnostics(host.id);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-1">
+    <Card padding="none" className="overflow-hidden">
       <div className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Diagnostics</h2>
         <p className="mt-1 text-sm text-text-3">
@@ -237,6 +238,6 @@ export function HostDiagnosticsPanel({ host }: Props) {
           </div>
         </>
       )}
-    </div>
+    </Card>
   );
 }

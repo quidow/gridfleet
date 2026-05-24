@@ -1,6 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { useHostToolStatus } from '../../hooks/useHosts';
 import { describeHostPrerequisite } from '../../lib/hostPrerequisites';
+import { Card } from '../ui/Card';
 import type { HostRead } from '../../types';
 
 function formatToolValue(value: string | null | undefined) {
@@ -19,7 +20,7 @@ export function HostToolVersionsPanel({ host }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-lg border border-border bg-surface-1">
+      <Card padding="none">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-sm font-medium text-text-2">Tool Versions</h2>
         </div>
@@ -43,7 +44,7 @@ export function HostToolVersionsPanel({ host }: Props) {
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {missingPrerequisites.length > 0 ? (
         <div className="rounded-lg border border-warning-strong/30 bg-warning-soft">

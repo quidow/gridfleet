@@ -3,6 +3,7 @@ import { PlatformIcon } from '../PlatformIcon';
 import { AvailabilityCell } from '../../pages/devices/deviceColumns';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
+import { Card } from '../ui/Card';
 import type { DeviceRead, HostDetail } from '../../types';
 
 const HOST_DEVICE_COLUMNS: DataTableColumn<DeviceRead>[] = [
@@ -47,7 +48,7 @@ type Props = {
 
 export function HostDevicesPanel({ host }: Props) {
   return (
-    <div className="rounded-lg border border-border bg-surface-1">
+    <Card padding="none">
       <div className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Devices ({host.devices.length})</h2>
       </div>
@@ -57,6 +58,6 @@ export function HostDevicesPanel({ host }: Props) {
         rowKey={(d) => d.id}
         emptyState={<p className="px-5 py-8 text-center text-sm text-text-3">No devices on this host.</p>}
       />
-    </div>
+    </Card>
   );
 }

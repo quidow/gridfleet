@@ -1,5 +1,6 @@
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import type { HostResourceSample } from '../../types';
+import { Card } from '../ui/Card';
 import { formatCpuUsage } from './hostResourceFormatters';
 
 type Props = {
@@ -85,33 +86,32 @@ export function HostOverviewResourceStrip({
   const latest = data ? pickLatestSample(data.samples) : null;
 
   return (
-    <div
-      className="rounded-lg border border-border bg-surface-1 p-5"
-      aria-label="Host resource usage"
-    >
-      <h2 className="mb-3 text-sm font-medium text-text-3">Resource Usage</h2>
-      <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
-        <Gauge
-          label="CPU"
-          percent={latest?.cpu_percent ?? null}
-          detail={formatCpuUsage(latest?.cpu_percent ?? null, totalCpuCores)}
-        />
-        <Gauge
-          label="Memory"
-          percent={memoryPercent(latest)}
-          detail={formatMemoryUsage(latest, totalMemoryMb)}
-        />
-        <Gauge
-          label="Disk"
-          percent={latest?.disk_percent ?? null}
-          detail={formatDiskUsage(latest, totalDiskGb)}
-        />
-      </div>
-      {!latest ? (
-        <p className="mt-3 text-xs text-text-3">
-          No telemetry samples yet. See Diagnostics tab for history.
-        </p>
-      ) : null}
+    <div aria-label="Host resource usage">
+      <Card padding="none" className="p-5">
+        <h2 className="mb-3 text-sm font-medium text-text-3">Resource Usage</h2>
+        <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
+          <Gauge
+            label="CPU"
+            percent={latest?.cpu_percent ?? null}
+            detail={formatCpuUsage(latest?.cpu_percent ?? null, totalCpuCores)}
+          />
+          <Gauge
+            label="Memory"
+            percent={memoryPercent(latest)}
+            detail={formatMemoryUsage(latest, totalMemoryMb)}
+          />
+          <Gauge
+            label="Disk"
+            percent={latest?.disk_percent ?? null}
+            detail={formatDiskUsage(latest, totalDiskGb)}
+          />
+        </div>
+        {!latest ? (
+          <p className="mt-3 text-xs text-text-3">
+            No telemetry samples yet. See Diagnostics tab for history.
+          </p>
+        ) : null}
+      </Card>
     </div>
   );
 }
