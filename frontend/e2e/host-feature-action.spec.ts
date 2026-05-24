@@ -158,7 +158,7 @@ test('feature action button on host detail page triggers action and shows succes
   await page.goto(`/hosts/${HOST_ID}?tab=drivers`);
 
   // Step 2: wait for the drivers panel to load.
-  await expect(page.getByText('Appium Drivers')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Driver', { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Tunnel', { exact: true })).toBeVisible();
   await expect(page.getByText('tunnel down')).toBeVisible();
 
