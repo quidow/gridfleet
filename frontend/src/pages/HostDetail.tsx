@@ -1,5 +1,4 @@
-import { Suspense, lazy } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useApproveHost, useHost, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SetupVerificationModal } from './devices/SetupVerificationModal';
@@ -11,28 +10,31 @@ import { PageHeader, Tabs, useTabParam } from '../components/ui';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { HostDetailStatusPills } from './hostDetail/HostDetailStatusPills';
 import { HostOverviewPanel } from '../components/hostDetail/HostOverviewPanel';
-import { HostDiagnosticsPanel } from '../components/hostDetail/HostDiagnosticsPanel';
-
-const HostResourceTelemetryPanel = lazy(() =>
-  import('../components/hostDetail/HostResourceTelemetryPanel').then((m) => ({ default: m.HostResourceTelemetryPanel })),
-);
 import { HostDevicesPanel } from '../components/hostDetail/HostDevicesPanel';
 import { HostDriversPanel } from '../components/hostDetail/HostDriversPanel';
 import { HostPluginsPanel } from '../components/hostDetail/HostPluginsPanel';
-import { HostLogsPanel } from '../components/hostDetail/HostLogsPanel';
+import { HostAgentLogPanel } from '../components/hostDetail/HostAgentLogPanel';
+import { HostEventsPanel } from '../components/hostDetail/HostEventsPanel';
+import { HostToolEnvPanel } from '../components/hostDetail/HostToolEnvPanel';
 import type { HostDetail as HostDetailType } from '../types';
 // HostDetail type alias avoids shadowing the default-exported component name
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'diagnostics', label: 'Diagnostics' },
-  { id: 'logs', label: 'Logs' },
   { id: 'devices', label: 'Devices' },
   { id: 'drivers', label: 'Drivers' },
   { id: 'plugins', label: 'Plugins' },
+  { id: 'environment', label: 'Environment' },
+  { id: 'agent-logs', label: 'Agent Logs' },
+  { id: 'events', label: 'Events' },
 ] as const;
 
 const TAB_IDS = TABS.map((t) => t.id);
+
+const LEGACY_TAB_MAP: Record<string, string> = {
+  diagnostics: 'overview',
+  logs: 'agent-logs',
+};
 
 export function HostDetail() {
   const { id } = useParams<{ id: string }>();
@@ -41,6 +43,14 @@ export function HostDetail() {
   const approveMut = useApproveHost();
   const rejectMut = useRejectHost();
   const discoveryFlow = useHostDiscoveryFlow(id ?? null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const legacyTab = searchParams.get('tab');
+  if (legacyTab && legacyTab in LEGACY_TAB_MAP) {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', LEGACY_TAB_MAP[legacyTab]);
+    next.delete('logs_tab');
+    setSearchParams(next, { replace: true });
+  }
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'overview');
 
   if (isLoading) {
@@ -70,36 +80,37 @@ export function HostDetail() {
             host={host}
             approvePending={approveMut.isPending}
             rejectPending={rejectMut.isPending}
-            discoverPending={discoveryFlow.discoverMut.isPending}
             onApprove={() => approveMut.mutate(id!)}
             onReject={() => rejectMut.mutate(id!)}
-            onDiscover={() => discoveryFlow.handleDiscover()}
           />
-        </SectionErrorBoundary>
-      )}
-
-      {tab === 'diagnostics' && (
-        <div className="space-y-6">
-          <SectionErrorBoundary scope="host-diagnostics">
-            <HostDiagnosticsPanel host={host} />
-          </SectionErrorBoundary>
-          <SectionErrorBoundary scope="host-resource-telemetry">
-            <Suspense fallback={<div className="h-48 animate-pulse rounded-md border border-border bg-surface-1" />}>
-              <HostResourceTelemetryPanel hostId={id!} hostOnline={hostOnline} />
-            </Suspense>
-          </SectionErrorBoundary>
-        </div>
-      )}
-
-      {tab === 'logs' && (
-        <SectionErrorBoundary scope="host-logs">
-          <HostLogsPanel hostId={id!} />
         </SectionErrorBoundary>
       )}
 
       {tab === 'devices' && (
         <SectionErrorBoundary scope="host-devices">
-          <HostDevicesPanel host={hostDetail} />
+          <HostDevicesPanel
+            host={hostDetail}
+            onDiscover={() => discoveryFlow.handleDiscover()}
+            discoverPending={discoveryFlow.discoverMut.isPending}
+          />
+        </SectionErrorBoundary>
+      )}
+
+      {tab === 'agent-logs' && (
+        <SectionErrorBoundary scope="host-agent-logs">
+          <HostAgentLogPanel hostId={id!} />
+        </SectionErrorBoundary>
+      )}
+
+      {tab === 'events' && (
+        <SectionErrorBoundary scope="host-events">
+          <HostEventsPanel hostId={id!} />
+        </SectionErrorBoundary>
+      )}
+
+      {tab === 'environment' && (
+        <SectionErrorBoundary scope="host-environment">
+          <HostToolEnvPanel hostId={id!} />
         </SectionErrorBoundary>
       )}
 

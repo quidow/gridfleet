@@ -35,8 +35,8 @@ describe('HostEventsPanel', () => {
 
   it('expands row to show JSON payload on click', () => {
     render(<HostEventsPanel hostId="host-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /host.status_changed/i }));
-    expect(screen.getByText(/old_status/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText('host.status_changed'));
+    expect(screen.getByText(/"old_status"/)).toBeInTheDocument();
   });
 
   it('renders empty state when no events', () => {

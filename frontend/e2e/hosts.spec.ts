@@ -646,30 +646,23 @@ test.describe('Hosts page', () => {
     await expect(page.getByText('Unknown', { exact: true })).toBeVisible();
 
     await page.getByRole('link', { name: 'lab-mac-mini' }).click();
-    // Overview tab is default — agent version notice and actions are here
+    // Overview tab is default — agent version notice, circuit breaker, and telemetry are here
     await expect(page.getByText('Agent update recommended')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Discover Devices' })).toBeVisible();
-
-    // Diagnostics tab — circuit breaker and recovery events
-    await page.getByRole('button', { name: 'Diagnostics', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Diagnostics' })).toBeVisible();
-    await expect(page.getByText('Host Resource Telemetry')).toBeVisible();
     await expect(page.getByText('Circuit Breaker')).toBeVisible();
-    await expect(page.getByText('HTTP 503')).toBeVisible();
-    await expect(page.getByText('Grid Relay')).toBeVisible();
-    await expect(page.getByText('Restart Succeeded')).toBeVisible();
+    await expect(page.getByText('Host Resource Telemetry')).toBeVisible();
 
-    // Devices tab — device links
+    // Devices tab — device links and discover button
     await page.getByRole('button', { name: 'Devices', exact: true }).click();
     await expect(page.getByRole('link', { name: 'iPhone 15' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Discover Devices' })).toBeVisible();
   });
 
   test('host detail tab navigation is URL-addressable', async ({ page }) => {
     await mockDefaultHostsSurface(page);
     await page.goto('/hosts/host-1?tab=drivers');
     await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
-    // Deep-linked Drivers tab should show drivers table area
-    await expect(page.getByText('Appium Drivers')).toBeVisible();
+    // Deep-linked Drivers tab should show the drivers table
+    await expect(page.getByText('Driver', { exact: true })).toBeVisible();
 
     // Switch to Plugins tab
     await page.getByRole('button', { name: 'Plugins', exact: true }).click();
@@ -681,20 +674,22 @@ test.describe('Hosts page', () => {
     await expect(page.getByText('Host Info')).toBeVisible();
   });
 
-  test('host logs tab shows agent logs and host events', async ({ page }) => {
-    await page.goto('/hosts/host-1?tab=logs');
+  test('agent logs tab shows agent process logs', async ({ page }) => {
+    await page.goto('/hosts/host-1?tab=agent-logs');
     await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('shipper online')).toBeVisible();
+  });
 
-    await page.getByRole('button', { name: 'Host events' }).click();
-    await expect(page).toHaveURL(/logs_tab=events/);
+  test('events tab shows host events with expandable rows', async ({ page }) => {
+    await page.goto('/hosts/host-1?tab=events');
+    await expect(page.getByRole('heading', { name: 'lab-mac-mini' })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('host.status_changed')).toBeVisible();
 
-    await page.getByRole('button', { name: 'host.status_changed' }).click();
+    await page.getByText('host.status_changed').click();
     await expect(page.getByText('"new_status": "online"')).toBeVisible();
   });
 
-  test('diagnostics tab shows host resource telemetry charts', async ({ page }) => {
+  test('overview tab shows host resource telemetry charts', async ({ page }) => {
     await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/resource-telemetry', async (route) => {
       if (route.request().method() !== 'GET') {
         await route.fallback();
@@ -739,7 +734,6 @@ test.describe('Hosts page', () => {
     });
 
     await page.goto('/hosts/host-1');
-    await page.getByRole('button', { name: 'Diagnostics', exact: true }).click();
 
     await expect(page.getByRole('heading', { name: 'CPU', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Memory', exact: true })).toBeVisible();
@@ -747,9 +741,8 @@ test.describe('Hosts page', () => {
     await expect(page.getByText(/Last sample/i)).toBeVisible();
   });
 
-  test('diagnostics tab shows empty host resource telemetry state', async ({ page }) => {
+  test('overview tab shows empty host resource telemetry state', async ({ page }) => {
     await page.goto('/hosts/host-1');
-    await page.getByRole('button', { name: 'Diagnostics', exact: true }).click();
 
     await expect(page.getByText('No telemetry samples in this window')).toBeVisible();
   });

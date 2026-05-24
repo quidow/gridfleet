@@ -8,6 +8,5 @@ export function formatCpuUsage(cpuPercent: number | null, cores: number | null):
   ) {
     return null;
   }
-  const busy = (cpuPercent / 100) * cores;
-  return `${busy.toFixed(1)} / ${cores} cores`;
+  return `${cores} cores`;
 }

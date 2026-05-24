@@ -6,7 +6,6 @@ import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverP
 import { triggerDriverDoctor } from '../../api/driverPacks';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
-import { Card } from '../ui/Card';
 import type { HostPackDoctorStatus, HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
 import { HostFeatureActionButton } from './HostFeatureActionButton';
 
@@ -75,6 +74,7 @@ export function HostDriversPanel({ hostId }: Props) {
   }
 
   const [expandedPacks, setExpandedPacks] = useState<Set<string>>(new Set());
+  const [unsupportedPacks, setUnsupportedPacks] = useState<Set<string>>(new Set());
 
   const toggleExpanded = (packId: string) => {
     setExpandedPacks((prev) => {
@@ -87,8 +87,14 @@ export function HostDriversPanel({ hostId }: Props) {
 
   const doctorMutation = useMutation({
     mutationFn: (packId: string) => triggerDriverDoctor(hostId, packId),
-    onSuccess: () => {
+    onSuccess: (results, packId) => {
       queryClient.invalidateQueries({ queryKey: ['host-driver-packs', hostId] });
+      setUnsupportedPacks((prev) => {
+        const next = new Set(prev);
+        if (results.length === 0) next.add(packId);
+        else next.delete(packId);
+        return next;
+      });
     },
     onError: (err: Error) => {
       toast.error(`Doctor check failed: ${err.message}`);
@@ -180,6 +186,14 @@ export function HostDriversPanel({ hostId }: Props) {
       key: 'doctor',
       header: 'Doctor',
       render: (p) => {
+        if (unsupportedPacks.has(p.pack_id)) {
+          return (
+            <span className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-neutral-soft text-neutral-foreground">
+              <MinusCircle size={12} />
+              not supported
+            </span>
+          );
+        }
         const checks = doctorByPack.get(p.pack_id);
         if (!checks || checks.length === 0) {
           return <span className="text-xs text-text-3">No doctor checks</span>;
@@ -230,7 +244,7 @@ export function HostDriversPanel({ hostId }: Props) {
         return (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-text-2 hover:bg-surface-2 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-1 px-2.5 py-1.5 text-xs font-medium text-text-2 hover:bg-surface-2 disabled:opacity-50"
             disabled={isRunning}
             onClick={(e) => {
               e.stopPropagation();
@@ -246,40 +260,35 @@ export function HostDriversPanel({ hostId }: Props) {
   ];
 
   return (
-    <Card padding="none">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4">
-        <h2 className="text-sm font-medium text-text-2">Appium Drivers</h2>
-      </div>
-      <DataTable<HostPackStatus>
-        columns={packColumns}
-        rows={rows}
-        rowKey={(p) => p.pack_id}
-        loading={isLoading}
-        emptyState={
-          <p className="px-5 py-8 text-center text-sm text-text-3">
-            No drivers installed. Enable drivers in Settings.
-          </p>
-        }
-        renderExpandedRow={(p) => {
-          const checks = doctorByPack.get(p.pack_id);
-          if (!expandedPacks.has(p.pack_id) || !checks || checks.length === 0) return null;
-          return (
-            <div className="flex flex-col gap-1.5">
-              {checks.map((c) => (
-                <div key={c.check_id} className="flex items-start gap-2 text-xs">
-                  {c.ok ? (
-                    <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-success-foreground" />
-                  ) : (
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0 text-danger-foreground" />
-                  )}
-                  <span className="font-medium text-text-2">{c.check_id}</span>
-                  <span className="text-text-3">{c.message}</span>
-                </div>
-              ))}
-            </div>
-          );
-        }}
-      />
-    </Card>
+    <DataTable<HostPackStatus>
+      columns={packColumns}
+      rows={rows}
+      rowKey={(p) => p.pack_id}
+      loading={isLoading}
+      emptyState={
+        <p className="px-5 py-8 text-center text-sm text-text-3">
+          No drivers installed. Enable drivers in Settings.
+        </p>
+      }
+      renderExpandedRow={(p) => {
+        const checks = doctorByPack.get(p.pack_id);
+        if (!expandedPacks.has(p.pack_id) || !checks || checks.length === 0) return null;
+        return (
+          <div className="flex flex-col gap-1.5">
+            {checks.map((c) => (
+              <div key={c.check_id} className="flex items-start gap-2 text-xs">
+                {c.ok ? (
+                  <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-success-foreground" />
+                ) : (
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0 text-danger-foreground" />
+                )}
+                <span className="font-medium text-text-2">{c.check_id}</span>
+                <span className="text-text-3">{c.message}</span>
+              </div>
+            ))}
+          </div>
+        );
+      }}
+    />
   );
 }

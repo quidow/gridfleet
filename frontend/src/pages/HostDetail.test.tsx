@@ -92,8 +92,12 @@ vi.mock('../components/hostDetail/HostResourceTelemetryPanel', () => ({
   HostResourceTelemetryPanel: () => <section>Resource Telemetry</section>,
 }));
 
-vi.mock('../components/hostDetail/HostLogsPanel', () => ({
-  HostLogsPanel: ({ hostId }: { hostId: string }) => <section>Host logs for {hostId}</section>,
+vi.mock('../components/hostDetail/HostAgentLogPanel', () => ({
+  HostAgentLogPanel: ({ hostId }: { hostId: string }) => <section>Agent logs for {hostId}</section>,
+}));
+
+vi.mock('../components/hostDetail/HostEventsPanel', () => ({
+  HostEventsPanel: ({ hostId }: { hostId: string }) => <section>Host events for {hostId}</section>,
 }));
 
 function renderHostDetail(path: string) {
@@ -109,13 +113,12 @@ function renderHostDetail(path: string) {
   );
 }
 
-test('does not render tool versions on diagnostics tab', async () => {
-  renderHostDetail('/hosts/host-1?tab=diagnostics');
+test('renders circuit breaker and resource telemetry on overview tab', async () => {
+  renderHostDetail('/hosts/host-1?tab=overview');
 
-  expect(screen.getAllByText('Diagnostics').length).toBeGreaterThan(0);
-  // HostResourceTelemetryPanel is lazy-loaded — await its Suspense resolution.
+  expect(screen.getByText('Circuit Breaker')).toBeInTheDocument();
+  expect(screen.getByText('Tool Versions')).toBeInTheDocument();
   expect(await screen.findByText('Resource Telemetry')).toBeInTheDocument();
-  expect(screen.queryByText('Tool Versions')).not.toBeInTheDocument();
 });
 
 test('renders hardware fields on the overview tab', () => {
@@ -128,16 +131,22 @@ test('renders hardware fields on the overview tab', () => {
   expect(screen.getByText('12')).toBeInTheDocument();
 });
 
-test('renders host logs from query param', () => {
-  renderHostDetail('/hosts/host-1?tab=logs&logs_tab=events');
+test('renders agent logs tab', () => {
+  renderHostDetail('/hosts/host-1?tab=agent-logs');
 
-  expect(screen.getByText('Host logs for host-1')).toBeInTheDocument();
+  expect(screen.getByText('Agent logs for host-1')).toBeInTheDocument();
 });
 
-test('switches to the host logs tab', () => {
+test('renders events tab', () => {
+  renderHostDetail('/hosts/host-1?tab=events');
+
+  expect(screen.getByText('Host events for host-1')).toBeInTheDocument();
+});
+
+test('switches to the agent logs tab', () => {
   renderHostDetail('/hosts/host-1');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Logs' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Agent Logs' }));
 
-  expect(screen.getByText('Host logs for host-1')).toBeInTheDocument();
+  expect(screen.getByText('Agent logs for host-1')).toBeInTheDocument();
 });

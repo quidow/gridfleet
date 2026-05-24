@@ -77,12 +77,12 @@ test('reserves detail row height when a gauge has no detail', () => {
   });
 });
 
-test('renders CPU busy/total cores when totalCpuCores is provided', () => {
+test('renders CPU core count when totalCpuCores is provided', () => {
   useHostResourceTelemetryMock.mockReturnValue({ data: { samples: [sampleWithTotals] } });
 
   renderStrip({ hostId: 'host-1', totalCpuCores: 8, totalMemoryMb: 32768, totalDiskGb: 1024 });
 
-  expect(screen.getByText(/5\.0\s*\/\s*8\s*cores/i)).toBeInTheDocument();
+  expect(screen.getByText('8 cores')).toBeInTheDocument();
 });
 
 test('CPU detail is absent (but row reserved) when totalCpuCores is null', () => {
@@ -102,16 +102,13 @@ test('CPU detail is absent (but row reserved) when totalCpuCores is null', () =>
 });
 
 describe('formatCpuUsage', () => {
-  test('returns busy/total cores for valid inputs', () => {
-    expect(formatCpuUsage(28, 8)).toBe('2.2 / 8 cores');
+  test('returns core count for valid inputs', () => {
+    expect(formatCpuUsage(28, 8)).toBe('8 cores');
   });
 
-  test('rounds busy cores to one decimal', () => {
-    expect(formatCpuUsage(62, 8)).toBe('5.0 / 8 cores');
-  });
-
-  test('preserves saturation above 100%', () => {
-    expect(formatCpuUsage(105, 8)).toBe('8.4 / 8 cores');
+  test('returns same core count regardless of cpu percent', () => {
+    expect(formatCpuUsage(62, 8)).toBe('8 cores');
+    expect(formatCpuUsage(105, 8)).toBe('8 cores');
   });
 
   test('returns null when cpu_percent is null', () => {
