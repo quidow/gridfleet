@@ -154,22 +154,10 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
 
 
 @pytest.mark.db
-async def test_sweep_reconciles_affected_device_only(
-    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+async def test_sweep_returns_affected_device_only(
+    db_session: AsyncSession,
+    db_host: Host,
 ) -> None:
-    from app.devices.services import intent_preconditions as module
-
-    reconciled: list[uuid.UUID] = []
-
-    async def fake_reconcile(db: AsyncSession, device_id: uuid.UUID) -> None:
-        reconciled.append(device_id)
-
-    async def fake_deliver(db: AsyncSession, device_id: uuid.UUID, *, limit: int = 5) -> None:
-        return None
-
-    monkeypatch.setattr(module, "reconcile_device", fake_reconcile)
-    monkeypatch.setattr(module, "deliver_agent_reconfigures", fake_deliver)
-
     device_a = await create_device(db_session, host_id=db_host.id, name="sweep-a")
     device_b = await create_device(db_session, host_id=db_host.id, name="sweep-b")
     await _seed_node(db_session, device_a.id)
@@ -191,9 +179,9 @@ async def test_sweep_reconciles_affected_device_only(
     run.state = RunState.completed
     await db_session.commit()
 
-    await reconcile_unsatisfied_preconditions(db_session)
+    affected = await reconcile_unsatisfied_preconditions(db_session)
     await db_session.commit()
-    assert reconciled == [device_a.id]
+    assert affected == {device_a.id}
 
 
 @pytest.mark.db
