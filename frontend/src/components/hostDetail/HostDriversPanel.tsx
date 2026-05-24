@@ -89,9 +89,12 @@ export function HostDriversPanel({ hostId }: Props) {
     mutationFn: (packId: string) => triggerDriverDoctor(hostId, packId),
     onSuccess: (results, packId) => {
       queryClient.invalidateQueries({ queryKey: ['host-driver-packs', hostId] });
-      if (results.length === 0) {
-        setUnsupportedPacks((prev) => new Set(prev).add(packId));
-      }
+      setUnsupportedPacks((prev) => {
+        const next = new Set(prev);
+        if (results.length === 0) next.add(packId);
+        else next.delete(packId);
+        return next;
+      });
     },
     onError: (err: Error) => {
       toast.error(`Doctor check failed: ${err.message}`);
