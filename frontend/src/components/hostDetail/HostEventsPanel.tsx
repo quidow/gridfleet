@@ -6,9 +6,7 @@ import { TextField } from '../ui/TextField';
 import { Button } from '../ui/Button';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
-import type { components } from '../../api/openapi';
-
-type HostEventEntry = components['schemas']['HostEventEntry'];
+import type { HostEventEntry } from '../../types';
 type RangeKey = '1h' | '6h' | '24h' | '7d';
 
 interface Props {

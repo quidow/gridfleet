@@ -1,20 +1,19 @@
 import api from './client';
-import type { components } from './openapi';
 import type {
+  AgentLogPage,
   DiscoveryConfirm,
   DiscoveryConfirmResult,
   DiscoveryResult,
   HostCreate,
   HostDetail,
+  HostEventsPage,
   HostResourceTelemetry,
   HostRead,
   HostDiagnostics,
+  HostToolEnvRead,
   HostToolStatus,
   IntakeCandidate,
 } from '../types';
-
-export type AgentLogPage = components['schemas']['AgentLogPage'];
-export type HostEventsPage = components['schemas']['HostEventsPage'];
 
 export interface AgentLogQuery {
   level?: 'INFO' | 'WARNING' | 'ERROR';
@@ -117,8 +116,6 @@ export async function approveHost(id: string): Promise<HostRead> {
 export async function rejectHost(id: string): Promise<void> {
   await api.post(`/hosts/${id}/reject`);
 }
-
-type HostToolEnvRead = components['schemas']['HostToolEnvRead'];
 
 export async function fetchHostToolEnv(id: string): Promise<HostToolEnvRead> {
   const { data } = await api.get(`/hosts/${id}/tool-env`);

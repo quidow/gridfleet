@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
-import type { components } from '../../api/openapi';
+import type { FleetCapacityTimelinePoint } from '../../types';
 
 const BUCKET_MINUTES = 60;
 const VIEW_W = 600;
@@ -9,7 +9,6 @@ const PAD_TOP = 6;
 const PAD_BOT = 6;
 
 type Tone = 'healthy' | 'warn' | 'critical';
-type SeriesPoint = components['schemas']['FleetCapacityTimelinePoint'];
 
 interface LiveFleetHealthPoint {
   devices_total: number;
@@ -48,7 +47,7 @@ function linePath(points: { x: number; y: number }[]): string {
   ].join(' ');
 }
 
-function seriesPct(point: SeriesPoint): number | null {
+function seriesPct(point: FleetCapacityTimelinePoint): number | null {
   if (!point.has_data) return null;
   if (!point.devices_total) return 0;
   const reachable = Math.max(0, point.devices_total - point.devices_offline - point.devices_maintenance);

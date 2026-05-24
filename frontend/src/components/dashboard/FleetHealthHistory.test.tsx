@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FleetHealthHistory } from './FleetHealthHistory';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
-import type { components } from '../../api/openapi';
+import type { FleetCapacityTimelinePoint } from '../../types';
 
 vi.mock('../../hooks/useAnalytics', () => ({
   useFleetCapacityTimeline: vi.fn(),
@@ -11,9 +11,7 @@ vi.mock('../../hooks/useAnalytics', () => ({
 
 const mockedHook = vi.mocked(useFleetCapacityTimeline);
 
-type SeriesPoint = components['schemas']['FleetCapacityTimelinePoint'];
-
-function makePoint(overrides: Partial<SeriesPoint> = {}): SeriesPoint {
+function makePoint(overrides: Partial<FleetCapacityTimelinePoint> = {}): FleetCapacityTimelinePoint {
   return {
     timestamp: '2026-04-18T10:00:00Z',
     total_capacity_slots: 0,
