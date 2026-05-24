@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.19.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.19.0...gridfleet-agent-v0.19.1) (2026-05-24)
+
+
+### Bug Fixes
+
+* **agent:** await adapter tool_versions through IsolatedAdapter wrapper ([#379](https://github.com/quidow/gridfleet/issues/379)) ([dc11a1d](https://github.com/quidow/gridfleet/commit/dc11a1d820faa569bebbb06cad26fbf5f27d897c))
+
 ## [0.19.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.18.1...gridfleet-agent-v0.19.0) (2026-05-24)
 
 
