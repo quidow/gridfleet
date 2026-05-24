@@ -45,7 +45,7 @@ function IdleCell({ title }: { title: string }) {
 
 function ActiveRunsList({ runs }: { runs: RunRead[] }) {
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border bg-surface-1">
+    <Card padding="none"><ul className="divide-y divide-border">
       {runs.slice(0, 5).map((run) => {
         const deviceCount = run.reserved_devices?.length ?? 0;
         const startedAt = run.started_at ?? run.created_at;
@@ -66,7 +66,7 @@ function ActiveRunsList({ runs }: { runs: RunRead[] }) {
           </li>
         );
       })}
-    </ul>
+    </ul></Card>
   );
 }
 
@@ -83,7 +83,7 @@ function availabilityTone(status: DeviceChipStatus) {
 
 function BusyDevicesList({ devices }: { devices: DeviceRead[] }) {
   return (
-    <ul className="divide-y divide-border rounded-lg border border-border bg-surface-1">
+    <Card padding="none"><ul className="divide-y divide-border">
       {devices.slice(0, 6).map((device) => (
         (() => {
           const status = deviceChipStatus(device);
@@ -100,7 +100,7 @@ function BusyDevicesList({ devices }: { devices: DeviceRead[] }) {
           );
         })()
       ))}
-    </ul>
+    </ul></Card>
   );
 }
 

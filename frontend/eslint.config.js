@@ -51,8 +51,6 @@ export default defineConfig([
       'src/components/ui/**/*.{ts,tsx}',
       // Pending Card-primitive migration:
       'src/components/SettingsSection.tsx',
-      'src/components/analytics/FleetCapacityTab.tsx',
-      'src/components/dashboard/OperationsSection.tsx',
       'src/components/settings/WebhookRegistryPanel.tsx',
       'src/pages/Devices.tsx',
     ],
