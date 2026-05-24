@@ -86,9 +86,11 @@ export function HostOverviewResourceStrip({
   const latest = data ? pickLatestSample(data.samples) : null;
 
   return (
-    <Card padding="none" className="p-5" aria-label="Host resource usage">
-      <h2 className="mb-3 text-sm font-medium text-text-3">Resource Usage</h2>
-      <div className="flex flex-col gap-4 sm:flex-row sm:gap-6">
+    <Card padding="none" aria-label="Host resource usage">
+      <div className="border-b border-border px-5 py-4">
+        <h2 className="text-sm font-medium text-text-2">Resource Usage</h2>
+      </div>
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:gap-6">
         <Gauge
           label="CPU"
           percent={latest?.cpu_percent ?? null}
@@ -106,8 +108,8 @@ export function HostOverviewResourceStrip({
         />
       </div>
       {!latest ? (
-        <p className="mt-3 text-xs text-text-3">
-          No telemetry samples yet. See Diagnostics tab for history.
+        <p className="px-5 pb-4 text-xs text-text-3">
+          No telemetry samples yet.
         </p>
       ) : null}
     </Card>

@@ -21,6 +21,10 @@ vi.mock('../../hooks/useHosts', () => ({
     isLoading: false,
     error: null,
   }),
+  useHostDiagnostics: () => ({
+    data: null,
+    isLoading: false,
+  }),
 }));
 
 vi.mock('../hosts/hostPresentation', async () => {
@@ -63,10 +67,8 @@ function renderOverview() {
         host={host}
         approvePending={false}
         rejectPending={false}
-        discoverPending={false}
         onApprove={() => undefined}
         onReject={() => undefined}
-        onDiscover={() => undefined}
       />
     </QueryClientProvider>,
   );

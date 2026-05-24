@@ -1,37 +1,67 @@
+import { Suspense, lazy } from 'react';
 import { formatHostTimestamp } from '../hosts/hostFormatting';
 import { HostActionButtons, HostAgentVersionNotice } from '../hosts/hostPresentation';
 import type { HostRead } from '../../types';
+import { useHostDiagnostics } from '../../hooks/useHosts';
 import { DefinitionList } from '../ui/DefinitionList';
 import { Card } from '../ui/Card';
 import { HostOverviewResourceStrip } from './HostOverviewResourceStrip';
 import { HostToolVersionsPanel } from './HostToolVersionsPanel';
-import { HostToolEnvPanel } from './HostToolEnvPanel';
+import { HostCircuitBreakerCard } from './HostCircuitBreakerCard';
 import { EMPTY_GLYPH } from '../../utils/emptyValue';
+
+const HostResourceTelemetryPanel = lazy(() =>
+  import('./HostResourceTelemetryPanel').then((m) => ({ default: m.HostResourceTelemetryPanel })),
+);
 
 type Props = {
   host: HostRead;
   approvePending: boolean;
   rejectPending: boolean;
-  discoverPending: boolean;
   onApprove: () => void;
   onReject: () => void;
-  onDiscover: () => void;
 };
 
 export function HostOverviewPanel({
   host,
   approvePending,
   rejectPending,
-  discoverPending,
   onApprove,
   onReject,
-  onDiscover,
 }: Props) {
+  const hostOnline = host.status === 'online';
+  const { data: diagnostics } = useHostDiagnostics(host.id);
+  const isPending = host.status === 'pending';
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {isPending && (
         <Card padding="none" className="p-5">
-          <h2 className="mb-4 text-sm font-medium text-text-3">Host Info</h2>
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium text-text-3">Actions</h2>
+            <span className="text-xs text-text-3">Host-scoped</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <HostActionButtons
+              status={host.status}
+              variant="detail"
+              onApprove={onApprove}
+              onReject={onReject}
+              onDiscover={() => {}}
+              approvePending={approvePending}
+              rejectPending={rejectPending}
+            />
+          </div>
+        </Card>
+      )}
+
+      {/* Tier 1: Identity & Health */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card padding="none">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-medium text-text-2">Host Info</h2>
+          </div>
+          <div className="p-5">
           <DefinitionList
             layout="justified"
             items={[
@@ -55,6 +85,7 @@ export function HostOverviewPanel({
             recommendedVersion={host.recommended_agent_version}
             updateAvailable={host.agent_update_available}
           />
+          </div>
         </Card>
 
         <div className="flex flex-col gap-6">
@@ -64,32 +95,27 @@ export function HostOverviewPanel({
             totalMemoryMb={host.total_memory_mb ?? null}
             totalDiskGb={host.total_disk_gb ?? null}
           />
-          <Card padding="none" className="p-5">
-            <div className="mb-3 flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-text-3">Actions</h2>
-              <span className="text-xs text-text-3">Host-scoped</span>
-            </div>
-            <p className="mb-3 text-xs text-text-3">
-              Discovery only checks devices visible to this agent.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <HostActionButtons
-                status={host.status}
-                variant="detail"
-                onApprove={onApprove}
-                onReject={onReject}
-                onDiscover={onDiscover}
-                approvePending={approvePending}
-                rejectPending={rejectPending}
-                discoverPending={discoverPending}
-              />
-            </div>
-          </Card>
+          {diagnostics ? (
+            <HostCircuitBreakerCard breaker={diagnostics.circuit_breaker} />
+          ) : (
+            <Card padding="none">
+              <div className="border-b border-border px-5 py-4">
+                <h2 className="text-sm font-medium text-text-2">Circuit Breaker</h2>
+              </div>
+              <p className="p-5 text-sm text-text-3">Loading...</p>
+            </Card>
+          )}
         </div>
       </div>
 
+      {/* Tier 2: Tool Versions */}
       <HostToolVersionsPanel host={host} />
-      <HostToolEnvPanel hostId={host.id} />
+
+      {/* Tier 3: Resource Monitoring */}
+      <Suspense fallback={<div className="h-48 animate-pulse rounded-md border border-border bg-surface-1" />}>
+        <HostResourceTelemetryPanel hostId={host.id} hostOnline={hostOnline} />
+      </Suspense>
+
     </div>
   );
 }
