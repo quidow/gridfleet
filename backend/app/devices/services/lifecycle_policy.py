@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+
+from tenacity import AsyncRetrying, RetryError, retry_if_result, stop_after_attempt, wait_fixed, wait_random
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
@@ -187,6 +188,26 @@ async def clear_pending_auto_stop_on_recovery(
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
+
+
+async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any]:
+    last_result: dict[str, Any] = {}
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max(1, RECOVERY_PROBE_ATTEMPTS)),
+            wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, 2),
+            retry=retry_if_result(lambda value: value.get("status") != "passed"),
+        ):
+            with attempt:
+                reloaded = await _reload_device(db, device)
+                last_result = await session_viability.run_session_viability_probe(
+                    db, reloaded, checked_by=SessionViabilityCheckedBy.recovery
+                )
+            if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
+                attempt.retry_state.set_result(last_result)
+    except RetryError:
+        pass
+    return last_result
 
 
 async def handle_health_failure(
@@ -634,16 +655,7 @@ async def attempt_auto_recovery(
                 device.id,
             )
 
-    result: dict[str, Any] = {}
-    for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):
-        device = await _reload_device(db, device)
-        result = await session_viability.run_session_viability_probe(
-            db, device, checked_by=SessionViabilityCheckedBy.recovery
-        )
-        if result.get("status") == "passed":
-            break
-        if attempt + 1 < RECOVERY_PROBE_ATTEMPTS:
-            await asyncio.sleep(RECOVERY_PROBE_RETRY_DELAY_SEC)
+    result = await _run_recovery_probe(db, device)
 
     if result.get("status") != "passed":
         failure_reason = result.get("error") or "Recovery viability probe failed"
