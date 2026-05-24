@@ -1,0 +1,153 @@
+import { useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
+import { useHostToolEnv, useUpdateHostToolEnv } from '../../hooks/useHostToolEnv';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+
+type Props = {
+  hostId: string;
+};
+
+type EnvRow = {
+  key: string;
+  value: string;
+};
+
+function envRecordToRows(record: Record<string, string>): EnvRow[] {
+  return Object.entries(record).map(([key, value]) => ({ key, value }));
+}
+
+function rowsToEnvRecord(rows: EnvRow[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    const trimmed = row.key.trim();
+    if (trimmed) {
+      result[trimmed] = row.value;
+    }
+  }
+  return result;
+}
+
+export function HostToolEnvPanel({ hostId }: Props) {
+  const { data: envData, isLoading } = useHostToolEnv(hostId);
+  const updateMutation = useUpdateHostToolEnv(hostId);
+
+  // Sync server data into local edit state using the derived-state pattern:
+  // store the last seen server snapshot in state alongside the edit rows so
+  // we can reset rows whenever the server data changes (e.g. after refetch).
+  const [syncedData, setSyncedData] = useState<Record<string, string> | undefined>(undefined);
+  const [rows, setRows] = useState<EnvRow[]>([]);
+  const [dirty, setDirty] = useState(false);
+
+  if (envData !== undefined && envData !== syncedData) {
+    setSyncedData(envData);
+    setRows(envRecordToRows(envData));
+    setDirty(false);
+  }
+
+  function handleKeyChange(index: number, newKey: string) {
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, key: newKey } : row)));
+    setDirty(true);
+  }
+
+  function handleValueChange(index: number, newValue: string) {
+    setRows((prev) => prev.map((row, i) => (i === index ? { ...row, value: newValue } : row)));
+    setDirty(true);
+  }
+
+  function handleAddRow() {
+    setRows((prev) => [...prev, { key: '', value: '' }]);
+    setDirty(true);
+  }
+
+  function handleDeleteRow(index: number) {
+    setRows((prev) => prev.filter((_, i) => i !== index));
+    setDirty(true);
+  }
+
+  function handleSave() {
+    updateMutation.mutate(rowsToEnvRecord(rows), {
+      onSuccess: () => {
+        setDirty(false);
+      },
+    });
+  }
+
+  return (
+    <Card padding="none">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4">
+        <h2 className="text-sm font-medium text-text-2">Tool Environment Variables</h2>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" leadingIcon={<Plus size={14} />} onClick={handleAddRow}>
+            Add Variable
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleSave}
+            disabled={!dirty}
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <p className="px-5 py-8 text-center text-sm text-text-3">Loading environment variables...</p>
+      ) : rows.length === 0 ? (
+        <div className="px-5 py-8 text-center">
+          <p className="text-sm text-text-2">No tool environment variables configured.</p>
+          <p className="mt-1 text-xs text-text-3">
+            Add variables like <span className="font-mono">ANDROID_HOME</span> to override the environment for Appium
+            subprocesses on this host.
+          </p>
+        </div>
+      ) : (
+        <div>
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-0 border-b border-border px-5 py-2">
+            <span className="text-xs font-medium uppercase text-text-3">Name</span>
+            <span className="text-xs font-medium uppercase text-text-3">Value</span>
+            <span className="w-8" />
+          </div>
+          <div className="divide-y divide-border">
+            {rows.map((row, index) => (
+              <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 px-5 py-2">
+                <input
+                  type="text"
+                  value={row.key}
+                  onChange={(e) => handleKeyChange(index, e.target.value)}
+                  placeholder="VARIABLE_NAME"
+                  className="w-full rounded border border-border bg-surface-2 px-2 py-1.5 font-mono text-sm text-text-1 placeholder-text-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  spellCheck={false}
+                />
+                <input
+                  type="text"
+                  value={row.value}
+                  onChange={(e) => handleValueChange(index, e.target.value)}
+                  placeholder="/path/to/value"
+                  className="w-full rounded border border-border bg-surface-2 px-2 py-1.5 font-mono text-sm text-text-1 placeholder-text-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleDeleteRow(index)}
+                  aria-label="Remove variable"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-2 hover:text-danger-foreground"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {updateMutation.isError ? (
+        <p className="border-t border-border px-5 py-3 text-sm text-danger-foreground">
+          Failed to save environment variables. Please try again.
+        </p>
+      ) : null}
+    </Card>
+  );
+}
