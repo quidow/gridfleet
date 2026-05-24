@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useHostToolEnv, useUpdateHostToolEnv } from '../../hooks/useHostToolEnv';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { FetchError } from '../ui/FetchError';
 
 type Props = {
   hostId: string;
@@ -30,7 +31,7 @@ function rowsToEnvRecord(rows: EnvRow[]): Record<string, string> {
 }
 
 export function HostToolEnvPanel({ hostId }: Props) {
-  const { data: rawData, isLoading, isError } = useHostToolEnv(hostId);
+  const { data: rawData, isLoading, isError, refetch } = useHostToolEnv(hostId);
   const envData = rawData?.env;
   const updateMutation = useUpdateHostToolEnv(hostId);
 
@@ -93,7 +94,9 @@ export function HostToolEnvPanel({ hostId }: Props) {
       </div>
 
       {isError ? (
-        <p className="px-5 py-8 text-center text-sm text-danger-foreground">Failed to load environment variables.</p>
+        <div className="px-5 py-4">
+          <FetchError message="Failed to load environment variables." onRetry={() => refetch()} />
+        </div>
       ) : isLoading ? (
         <p className="px-5 py-8 text-center text-sm text-text-3">Loading environment variables...</p>
       ) : rows.length === 0 ? (
