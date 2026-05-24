@@ -108,6 +108,13 @@ class PackStateLoop:
                 plugins=tuple((p.name, p.version, p.source, p.package) for p in parsed.plugins),
             )
 
+        prev_runtime_ids: dict[str, str] = {}
+        if self.runtime_registry is not None:
+            for pack in parsed.packs:
+                existing_env = self.runtime_registry.get_for_pack(pack.id)
+                if existing_env is not None:
+                    prev_runtime_ids[pack.id] = existing_env.runtime_id
+
         try:
             env_by_pack, errors_by_pack = await self.runtime_mgr.reconcile(desired_by_pack)
         except Exception:
@@ -170,6 +177,9 @@ class PackStateLoop:
 
             if self.runtime_registry is not None:
                 self.runtime_registry.set_for_pack(pack.id, env)
+                runtime_changed = env.runtime_id != prev_runtime_ids.get(pack_id)
+                if runtime_changed:
+                    doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
 
             if (
                 self.adapter_loader is not None
@@ -222,8 +232,6 @@ class PackStateLoop:
                                     "message": f"sidecar start failed: {exc}",
                                 }
                             )
-
-            doctor_entries.extend(await self._doctor_entries_for_pack(pack, host_id=host_id))
 
             pack_entries.append(
                 {

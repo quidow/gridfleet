@@ -1,5 +1,5 @@
 import api from './client';
-import type { DriverPack, HostDriverPacksStatus } from '../types/driverPacks';
+import type { DriverPack, HostDriverPacksStatus, HostPackDoctorStatus } from '../types/driverPacks';
 
 export async function fetchDriverPackCatalog(): Promise<DriverPack[]> {
   const { data } = await api.get<{ packs: DriverPack[] }>('/driver-packs/catalog');
@@ -16,5 +16,15 @@ export async function setDriverPackState(
 
 export async function fetchHostDriverPacks(hostId: string): Promise<HostDriverPacksStatus> {
   const { data } = await api.get<HostDriverPacksStatus>(`/hosts/${hostId}/driver-packs`);
+  return data;
+}
+
+export async function triggerDriverDoctor(
+  hostId: string,
+  packId: string,
+): Promise<HostPackDoctorStatus[]> {
+  const { data } = await api.post<HostPackDoctorStatus[]>(
+    `/hosts/${hostId}/driver-packs/${packId}/doctor`,
+  );
   return data;
 }

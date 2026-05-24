@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query, status
 
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
-from agent_app.pack.adapter_dispatch import dispatch_feature_action
+from agent_app.pack.adapter_dispatch import dispatch_doctor, dispatch_feature_action
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
     DesiredPlatformDep,
@@ -32,8 +33,11 @@ from agent_app.pack.schemas import (
     PackDevicePropertiesResponse,
     PackDevicesResponse,
     PackDeviceTelemetryResponse,
+    PackDoctorResponse,
     _FeatureActionContext,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
@@ -291,3 +295,38 @@ async def normalize_device_route(
             message=f"No adapter loaded for pack {req.pack_id!r}",
         )
     return result
+
+
+class _DoctorCtx:
+    """Concrete DoctorContext for the doctor route."""
+
+    __slots__ = ("host_id",)
+
+    def __init__(self, host_id: str) -> None:
+        self.host_id = host_id
+
+
+@router.post(
+    "/{pack_id}/doctor",
+    response_model=PackDoctorResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Run doctor checks for a specific driver pack",
+)
+async def pack_doctor_route(
+    pack_id: str,
+    adapter_registry: OptionalAdapterRegistryDep,
+    host_id: HostIdDep,
+) -> dict[str, Any]:
+    adapter = adapter_registry.get_current(pack_id) if adapter_registry is not None else None
+    if adapter is None:
+        return {"checks": []}
+    try:
+        results = await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id))
+    except Exception as exc:
+        safe_id = pack_id.replace("\n", "").replace("\r", "")[:64]
+        logger.exception("adapter doctor failed for pack %s", safe_id)
+        msg = f"adapter doctor failed: {type(exc).__name__}"
+        return {"checks": [{"check_id": "adapter_doctor", "ok": False, "message": msg}]}
+    return {
+        "checks": [{"check_id": r.check_id, "ok": r.ok, "message": r.message} for r in results],
+    }
