@@ -8,6 +8,7 @@ import { Badge, Button, PageHeader, Tabs, useTabParam } from '../components/ui';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import {
   useDeleteDriverPack,
+  useDeleteRelease,
   useDriverDetail,
   useDriverReleases,
   useSetDriverPackCurrentRelease,
@@ -73,14 +74,20 @@ function ManifestPanel({ pack }: { pack: DriverPack }) {
 function ReleasesPanel({ packId }: { packId: string }) {
   const { data, isLoading } = useDriverReleases(packId);
   const setCurrentRelease = useSetDriverPackCurrentRelease();
+  const deleteMutation = useDeleteRelease();
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   if (isLoading) return <LoadingSpinner />;
+
+  const releases = data?.releases ?? [];
+  const isSoleRelease = releases.length <= 1;
 
   return (
     <Card padding="md">
       <h2 className="mb-3 text-sm font-semibold text-text-1">Uploaded Releases</h2>
       <div className="divide-y divide-border">
-        {(data?.releases ?? []).map((release) => (
+        {releases.map((release) => (
           <div key={release.release} className="flex flex-wrap items-center justify-between gap-3 py-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -92,17 +99,60 @@ function ReleasesPanel({ packId }: { packId: string }) {
                 {release.artifact_sha256 && <span className="font-mono">{release.artifact_sha256.slice(0, 12)}</span>}
               </div>
             </div>
-            <Button
-              size="sm"
-              variant={release.is_current ? 'secondary' : 'primary'}
-              disabled={release.is_current || setCurrentRelease.isPending}
-              onClick={() => setCurrentRelease.mutate({ packId, release: release.release })}
-            >
-              {release.is_current ? 'Current' : `Switch to ${release.release}`}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={release.is_current ? 'secondary' : 'primary'}
+                disabled={release.is_current || setCurrentRelease.isPending}
+                onClick={() => setCurrentRelease.mutate({ packId, release: release.release })}
+              >
+                {release.is_current ? 'Current' : `Switch to ${release.release}`}
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={release.is_current || isSoleRelease || deleteMutation.isPending}
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteTarget(release.release);
+                }}
+              >
+                Delete
+              </Button>
+            </div>
           </div>
         ))}
       </div>
+
+      {deleteError !== null && (
+        <p role="alert" className="mt-3 rounded border border-danger-foreground bg-danger-soft px-3 py-2 text-sm text-danger-foreground">
+          {deleteError}
+        </p>
+      )}
+
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteMutation.mutate(
+            { packId, release: deleteTarget },
+            {
+              onSuccess: () => setDeleteTarget(null),
+              onError: (err: unknown) => {
+                setDeleteTarget(null);
+                setDeleteError(
+                  err instanceof Error ? err.message : 'Failed to delete release.',
+                );
+              },
+            },
+          );
+        }}
+        title="Delete Release"
+        message={`Delete release ${deleteTarget}? This removes the stored tarball artifact. Releases installed on hosts or referenced by devices with unique platforms cannot be deleted.`}
+        confirmLabel="Delete"
+        variant="danger"
+      />
     </Card>
   );
 }
