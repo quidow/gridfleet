@@ -255,6 +255,15 @@ class DoctorCheck(BaseModel):
     adapter_hook: str | None = None
 
 
+class ToolDependency(BaseModel):
+    """A host tool required by this driver pack."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str
+
+
 class Requires(BaseModel):
     """Version requirements for runtime dependencies."""
 
@@ -263,6 +272,7 @@ class Requires(BaseModel):
     gridfleet: str | None = None
     node: str | None = None
     host_os: list[Literal["linux", "macos"]] = Field(default_factory=list)
+    tool_dependencies: list[ToolDependency] = Field(default_factory=list)
 
 
 class WorkaroundAppliesWhen(BaseModel):
