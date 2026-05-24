@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, MinusCircle, ChevronDown, ChevronRight, Activity, Loader2 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverPacks';
 import { triggerDriverDoctor } from '../../api/driverPacks';
 import { DataTable } from '../ui';
@@ -88,6 +89,9 @@ export function HostDriversPanel({ hostId }: Props) {
     mutationFn: (packId: string) => triggerDriverDoctor(hostId, packId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['host-driver-packs', hostId] });
+    },
+    onError: (err: Error) => {
+      toast.error(`Doctor check failed: ${err.message}`);
     },
   });
 

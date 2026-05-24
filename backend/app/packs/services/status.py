@@ -37,7 +37,7 @@ async def persist_doctor_results(
         session.add(
             HostPackDoctorResult(
                 host_id=host_id,
-                pack_id=d.get("pack_id", pack_id),
+                pack_id=pack_id,
                 check_id=d["check_id"],
                 ok=d["ok"],
                 message=d.get("message", ""),
