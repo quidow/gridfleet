@@ -252,7 +252,7 @@ export function DeviceGroupDetail() {
                     return next;
                   });
                 }}
-                className="cursor-pointer rounded px-3 py-2 hover:bg-surface-2"
+                className="rounded px-3 py-2 hover:bg-surface-2"
                 label={device.name}
                 description={`${resolvePlatformLabel(device.platform_id, device.platform_label)} - ${device.os_version}`}
               />
