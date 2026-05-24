@@ -30,7 +30,7 @@ describe('DashboardHeader', () => {
 
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByText(/Fleet overview/)).toBeInTheDocument();
-    expect(screen.getAllByTestId('system-health-pill')).toHaveLength(3);
+    expect(screen.getAllByLabelText(/^(Stream|DB|Grid) /)).toHaveLength(3);
     expect(screen.getByText('Stream')).toBeInTheDocument();
     expect(screen.getByText('DB')).toBeInTheDocument();
     expect(screen.getByText('Grid')).toBeInTheDocument();
