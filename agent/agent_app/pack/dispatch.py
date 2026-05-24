@@ -91,7 +91,10 @@ def _adapter_health_payload(results: list[HealthCheckResult]) -> dict[str, Any]:
 
 
 def _adapter_lifecycle_payload(result: LifecycleActionResult) -> dict[str, Any]:
-    return {"success": result.ok, "state": result.state, "detail": result.detail}
+    payload: dict[str, Any] = {"success": result.ok, "state": result.state, "detail": result.detail}
+    if result.resolved_connection_target is not None:
+        payload["resolved_connection_target"] = result.resolved_connection_target
+    return payload
 
 
 async def adapter_health_check(
