@@ -67,16 +67,16 @@ def test_subprocess_env_no_adb_found() -> None:
 def test_tool_versions_returns_adb_version() -> None:
     from unittest.mock import patch
 
+    adb_result = type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\nRevision 1234", "returncode": 0, "stderr": ""})()
+
     with (
         patch("adapter.tools.find_adb", return_value="/opt/android/platform-tools/adb"),
-        patch(
-            "subprocess.run",
-            return_value=type("R", (), {"stdout": "Android Debug Bridge version 1.0.41\nRevision 1234", "returncode": 0, "stderr": ""})(),
-        ),
+        patch("subprocess.run", side_effect=[adb_result, FileNotFoundError()]),
     ):
         result = Adapter().tool_versions()
 
     assert result["adb"] == "1.0.41"
+    assert result["java"] is None
 
 
 @pytest.mark.asyncio

@@ -62,17 +62,11 @@ export function HostToolVersionsPanel({ host }: Props) {
         )}
       </Card>
 
-      <Card padding="none">
-        <div className="border-b border-border px-5 py-4">
-          <h2 className="text-sm font-medium text-text-2">Driver Pack Dependencies</h2>
-        </div>
-        {!hostOnline ? offlineMessage : toolsLoading ? (
-          <p className="px-5 py-8 text-center text-sm text-text-3">Loading tool versions...</p>
-        ) : !toolStatus ? (
-          <p className="px-5 py-8 text-center text-sm text-text-3">Tool versions are currently unavailable.</p>
-        ) : !hasPackDeps ? (
-          <p className="px-5 py-8 text-center text-sm text-text-3">No driver packs installed.</p>
-        ) : (
+      {hasPackDeps ? (
+        <Card padding="none">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-medium text-text-2">Driver Pack Dependencies</h2>
+          </div>
           <div className="divide-y divide-border">
             {packEntries.map(([packId, tools]) =>
               tools.length > 0 ? (
@@ -89,8 +83,8 @@ export function HostToolVersionsPanel({ host }: Props) {
               ) : null,
             )}
           </div>
-        )}
-      </Card>
+        </Card>
+      ) : null}
     </div>
   );
 }

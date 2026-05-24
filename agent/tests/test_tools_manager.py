@@ -98,6 +98,7 @@ async def test_get_tool_status_with_provider_error() -> None:
         status = await get_tool_status()
 
     assert status["host"]["node_provider"]["version"] is None
+    assert status["host"]["node_provider"]["description"] == "node_not_configured"
 
 
 async def test_get_tool_status_structured_response() -> None:

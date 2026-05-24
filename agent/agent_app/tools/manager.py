@@ -253,16 +253,16 @@ async def get_tool_status(
         "node_provider": {
             "name": "node_provider",
             "version": provider.name if provider and not provider.error else None,
-            "description": "Node.js version manager",
+            "description": provider.error if provider and provider.error else "Node.js version manager",
         },
     }
 
     packs: dict[str, list[dict[str, Any]]] = {}
-    if adapter_registry is not None and desired_packs:
+    if desired_packs:
         for pack in desired_packs:
             if not pack.tool_dependencies:
                 continue
-            adapter = adapter_registry.get_current(pack.id)
+            adapter = adapter_registry.get_current(pack.id) if adapter_registry else None
             detected: dict[str, str | None] = {}
             if adapter is not None and hasattr(adapter, "tool_versions"):
                 result = adapter.tool_versions()
