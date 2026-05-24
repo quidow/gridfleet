@@ -49,8 +49,6 @@ export default defineConfig([
     // are tracked migration debt.
     files: [
       'src/components/ui/**/*.{ts,tsx}',
-      // Pending Card-primitive migration:
-      'src/pages/Devices.tsx',
     ],
     rules: {
       'no-restricted-syntax': 'off',
