@@ -111,7 +111,7 @@ async def export_device_diagnostics(
             warnings.append(f"snapshot persistence failed: {exc.__class__.__name__}")
             logger.warning(
                 "Diagnostic snapshot persistence failed for device %s",
-                str(device_id),
+                device.id,
                 exc_info=True,
             )
     await db.commit()

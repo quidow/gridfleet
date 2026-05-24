@@ -85,7 +85,11 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
         reconcile_unsatisfied_preconditions,
     )
 
-    await reconcile_unsatisfied_preconditions(db)
+    precondition_affected = await reconcile_unsatisfied_preconditions(db)
+    for affected_id in sorted(precondition_affected):
+        await reconcile_device(db, affected_id)
+        await db.commit()
+        await deliver_agent_reconfigures(db, affected_id)
     if cycle % full_scan_every == 0:
         await _reconcile_all_devices_once(db)
     else:

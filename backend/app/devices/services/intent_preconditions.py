@@ -5,7 +5,6 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures
 from app.core.observability import get_logger
 from app.devices.models import DeviceEventType, DeviceIntent
 from app.devices.services.event import record_event
@@ -34,8 +33,12 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
     return True
 
 
-async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
-    """Delete intents whose precondition no longer holds, then re-reconcile.
+async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> set[UUID]:
+    """Delete intents whose precondition no longer holds.
+
+    Returns the set of affected device IDs so the caller can re-reconcile
+    and deliver agent reconfigures. This avoids a cyclic import back into
+    ``intent_reconciler``.
 
     The outer SELECT runs without ``FOR UPDATE``, so a concurrent producer
     can upsert the same ``(device_id, source)`` row with a fresh
@@ -59,8 +62,6 @@ async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
         if locked_intent is None:
             continue
         if await is_satisfied(db, locked_intent):
-            # A concurrent producer re-registered this intent with a fresh
-            # precondition that does hold. Do not delete.
             continue
         precondition_kind = (locked_intent.precondition or {}).get("kind") if locked_intent.precondition else None
         await record_event(
@@ -79,15 +80,9 @@ async def reconcile_unsatisfied_preconditions(db: AsyncSession) -> None:
         )
         affected.add(locked_intent.device_id)
         await db.delete(locked_intent)
-    if not affected:
-        return
-    await db.flush()
-    from app.devices.services.intent_reconciler import reconcile_device  # noqa: PLC0415
-
-    for device_id in sorted(affected):
-        await reconcile_device(db, device_id)
-        await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+    if affected:
+        await db.flush()
+    return affected
 
 
 async def _eval_run_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
