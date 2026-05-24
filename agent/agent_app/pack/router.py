@@ -323,7 +323,7 @@ async def pack_doctor_route(
     try:
         results = await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id))
     except Exception as exc:
-        safe_id = pack_id.replace("\n", "").replace("\r", "")
+        safe_id = pack_id.replace("\n", "").replace("\r", "")[:64]
         logger.exception("adapter doctor failed for pack %s", safe_id)
         msg = f"adapter doctor failed: {type(exc).__name__}"
         return {"checks": [{"check_id": "adapter_doctor", "ok": False, "message": msg}]}

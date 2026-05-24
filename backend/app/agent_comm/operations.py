@@ -793,7 +793,10 @@ async def pack_doctor(
         raw = cast("dict[str, Any]", response.json())
     except ValueError as exc:
         raise AgentUnreachableError(host, f"Agent pack doctor failed on host {host} (invalid JSON payload)") from exc
-    return list(raw.get("checks", []))
+    checks = raw.get("checks", [])
+    if not isinstance(checks, list):
+        raise AgentUnreachableError(host, f"Agent pack doctor failed on host {host} (invalid checks payload)")
+    return checks
 
 
 def response_json_dict(response: httpx.Response) -> dict[str, Any]:
