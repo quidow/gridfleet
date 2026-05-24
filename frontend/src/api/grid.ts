@@ -1,8 +1,13 @@
 import api from './client';
-import type { GridStatus, HealthStatus } from '../types';
+import type { GridQueueRead, GridStatus, HealthStatus } from '../types';
 
 export async function fetchGridStatus(): Promise<GridStatus> {
   const { data } = await api.get('/grid/status');
+  return data;
+}
+
+export async function fetchGridQueue(): Promise<GridQueueRead> {
+  const { data } = await api.get('/grid/queue');
   return data;
 }
 

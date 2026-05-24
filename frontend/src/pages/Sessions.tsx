@@ -13,11 +13,13 @@ import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Select } from '../components/ui/Select';
 import { DateInput } from '../components/ui/DateInput';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
+import { QueuedRequestsCard } from '../components/sessions/QueuedRequestsCard';
 import type { SessionDetail, SessionSortKey, SessionStatus } from '../types';
 import { SESSION_STATUS_LABELS, resolvePlatformLabel } from '../lib/labels';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { dateOnlyToEndOfDayIso, dateOnlyToStartOfDayIso } from '../utils/dateFormatting';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
+import { useGridQueue } from '../hooks/useGridQueue';
 
 const SESSION_STATUSES: SessionStatus[] = ['running', 'passed', 'failed', 'error'];
 
@@ -51,6 +53,7 @@ function SessionsTableSection() {
   const includeProbes = searchParams.get('include_probes') === '1';
 
   const { data: devices } = useDevices();
+  const { data: queue } = useGridQueue();
   const { data: catalog = [] } = useDriverPackCatalog();
 
   // Build sorted list of unique platform options from catalog
@@ -89,6 +92,7 @@ function SessionsTableSection() {
       />
 
       <div className="fade-in-stagger flex flex-col gap-4">
+        <QueuedRequestsCard requests={queue?.requests ?? []} />
         <FilterBar
           onClear={
             hasFilters

@@ -1,7 +1,8 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRun, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useSessions } from '../hooks/useSessions';
+import { useGridQueue } from '../hooks/useGridQueue';
 import { StatusBadge } from '../components/StatusBadge';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -12,6 +13,7 @@ import { Card } from '../components/ui/Card';
 import { RunActionButtons } from '../components/runs/RunActionButtons';
 import type { DataTableColumn } from '../components/ui/DataTable';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
+import { QueuedRequestsCard } from '../components/sessions/QueuedRequestsCard';
 import type { RunState, SessionDetail, SessionSortKey } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
@@ -138,6 +140,14 @@ export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: run, isLoading } = useRun(id!);
+  const isActive = run ? ACTIVE_RUN_STATES.has(run.state) : false;
+  const { data: queue } = useGridQueue({ enabled: isActive });
+  const runQueuedRequests = useMemo(
+    () => (queue?.requests ?? []).filter(
+      (r) => r.capabilities?.['gridfleet:run_id'] === id,
+    ),
+    [queue, id],
+  );
   usePageTitle(run?.name ?? 'Run');
   const cancelMutation = useCancelRun();
   const forceReleaseMutation = useForceReleaseRun();
@@ -146,8 +156,6 @@ export function RunDetail() {
 
   if (isLoading) return <LoadingSpinner />;
   if (!run) return <p className="text-text-3 text-center mt-12">Run not found</p>;
-
-  const isActive = ACTIVE_RUN_STATES.has(run.state);
   const stateIndex = STATE_ORDER.indexOf(run.state as RunState);
   const isTerminalNonHappy = TERMINAL_NON_HAPPY_STATES.has(run.state as RunState);
 
@@ -235,6 +243,8 @@ export function RunDetail() {
           emptyState={<p className="px-5 py-8 text-sm text-text-3 text-center">No devices reserved</p>}
         />
       </Card>
+
+      {isActive && <QueuedRequestsCard requests={runQueuedRequests} />}
 
       <SectionErrorBoundary scope="run-sessions">
         <RunSessionsCard runId={id!} />

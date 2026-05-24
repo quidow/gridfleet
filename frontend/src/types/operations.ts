@@ -31,6 +31,16 @@ export type GridStatus = Omit<Schemas['GridStatusRead'], 'grid'> & {
   grid: GridRuntimeStatus;
 };
 
+export type GridQueueRequest = {
+  requestId?: string;
+  capabilities?: Record<string, unknown>;
+  requestTimestamp?: string;
+};
+
+export type GridQueueRead = Omit<Schemas['GridQueueRead'], 'requests'> & {
+  requests: GridQueueRequest[];
+};
+
 export type HealthStatus = Omit<Schemas['HealthStatusRead'], 'checks'> & {
   checks?: HealthChecks;
 };
