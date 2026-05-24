@@ -62,9 +62,7 @@ def test_install_dry_run(capsys: pytest.CaptureFixture[str], monkeypatch: pytest
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(
-        cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin", android_home="/opt/android-sdk")
-    )
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin"))
     monkeypatch.setattr(cli, "format_dry_run", lambda config, discovery: "DRY RUN")
     assert cli.main(["install", "--dry-run"]) == 0
     assert capsys.readouterr().out == "DRY RUN\n"
@@ -74,9 +72,7 @@ def test_install_no_start(capsys: pytest.CaptureFixture[str], monkeypatch: pytes
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(
-        cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin", android_home="/opt/android-sdk")
-    )
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin"))
     monkeypatch.setattr(
         cli,
         "install_no_start",
@@ -94,9 +90,7 @@ def test_install_start_with_health_warning(capsys: pytest.CaptureFixture[str], m
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(
-        cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin", android_home="/opt/android-sdk")
-    )
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin"))
     result = InstallResult(
         config_env=Path("/etc/gridfleet-agent/config.env"),
         service_file=Path("/etc/systemd/system/gridfleet-agent.service"),
@@ -114,9 +108,7 @@ def test_install_start_with_registration(capsys: pytest.CaptureFixture[str], mon
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(
-        cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin", android_home="/opt/android-sdk")
-    )
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin"))
     result = InstallResult(
         config_env=Path("/etc/gridfleet-agent/config.env"),
         service_file=Path("/etc/systemd/system/gridfleet-agent.service"),
@@ -141,9 +133,7 @@ def test_install_runtime_error(capsys: pytest.CaptureFixture[str], monkeypatch: 
     monkeypatch.setattr(
         cli, "resolve_operator_identity", lambda: OperatorIdentity(login="root", uid=0, home=Path("/root"))
     )
-    monkeypatch.setattr(
-        cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin", android_home="/opt/android-sdk")
-    )
+    monkeypatch.setattr(cli, "discover_tools", lambda: ToolDiscovery(node_bin_dir="/usr/bin"))
     monkeypatch.setattr(
         cli, "install_no_start", lambda config, discovery, operator: (_ for _ in ()).throw(RuntimeError("disk full"))
     )

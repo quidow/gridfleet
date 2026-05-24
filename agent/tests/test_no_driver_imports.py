@@ -53,11 +53,7 @@ BANNED_IMPORTS: set[tuple[str, str]] = {
     ("agent_app.tools.utils", "find_android_home"),
 }
 
-KNOWN_VIOLATIONS: set[tuple[str, str]] = {
-    # installer/plan.py — Android SDK in service config (audit 1.10)
-    ("agent_app/installer/plan.py", "ANDROID_HOME"),
-    ("agent_app/installer/plan.py", "ANDROID_SDK_ROOT"),
-}
+KNOWN_VIOLATIONS: set[tuple[str, str]] = set()
 
 
 def _is_banned_literal(value: str) -> str | None:
