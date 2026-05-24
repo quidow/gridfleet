@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useApproveHost, useHost, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SetupVerificationModal } from './devices/SetupVerificationModal';
@@ -31,6 +31,11 @@ const TABS = [
 
 const TAB_IDS = TABS.map((t) => t.id);
 
+const LEGACY_TAB_MAP: Record<string, string> = {
+  diagnostics: 'overview',
+  logs: 'agent-logs',
+};
+
 export function HostDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: host, isLoading, dataUpdatedAt } = useHost(id!);
@@ -38,6 +43,14 @@ export function HostDetail() {
   const approveMut = useApproveHost();
   const rejectMut = useRejectHost();
   const discoveryFlow = useHostDiscoveryFlow(id ?? null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const legacyTab = searchParams.get('tab');
+  if (legacyTab && legacyTab in LEGACY_TAB_MAP) {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', LEGACY_TAB_MAP[legacyTab]);
+    next.delete('logs_tab');
+    setSearchParams(next, { replace: true });
+  }
   const [tab, setTab] = useTabParam('tab', TAB_IDS as unknown as string[], 'overview');
 
   if (isLoading) {

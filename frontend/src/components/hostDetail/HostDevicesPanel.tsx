@@ -178,7 +178,7 @@ export function HostDevicesPanel({ host, onDiscover, discoverPending }: Props) {
       <DataTable<DeviceRow>
         columns={HOST_DEVICE_COLUMNS}
         rows={rows}
-        rowKey={(r) => r.kind === 'device' ? r.device.id : `unmapped-${r.node.port}-${r.node.connection_target ?? 'process'}`}
+        rowKey={(r) => r.kind === 'device' ? r.device.id : `unmapped-${r.node.port}-${r.node.pid ?? 'nopid'}-${r.node.connection_target ?? 'process'}`}
         emptyState={<p className="px-5 py-8 text-center text-sm text-text-3">No devices on this host.</p>}
       />
     </Card>
