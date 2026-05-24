@@ -947,12 +947,6 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("caps")),
     )
-    monkeypatch.setattr(
-        session_viability,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.available),
-    )
-
     with pytest.raises(RuntimeError, match="caps"):
         await run_session_viability_probe(
             db_session,
@@ -1009,12 +1003,6 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("caps")),
     )
-    monkeypatch.setattr(
-        session_viability,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.available),
-    )
-
     with pytest.raises(RuntimeError, match="caps"):
         await run_session_viability_probe(
             db_session,

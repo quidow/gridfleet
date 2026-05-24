@@ -67,14 +67,13 @@ class _FakeAdapterRegistry:
 
 class _RaisingStartSidecarSupervisor:
     async def start(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
-        del pack_id, release, feature_id, adapter
         raise RuntimeError("sidecar boot failed")
 
     async def stop(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
-        del pack_id, release, feature_id, adapter
+        pass
 
     async def drop(self, *, pack_id: str, release: str, feature_id: str) -> None:
-        del pack_id, release, feature_id
+        pass
 
     def tracked_keys(self) -> set[tuple[str, str, str]]:
         return set()
@@ -89,14 +88,13 @@ class _RaisingStopSidecarSupervisor:
     _STALE_KEY = ("appium-uiautomator2", "2026.04.0", "stale-feature")
 
     async def start(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
-        del pack_id, release, feature_id, adapter
+        pass
 
     async def stop(self, *, pack_id: str, release: str, feature_id: str, adapter: object) -> None:
-        del pack_id, release, feature_id, adapter
         raise RuntimeError("sidecar teardown failed")
 
     async def drop(self, *, pack_id: str, release: str, feature_id: str) -> None:
-        del pack_id, release, feature_id
+        pass
 
     def tracked_keys(self) -> set[tuple[str, str, str]]:
         return {self._STALE_KEY}

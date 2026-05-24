@@ -28,7 +28,6 @@ from sqlalchemy import select
 import app.runs.service_reservation_lookup as _lookup
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
-from app.runs.service_reservation_lookup import exclude_device_from_run
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
@@ -95,7 +94,7 @@ async def test_exclude_marks_released_reservation_as_excluded(
         return snapshot
 
     with patch.object(_lookup, "_get_device_reservation_with_entry", side_effect=_get_then_release):
-        await exclude_device_from_run(db_session, device_id, reason="test race", commit=True)
+        await _lookup.exclude_device_from_run(db_session, device_id, reason="test race", commit=True)
 
     # Re-read the reservation on a fresh session.
     async with db_session_maker() as side:
