@@ -17,7 +17,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
-from app.devices.services.service import DeviceListStatement, _apply_device_filters
+from app.devices.services.service import _apply_device_filters
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.schemas.inventory import InventoryColumn
+    from app.devices.services.service import DeviceListStatement
 
 _CHUNK = 200
 

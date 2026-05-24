@@ -12,6 +12,7 @@ the decoder is exposed here alongside the subscriber.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -122,12 +123,11 @@ class HubEventBusSubscriber:
     async def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            except Exception:  # noqa: BLE001
-                logger.warning("grid event bus subscriber task failed during shutdown", exc_info=True)
+            with contextlib.suppress(asyncio.CancelledError):
+                try:
+                    await self._task
+                except Exception:  # noqa: BLE001
+                    logger.warning("grid event bus subscriber task failed during shutdown", exc_info=True)
             self._task = None
         if self._socket is not None:
             self._socket.close(linger=0)

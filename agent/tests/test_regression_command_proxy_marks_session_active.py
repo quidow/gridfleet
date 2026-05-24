@@ -20,11 +20,10 @@ if TYPE_CHECKING:
 
 class _RecordingProxy:
     async def request(self, request: object, *, upstream: str, timeout: float, client: object) -> JSONResponse:
-        del request, upstream, timeout, client
         return JSONResponse({"value": {"ok": True}})
 
     async def websocket(self, websocket: object, *, upstream: str) -> None:
-        del websocket, upstream
+        pass
 
 
 def test_command_proxy_marks_session_active(monkeypatch: pytest.MonkeyPatch) -> None:

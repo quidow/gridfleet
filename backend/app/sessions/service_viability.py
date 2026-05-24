@@ -65,7 +65,6 @@ logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
 is_ready_for_use_async = device_readiness.is_ready_for_use_async
 readiness_error_detail_async = device_readiness.readiness_error_detail_async
-ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])

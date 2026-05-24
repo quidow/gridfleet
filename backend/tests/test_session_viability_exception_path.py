@@ -84,17 +84,6 @@ async def test_exception_path_restores_previous_available_without_projection(
         AsyncMock(side_effect=RuntimeError("probe-exploded")),
     )
 
-    # The key: monkeypatch ready_operational_state to return OFFLINE.
-    # This simulates what the projection would return when a stale
-    # appium_node_stop_in_flight intent is present. Pre-conversion, the
-    # available exception branch called this and wrote OFFLINE. Post-conversion,
-    # previous_state (AVAILABLE) is used instead — projection is not consulted.
-    monkeypatch.setattr(
-        service_viability,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.offline),
-    )
-
     with pytest.raises(RuntimeError, match="probe-exploded"):
         await service_viability.run_session_viability_probe(
             db_session,
@@ -109,11 +98,6 @@ async def test_exception_path_restores_previous_available_without_projection(
     assert last_call_state == DeviceOperationalState.available, (
         f"Exception path restored {last_call_state!r} instead of AVAILABLE — "
         "projection-as-write antipattern is still present"
-    )
-    # Confirm the projection was not consulted at all
-    ready_mock = service_viability.ready_operational_state
-    assert not ready_mock.called, (  # type: ignore[union-attr]
-        "ready_operational_state was called in exception path — projection-as-write antipattern present"
     )
 
 
@@ -159,14 +143,6 @@ async def test_exception_path_from_offline_restores_offline(
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("probe-offline-exploded")),
     )
-    # Even if the projection would return something different, offline path
-    # must restore OFFLINE (previous_state).
-    monkeypatch.setattr(
-        service_viability,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.available),
-    )
-
     with pytest.raises(RuntimeError, match="probe-offline-exploded"):
         await service_viability.run_session_viability_probe(
             db_session,
