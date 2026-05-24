@@ -80,6 +80,7 @@ build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy
 
 RECOVERY_PROBE_ATTEMPTS = 3
 RECOVERY_PROBE_RETRY_DELAY_SEC = 10
+RECOVERY_PROBE_JITTER_MAX_SEC = 2
 RECOVERY_NODE_START_WAIT_TIMEOUT_SEC = 60
 RECOVERY_NODE_START_WAIT_POLL_SEC = 0.5
 
@@ -195,7 +196,7 @@ async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any
     try:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(max(1, RECOVERY_PROBE_ATTEMPTS)),
-            wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, 2),
+            wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, RECOVERY_PROBE_JITTER_MAX_SEC),
             retry=retry_if_result(lambda value: value.get("status") != "passed"),
         ):
             with attempt:

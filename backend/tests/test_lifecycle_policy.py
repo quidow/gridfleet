@@ -42,6 +42,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 @pytest.fixture(autouse=True)
 def _speed_up_recovery_probe_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0, raising=False)
+    monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_PROBE_JITTER_MAX_SEC", 0, raising=False)
     monkeypatch.setattr(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0, raising=False)
 
 

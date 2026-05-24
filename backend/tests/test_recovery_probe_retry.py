@@ -28,6 +28,7 @@ async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pyte
     from app.devices.services import lifecycle_policy
 
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
 
     probe_mock = AsyncMock(return_value={"status": "failed", "error": "boom"})
 
@@ -46,6 +47,7 @@ async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatc
     from app.devices.services import lifecycle_policy
 
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
 
     outcomes: list[dict[str, Any]] = [
         {"status": "failed", "error": "x"},
