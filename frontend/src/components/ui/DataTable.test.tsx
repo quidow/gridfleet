@@ -175,4 +175,30 @@ describe('DataTable', () => {
     expect(container.querySelector('[data-testid="row-a"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="row-b"]')).not.toBeNull();
   });
+
+  it('renders expanded row content when renderExpandedRow returns non-null', () => {
+    render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        renderExpandedRow={(r) => (r.id === '1' ? <span>Expanded Alice</span> : null)}
+      />,
+    );
+    expect(screen.getByText('Expanded Alice')).toBeInTheDocument();
+    expect(screen.queryByText('Expanded Bob')).not.toBeInTheDocument();
+  });
+
+  it('does not render expanded row when renderExpandedRow returns null', () => {
+    const { container } = render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        renderExpandedRow={() => null}
+      />,
+    );
+    const bodyRows = within(container.querySelector('tbody')!).getAllByRole('row');
+    expect(bodyRows).toHaveLength(2);
+  });
 });

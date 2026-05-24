@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { SortableHeader } from '../SortableHeader';
 import { RowActionsMenu, type RowActionItem } from './RowActionsMenu';
 import { EmptyState } from './EmptyState';
@@ -42,6 +42,7 @@ interface DataTableProps<Row, SortKey extends string = string> {
   selection?: DataTableSelection<Row>;
   rowActions?: (row: Row) => RowActionItem[];
   rowActionsLabel?: (row: Row) => string;
+  renderExpandedRow?: (row: Row) => ReactNode | null;
   density?: 'compact' | 'comfortable';
   stickyHeader?: boolean;
   caption?: string;
@@ -67,6 +68,7 @@ function DataTableInner<Row, SortKey extends string = string>({
   selection,
   rowActions,
   rowActionsLabel,
+  renderExpandedRow,
   density = 'compact',
   stickyHeader = false,
   caption,
@@ -75,6 +77,7 @@ function DataTableInner<Row, SortKey extends string = string>({
   const cellPad = CELL_PADDING[density];
   const hasRowActions = !!rowActions;
   const hasSelection = !!selection;
+  const totalColSpan = columns.length + (hasSelection ? 1 : 0) + (hasRowActions ? 1 : 0);
 
   function handleSortToggle(sortKey: SortKey) {
     if (!onSortChange) return;
@@ -216,58 +219,67 @@ function DataTableInner<Row, SortKey extends string = string>({
           {rows.map((row, index) => {
             const key = rowKey(row);
             const isSelected = selection?.selectedKeys.has(key);
+            const expandedContent = renderExpandedRow?.(row) ?? null;
             return (
-              <tr
-                key={key}
-                data-testid={rowTestId?.(row)}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-                className={[
-                  'hover:bg-surface-2',
-                  onRowClick ? 'cursor-pointer' : '',
-                  isSelected ? 'bg-accent-soft' : '',
-                  rowClassName?.(row) ?? '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              >
-                {hasSelection && (
-                  <td
-                    className={cellPad}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 cursor-pointer rounded border-border-strong text-accent focus:ring-accent"
-                      checked={!!isSelected}
-                      onChange={() => selection.onToggle(row)}
-                      aria-label={`Select row ${index + 1}`}
-                    />
-                  </td>
+              <Fragment key={key}>
+                <tr
+                  data-testid={rowTestId?.(row)}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  className={[
+                    'hover:bg-surface-2',
+                    onRowClick ? 'cursor-pointer' : '',
+                    isSelected ? 'bg-accent-soft' : '',
+                    rowClassName?.(row) ?? '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  {hasSelection && (
+                    <td
+                      className={cellPad}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer rounded border-border-strong text-accent focus:ring-accent"
+                        checked={!!isSelected}
+                        onChange={() => selection.onToggle(row)}
+                        aria-label={`Select row ${index + 1}`}
+                      />
+                    </td>
+                  )}
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={[
+                        cellPad,
+                        'text-sm text-text-1',
+                        ALIGN_CLASSES[col.align ?? 'left'],
+                        col.className ?? '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                    >
+                      {col.render(row, index)}
+                    </td>
+                  ))}
+                  {hasRowActions && (
+                    <td
+                      className={`${cellPad} text-right`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <RowActionsMenu label={rowActionsLabel?.(row) ?? 'Row actions'} items={rowActions(row)} />
+                    </td>
+                  )}
+                </tr>
+                {expandedContent != null && (
+                  <tr>
+                    <td colSpan={totalColSpan} className="bg-surface-2 px-6 py-3">
+                      {expandedContent}
+                    </td>
+                  </tr>
                 )}
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={[
-                      cellPad,
-                      'text-sm text-text-1',
-                      ALIGN_CLASSES[col.align ?? 'left'],
-                      col.className ?? '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                  >
-                    {col.render(row, index)}
-                  </td>
-                ))}
-                {hasRowActions && (
-                  <td
-                    className={`${cellPad} text-right`}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <RowActionsMenu label={rowActionsLabel?.(row) ?? 'Row actions'} items={rowActions(row)} />
-                  </td>
-                )}
-              </tr>
+              </Fragment>
             );
           })}
         </tbody>

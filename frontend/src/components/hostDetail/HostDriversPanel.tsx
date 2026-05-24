@@ -1,9 +1,10 @@
-import { Fragment, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, MinusCircle, ChevronDown, ChevronRight, Activity, Loader2 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverPacks';
 import { triggerDriverDoctor } from '../../api/driverPacks';
+import { DataTable } from '../ui';
+import type { DataTableColumn } from '../ui';
 import { Card } from '../ui/Card';
 import type { HostPackDoctorStatus, HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
 import { HostFeatureActionButton } from './HostFeatureActionButton';
@@ -43,8 +44,6 @@ function FeatureStatusBadge({ status }: { status: HostPackFeatureStatus | undefi
     </span>
   );
 }
-
-type Column = { key: string; header: string; width?: string; render: (row: HostPackStatus, index: number) => ReactNode };
 
 type Props = {
   hostId: string;
@@ -92,7 +91,7 @@ export function HostDriversPanel({ hostId }: Props) {
     },
   });
 
-  const packColumns: Column[] = [
+  const packColumns: DataTableColumn<HostPackStatus>[] = [
     {
       key: 'pack_id',
       header: 'Driver',
@@ -247,67 +246,36 @@ export function HostDriversPanel({ hostId }: Props) {
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Appium Drivers</h2>
       </div>
-      {isLoading ? (
-        <p className="px-5 py-8 text-center text-sm text-text-3">Loading...</p>
-      ) : rows.length === 0 ? (
-        <p className="px-5 py-8 text-center text-sm text-text-3">
-          No drivers installed. Enable drivers in Settings.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-border">
-            <thead className="bg-surface-2">
-              <tr>
-                {packColumns.map((col) => (
-                  <th
-                    key={col.key}
-                    className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-3"
-                    style={col.width ? { width: col.width } : undefined}
-                  >
-                    {col.header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {rows.map((row, index) => {
-                const checks = doctorByPack.get(row.pack_id);
-                const isExpanded = expandedPacks.has(row.pack_id) && checks && checks.length > 0;
-                return (
-                  <Fragment key={row.pack_id}>
-                    <tr className="hover:bg-surface-2">
-                      {packColumns.map((col) => (
-                        <td key={col.key} className="px-3 py-2 text-sm text-text-1">
-                          {col.render(row, index)}
-                        </td>
-                      ))}
-                    </tr>
-                    {isExpanded && (
-                      <tr>
-                        <td colSpan={packColumns.length} className="bg-surface-2 px-6 py-3">
-                          <div className="flex flex-col gap-1.5">
-                            {checks.map((c) => (
-                              <div key={c.check_id} className="flex items-start gap-2 text-xs">
-                                {c.ok ? (
-                                  <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-success-foreground" />
-                                ) : (
-                                  <AlertTriangle size={12} className="mt-0.5 shrink-0 text-danger-foreground" />
-                                )}
-                                <span className="font-medium text-text-2">{c.check_id}</span>
-                                <span className="text-text-3">{c.message}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable<HostPackStatus>
+        columns={packColumns}
+        rows={rows}
+        rowKey={(p) => p.pack_id}
+        loading={isLoading}
+        emptyState={
+          <p className="px-5 py-8 text-center text-sm text-text-3">
+            No drivers installed. Enable drivers in Settings.
+          </p>
+        }
+        renderExpandedRow={(p) => {
+          const checks = doctorByPack.get(p.pack_id);
+          if (!expandedPacks.has(p.pack_id) || !checks || checks.length === 0) return null;
+          return (
+            <div className="flex flex-col gap-1.5">
+              {checks.map((c) => (
+                <div key={c.check_id} className="flex items-start gap-2 text-xs">
+                  {c.ok ? (
+                    <CheckCircle2 size={12} className="mt-0.5 shrink-0 text-success-foreground" />
+                  ) : (
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0 text-danger-foreground" />
+                  )}
+                  <span className="font-medium text-text-2">{c.check_id}</span>
+                  <span className="text-text-3">{c.message}</span>
+                </div>
+              ))}
+            </div>
+          );
+        }}
+      />
     </Card>
   );
 }
