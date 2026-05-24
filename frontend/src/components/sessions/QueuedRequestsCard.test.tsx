@@ -52,4 +52,17 @@ describe('QueuedRequestsCard', () => {
     const link = screen.getByRole('link', { name: deviceId });
     expect(link).toHaveAttribute('href', `/devices/${deviceId}`);
   });
+
+  it('renders formatted wait time from requestTimestamp', () => {
+    const now = Date.now();
+    const twoMinAgo = new Date(now - 120_000).toISOString();
+    renderCard([{ capabilities: { platformName: 'android' }, requestTimestamp: twoMinAgo }]);
+    expect(screen.getByText('2m 0s')).toBeInTheDocument();
+  });
+
+  it('renders "—" for waiting column when no requestTimestamp', () => {
+    renderCard([{ capabilities: { platformName: 'android' } }]);
+    const waitingCells = screen.getAllByText('—');
+    expect(waitingCells.length).toBeGreaterThanOrEqual(1);
+  });
 });

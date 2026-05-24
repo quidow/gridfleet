@@ -140,7 +140,8 @@ export function RunDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: run, isLoading } = useRun(id!);
-  const { data: queue } = useGridQueue();
+  const isActive = run ? ACTIVE_RUN_STATES.has(run.state) : false;
+  const { data: queue } = useGridQueue({ enabled: isActive });
   const runQueuedRequests = useMemo(
     () => (queue?.requests ?? []).filter(
       (r) => r.capabilities?.['gridfleet:run_id'] === id,
@@ -155,8 +156,6 @@ export function RunDetail() {
 
   if (isLoading) return <LoadingSpinner />;
   if (!run) return <p className="text-text-3 text-center mt-12">Run not found</p>;
-
-  const isActive = ACTIVE_RUN_STATES.has(run.state);
   const stateIndex = STATE_ORDER.indexOf(run.state as RunState);
   const isTerminalNonHappy = TERMINAL_NON_HAPPY_STATES.has(run.state as RunState);
 
