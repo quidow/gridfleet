@@ -28,6 +28,7 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
+        "appium:udid": "{device.connection_target}"
         "appium:platform": "{device.platform_id}"
         "appium:os_version": "{device.os_version}"
         "appium:device_type": "{device.device_type}"
@@ -90,6 +91,7 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
+        "appium:udid": "{device.connection_target}"
         "appium:platform": "{device.platform_id}"
         "appium:os_version": "{device.os_version}"
         "appium:device_type": "{device.device_type}"
@@ -152,6 +154,7 @@ platforms:
     grid_slots: [native, chrome]
     capabilities:
       stereotype:
+        "appium:udid": "{device.connection_target}"
         "appium:platform": "{device.platform_id}"
         "appium:os_version": "{device.os_version}"
         "appium:device_type": "{device.device_type}"
