@@ -21,6 +21,30 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
+async def persist_doctor_results(
+    session: AsyncSession,
+    host_id: uuid.UUID,
+    pack_id: str,
+    checks: list[dict[str, Any]],
+) -> None:
+    await session.execute(
+        delete(HostPackDoctorResult).where(
+            HostPackDoctorResult.host_id == host_id,
+            HostPackDoctorResult.pack_id == pack_id,
+        )
+    )
+    for d in checks:
+        session.add(
+            HostPackDoctorResult(
+                host_id=host_id,
+                pack_id=d.get("pack_id", pack_id),
+                check_id=d["check_id"],
+                ok=d["ok"],
+                message=d.get("message", ""),
+            )
+        )
+
+
 async def apply_status(session: AsyncSession, payload: dict[str, Any]) -> None:
     host_id = uuid.UUID(payload["host_id"])
 
@@ -103,25 +127,12 @@ async def apply_status(session: AsyncSession, payload: dict[str, Any]) -> None:
                 existing_pack.installed_at = datetime.now(UTC)
 
     doctor_scope_pack_ids = {p["pack_id"] for p in payload.get("packs", []) if p.get("status") == "installed"}
-    if doctor_scope_pack_ids:
-        await session.execute(
-            delete(HostPackDoctorResult).where(
-                HostPackDoctorResult.host_id == host_id,
-                HostPackDoctorResult.pack_id.in_(doctor_scope_pack_ids),
-            )
-        )
+    doctor_by_pack: dict[str, list[dict[str, Any]]] = {}
     for d in payload.get("doctor", []):
-        if d["pack_id"] not in doctor_scope_pack_ids:
-            continue
-        session.add(
-            HostPackDoctorResult(
-                host_id=host_id,
-                pack_id=d["pack_id"],
-                check_id=d["check_id"],
-                ok=d["ok"],
-                message=d.get("message", ""),
-            )
-        )
+        if d["pack_id"] in doctor_scope_pack_ids:
+            doctor_by_pack.setdefault(d["pack_id"], []).append(d)
+    for scope_pack_id in doctor_scope_pack_ids:
+        await persist_doctor_results(session, host_id, scope_pack_id, doctor_by_pack.get(scope_pack_id, []))
 
     for sidecar in payload.get("sidecars", []):
         await record_feature_status(
