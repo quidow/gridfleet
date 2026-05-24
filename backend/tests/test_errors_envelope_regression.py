@@ -4,11 +4,32 @@ import json
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
+from pydantic import BaseModel
 
-from app.main import app
+from app.core.errors import register_exception_handlers
 
 FIXTURES = Path(__file__).parent / "fixtures" / "error_envelopes"
+
+
+@pytest.fixture
+def app() -> FastAPI:
+    application = FastAPI()
+    register_exception_handlers(application)
+
+    @application.get("/_test-not-found")
+    async def _not_found() -> None:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    class _Body(BaseModel):
+        device_ids: list[str]
+
+    @application.post("/_test-validation")
+    async def _validation(body: _Body) -> None:
+        pass  # pragma: no cover
+
+    return application
 
 
 @pytest.fixture
@@ -19,23 +40,25 @@ def fixtures_dir() -> Path:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("scenario", "method", "path", "expected_status"),
+    ("scenario", "method", "path", "json_body", "expected_status"),
     [
-        ("not_found", "GET", "/api/devices/00000000-0000-0000-0000-000000000000", 404),
-        ("validation_error", "POST", "/api/devices/bulk/start-nodes", 422),
+        ("not_found", "GET", "/_test-not-found", None, 404),
+        ("validation_error", "POST", "/_test-validation", {}, 422),
     ],
 )
 async def test_error_envelope_matches_fixture(
     scenario: str,
     method: str,
     path: str,
+    json_body: dict[str, object] | None,
     expected_status: int,
     fixtures_dir: Path,
+    app: FastAPI,
 ) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        if method == "POST":
-            response = await client.request(method, path, json={})
+        if json_body is not None:
+            response = await client.request(method, path, json=json_body)
         else:
             response = await client.request(method, path)
     assert response.status_code == expected_status
