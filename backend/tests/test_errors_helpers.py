@@ -1,22 +1,10 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import json
 
 from fastapi import HTTPException
 
-from app.core import errors as errors
-
-
-def test_request_id_helpers_and_error_body() -> None:
-    request = SimpleNamespace(state=SimpleNamespace(request_id="req-123"))
-    scope = {"state": {"request_id": "req-456"}}
-
-    assert errors.request_id_from_request(request) == "req-123"
-    assert errors.request_id_from_scope(scope) == "req-456"
-    assert errors.request_id_from_scope({"state": object()}) is None
-    assert errors.build_error_body(code="BAD", message="boom", request_id="req-123", details={"a": 1}) == {
-        "error": {"code": "BAD", "message": "boom", "request_id": "req-123", "details": {"a": 1}}
-    }
+from app.core import errors
 
 
 def test_http_error_helpers_cover_supported_statuses() -> None:
@@ -40,3 +28,52 @@ def test_http_error_helpers_cover_supported_statuses() -> None:
         {"field": "x"},
     )
     assert errors._http_error_payload(HTTPException(status_code=400, detail=123)) == ("Request failed", 123)
+
+
+def test_envelope_response_shape_with_details() -> None:
+    response = errors.envelope_response(
+        status_code=409,
+        code="CONFLICT",
+        message="boom",
+        request_id="req-123",
+        details={"a": 1},
+    )
+    assert response.status_code == 409
+    body = json.loads(response.body)
+    assert body == {
+        "error": {
+            "code": "CONFLICT",
+            "message": "boom",
+            "request_id": "req-123",
+            "details": {"a": 1},
+        }
+    }
+
+
+def test_envelope_response_shape_without_details_and_blank_request_id() -> None:
+    response = errors.envelope_response(
+        status_code=500,
+        code="INTERNAL_ERROR",
+        message="oops",
+        request_id="",
+    )
+    assert response.status_code == 500
+    body = json.loads(response.body)
+    assert body == {
+        "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "oops",
+            "request_id": None,
+        }
+    }
+
+
+def test_envelope_response_passes_headers() -> None:
+    response = errors.envelope_response(
+        status_code=401,
+        code="UNAUTHORIZED",
+        message="nope",
+        request_id=None,
+        headers={"www-authenticate": "Basic"},
+    )
+    assert response.headers["www-authenticate"] == "Basic"

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth import service as _auth_service
-from app.core.errors import error_response, request_id_from_request
+from app.core.errors import envelope_response
 
 if TYPE_CHECKING:
     from starlette.middleware.base import RequestResponseEndpoint
@@ -64,9 +64,10 @@ class StaticPathsAuthMiddleware(BaseHTTPMiddleware):
         # Route through the standard JSON error envelope so the response
         # carries x-request-id (populated by RequestContextMiddleware
         # running outside us) and matches the rest of the API's error shape.
-        return error_response(
+        request_id = getattr(request.state, "request_id", None)
+        return envelope_response(
             status_code=401,
             code="UNAUTHORIZED",
             message="Authentication is required",
-            request_id=request_id_from_request(request),
+            request_id=request_id if isinstance(request_id, str) and request_id else None,
         )
