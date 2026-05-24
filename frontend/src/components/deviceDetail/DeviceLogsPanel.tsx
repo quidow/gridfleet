@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useDeviceLogs } from '../../hooks/useDevices';
+import { Card } from '../ui/Card';
 import { DeviceLogsEmptyPanel } from './DeviceLogsEmptyPanel';
 
 type Props = {
@@ -23,7 +24,7 @@ export function DeviceLogsPanel({ deviceId }: Props) {
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+    <Card padding="none" as="section" className="overflow-hidden">
       <div className="flex items-center justify-between px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold text-text-1">Appium Logs</h2>
@@ -38,6 +39,6 @@ export function DeviceLogsPanel({ deviceId }: Props) {
         ))}
         <div ref={logEndRef} />
       </div>
-    </section>
+    </Card>
   );
 }

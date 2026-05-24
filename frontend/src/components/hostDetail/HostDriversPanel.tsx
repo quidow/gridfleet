@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, MinusCircle } from 'lucide-react';
 import { useDriverPackCatalog, useHostDriverPacks } from '../../hooks/useDriverPacks';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
+import { Card } from '../ui/Card';
 import type { HostPackFeatureStatus, HostPackStatus } from '../../types/driverPacks';
 import { HostFeatureActionButton } from './HostFeatureActionButton';
 
@@ -144,7 +145,7 @@ export function HostDriversPanel({ hostId }: Props) {
   ];
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1">
+    <Card padding="none">
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Appium Drivers</h2>
       </div>
@@ -159,6 +160,6 @@ export function HostDriversPanel({ hostId }: Props) {
           </p>
         }
       />
-    </div>
+    </Card>
   );
 }

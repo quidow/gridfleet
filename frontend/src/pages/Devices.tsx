@@ -27,6 +27,7 @@ import { getVerificationAction as getWorkflowVerificationAction } from '../lib/d
 import { usePageTitle } from '../hooks/usePageTitle';
 import { useDevRenderCrashTrigger } from '../hooks/useDevRenderCrashTrigger';
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
+import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Button } from '../components/ui/Button';
 import { ListPageSubheader } from '../components/ui/ListPageSubheader';
@@ -61,6 +62,7 @@ function DevicesEmptyPanel({
   return (
     <section className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-5 py-8">
       <div className="mx-auto flex max-w-xl flex-col items-center text-center sm:flex-row sm:text-left">
+        {/* eslint-disable-next-line no-restricted-syntax -- icon box, not a card */}
         <div className="mb-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-1 text-text-2 sm:mb-0 sm:mr-4">
           <Icon size={20} />
         </div>
@@ -234,9 +236,9 @@ export function Devices() {
         />
 
         {showInitialLoading ? (
-          <div className="rounded-lg border border-border bg-surface-1 py-12 shadow-sm">
+          <Card padding="none" className="py-12">
             <LoadingSpinner />
-          </div>
+          </Card>
         ) : controller.sorted.length === 0 ? (
           <DevicesEmptyPanel
             hasFilters={controller.hasFilters}

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MoreVertical } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
-import { useAnchoredPlacement } from '../lib/useAnchoredPlacement';
-import type { Placement } from '../lib/anchoredPlacement';
+import { useAnchoredPlacement } from '../../lib/useAnchoredPlacement';
+import type { Placement } from '../../lib/anchoredPlacement';
 
 export type RowActionItem = {
   key: string;
@@ -145,7 +145,7 @@ export function RowActionsMenu({ label, items }: Props) {
                   }}
                   disabled={item.disabled}
                   title={item.title}
-                  className={`flex min-h-[40px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm ${
+                  className={`flex min-h-10 w-full items-center gap-2 px-3 py-2.5 text-left text-sm ${
                     item.disabled
                       ? 'cursor-not-allowed text-text-3'
                       : item.tone === 'danger'

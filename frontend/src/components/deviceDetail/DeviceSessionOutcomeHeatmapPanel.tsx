@@ -1,5 +1,6 @@
 import { BarChart3 } from 'lucide-react';
 import { useDeviceSessionOutcomeHeatmap } from '../../hooks/useDevices';
+import { Card } from '../ui/Card';
 import {
   buildSessionOutcomeHeatmap,
   SESSION_OUTCOME_HEATMAP_WEEKDAY_LABELS,
@@ -55,6 +56,7 @@ function CompactHeatmapEmptyState({ days }: { days: number }) {
   return (
     <div className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-4 py-5">
       <div className="flex flex-col gap-3 text-center sm:flex-row sm:items-center sm:text-left">
+        {/* eslint-disable-next-line no-restricted-syntax -- icon box, not a card */}
         <div className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-1 text-text-3 sm:mx-0">
           <BarChart3 size={18} />
         </div>
@@ -74,7 +76,7 @@ export function DeviceSessionOutcomeHeatmapPanel({ deviceId, days = 90 }: Props)
   const heatmap = buildSessionOutcomeHeatmap(data, days);
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1 p-5 shadow-sm">
+    <Card padding="none" className="p-5">
       <div className="flex flex-col gap-2 border-b border-border pb-4">
         <h2 className="text-sm font-semibold text-text-1">Session Outcome Heatmap</h2>
         <p className="text-sm text-text-2">
@@ -134,6 +136,6 @@ export function DeviceSessionOutcomeHeatmapPanel({ deviceId, days = 90 }: Props)
           </div>
         </>
       )}
-    </div>
+    </Card>
   );
 }

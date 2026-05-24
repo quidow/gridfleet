@@ -1,4 +1,6 @@
 import { Button } from './Button';
+import { Card } from './Card';
+import { Select } from './Select';
 
 interface CursorPaginationProps {
   pageSize: number;
@@ -28,9 +30,10 @@ export function CursorPagination({
   className = '',
 }: CursorPaginationProps) {
   return (
-    <div
+    <Card
+      padding="none"
       className={[
-        'mt-4 flex flex-col gap-3 rounded-lg border border-border bg-surface-1 px-4 py-3 md:flex-row md:items-center md:justify-between',
+        'mt-4 flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between',
         className,
       ].filter(Boolean).join(' ')}
     >
@@ -41,18 +44,16 @@ export function CursorPagination({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <label className="flex items-center gap-2 text-sm text-text-2">
           <span>Rows per page</span>
-          <select
-            aria-label="Rows per page"
-            value={pageSize}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-            className="rounded-md border border-border-strong px-2 py-1.5 text-sm text-text-2 focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            {pageSizeOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+          <Select
+            ariaLabel="Rows per page"
+            value={String(pageSize)}
+            onChange={(value) => onPageSizeChange(Number(value))}
+            size="sm"
+            options={pageSizeOptions.map((option) => ({
+              value: String(option),
+              label: String(option),
+            }))}
+          />
         </label>
 
         <div className="flex items-center gap-2">
@@ -77,6 +78,6 @@ export function CursorPagination({
           </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

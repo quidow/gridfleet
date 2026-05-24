@@ -44,36 +44,11 @@ export default defineConfig([
     },
   },
   {
-    // Allowlist is technical debt — shrink, do not grow.
-    // UI primitives need the raw underlying element; non-primitive entries
-    // are tracked migration debt.
+    // UI primitives define the raw elements and card class strings that
+    // the no-restricted-syntax rules enforce. No non-primitive file should
+    // appear here — if a consumer needs an exception, wrap in a primitive.
     files: [
       'src/components/ui/**/*.{ts,tsx}',
-      // Pending Card-primitive migration:
-      'src/components/RowActionsMenu.tsx',
-      'src/components/SettingsSection.tsx',
-      'src/components/analytics/FleetCapacityTab.tsx',
-      'src/components/dashboard/OperationsSection.tsx',
-      'src/components/deviceDetail/DeviceLogsEmptyPanel.tsx',
-      'src/components/deviceDetail/DeviceLogsPanel.tsx',
-      'src/components/deviceDetail/DeviceSessionOutcomeHeatmapPanel.tsx',
-      'src/components/deviceDetail/DeviceStatStrip.tsx',
-      'src/components/deviceDetail/StateHistoryPanel.tsx',
-      'src/components/hostDetail/HostDevicesPanel.tsx',
-      'src/components/hostDetail/HostDiagnosticsPanel.tsx',
-      'src/components/hostDetail/HostDriversPanel.tsx',
-      'src/components/hostDetail/HostOverviewPanel.tsx',
-      'src/components/hostDetail/HostOverviewResourceStrip.tsx',
-      'src/components/hostDetail/HostPluginsPanel.tsx',
-      'src/components/hostDetail/HostResourceTelemetryPanel.tsx',
-      'src/components/hostDetail/HostTerminalPanel.tsx',
-      'src/components/hostDetail/HostToolVersionsPanel.tsx',
-      'src/components/settings/WebhookRegistryPanel.tsx',
-      'src/pages/DeviceDetail.tsx',
-      'src/pages/Devices.tsx',
-      // Pending TextField-primitive migration:
-      'src/pages/Login.tsx',
-      'src/pages/devices/FilterBuilder.tsx',
     ],
     rules: {
       'no-restricted-syntax': 'off',

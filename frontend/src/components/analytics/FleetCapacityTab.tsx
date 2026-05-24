@@ -14,6 +14,7 @@ import type { AnalyticsParams } from '../../api/analytics';
 import type { FleetCapacityTimelinePoint } from '../../types';
 import { buildFleetCapacityChartData } from '../../lib/fleetCapacityTimeline';
 import { SectionSkeleton } from '../ui/SectionSkeleton';
+import { Card } from '../ui/Card';
 
 interface Props {
   params: AnalyticsParams;
@@ -60,11 +61,11 @@ function CapacityTooltip({ active, label, payload }: CapacityTooltipProps) {
 
 function MetricSummary({ label, value, detail }: { label: string; value: number; detail: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface-1 px-4 py-3">
+    <Card padding="none" className="px-4 py-3">
       <p className="text-xs font-medium uppercase text-text-3">{label}</p>
       <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-text-1">{value}</p>
       <p className="mt-1 text-xs text-text-3">{detail}</p>
-    </div>
+    </Card>
   );
 }
 
@@ -106,7 +107,7 @@ export function FleetCapacityTab({ params }: Props) {
         <MetricSummary label="Peak inferred demand" value={maxMetric(rows, 'inferred_demand')} detail={`${rejectedTotal} unfulfilled attempts`} />
       </div>
 
-      <div className="rounded-lg border border-border bg-surface-1 p-5">
+      <Card padding="none" className="p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h4 className="text-sm font-medium text-text-2">Demand vs. Supply</h4>
@@ -176,7 +177,7 @@ export function FleetCapacityTab({ params }: Props) {
             />
           </LineChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
     </div>
   );
 }

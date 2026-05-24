@@ -2,6 +2,7 @@ import { formatHostTimestamp } from '../hosts/hostFormatting';
 import { HostActionButtons, HostAgentVersionNotice } from '../hosts/hostPresentation';
 import type { HostRead } from '../../types';
 import { DefinitionList } from '../ui/DefinitionList';
+import { Card } from '../ui/Card';
 import { HostOverviewResourceStrip } from './HostOverviewResourceStrip';
 import { HostToolVersionsPanel } from './HostToolVersionsPanel';
 import { HostToolEnvPanel } from './HostToolEnvPanel';
@@ -29,7 +30,7 @@ export function HostOverviewPanel({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-lg border border-border bg-surface-1 p-5">
+        <Card padding="none" className="p-5">
           <h2 className="mb-4 text-sm font-medium text-text-3">Host Info</h2>
           <DefinitionList
             layout="justified"
@@ -54,7 +55,7 @@ export function HostOverviewPanel({
             recommendedVersion={host.recommended_agent_version}
             updateAvailable={host.agent_update_available}
           />
-        </div>
+        </Card>
 
         <div className="flex flex-col gap-6">
           <HostOverviewResourceStrip
@@ -63,7 +64,7 @@ export function HostOverviewPanel({
             totalMemoryMb={host.total_memory_mb ?? null}
             totalDiskGb={host.total_disk_gb ?? null}
           />
-          <div className="rounded-lg border border-border bg-surface-1 p-5">
+          <Card padding="none" className="p-5">
             <div className="mb-3 flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-text-3">Actions</h2>
               <span className="text-xs text-text-3">Host-scoped</span>
@@ -83,7 +84,7 @@ export function HostOverviewPanel({
                 discoverPending={discoverPending}
               />
             </div>
-          </div>
+          </Card>
         </div>
       </div>
 

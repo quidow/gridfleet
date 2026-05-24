@@ -10,6 +10,7 @@ import {
 import { LoadingSpinner } from '../LoadingSpinner';
 import { AnalyticsEmptyState } from '../analytics/AnalyticsEmptyState';
 import { HardwareTelemetryStateBadge } from '../HardwareTelemetryStateBadge';
+import { Card } from '../ui/Card';
 import { useHostResourceTelemetry } from '../../hooks/useHosts';
 import { deriveHostResourceTelemetryState } from '../../lib/hostResourceTelemetry';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormatting';
@@ -75,7 +76,7 @@ function MetricCard({
   points: ChartPoint[];
 }) {
   return (
-    <div className="rounded-lg border border-border bg-surface-1 p-5">
+    <Card padding="none" className="p-5">
       <h3 className="mb-4 text-sm font-medium text-text-2">{title}</h3>
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={points}>
@@ -97,7 +98,7 @@ function MetricCard({
           />
         </LineChart>
       </ResponsiveContainer>
-    </div>
+    </Card>
   );
 }
 
@@ -110,7 +111,7 @@ export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
     : 'No telemetry samples recorded yet.';
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1 p-5">
+    <Card padding="none" className="p-5">
       <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-sm font-medium text-text-2">Host Resource Telemetry</h2>
@@ -144,6 +145,6 @@ export function HostResourceTelemetryPanel({ hostId, hostOnline }: Props) {
           <MetricCard title="Disk" dataKey="diskPercent" stroke="#f59e0b" points={chartPoints} />
         </div>
       )}
-    </div>
+    </Card>
   );
 }

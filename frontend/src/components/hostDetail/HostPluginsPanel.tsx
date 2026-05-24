@@ -2,6 +2,7 @@ import { RefreshCw } from 'lucide-react';
 import { useHostPlugins, useSyncHostPlugins } from '../../hooks/usePlugins';
 import { DataTable } from '../ui';
 import type { DataTableColumn } from '../ui';
+import { Card } from '../ui/Card';
 import type { HostPluginStatus } from '../../types';
 
 const PLUGIN_COLUMNS: DataTableColumn<HostPluginStatus>[] = [
@@ -48,7 +49,7 @@ export function HostPluginsPanel({ hostId }: Props) {
   const syncPluginsMut = useSyncHostPlugins();
 
   return (
-    <div className="rounded-lg border border-border bg-surface-1">
+    <Card padding="none">
       <div className="flex items-center justify-between border-b border-border px-5 py-4">
         <h2 className="text-sm font-medium text-text-2">Appium Plugins</h2>
         <button
@@ -71,6 +72,6 @@ export function HostPluginsPanel({ hostId }: Props) {
           </p>
         }
       />
-    </div>
+    </Card>
   );
 }

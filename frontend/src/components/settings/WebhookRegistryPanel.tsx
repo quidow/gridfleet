@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2, Pencil, Play, RotateCcw, Trash2 } from 'lucide-react';
+import { Card } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadingSpinner } from '../LoadingSpinner';
@@ -214,10 +215,7 @@ function WebhookRow({
             ) : (
               <div className="space-y-3">
                 {data.items.map((delivery) => (
-                  <div
-                    key={delivery.id}
-                    className="flex flex-col gap-2 rounded-lg border border-border bg-surface-1 px-3 py-3 text-sm text-text-2 md:flex-row md:items-start md:justify-between"
-                  >
+                  <Card key={delivery.id} padding="none" className="flex flex-col gap-2 px-3 py-3 text-sm text-text-2 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-text-1">{delivery.event_type}</span>
@@ -240,7 +238,7 @@ function WebhookRow({
                         Retry
                       </button>
                     ) : null}
-                  </div>
+                  </Card>
                 ))}
                 {data.total > data.items.length ? (
                   <p className="text-xs text-text-3">Showing {data.items.length} of {data.total} deliveries.</p>

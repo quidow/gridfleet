@@ -10,7 +10,7 @@ import { deviceChipStatus } from '../../lib/deviceState';
 import { isEmulatorStopped } from '../../lib/emulatorState';
 import { DEVICE_STATUS_LABELS } from '../../lib/labels';
 import { getPendingDeviceActionLabel, type DevicePendingAction } from '../../lib/devicePendingAction';
-import type { RowActionItem } from '../../components/RowActionsMenu';
+import type { RowActionItem } from '../../components/ui/RowActionsMenu';
 import type { DataTableColumn } from '../../components/ui/DataTable';
 import type { DeviceChipStatus, DeviceRead } from '../../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_COLORS, DEVICE_TYPE_LABELS } from './devicePageHelpers';
