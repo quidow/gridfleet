@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select as sa_select
 from sqlalchemy.orm import selectinload
@@ -13,13 +13,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
-
+    from app.devices.readiness_types import ReadinessState
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services import release_ordering as pack_release_ordering
 
 selected_release = pack_release_ordering.selected_release
-
-ReadinessState = Literal["setup_required", "verification_required", "verified"]
 DEVICE_FIELD_ATTRS = frozenset(
     {
         "connection_target",

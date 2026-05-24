@@ -14,7 +14,7 @@ from app.devices.models import (
     HardwareChargingState,
     HardwareHealthStatus,
 )
-from app.devices.services.readiness import ReadinessState
+from app.devices.readiness_types import ReadinessState
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
