@@ -56,7 +56,8 @@ function CompactHeatmapEmptyState({ days }: { days: number }) {
   return (
     <div className="rounded-lg border border-dashed border-border-strong bg-surface-2 px-4 py-5">
       <div className="flex flex-col gap-3 text-center sm:flex-row sm:items-center sm:text-left">
-        <div className={`mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-1 text-text-3 sm:mx-0`}>
+        {/* eslint-disable-next-line no-restricted-syntax -- icon box, not a card */}
+        <div className="mx-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-1 text-text-3 sm:mx-0">
           <BarChart3 size={18} />
         </div>
         <div>

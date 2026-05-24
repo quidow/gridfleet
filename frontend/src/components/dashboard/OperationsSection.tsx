@@ -45,28 +45,30 @@ function IdleCell({ title }: { title: string }) {
 
 function ActiveRunsList({ runs }: { runs: RunRead[] }) {
   return (
-    <Card padding="none"><ul className="divide-y divide-border">
-      {runs.slice(0, 5).map((run) => {
-        const deviceCount = run.reserved_devices?.length ?? 0;
-        const startedAt = run.started_at ?? run.created_at;
-        return (
-          <li key={run.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-            <div className="min-w-0 flex-1">
-              <Link to={`/runs/${run.id}`} className="block truncate font-medium text-accent hover:text-accent-hover">
-                {run.name}
-              </Link>
-              <p className="mt-0.5 text-xs text-text-2">
-                <span className="font-mono tabular-nums">{deviceCount}</span> device{deviceCount === 1 ? '' : 's'}
-                {startedAt ? <span className="before:mx-1.5 before:content-['·']">{formatRelativeTime(startedAt)}</span> : null}
-              </p>
-            </div>
-            <div className="shrink-0">
-              <StatusBadge status={run.state} />
-            </div>
-          </li>
-        );
-      })}
-    </ul></Card>
+    <Card padding="none">
+      <ul className="divide-y divide-border">
+        {runs.slice(0, 5).map((run) => {
+          const deviceCount = run.reserved_devices?.length ?? 0;
+          const startedAt = run.started_at ?? run.created_at;
+          return (
+            <li key={run.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+              <div className="min-w-0 flex-1">
+                <Link to={`/runs/${run.id}`} className="block truncate font-medium text-accent hover:text-accent-hover">
+                  {run.name}
+                </Link>
+                <p className="mt-0.5 text-xs text-text-2">
+                  <span className="font-mono tabular-nums">{deviceCount}</span> device{deviceCount === 1 ? '' : 's'}
+                  {startedAt ? <span className="before:mx-1.5 before:content-['·']">{formatRelativeTime(startedAt)}</span> : null}
+                </p>
+              </div>
+              <div className="shrink-0">
+                <StatusBadge status={run.state} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 
@@ -83,24 +85,26 @@ function availabilityTone(status: DeviceChipStatus) {
 
 function BusyDevicesList({ devices }: { devices: DeviceRead[] }) {
   return (
-    <Card padding="none"><ul className="divide-y divide-border">
-      {devices.slice(0, 6).map((device) => (
-        (() => {
-          const status = deviceChipStatus(device);
-          return (
-            <li key={device.id} className="grid grid-cols-[minmax(0,1fr),7rem,auto] items-center gap-3 px-3 py-2.5 text-sm">
-              <Link to={`/devices/${device.id}`} className="min-w-0 truncate font-medium text-accent hover:text-accent-hover">
-                {device.name}
-              </Link>
-              <PlatformIcon platformId={device.platform_id} platformLabel={device.platform_label} />
-              <Badge tone={availabilityTone(status)}>
-                {DEVICE_STATUS_LABELS[status]}
-              </Badge>
-            </li>
-          );
-        })()
-      ))}
-    </ul></Card>
+    <Card padding="none">
+      <ul className="divide-y divide-border">
+        {devices.slice(0, 6).map((device) => (
+          (() => {
+            const status = deviceChipStatus(device);
+            return (
+              <li key={device.id} className="grid grid-cols-[minmax(0,1fr),7rem,auto] items-center gap-3 px-3 py-2.5 text-sm">
+                <Link to={`/devices/${device.id}`} className="min-w-0 truncate font-medium text-accent hover:text-accent-hover">
+                  {device.name}
+                </Link>
+                <PlatformIcon platformId={device.platform_id} platformLabel={device.platform_label} />
+                <Badge tone={availabilityTone(status)}>
+                  {DEVICE_STATUS_LABELS[status]}
+                </Badge>
+              </li>
+            );
+          })()
+        ))}
+      </ul>
+    </Card>
   );
 }
 
