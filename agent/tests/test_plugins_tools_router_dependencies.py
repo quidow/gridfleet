@@ -72,7 +72,7 @@ async def test_tools_status_uses_override(client: AsyncClient) -> None:
     async def _fake() -> dict[str, Any]:
         return {
             "host": {
-                "node": {"name": "node", "version": "v20.0.0", "description": "JavaScript runtime for Appium server"},
+                "node": {"name": "Node", "version": "v20.0.0", "description": "JavaScript runtime for Appium server"},
             },
             "packs": {
                 "test-pack": [{"name": "adb", "version": "33.0.3", "description": "ADB tool"}],

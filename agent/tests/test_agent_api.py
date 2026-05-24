@@ -493,8 +493,8 @@ async def test_agent_tools_status(client: AsyncClient) -> None:
     async def _fake() -> dict[str, object]:
         return {
             "host": {
-                "node": {"name": "node", "version": "24.14.1", "description": "JavaScript runtime for Appium server"},
-                "node_provider": {"name": "node_provider", "version": "fnm", "description": "Node.js version manager"},
+                "node": {"name": "Node", "version": "24.14.1", "description": "JavaScript runtime for Appium server"},
+                "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node.js version manager"},
             },
             "packs": {
                 "test-pack": [

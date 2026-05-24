@@ -117,7 +117,7 @@ def test_tools_status_response_accepts_structured_dict() -> None:
     ToolsStatusResponse.model_validate(
         {
             "host": {
-                "node": {"name": "node", "version": "20.0", "description": "JavaScript runtime for Appium server"},
+                "node": {"name": "Node", "version": "20.0", "description": "JavaScript runtime for Appium server"},
             },
             "packs": {
                 "test-pack": [

@@ -428,8 +428,8 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
             "http://10.0.0.5:5100/agent/tools/status",
             payload={
                 "host": {
-                    "node": {"name": "node", "version": "24.14.1", "description": "JS runtime"},
-                    "node_provider": {"name": "node_provider", "version": "fnm", "description": "Node manager"},
+                    "node": {"name": "Node", "version": "24.14.1", "description": "JS runtime"},
+                    "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node manager"},
                 },
                 "packs": {},
             },

@@ -246,12 +246,12 @@ async def get_tool_status(
 
     host: dict[str, dict[str, Any]] = {
         "node": {
-            "name": "node",
+            "name": "Node",
             "version": node_version,
             "description": "JavaScript runtime for Appium server",
         },
         "node_provider": {
-            "name": "node_provider",
+            "name": "Node Provider",
             "version": provider.name if provider and not provider.error else None,
             "description": provider.error if provider and provider.error else "Node.js version manager",
         },

@@ -129,7 +129,7 @@ async def test_get_tool_status_structured_response() -> None:
         status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
 
     assert status["host"]["node"]["version"] == "20.0.0"
-    assert status["host"]["node"]["name"] == "node"
+    assert status["host"]["node"]["name"] == "Node"
     assert status["host"]["node_provider"]["version"] is None
 
     assert len(status["packs"]["test-pack"]) == 2

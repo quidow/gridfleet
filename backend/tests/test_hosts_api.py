@@ -384,8 +384,8 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
         new=AsyncMock(
             return_value={
                 "host": {
-                    "node": {"name": "node", "version": "24.14.1", "description": "JS runtime"},
-                    "node_provider": {"name": "node_provider", "version": "fnm", "description": "Node manager"},
+                    "node": {"name": "Node", "version": "24.14.1", "description": "JS runtime"},
+                    "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node manager"},
                 },
                 "packs": {},
             }

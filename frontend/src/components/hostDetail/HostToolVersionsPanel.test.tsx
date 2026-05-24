@@ -8,8 +8,8 @@ vi.mock('../../hooks/useHosts', () => ({
   useHostToolStatus: () => ({
     data: {
       host: {
-        node: { name: 'node', version: '24.14.1', description: 'JavaScript runtime for Appium server' },
-        node_provider: { name: 'node_provider', version: 'fnm', description: 'Node.js version manager' },
+        node: { name: 'Node', version: '24.14.1', description: 'JavaScript runtime for Appium server' },
+        node_provider: { name: 'Node Provider', version: 'fnm', description: 'Node.js version manager' },
       },
       packs: {
         'appium-xcuitest': [
@@ -56,9 +56,9 @@ function renderPanel() {
 test('renders host tools section with node and node provider', () => {
   renderPanel();
   expect(screen.getByText('Host Tools')).toBeInTheDocument();
-  expect(screen.getByText('node')).toBeInTheDocument();
+  expect(screen.getByText('Node')).toBeInTheDocument();
   expect(screen.getByText('24.14.1')).toBeInTheDocument();
-  expect(screen.getByText('node_provider')).toBeInTheDocument();
+  expect(screen.getByText('Node Provider')).toBeInTheDocument();
   expect(screen.getByText('fnm')).toBeInTheDocument();
 });
 
