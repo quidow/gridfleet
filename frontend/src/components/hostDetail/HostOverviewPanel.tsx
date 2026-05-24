@@ -4,6 +4,7 @@ import type { HostRead } from '../../types';
 import { DefinitionList } from '../ui/DefinitionList';
 import { HostOverviewResourceStrip } from './HostOverviewResourceStrip';
 import { HostToolVersionsPanel } from './HostToolVersionsPanel';
+import { HostToolEnvPanel } from './HostToolEnvPanel';
 import { EMPTY_GLYPH } from '../../utils/emptyValue';
 
 type Props = {
@@ -87,6 +88,7 @@ export function HostOverviewPanel({
       </div>
 
       <HostToolVersionsPanel host={host} />
+      <HostToolEnvPanel hostId={host.id} />
     </div>
   );
 }

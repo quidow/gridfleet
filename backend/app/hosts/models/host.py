@@ -42,6 +42,7 @@ class Host(Base):
     total_memory_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_disk_gb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    tool_env: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     devices: Mapped[list[Any]] = relationship("Device", back_populates="host")

@@ -33,6 +33,8 @@ from app.hosts.schemas import (
     HostRead,
     HostRegister,
     HostResourceTelemetryResponse,
+    HostToolEnvRead,
+    HostToolEnvUpdate,
     HostToolStatusRead,
     IntakeCandidateRead,
 )
@@ -359,3 +361,35 @@ async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDe
         )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{host_id}/tool-env",
+    response_model=HostToolEnvRead,
+    status_code=200,
+    summary="Get per-host tool environment variables",
+)
+async def get_host_tool_env(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+    host = await host_service.get_host(db, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host not found")
+    return {"env": host.tool_env or {}}
+
+
+@router.put(
+    "/{host_id}/tool-env",
+    response_model=HostToolEnvRead,
+    status_code=200,
+    summary="Set per-host tool environment variables",
+)
+async def put_host_tool_env(
+    host_id: uuid.UUID,
+    body: HostToolEnvUpdate,
+    db: DbDep,
+) -> dict[str, Any]:
+    host = await host_service.get_host(db, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host not found")
+    host.tool_env = body.env if body.env else None
+    await db.commit()
+    return {"env": host.tool_env or {}}

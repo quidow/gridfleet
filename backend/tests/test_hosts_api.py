@@ -713,6 +713,50 @@ async def test_register_host_without_host_info_keeps_columns_null(client: AsyncC
     assert data["total_disk_gb"] is None
 
 
+async def test_get_tool_env_returns_empty_for_new_host(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {}}
+
+
+async def test_put_tool_env_sets_and_returns(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    resp = await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {"ANDROID_HOME": "/sdk"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {"ANDROID_HOME": "/sdk"}}
+
+    get_resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert get_resp.status_code == 200
+    assert get_resp.json() == {"env": {"ANDROID_HOME": "/sdk"}}
+
+
+async def test_put_tool_env_empty_dict_clears(client: AsyncClient) -> None:
+    host = await _create_host(client)
+    await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {"X": "1"}},
+    )
+    resp = await client.put(
+        f"/api/hosts/{host['id']}/tool-env",
+        json={"env": {}},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"env": {}}
+
+    get_resp = await client.get(f"/api/hosts/{host['id']}/tool-env")
+    assert get_resp.status_code == 200
+    assert get_resp.json() == {"env": {}}
+
+
+async def test_get_tool_env_404_for_missing_host(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/tool-env")
+    assert resp.status_code == 404
+
+
 async def test_register_host_does_not_overwrite_hardware_info_with_null(client: AsyncClient) -> None:
     with patch("app.hosts.router._fire_and_forget"):
         first = await client.post(

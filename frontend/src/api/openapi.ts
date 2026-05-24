@@ -1728,6 +1728,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hosts/{host_id}/tool-env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get per-host tool environment variables */
+        get: operations["get_host_tool_env_api_hosts__host_id__tool_env_get"];
+        /** Set per-host tool environment variables */
+        put: operations["put_host_tool_env_api_hosts__host_id__tool_env_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hosts/{host_id}/tools/status": {
         parameters: {
             query?: never;
@@ -3879,6 +3897,10 @@ export interface components {
             /** Required Agent Version */
             required_agent_version?: string | null;
             status: components["schemas"]["HostStatus"];
+            /** Tool Env */
+            tool_env?: {
+                [key: string]: string;
+            } | null;
             /** Total Disk Gb */
             total_disk_gb?: number | null;
             /** Total Memory Mb */
@@ -4105,6 +4127,10 @@ export interface components {
             /** Required Agent Version */
             required_agent_version?: string | null;
             status: components["schemas"]["HostStatus"];
+            /** Tool Env */
+            tool_env?: {
+                [key: string]: string;
+            } | null;
             /** Total Disk Gb */
             total_disk_gb?: number | null;
             /** Total Memory Mb */
@@ -4255,6 +4281,20 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** HostToolEnvRead */
+        HostToolEnvRead: {
+            /** Env */
+            env: {
+                [key: string]: string;
+            };
+        };
+        /** HostToolEnvUpdate */
+        HostToolEnvUpdate: {
+            /** Env */
+            env: {
+                [key: string]: string;
+            };
         };
         /** HostToolStatusRead */
         HostToolStatusRead: {
@@ -11506,6 +11546,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostResourceTelemetryResponse"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_host_tool_env_api_hosts__host_id__tool_env_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostToolEnvRead"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_host_tool_env_api_hosts__host_id__tool_env_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostToolEnvUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostToolEnvRead"];
                 };
             };
             /** @description Validation error */
