@@ -2,6 +2,22 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.19.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.18.1...gridfleet-agent-v0.19.0) (2026-05-24)
+
+
+### Features
+
+* **agent:** add resolved_connection_target to LifecycleActionResult ([5955ac0](https://github.com/quidow/gridfleet/commit/5955ac0ffc7c0ed77adc9ad86b67e64fe935fe86))
+* **agent:** add tool_versions to DriverPackAdapter and pack_ids to AdapterRegistry ([accecea](https://github.com/quidow/gridfleet/commit/acceceadeaf308f37e9db96e0a1ab248ce1c8b18))
+
+
+### Bug Fixes
+
+* **agent:** avoid blocking event loop in tool_versions collection ([139e784](https://github.com/quidow/gridfleet/commit/139e784cbe9c722d3c535a2356604a6d2619534b))
+* **agent:** remove _get_go_ios_version references from test_tools_and_utilities_more ([ea84f49](https://github.com/quidow/gridfleet/commit/ea84f49ead09d3a2293a4810fa925feac4dce5b8))
+* **agent:** update integration test for resolved_connection_target ([ce270e0](https://github.com/quidow/gridfleet/commit/ce270e03aafbc5a630e32f277502125d3e2dc49b))
+* **backend,agent:** resolve CodeQL code scanning alerts ([#374](https://github.com/quidow/gridfleet/issues/374)) ([48c1f71](https://github.com/quidow/gridfleet/commit/48c1f71a3743e417fb4960ea3fd183133e38147b))
+
 ## [0.18.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.18.0...gridfleet-agent-v0.18.1) (2026-05-23)
 
 
