@@ -1,14 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchGridStatus, fetchHealth } from '../api/grid';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useGridStatus() {
   const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: ['grid-status'],
     queryFn: fetchGridStatus,
-    refetchInterval: connected ? 60_000 : 10_000,
-    staleTime: connected ? 30_000 : 5_000,
+    ...sseAdaptivePolling(connected, 10_000),
     refetchOnWindowFocus: false,
   });
 }
@@ -18,7 +18,6 @@ export function useHealth() {
   return useQuery({
     queryKey: ['health'],
     queryFn: fetchHealth,
-    refetchInterval: connected ? 60_000 : 30_000,
-    staleTime: connected ? 30_000 : 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }

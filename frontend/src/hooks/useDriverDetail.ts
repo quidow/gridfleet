@@ -7,6 +7,7 @@ import {
   setDriverPackCurrentRelease,
 } from '../api/driverPackDetail';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useDriverDetail(packId: string) {
   const { connected } = useEventStreamStatus();
@@ -14,8 +15,7 @@ export function useDriverDetail(packId: string) {
     queryKey: ['driver-pack', packId],
     queryFn: () => fetchDriverPack(packId),
     enabled: packId.length > 0,
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 
@@ -25,8 +25,7 @@ export function useDriverReleases(packId: string) {
     queryKey: ['driver-pack-releases', packId],
     queryFn: () => fetchDriverPackReleases(packId),
     enabled: packId.length > 0,
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 
@@ -36,8 +35,7 @@ export function useDriverPackHosts(packId: string) {
     queryKey: ['driver-pack-hosts', packId],
     queryFn: () => fetchDriverPackHosts(packId),
     enabled: packId.length > 0,
-    refetchInterval: connected ? 60_000 : 15_000,
-    staleTime: connected ? 30_000 : 7_500,
+    ...sseAdaptivePolling(connected, 15_000),
   });
 }
 

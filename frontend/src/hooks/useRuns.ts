@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { cancelRun, fetchRun, fetchRuns, forceReleaseRun } from '../api/runs';
 import type { RunListParams } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 export function useRuns(params?: RunListParams) {
   const { connected } = useEventStreamStatus();
@@ -9,8 +10,7 @@ export function useRuns(params?: RunListParams) {
   return useQuery({
     queryKey: ['runs', 'cursor', params],
     queryFn: () => fetchRuns(params),
-    refetchInterval: isHistorical ? false : (connected ? 60_000 : 10_000),
-    staleTime: isHistorical ? Infinity : (connected ? 30_000 : 5_000),
+    ...(isHistorical ? { refetchInterval: false as const, staleTime: Infinity } : sseAdaptivePolling(connected, 10_000)),
     refetchOnWindowFocus: false,
   });
 }
@@ -20,8 +20,7 @@ export function useRun(id: string) {
   return useQuery({
     queryKey: ['run', id],
     queryFn: () => fetchRun(id),
-    refetchInterval: connected ? 60_000 : 5_000,
-    staleTime: connected ? 30_000 : 2_500,
+    ...sseAdaptivePolling(connected, 5_000),
     refetchOnWindowFocus: false,
   });
 }

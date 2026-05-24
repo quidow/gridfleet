@@ -7,6 +7,7 @@ import {
 } from '../api/driverPacks';
 import type { DriverPack } from '../types/driverPacks';
 import { useEventStreamStatus } from '../context/EventStreamContext';
+import { sseAdaptivePolling } from './polling';
 
 function platformKey(packId: string, platformId: string): string {
   return `${packId}:${platformId}`;
@@ -50,8 +51,7 @@ export function useDriverPackCatalog() {
   return useQuery({
     queryKey: ['driver-pack-catalog'],
     queryFn: fetchDriverPackCatalog,
-    refetchInterval: connected ? 60_000 : 30_000,
-    staleTime: connected ? 30_000 : 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   }, contextClient ?? fallbackQueryClient);
 }
 
@@ -79,7 +79,6 @@ export function useHostDriverPacks(hostId: string) {
     queryKey: ['host-driver-packs', hostId],
     queryFn: () => fetchHostDriverPacks(hostId),
     enabled: !!hostId,
-    refetchInterval: connected ? 60_000 : 30_000,
-    staleTime: connected ? 30_000 : 15_000,
+    ...sseAdaptivePolling(connected, 30_000),
   });
 }
