@@ -52,7 +52,6 @@ Current auth behavior:
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}/sessions` | List recent sessions for one device | `limit` | `SessionRead[]` |
 | `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered by key | `keys` | config object |
-| `PUT` | `/api/devices/{device_id}/config` | Replace device config | config object body | config object |
 | `PATCH` | `/api/devices/{device_id}/config` | Deep-merge config keys | partial config object | config object |
 | `GET` | `/api/devices/{device_id}/config/history` | Read config audit history | `limit` | config-audit entries |
 | `GET` | `/api/devices/{device_id}/health` | Probe current device health through the assigned host | path `device_id` | health/status object |
@@ -62,7 +61,6 @@ Current auth behavior:
 | `POST` | `/api/devices/{device_id}/node/stop` | Stop the managed Appium node | path `device_id` | node/device status payload |
 | `POST` | `/api/devices/{device_id}/node/restart` | Restart the managed Appium node | path `device_id` | node/device status payload |
 | `POST` | `/api/devices/{device_id}/reconnect` | Reconnect a network Android/Fire TV transport | path `device_id` | reconnect result |
-| `POST` | `/api/devices/{device_id}/refresh` | Refresh device properties from the host | path `device_id` | `DeviceRead` |
 | `GET` | `/api/devices/{device_id}/session-outcome-heatmap` | Read recent session outcome points | `days` | `SessionOutcomeHeatmapRow[]` |
 | `POST` | `/api/devices/{device_id}/session-test` | Run a session viability probe | path `device_id` | session-test result |
 
