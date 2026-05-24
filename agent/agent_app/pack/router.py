@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Query, status
@@ -35,6 +36,8 @@ from agent_app.pack.schemas import (
     PackDoctorResponse,
     _FeatureActionContext,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
@@ -320,9 +323,9 @@ async def pack_doctor_route(
     try:
         results = await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id))
     except Exception as exc:
-        return {
-            "checks": [{"check_id": "adapter_doctor", "ok": False, "message": str(exc)}],
-        }
+        logger.exception("adapter doctor failed for pack %s", pack_id)
+        msg = f"adapter doctor failed: {type(exc).__name__}"
+        return {"checks": [{"check_id": "adapter_doctor", "ok": False, "message": msg}]}
     return {
         "checks": [{"check_id": r.check_id, "ok": r.ok, "message": r.message} for r in results],
     }
