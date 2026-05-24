@@ -286,6 +286,194 @@ async def test_start_remote_node_maps_agent_http_status_errors(
         )
 
 
+def _standard_start_monkeypatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apply common monkeypatches for start_remote_node tests."""
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.assert_runnable", AsyncMock())
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_for_device",
+        lambda _device: ("appium-uiautomator2", "android_mobile"),
+    )
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.render_stereotype", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.resolve_pack_platform",
+        AsyncMock(return_value=SimpleNamespace(appium_platform_name="Android")),
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent._build_session_aligned_start_caps", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
+
+
+async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """host.tool_env is the base; pack workaround_env overrides on top."""
+    db_host.tool_env = {"ANDROID_HOME": "/custom", "SHARED": "host-value"}
+    device = await _loaded_device(db_session, db_host, "tool-env-merge")
+    _standard_start_monkeypatches(monkeypatch)
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
+        AsyncMock(
+            return_value={
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "appium_platform_name": "Android",
+                "stereotype_caps": {},
+                "workaround_env": {"OTHER": "pack-val", "SHARED": "pack-value"},
+            }
+        ),
+    )
+    captured_payload: list[dict[str, object]] = []
+
+    async def _fake_appium_start(
+        agent_base: str, *, host: str, agent_port: int, payload: dict[str, object], **kw: object
+    ) -> _FakeResponse:
+        captured_payload.append(payload)
+        return _FakeResponse({"pid": 1234, "connection_target": "t"})
+
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", _fake_appium_start)
+
+    await node_agent.start_remote_node(
+        db_session,
+        device,
+        port=4730,
+        allocated_caps={},
+        agent_base="http://agent",
+        http_client_factory=httpx.AsyncClient,
+    )
+
+    assert len(captured_payload) == 1
+    merged = captured_payload[0].get("workaround_env")
+    # Both host and pack keys present
+    assert merged == {"ANDROID_HOME": "/custom", "OTHER": "pack-val", "SHARED": "pack-value"}
+
+
+async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pack workaround_env takes precedence over host tool_env for duplicate keys."""
+    db_host.tool_env = {"X": "host"}
+    device = await _loaded_device(db_session, db_host, "tool-env-conflict")
+    _standard_start_monkeypatches(monkeypatch)
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
+        AsyncMock(
+            return_value={
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "appium_platform_name": "Android",
+                "stereotype_caps": {},
+                "workaround_env": {"X": "pack"},
+            }
+        ),
+    )
+    captured_payload: list[dict[str, object]] = []
+
+    async def _fake_appium_start(
+        agent_base: str, *, host: str, agent_port: int, payload: dict[str, object], **kw: object
+    ) -> _FakeResponse:
+        captured_payload.append(payload)
+        return _FakeResponse({"pid": 5678, "connection_target": "t"})
+
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", _fake_appium_start)
+
+    await node_agent.start_remote_node(
+        db_session,
+        device,
+        port=4731,
+        allocated_caps={},
+        agent_base="http://agent",
+        http_client_factory=httpx.AsyncClient,
+    )
+
+    assert len(captured_payload) == 1
+    assert captured_payload[0].get("workaround_env") == {"X": "pack"}
+
+
+async def test_start_remote_node_no_tool_env_behavior_unchanged(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When host.tool_env is None and pack has no workaround_env, no workaround_env is sent."""
+    db_host.tool_env = None
+    device = await _loaded_device(db_session, db_host, "tool-env-none")
+    _standard_start_monkeypatches(monkeypatch)
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
+        AsyncMock(
+            return_value={
+                "pack_id": "appium-uiautomator2",
+                "platform_id": "android_mobile",
+                "appium_platform_name": "Android",
+                "stereotype_caps": {},
+                # no workaround_env key
+            }
+        ),
+    )
+    captured_payload: list[dict[str, object]] = []
+
+    async def _fake_appium_start(
+        agent_base: str, *, host: str, agent_port: int, payload: dict[str, object], **kw: object
+    ) -> _FakeResponse:
+        captured_payload.append(payload)
+        return _FakeResponse({"pid": 9999, "connection_target": "t"})
+
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", _fake_appium_start)
+
+    await node_agent.start_remote_node(
+        db_session,
+        device,
+        port=4732,
+        allocated_caps={},
+        agent_base="http://agent",
+        http_client_factory=httpx.AsyncClient,
+    )
+
+    assert len(captured_payload) == 1
+    assert "workaround_env" not in captured_payload[0]
+
+
+async def test_start_remote_node_host_tool_env_no_pack_overrides(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When host.tool_env is set but pack_overrides is None, host env is still sent."""
+    db_host.tool_env = {"JAVA_HOME": "/opt/java"}
+    device = await _loaded_device(db_session, db_host, "tool-env-no-pack")
+    _standard_start_monkeypatches(monkeypatch)
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.build_pack_start_payload",
+        AsyncMock(return_value=None),
+    )
+    captured_payload: list[dict[str, object]] = []
+
+    async def _fake_appium_start(
+        agent_base: str, *, host: str, agent_port: int, payload: dict[str, object], **kw: object
+    ) -> _FakeResponse:
+        captured_payload.append(payload)
+        return _FakeResponse({"pid": 7777, "connection_target": "t"})
+
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", _fake_appium_start)
+
+    await node_agent.start_remote_node(
+        db_session,
+        device,
+        port=4733,
+        allocated_caps={},
+        agent_base="http://agent",
+        http_client_factory=httpx.AsyncClient,
+    )
+
+    assert len(captured_payload) == 1
+    assert captured_payload[0].get("workaround_env") == {"JAVA_HOME": "/opt/java"}
+
+
 async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     host = Host(
         id=__import__("uuid").uuid4(),

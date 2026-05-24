@@ -24,6 +24,7 @@ from tests.pack.factories import seed_test_packs
 class _FakeHost:
     ip = "127.0.0.1"
     agent_port = 5100
+    tool_env: dict[str, str] | None = None
 
 
 class _FakeHttpxResponse:
