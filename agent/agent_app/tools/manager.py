@@ -17,6 +17,7 @@ from agent_app.tools.paths import _parse_node_version
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
+    from agent_app.pack.manifest import DesiredPack
 
 logger = logging.getLogger(__name__)
 
@@ -236,32 +237,46 @@ async def _get_node_version(provider: NodeProvider | None) -> str | None:
 async def get_tool_status(
     *,
     adapter_registry: AdapterRegistry | None = None,
+    desired_packs: list[DesiredPack] | None = None,
 ) -> dict[str, Any]:
     provider = await detect_node_provider()
     if provider and provider.bin_paths:
         _prepend_process_path(provider.bin_paths)
     node_version = await _get_node_version(provider)
 
-    async def _collect() -> dict[str, str | None]:
-        tools: dict[str, str | None] = {}
-        if adapter_registry is not None:
-            for pack_id in adapter_registry.pack_ids():
-                adapter = adapter_registry.get_current(pack_id)
-                if adapter is not None and hasattr(adapter, "tool_versions"):
-                    result = adapter.tool_versions()
-                    if inspect.isawaitable(result):
-                        result = await result
-                    for name, version in result.items():
-                        if name not in tools:
-                            tools[name] = version
-        return tools
-
-    adapter_tools = await _collect()
-
-    result: dict[str, Any] = {
-        "node": node_version,
-        "node_provider": provider.name if provider and not provider.error else None,
-        "node_error": provider.error if provider and provider.error else None,
+    host: dict[str, dict[str, Any]] = {
+        "node": {
+            "name": "Node",
+            "version": node_version,
+            "description": "JavaScript runtime for Appium server",
+        },
+        "node_provider": {
+            "name": "Node Provider",
+            "version": provider.name if provider and not provider.error else None,
+            "description": provider.error if provider and provider.error else "Node.js version manager",
+        },
     }
-    result.update(adapter_tools)
-    return result
+
+    packs: dict[str, list[dict[str, Any]]] = {}
+    if desired_packs:
+        for pack in desired_packs:
+            if not pack.tool_dependencies:
+                continue
+            adapter = adapter_registry.get_current(pack.id) if adapter_registry else None
+            detected: dict[str, str | None] = {}
+            if adapter is not None and hasattr(adapter, "tool_versions"):
+                result = adapter.tool_versions()
+                if inspect.isawaitable(result):
+                    result = await result
+                detected = result
+
+            packs[pack.id] = [
+                {
+                    "name": dep.name,
+                    "version": detected.get(dep.name),
+                    "description": dep.description,
+                }
+                for dep in pack.tool_dependencies
+            ]
+
+    return {"host": host, "packs": packs}

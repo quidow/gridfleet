@@ -70,12 +70,21 @@ async def test_sync_plugins_uses_override(client: AsyncClient) -> None:
 
 async def test_tools_status_uses_override(client: AsyncClient) -> None:
     async def _fake() -> dict[str, Any]:
-        return {"adb": "33.0.3", "node": "v20.0.0"}
+        return {
+            "host": {
+                "node": {"name": "Node", "version": "v20.0.0", "description": "JavaScript runtime for Appium server"},
+            },
+            "packs": {
+                "test-pack": [{"name": "adb", "version": "33.0.3", "description": "ADB tool"}],
+            },
+        }
 
     app.dependency_overrides[get_tool_status_dep] = _fake
     try:
         resp = await client.get("/agent/tools/status")
         assert resp.status_code == 200
-        assert resp.json() == {"adb": "33.0.3", "node": "v20.0.0"}
+        body = resp.json()
+        assert body["host"]["node"]["version"] == "v20.0.0"
+        assert body["packs"]["test-pack"][0]["version"] == "33.0.3"
     finally:
         app.dependency_overrides.pop(get_tool_status_dep, None)

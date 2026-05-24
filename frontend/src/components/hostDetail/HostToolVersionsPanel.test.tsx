@@ -7,12 +7,20 @@ import type { HostRead } from '../../types';
 vi.mock('../../hooks/useHosts', () => ({
   useHostToolStatus: () => ({
     data: {
-      node: '24.14.1',
-      node_provider: 'fnm',
-      go_ios: '1.0.188',
-      appium: '3.3.0',
-      selenium_jar: '4.41.0',
-      selenium_jar_path: '/opt/gridfleet-agent/selenium-server.jar',
+      host: {
+        node: { name: 'Node', version: '24.14.1', description: 'JavaScript runtime for Appium server' },
+        node_provider: { name: 'Node Provider', version: 'fnm', description: 'Node.js version manager' },
+      },
+      packs: {
+        'appium-xcuitest': [
+          { name: 'xcodebuild', version: '16.2', description: 'Builds and tests iOS/tvOS apps via Xcode' },
+          { name: 'go_ios', version: '1.0.188', description: 'iOS real-device battery and hardware telemetry' },
+        ],
+        'appium-uiautomator2': [
+          { name: 'adb', version: '35.0.2', description: 'Communicates with Android devices over USB and TCP' },
+          { name: 'java', version: null, description: 'Required by UIAutomator2 test server build tools' },
+        ],
+      },
     },
     isLoading: false,
     error: null,
@@ -45,14 +53,36 @@ function renderPanel() {
   );
 }
 
-test('renders host-level tools without global appium or selenium jar management', () => {
+test('renders host tools section with node and node provider', () => {
   renderPanel();
-
+  expect(screen.getByText('Host Tools')).toBeInTheDocument();
   expect(screen.getByText('Node')).toBeInTheDocument();
+  expect(screen.getByText('24.14.1')).toBeInTheDocument();
   expect(screen.getByText('Node Provider')).toBeInTheDocument();
-  expect(screen.getByText('go-ios')).toBeInTheDocument();
-  expect(screen.queryByText('Appium')).not.toBeInTheDocument();
-  expect(screen.queryByText('Selenium JAR')).not.toBeInTheDocument();
-  expect(screen.queryByText('Selenium JAR Path')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /ensure versions/i })).not.toBeInTheDocument();
+  expect(screen.getByText('fnm')).toBeInTheDocument();
+});
+
+test('renders driver pack dependencies grouped by pack', () => {
+  renderPanel();
+  expect(screen.getByText('Driver Pack Dependencies')).toBeInTheDocument();
+  expect(screen.getByText('appium-xcuitest')).toBeInTheDocument();
+  expect(screen.getByText('appium-uiautomator2')).toBeInTheDocument();
+  expect(screen.getByText('xcodebuild')).toBeInTheDocument();
+  expect(screen.getByText('16.2')).toBeInTheDocument();
+  expect(screen.getByText('go_ios')).toBeInTheDocument();
+  expect(screen.getByText('1.0.188')).toBeInTheDocument();
+  expect(screen.getByText('adb')).toBeInTheDocument();
+  expect(screen.getByText('35.0.2')).toBeInTheDocument();
+});
+
+test('shows descriptions for all tools', () => {
+  renderPanel();
+  expect(screen.getByText('JavaScript runtime for Appium server')).toBeInTheDocument();
+  expect(screen.getByText('Builds and tests iOS/tvOS apps via Xcode')).toBeInTheDocument();
+  expect(screen.getByText('iOS real-device battery and hardware telemetry')).toBeInTheDocument();
+});
+
+test('shows warning for missing tools', () => {
+  renderPanel();
+  expect(screen.getByText('not found')).toBeInTheDocument();
 });

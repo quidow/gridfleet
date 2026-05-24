@@ -151,6 +151,29 @@ def test_manifest_rejects_workaround_without_id() -> None:
         load_manifest_yaml(yaml_text)
 
 
+def test_manifest_accepts_tool_dependencies() -> None:
+    old = 'requires:\n  gridfleet: ">=1.7"\n  host_os: [linux, macos]'
+    new = (
+        'requires:\n  gridfleet: ">=1.7"\n  host_os: [linux, macos]\n'
+        "  tool_dependencies:\n"
+        "    - name: adb\n"
+        '      description: "Communicates with Android devices over USB and TCP"\n'
+        "    - name: java\n"
+        '      description: "Required by UIAutomator2 test server build tools"'
+    )
+    yaml_text = _valid_yaml().replace(old, new)
+    manifest = load_manifest_yaml(yaml_text)
+    assert len(manifest.requires.tool_dependencies) == 2
+    assert manifest.requires.tool_dependencies[0].name == "adb"
+    assert manifest.requires.tool_dependencies[0].description == ("Communicates with Android devices over USB and TCP")
+    assert manifest.requires.tool_dependencies[1].name == "java"
+
+
+def test_manifest_tool_dependencies_defaults_to_empty() -> None:
+    manifest = load_manifest_yaml(_valid_yaml())
+    assert manifest.requires.tool_dependencies == []
+
+
 def test_manifest_accepts_device_fields_schema_default() -> None:
     replacement = (
         "identity:\n      scheme: android_serial\n      scope: host\n"

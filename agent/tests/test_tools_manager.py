@@ -1,6 +1,8 @@
 from unittest.mock import AsyncMock, patch
 
 from agent_app.pack.adapter_registry import AdapterRegistry
+from agent_app.pack.manifest import DesiredPack, ToolDependency
+from agent_app.pack.runtime_types import AppiumInstallable
 from agent_app.tools.manager import (
     CommandResult,
     NodeProvider,
@@ -13,6 +15,32 @@ from agent_app.tools.manager import (
 )
 
 
+def _stub_desired_pack(
+    pack_id: str,
+    tool_deps: list[ToolDependency],
+) -> DesiredPack:
+    return DesiredPack(
+        id=pack_id,
+        release="1.0",
+        appium_server=AppiumInstallable(
+            source="npm",
+            package="appium",
+            version="==3.0.0",
+            recommended=None,
+            known_bad=[],
+        ),
+        appium_driver=AppiumInstallable(
+            source="npm",
+            package="appium-fake",
+            version="==1.0.0",
+            recommended=None,
+            known_bad=[],
+        ),
+        platforms=[],
+        tool_dependencies=tool_deps,
+    )
+
+
 async def test_get_tool_status_returns_nulls_for_absent_tools() -> None:
     with (
         patch("agent_app.tools.manager.detect_node_provider", new_callable=AsyncMock, return_value=None),
@@ -20,11 +48,9 @@ async def test_get_tool_status_returns_nulls_for_absent_tools() -> None:
     ):
         status = await get_tool_status()
 
-    assert status["node"] is None
-    assert status["node_provider"] is None
-    assert "appium" not in status
-    assert "selenium_jar" not in status
-    assert "selenium_jar_path" not in status
+    assert status["host"]["node"]["version"] is None
+    assert status["host"]["node_provider"]["version"] is None
+    assert status["packs"] == {}
 
 
 async def test_get_tool_status_includes_adapter_tool_versions() -> None:
@@ -38,13 +64,23 @@ async def test_get_tool_status_includes_adapter_tool_versions() -> None:
     registry = AdapterRegistry()
     registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
 
+    desired = [
+        _stub_desired_pack(
+            "test-pack",
+            [
+                ToolDependency(name="go_ios", description="iOS telemetry"),
+            ],
+        ),
+    ]
+
     with (
         patch("agent_app.tools.manager.detect_node_provider", new_callable=AsyncMock, return_value=None),
         patch("agent_app.tools.manager._get_node_version", new_callable=AsyncMock, return_value=None),
     ):
-        status = await get_tool_status(adapter_registry=registry)
+        status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
 
-    assert status["go_ios"] == "1.0.207"
+    pack_tools = status["packs"]["test-pack"]
+    assert pack_tools[0]["version"] == "1.0.207"
 
 
 async def test_get_tool_status_with_provider_error() -> None:
@@ -61,8 +97,90 @@ async def test_get_tool_status_with_provider_error() -> None:
     ):
         status = await get_tool_status()
 
-    assert status["node_error"] == "node_not_configured"
-    assert status["node_provider"] is None
+    assert status["host"]["node_provider"]["version"] is None
+    assert status["host"]["node_provider"]["description"] == "node_not_configured"
+
+
+async def test_get_tool_status_structured_response() -> None:
+    class FakeAdapter:
+        pack_id = "test-pack"
+        pack_release = "1.0"
+
+        def tool_versions(self) -> dict[str, str | None]:
+            return {"go_ios": "1.0.207", "xcodebuild": "16.2"}
+
+    registry = AdapterRegistry()
+    registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
+
+    desired = [
+        _stub_desired_pack(
+            "test-pack",
+            [
+                ToolDependency(name="go_ios", description="iOS telemetry"),
+                ToolDependency(name="xcodebuild", description="Xcode build tools"),
+            ],
+        ),
+    ]
+
+    with (
+        patch("agent_app.tools.manager.detect_node_provider", new_callable=AsyncMock, return_value=None),
+        patch("agent_app.tools.manager._get_node_version", new_callable=AsyncMock, return_value="20.0.0"),
+    ):
+        status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
+
+    assert status["host"]["node"]["version"] == "20.0.0"
+    assert status["host"]["node"]["name"] == "Node"
+    assert status["host"]["node_provider"]["version"] is None
+
+    assert len(status["packs"]["test-pack"]) == 2
+    go_ios_entry = next(e for e in status["packs"]["test-pack"] if e["name"] == "go_ios")
+    assert go_ios_entry["version"] == "1.0.207"
+    assert go_ios_entry["description"] == "iOS telemetry"
+
+
+async def test_get_tool_status_missing_tool_version_is_null() -> None:
+    class FakeAdapter:
+        pack_id = "test-pack"
+        pack_release = "1.0"
+
+        def tool_versions(self) -> dict[str, str | None]:
+            return {"go_ios": None}
+
+    registry = AdapterRegistry()
+    registry.set("test-pack", "1.0", FakeAdapter())  # type: ignore[arg-type]
+
+    desired = [
+        _stub_desired_pack(
+            "test-pack",
+            [
+                ToolDependency(name="go_ios", description="iOS telemetry"),
+                ToolDependency(name="xcodebuild", description="Xcode build tools"),
+            ],
+        ),
+    ]
+
+    with (
+        patch("agent_app.tools.manager.detect_node_provider", new_callable=AsyncMock, return_value=None),
+        patch("agent_app.tools.manager._get_node_version", new_callable=AsyncMock, return_value=None),
+    ):
+        status = await get_tool_status(adapter_registry=registry, desired_packs=desired)
+
+    pack_tools = status["packs"]["test-pack"]
+    go_ios_entry = next(e for e in pack_tools if e["name"] == "go_ios")
+    xcode_entry = next(e for e in pack_tools if e["name"] == "xcodebuild")
+    assert go_ios_entry["version"] is None
+    assert xcode_entry["version"] is None
+
+
+async def test_get_tool_status_no_packs_returns_empty_packs() -> None:
+    with (
+        patch("agent_app.tools.manager.detect_node_provider", new_callable=AsyncMock, return_value=None),
+        patch("agent_app.tools.manager._get_node_version", new_callable=AsyncMock, return_value=None),
+    ):
+        status = await get_tool_status(desired_packs=[])
+
+    assert status["packs"] == {}
+    assert "host" in status
 
 
 async def test_detect_fnm_provider_fallback_bin_dirs() -> None:

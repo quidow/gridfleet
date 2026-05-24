@@ -491,7 +491,17 @@ async def test_sync_plugins(client: AsyncClient) -> None:
 
 async def test_agent_tools_status(client: AsyncClient) -> None:
     async def _fake() -> dict[str, object]:
-        return {"node": "24.14.1", "node_provider": "fnm", "go_ios": "1.0.207"}
+        return {
+            "host": {
+                "node": {"name": "Node", "version": "24.14.1", "description": "JavaScript runtime for Appium server"},
+                "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node.js version manager"},
+            },
+            "packs": {
+                "test-pack": [
+                    {"name": "go_ios", "version": "1.0.207", "description": "iOS telemetry"},
+                ],
+            },
+        }
 
     app.dependency_overrides[get_tool_status_dep] = _fake
     try:
@@ -500,8 +510,8 @@ async def test_agent_tools_status(client: AsyncClient) -> None:
         app.dependency_overrides.pop(get_tool_status_dep, None)
 
     assert resp.status_code == 200
-    assert resp.json()["node_provider"] == "fnm"
-    assert resp.json()["go_ios"] == "1.0.207"
+    assert resp.json()["host"]["node_provider"]["version"] == "fnm"
+    assert resp.json()["packs"]["test-pack"][0]["version"] == "1.0.207"
 
 
 async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:

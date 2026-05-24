@@ -383,11 +383,11 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
         "app.hosts.router.get_agent_tool_status",
         new=AsyncMock(
             return_value={
-                "appium": "3.3.0",
-                "node": "24.14.1",
-                "node_provider": "fnm",
-                "selenium_jar": "4.41.0",
-                "selenium_jar_path": "/opt/gridfleet-agent/selenium-server.jar",
+                "host": {
+                    "node": {"name": "Node", "version": "24.14.1", "description": "JS runtime"},
+                    "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node manager"},
+                },
+                "packs": {},
             }
         ),
     ) as status_mock:
@@ -395,10 +395,9 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
 
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["node_provider"] == "fnm"
-    assert "appium" not in payload
-    assert "selenium_jar" not in payload
-    assert "selenium_jar_path" not in payload
+    assert payload["host"]["node_provider"]["version"] == "fnm"
+    assert payload["host"]["node"]["version"] == "24.14.1"
+    assert payload["packs"] == {}
     status_mock.assert_awaited_once_with("10.0.0.40", 5100)
 
 

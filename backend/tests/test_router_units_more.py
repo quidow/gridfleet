@@ -1090,9 +1090,9 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     assert exc.value.status_code == 400
     with (
         patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.hosts.router.get_agent_tool_status", new=AsyncMock(return_value={"tools": []})),
+        patch("app.hosts.router.get_agent_tool_status", new=AsyncMock(return_value={"host": {}, "packs": {}})),
     ):
-        assert await hosts.get_host_tool_status(host_id, db=object()) == {"tools": []}
+        assert await hosts.get_host_tool_status(host_id, db=object()) == {"host": {}, "packs": {}}
 
     for error, status_code in ((ValueError("busy"), 409), (None, 404)):
         result = AsyncMock(side_effect=error) if error is not None else AsyncMock(return_value=False)

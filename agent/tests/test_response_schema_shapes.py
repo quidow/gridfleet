@@ -113,5 +113,16 @@ def test_plugin_sync_response_accepts_arbitrary_dict() -> None:
     PluginSyncResponse.model_validate({"installed": [], "updated": [], "removed": [], "errors": {}})
 
 
-def test_tools_status_response_accepts_arbitrary_dict() -> None:
-    ToolsStatusResponse.model_validate({"adb": "1.0", "node": "20.0"})
+def test_tools_status_response_accepts_structured_dict() -> None:
+    ToolsStatusResponse.model_validate(
+        {
+            "host": {
+                "node": {"name": "Node", "version": "20.0", "description": "JavaScript runtime for Appium server"},
+            },
+            "packs": {
+                "test-pack": [
+                    {"name": "adb", "version": "1.0", "description": "ADB tool"},
+                ],
+            },
+        }
+    )

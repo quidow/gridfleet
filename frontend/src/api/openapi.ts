@@ -4389,14 +4389,14 @@ export interface components {
         };
         /** HostToolStatusRead */
         HostToolStatusRead: {
-            /** Go Ios */
-            go_ios?: string | null;
-            /** Node */
-            node?: string | null;
-            /** Node Error */
-            node_error?: string | null;
-            /** Node Provider */
-            node_provider?: string | null;
+            /** Host */
+            host: {
+                [key: string]: components["schemas"]["ToolEntry"];
+            };
+            /** Packs */
+            packs: {
+                [key: string]: components["schemas"]["ToolEntry"][];
+            };
         };
         /**
          * Identity
@@ -5558,6 +5558,15 @@ export interface components {
         /** TestDataRead */
         TestDataRead: {
             [key: string]: unknown;
+        };
+        /** ToolEntry */
+        ToolEntry: {
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Version */
+            version?: string | null;
         };
         /** UnavailableInclude */
         UnavailableInclude: {

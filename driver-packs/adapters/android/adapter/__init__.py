@@ -110,16 +110,31 @@ class Adapter:
 
         from adapter.tools import find_adb
 
+        versions: dict[str, str | None] = {"adb": None, "java": None}
+
         adb = find_adb()
         try:
             result = subprocess.run(
                 [adb, "--version"], capture_output=True, text=True, timeout=5
             )
             match = re.search(r"(\d+\.\d+\.\d+)", result.stdout)
-            version = match.group(1) if match else None
+            if match:
+                versions["adb"] = match.group(1)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            version = None
-        return {"adb": version}
+            pass  # version stays None from default
+
+        try:
+            result = subprocess.run(
+                ["java", "-version"], capture_output=True, text=True, timeout=5
+            )
+            combined = result.stdout + result.stderr
+            match = re.search(r'"(\d+\.\d+\.\d+)', combined)
+            if match:
+                versions["java"] = match.group(1)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass  # version stays None from default
+
+        return versions
 
     def subprocess_env(self) -> SubprocessEnvContribution:
         import os

@@ -426,7 +426,13 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         get_response=_response(
             "GET",
             "http://10.0.0.5:5100/agent/tools/status",
-            payload={"node_provider": "fnm", "node": "24.14.1"},
+            payload={
+                "host": {
+                    "node": {"name": "Node", "version": "24.14.1", "description": "JS runtime"},
+                    "node_provider": {"name": "Node Provider", "version": "fnm", "description": "Node manager"},
+                },
+                "packs": {},
+            },
         )
     )
 
@@ -437,7 +443,7 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         timeout=15,
     )
 
-    assert payload["node_provider"] == "fnm"
+    assert payload["host"]["node_provider"]["version"] == "fnm"
     assert client.get_calls == [
         (
             "http://10.0.0.5:5100/agent/tools/status",

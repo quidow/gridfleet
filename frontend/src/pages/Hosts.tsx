@@ -16,7 +16,6 @@ import {
 } from '../components/hosts/hostPresentation';
 import { useHostDiscoveryFlow } from '../components/hosts/useHostDiscoveryFlow';
 import { getVerificationAction } from '../lib/deviceWorkflow';
-import { formatHostPrerequisiteList } from '../lib/hostPrerequisites';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { DataTable } from '../components/ui/DataTable';
 import { Button } from '../components/ui/Button';
@@ -134,7 +133,7 @@ function HostsTableSection({
             <AlertTriangle
               size={15}
               className="text-warning-strong"
-              aria-label={`Missing prerequisites: ${formatHostPrerequisiteList(host.missing_prerequisites ?? [])}`}
+              aria-label={`Missing prerequisites: ${(host.missing_prerequisites ?? []).join(', ')}`}
             />
           ) : null}
         </div>
