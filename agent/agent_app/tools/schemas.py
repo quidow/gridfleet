@@ -5,7 +5,16 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 
-class ToolsStatusResponse(BaseModel):
-    """Detected versions of supporting CLI tools. Keys vary by host."""
+class ToolEntry(BaseModel):
+    name: str
+    version: str | None = None
+    description: str
 
-    model_config = ConfigDict(extra="allow")
+
+class ToolsStatusResponse(BaseModel):
+    """Detected versions of supporting CLI tools, grouped by host and pack."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: dict[str, ToolEntry]
+    packs: dict[str, list[ToolEntry]]

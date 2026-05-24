@@ -257,10 +257,18 @@ class PluginSyncResponse(BaseModel):
     )
 
 
+class ToolEntry(BaseModel):
+    description: Annotated[str, Field(title="Description")]
+    name: Annotated[str, Field(title="Name")]
+    version: Annotated[str | None, Field(title="Version")] = None
+
+
 class ToolsStatusResponse(BaseModel):
     model_config = ConfigDict(
-        extra="allow",
+        extra="forbid",
     )
+    host: Annotated[dict[str, ToolEntry], Field(title="Host")]
+    packs: Annotated[dict[str, list[ToolEntry]], Field(title="Packs")]
 
 
 class ValidationError(BaseModel):
