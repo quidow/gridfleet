@@ -391,5 +391,5 @@ async def put_host_tool_env(
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     host.tool_env = body.env if body.env else None
-    await db.flush()
+    await db.commit()
     return {"env": host.tool_env or {}}

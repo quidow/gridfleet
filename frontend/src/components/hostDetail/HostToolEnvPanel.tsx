@@ -9,12 +9,13 @@ type Props = {
 };
 
 type EnvRow = {
+  id: string;
   key: string;
   value: string;
 };
 
 function envRecordToRows(record: Record<string, string>): EnvRow[] {
-  return Object.entries(record).map(([key, value]) => ({ key, value }));
+  return Object.entries(record).map(([key, value]) => ({ id: crypto.randomUUID(), key, value }));
 }
 
 function rowsToEnvRecord(rows: EnvRow[]): Record<string, string> {
@@ -57,7 +58,7 @@ export function HostToolEnvPanel({ hostId }: Props) {
   }
 
   function handleAddRow() {
-    setRows((prev) => [...prev, { key: '', value: '' }]);
+    setRows((prev) => [...prev, { id: crypto.randomUUID(), key: '', value: '' }]);
     setDirty(true);
   }
 
@@ -112,16 +113,22 @@ export function HostToolEnvPanel({ hostId }: Props) {
             <span className="w-8" />
           </div>
           <div className="divide-y divide-border">
-            {rows.map((row, index) => (
-              <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 px-5 py-2">
-                <input
-                  type="text"
-                  value={row.key}
-                  onChange={(e) => handleKeyChange(index, e.target.value)}
-                  placeholder="VARIABLE_NAME"
-                  className="w-full rounded border border-border bg-surface-2 px-2 py-1.5 font-mono text-sm text-text-1 placeholder-text-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  spellCheck={false}
-                />
+            {rows.map((row, index) => {
+              const trimmedKey = row.key.trim();
+              const isDuplicate = trimmedKey !== '' && rows.some((r, i) => i !== index && r.key.trim() === trimmedKey);
+              return (
+              <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] items-center gap-2 px-5 py-2">
+                <div>
+                  <input
+                    type="text"
+                    value={row.key}
+                    onChange={(e) => handleKeyChange(index, e.target.value)}
+                    placeholder="VARIABLE_NAME"
+                    className={`w-full rounded border bg-surface-2 px-2 py-1.5 font-mono text-sm text-text-1 placeholder-text-3 focus:outline-none focus:ring-1 ${isDuplicate ? 'border-danger-foreground focus:border-danger-foreground focus:ring-danger-foreground' : 'border-border focus:border-accent focus:ring-accent'}`}
+                    spellCheck={false}
+                  />
+                  {isDuplicate && <p className="mt-0.5 text-xs text-danger-foreground">Duplicate name</p>}
+                </div>
                 <input
                   type="text"
                   value={row.value}
@@ -139,7 +146,7 @@ export function HostToolEnvPanel({ hostId }: Props) {
                   <Trash2 size={14} />
                 </button>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}

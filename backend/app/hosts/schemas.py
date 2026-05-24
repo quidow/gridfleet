@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.schemas.device import DeviceRead
@@ -270,3 +270,17 @@ class HostToolEnvRead(BaseModel):
 
 class HostToolEnvUpdate(BaseModel):
     env: dict[str, str]
+
+    @field_validator("env")
+    @classmethod
+    def validate_env_entries(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, value in v.items():
+            if not key or not key.strip():
+                raise ValueError("env var name must not be empty")
+            if len(key) > 256:
+                raise ValueError(f"env var name exceeds 256 chars: {key[:32]}...")
+            if len(value) > 4096:
+                raise ValueError(f"env var value exceeds 4096 chars for key: {key}")
+            if "\x00" in key or "\x00" in value:
+                raise ValueError(f"env var must not contain null bytes: {key}")
+        return v
