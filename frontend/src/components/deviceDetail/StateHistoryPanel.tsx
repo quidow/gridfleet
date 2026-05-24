@@ -2,6 +2,7 @@ import { useCursorQueryState } from '../../hooks/useCursorQueryState';
 import { useLifecycleIncidents } from '../../hooks/useLifecycle';
 import type { LifecycleIncidentRead } from '../../types';
 import { Badge, type BadgeTone } from '../ui/Badge';
+import { Card } from '../ui/Card';
 import { CursorPagination } from '../ui/CursorPagination';
 import { formatDate } from './utils';
 
@@ -46,7 +47,7 @@ export function StateHistoryPanel({ deviceId }: Props) {
   const isNewestPage = !cursor;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-1 shadow-sm">
+    <Card padding="none" className="overflow-hidden">
       <div className="border-b border-border px-5 py-4">
         <h2 className="text-sm font-semibold text-text-1">State History</h2>
       </div>
@@ -96,6 +97,6 @@ export function StateHistoryPanel({ deviceId }: Props) {
           />
         </>
       )}
-    </div>
+    </Card>
   );
 }
