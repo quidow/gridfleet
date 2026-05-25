@@ -18,3 +18,19 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
   - Delivery history, retry, test-event, and disable/fix workflow for failing outbound webhooks.
 - `backend-deploy-restart-rollback.md`
   - Manual production restart, deploy, verification, and rollback procedure for the single-stack compose deployment.
+- `appium-node-desync.md`
+  - Recovery when Appium nodes desync from the Grid hub.
+- `device-export-import.md`
+  - Bulk device export and re-import workflow.
+- `device-ip-ping-recovery.md`
+  - IP connectivity recovery for unreachable devices.
+- `grid-version.md`
+  - Checking and upgrading the Selenium Grid version.
+- `heartbeat-flapping.md`
+  - Diagnosis and resolution of flapping agent heartbeats.
+- `lifecycle-stuck-deferred-stop.md`
+  - Recovery for devices stuck in deferred-stop lifecycle state.
+- `publish-agent.md`
+  - Steps to publish a new agent release to PyPI.
+- `publish-testkit.md`
+  - Steps to publish a new testkit release to PyPI.

@@ -21,8 +21,7 @@ adapter code.
 - FastAPI backend with PostgreSQL, async SQLAlchemy, Alembic migrations, and
   leader-owned background workers.
 - Host agent that runs on each device host and manages discovery, Appium
-  processes, Selenium Grid relay nodes, tools, telemetry, and optional host
-  terminal access.
+  processes, Selenium Grid relay nodes, tools, and telemetry.
 - React operator dashboard for devices, hosts, sessions, runs, analytics,
   driver packs, settings, notifications, and bulk operations.
 - Python testkit for pytest/Appium suites that need run registration,
@@ -37,7 +36,7 @@ gridfleet/
 ├── backend/       FastAPI manager API, services, models, migrations, tests
 ├── agent/         Host-side FastAPI agent and native install/update scripts
 ├── frontend/      React + TypeScript operator console
-├── driver-packs/  Curated manifests, templates, and adapter source
+├── driver-packs/  Curated manifests and adapter source
 ├── testkit/       Supported Python pytest/Appium helper package
 ├── docker/        Development and production compose files
 ├── docs/          Guides, references, and runbooks
