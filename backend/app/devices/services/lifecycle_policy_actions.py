@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
-from app.devices.models import DeviceEventType
+from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services.event import record_event
@@ -256,8 +256,9 @@ async def handle_node_crash(
     - Node not running or absent (``else`` branch): forces ``offline`` directly
       using the already-held row lock; no re-acquisition needed.
 
-    ``record_event(DeviceEventType.node_crash, ...)`` fires on every branch —
-    webhook subscribers of ``device.crashed`` see the crash unconditionally.
+    ``node_crash`` and ``device.crashed`` events fire only when the device is
+    not already offline — a device that is already offline cannot crash again.
+    The ``failure_event_type`` event always fires for observability.
     """
     device = await _lock_for_state_write(db, device)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -267,22 +268,23 @@ async def handle_node_crash(
         failure_event_type(source),
         {"source": source, "reason": reason},
     )
-    await record_event(
-        db,
-        device.id,
-        DeviceEventType.node_crash,
-        {"error": reason, "source": source, "will_restart": True},
-    )
-    queue_device_crashed_event(
-        db,
-        device_id=str(device.id),
-        device_name=device.name,
-        source=source,
-        reason=reason,
-        will_restart=True,
-        process=None,
-        severity="warning",
-    )
+    if device.operational_state != DeviceOperationalState.offline:
+        await record_event(
+            db,
+            device.id,
+            DeviceEventType.node_crash,
+            {"error": reason, "source": source, "will_restart": True},
+        )
+        queue_device_crashed_event(
+            db,
+            device_id=str(device.id),
+            device_name=device.name,
+            source=source,
+            reason=reason,
+            will_restart=True,
+            process=None,
+            severity="warning",
+        )
 
     if node is not None and node.observed_running:
         await _MACHINE.transition(

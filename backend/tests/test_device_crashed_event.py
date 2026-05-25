@@ -93,3 +93,43 @@ async def test_handle_node_crash_queues_device_crashed(
     assert crashed[0]["source"] == "connectivity_lost"
     assert crashed[0]["reason"] == "ADB disconnect"
     assert crashed[0]["process"] is None
+
+
+async def test_handle_node_crash_skips_crashed_event_when_already_offline(
+    db_session: AsyncSession,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """A device that is already offline cannot crash again. handle_node_crash
+    must skip the device.crashed event and node_crash DB event when the device
+    is already in offline state."""
+    from app.devices import locking as device_locking
+    from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
+    from app.devices.services.lifecycle_policy_actions import handle_node_crash
+
+    _, device = await seed_host_and_device(
+        db_session, identity="already-offline-crash", operational_state=DeviceOperationalState.offline
+    )
+    event_bus_capture.clear()
+    locked = await device_locking.lock_device(db_session, device.id)
+
+    await handle_node_crash(
+        db_session,
+        locked,
+        source="session_viability",
+        reason="Recovery probe failed",
+    )
+    await db_session.commit()
+    await settle_after_commit_tasks()
+
+    # device.crashed must NOT fire for an already-offline device
+    crashed = [p for n, p in event_bus_capture if n == "device.crashed"]
+    assert crashed == [], "device.crashed must not fire for already-offline device"
+
+    # node_crash DB event must NOT be recorded
+    from sqlalchemy import select
+
+    result = await db_session.execute(select(DeviceEvent.event_type).where(DeviceEvent.device_id == device.id))
+    event_types = list(result.scalars().all())
+    assert DeviceEventType.node_crash not in event_types, (
+        "node_crash event must not be recorded for already-offline device"
+    )
