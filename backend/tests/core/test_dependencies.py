@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 
-from app.core.dependencies import get_app_services
+from app.dependencies import get_app_services
 
 
 def test_get_app_services_signature() -> None:

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core.composition import AppServices, compose_app
+from app.composition import AppServices, compose_app
 
 
 @pytest.fixture
