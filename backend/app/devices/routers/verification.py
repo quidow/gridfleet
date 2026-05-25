@@ -19,7 +19,8 @@ from app.devices.schemas.device import (
 from app.devices.services import service as device_service
 from app.devices.services import verification as device_verification
 from app.devices.services.verification_job_state import public_snapshot
-from app.events import Event, event_bus
+from app.events import Event
+from app.events.dependencies import EventServicesDep
 
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
 
@@ -79,13 +80,14 @@ async def stream_device_verification_job_events(
     job_id: str,
     request: Request,
     db: DbDep,
+    event_services: EventServicesDep,
 ) -> EventSourceResponse:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     initial_job = await device_verification.get_verification_job(job_id, session_factory=session_factory)
     if initial_job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
 
-    queue = event_bus.subscribe()
+    queue = event_services.bus.subscribe()
 
     async def generate() -> AsyncGenerator[dict[str, str], None]:
         try:
@@ -114,6 +116,6 @@ async def stream_device_verification_job_events(
                 if payload["status"] in {"completed", "failed"}:
                     return
         finally:
-            event_bus.unsubscribe(queue)
+            event_services.bus.unsubscribe(queue)
 
     return EventSourceResponse(generate())

@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.core.dependencies import DbDep
-from app.events import event_bus
+from app.events.dependencies import EventServicesDep
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import service as webhook_service
 from app.webhooks.models import Webhook
@@ -53,11 +53,11 @@ async def delete_webhook(webhook_id: uuid.UUID, db: DbDep) -> None:
 
 
 @router.post("/{webhook_id}/test", status_code=200)
-async def test_webhook(webhook_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def test_webhook(webhook_id: uuid.UUID, db: DbDep, event_services: EventServicesDep) -> dict[str, Any]:
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
-    await event_bus.publish(
+    await event_services.bus.publish(
         "webhook.test",
         {
             "webhook_id": str(webhook.id),

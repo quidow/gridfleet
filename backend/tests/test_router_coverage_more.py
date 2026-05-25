@@ -475,18 +475,20 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
 async def test_device_verification_event_stream_initial_completed_job(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock(bind=object())
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
+    unsubscribe = MagicMock()
+    mock_event_services = SimpleNamespace(
+        bus=SimpleNamespace(subscribe=MagicMock(return_value=queue), unsubscribe=unsubscribe)
+    )
     monkeypatch.setattr(
         devices_verification.device_verification,
         "get_verification_job",
         AsyncMock(return_value={"job_id": "job", "status": "completed"}),
     )
-    monkeypatch.setattr(devices_verification.event_bus, "subscribe", MagicMock(return_value=queue))
-    unsubscribe = MagicMock()
-    monkeypatch.setattr(devices_verification.event_bus, "unsubscribe", unsubscribe)
     response = await devices_verification.stream_device_verification_job_events(
         "job",
         SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
         db=db,
+        event_services=mock_event_services,
     )
 
     first = await response.body_iterator.__anext__()

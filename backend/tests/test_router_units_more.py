@@ -391,6 +391,8 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=[False, True]))
     initial_job = {"job_id": "job-stream", "status": "running", "current_stage": "probe"}
 
+    mock_event_services = SimpleNamespace(bus=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock()))
+
     monkeypatch.setattr(
         devices_verification_router.device_verification,
         "get_verification_job",
@@ -398,7 +400,7 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.stream_device_verification_job_events(
-            "missing", request, db=SimpleNamespace(bind=None)
+            "missing", request, db=SimpleNamespace(bind=None), event_services=mock_event_services
         )
     assert exc.value.status_code == 404
 
@@ -407,13 +409,12 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         "get_verification_job",
         AsyncMock(return_value=initial_job),
     )
-    monkeypatch.setattr(devices_verification_router.event_bus, "subscribe", Mock(return_value=queue))
-    monkeypatch.setattr(devices_verification_router.event_bus, "unsubscribe", Mock())
 
     response = await devices_verification_router.stream_device_verification_job_events(
         "job-stream",
         request,
         db=SimpleNamespace(bind=None),
+        event_services=mock_event_services,
     )
     assert (await response.body_iterator.__anext__())["event"] == "device.verification.updated"
     with pytest.raises(StopAsyncIteration):
@@ -950,9 +951,11 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
     response = SimpleNamespace(status_code=200)
 
+    mock_event_services = SimpleNamespace(bus=object())
+
     with patch("app.hosts.router.host_service.register_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
         with pytest.raises(HTTPException) as exc:
-            await hosts.register_host(object(), response, db=object())  # type: ignore[arg-type]
+            await hosts.register_host(object(), response, db=object(), event_services=mock_event_services)  # type: ignore[arg-type]
     assert exc.value.status_code == 409
 
     with (
@@ -961,13 +964,16 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
-        assert await hosts.register_host(object(), response, db=object()) == {"id": str(host_id)}  # type: ignore[arg-type]
+        result = await hosts.register_host(  # type: ignore[arg-type]
+            object(), response, db=object(), event_services=mock_event_services
+        )
+        assert result == {"id": str(host_id)}
     assert response.status_code == 201
     assert fire.call_count == 2
 
     with patch("app.hosts.router.host_service.approve_host", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
-            await hosts.approve_host(host_id, db=object())
+            await hosts.approve_host(host_id, db=object(), event_services=mock_event_services)
     assert exc.value.status_code == 404
 
     with (
@@ -975,7 +981,8 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
-        assert await hosts.approve_host(host_id, db=object()) == {"id": str(host_id)}
+        result = await hosts.approve_host(host_id, db=object(), event_services=mock_event_services)
+        assert result == {"id": str(host_id)}
     assert fire.call_count == 2
 
     with patch("app.hosts.router.host_service.reject_host", new=AsyncMock(return_value=False)):
@@ -1994,11 +2001,12 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     )
 
     with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
+        mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
         for call in (
             lambda: webhooks.get_webhook(webhook_id, db=object()),
             lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
             lambda: webhooks.delete_webhook(webhook_id, db=object()),
-            lambda: webhooks.test_webhook(webhook_id, db=object()),
+            lambda: webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh),
             lambda: webhooks.list_webhook_deliveries(webhook_id, db=object()),
             lambda: webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object()),
         ):
@@ -2006,14 +2014,15 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
                 await call()
             assert exc.value.status_code == 404
 
+    mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
     with (
         patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
-        patch("app.webhooks.router.event_bus.publish", new=AsyncMock()) as publish,
         patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
         patch("app.webhooks.router.webhook_dispatcher.retry_delivery", new=AsyncMock(side_effect=[None, delivery])),
     ):
-        assert (await webhooks.test_webhook(webhook_id, db=object()))["webhook_name"] == "alerts"
-        publish.assert_awaited_once()
+        result = await webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh)
+        assert result["webhook_name"] == "alerts"
+        mock_event_services_wh.bus.publish.assert_awaited_once()
         deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
         assert deliveries["total"] == 1
         with pytest.raises(HTTPException) as exc:
@@ -2306,19 +2315,20 @@ async def test_devices_verification_router_error_and_success_branches(db_session
 async def test_devices_verification_event_stream_terminal_initial_event(db_session: AsyncSession) -> None:
     job = {"job_id": "job-stream", "status": "completed", "current_stage": "save_device"}
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
-    with (
-        patch.object(
-            devices_verification_router.device_verification,
-            "get_verification_job",
-            new=AsyncMock(return_value=job),
-        ),
-        patch.object(devices_verification_router.event_bus, "subscribe", new=Mock(return_value=object())),
-        patch.object(devices_verification_router.event_bus, "unsubscribe", new=Mock()) as unsubscribe,
+    unsubscribe = Mock()
+    mock_event_services = SimpleNamespace(
+        bus=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
+    )
+    with patch.object(
+        devices_verification_router.device_verification,
+        "get_verification_job",
+        new=AsyncMock(return_value=job),
     ):
         response = await devices_verification_router.stream_device_verification_job_events(
             "job-stream",
             request,  # type: ignore[arg-type]
             db=db_session,
+            event_services=mock_event_services,
         )
         first = await response.body_iterator.__anext__()
         await response.body_iterator.aclose()

@@ -1,8 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
-import uuid
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent_comm.operations import pack_device_lifecycle_action
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
@@ -24,12 +23,17 @@ from app.devices.services.operator_node_lifecycle import (
 )
 from app.devices.services.service import delete_device
 from app.events import event_bus, queue_event_for_session
-from app.events.catalog import EventSeverity
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Awaitable, Callable
+
+    from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.events.catalog import EventSeverity
+    from app.events.protocols import EventPublisher
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -95,6 +99,7 @@ async def _run_per_device_node_action(
     operation: str,
     action_fn: Callable[..., Awaitable[object]],
     caller: str,
+    publisher: EventPublisher | None = None,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
     session_factory = _session_factory_from_db(db)
@@ -118,7 +123,8 @@ async def _run_per_device_node_action(
     succeeded = len(existing_device_ids) - len(errors)
     total = len(existing_device_ids)
     failed = len(errors)
-    await event_bus.publish(
+    _bus = publisher or event_bus
+    await _bus.publish(
         "bulk.operation_completed",
         {
             "operation": operation,
@@ -201,7 +207,9 @@ async def bulk_update_tags(
     return _result(len(devices), len(devices), {})
 
 
-async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_delete(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher | None = None
+) -> dict[str, Any]:
     errors: dict[str, str] = {}
     for device_id in device_ids:
         try:
@@ -213,7 +221,8 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str
     succeeded = len(device_ids) - len(errors)
     total = len(device_ids)
     failed = len(errors)
-    await event_bus.publish(
+    _bus = publisher or event_bus
+    await _bus.publish(
         "bulk.operation_completed",
         {
             "operation": "delete",
@@ -254,7 +263,9 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) 
     return _result(len(ordered_ids), succeeded, errors)
 
 
-async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_reconnect(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher | None = None
+) -> dict[str, Any]:
     """Reconnect network-connected ADB devices."""
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
@@ -318,7 +329,8 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[
     succeeded = len(devices) - len(errors)
     total = len(devices)
     failed = len(errors)
-    await event_bus.publish(
+    _bus = publisher or event_bus
+    await _bus.publish(
         "bulk.operation_completed",
         {
             "operation": "reconnect",

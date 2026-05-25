@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import copy
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from app.core.type_defs import SessionFactory
 from app.events import event_bus
-from app.events.catalog import EventSeverity
 from app.jobs.models import Job
+
+if TYPE_CHECKING:
+    from app.core.type_defs import SessionFactory
+    from app.events.catalog import EventSeverity
+    from app.events.protocols import EventPublisher
 
 VERIFICATION_EVENT = "device.verification.updated"
 STAGE_NAMES = ("validation", "device_health", "node_start", "session_probe", "cleanup", "save_device")
@@ -101,14 +106,15 @@ def public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def publish(job: dict[str, Any]) -> None:
+async def publish(job: dict[str, Any], *, publisher: EventPublisher | None = None) -> None:
     await persist_job(job)
     snap = snapshot(job)
     job_status = str(snap.get("status", "pending"))
     # Determine current stage status for severity derivation.
     _, current_stage = _resolve_current_stage(snap)
     stage_status = current_stage.get("status") if current_stage else None
-    await event_bus.publish(
+    _bus = publisher or event_bus
+    await _bus.publish(
         VERIFICATION_EVENT,
         snap,
         severity=_verification_severity(job_status, stage_status),
