@@ -16,7 +16,6 @@ class RunState(enum.StrEnum):
     pending = "pending"
     preparing = "preparing"
     active = "active"
-    completing = "completing"
     completed = "completed"
     failed = "failed"
     expired = "expired"
