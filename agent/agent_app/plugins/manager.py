@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from agent_app.appium.process import _build_env
+from agent_app.pack.runtime import _versioned
 from agent_app.tools.paths import find_appium as _find_appium
 
 logger = logging.getLogger(__name__)
@@ -48,10 +49,6 @@ async def get_installed_plugins() -> list[dict[str, str]]:
         if isinstance(info, dict) and info.get("installed", True):
             results.append({"name": name, "version": info.get("version", "unknown")})
     return results
-
-
-def _versioned(value: str, version: str) -> str:
-    return value if "@" in value.rsplit("/", 1)[-1] else f"{value}@{version}"
 
 
 def _install_command(appium: str, name: str, version: str, source: str, package: str | None) -> list[str]:

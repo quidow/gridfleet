@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, patch
 
 from agent_app.plugins.manager import (
     _install_command,
-    _versioned,
     get_installed_plugins,
     install_plugin,
     uninstall_plugin,
@@ -21,10 +20,6 @@ class _FakeProc:
         future: asyncio.Future[tuple[bytes, bytes]] = loop.create_future()
         future.set_result((self._stdout, self._stderr))
         return future
-
-
-def test_versioned_leaves_existing_suffix_untouched() -> None:
-    assert _versioned("@scope/plugin@1.0.0", "2.0.0") == "@scope/plugin@1.0.0"
 
 
 def test_install_command_supports_all_sources() -> None:

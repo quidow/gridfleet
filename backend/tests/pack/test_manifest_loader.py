@@ -15,7 +15,6 @@ def _valid_yaml() -> str:
         maintainer: gridfleet-team
         license: Apache-2.0
         requires:
-          gridfleet: ">=1.7"
           host_os: [linux, macos]
         appium_server:
           source: npm
@@ -152,9 +151,9 @@ def test_manifest_rejects_workaround_without_id() -> None:
 
 
 def test_manifest_accepts_tool_dependencies() -> None:
-    old = 'requires:\n  gridfleet: ">=1.7"\n  host_os: [linux, macos]'
+    old = "requires:\n  host_os: [linux, macos]"
     new = (
-        'requires:\n  gridfleet: ">=1.7"\n  host_os: [linux, macos]\n'
+        "requires:\n  host_os: [linux, macos]\n"
         "  tool_dependencies:\n"
         "    - name: adb\n"
         '      description: "Communicates with Android devices over USB and TCP"\n'

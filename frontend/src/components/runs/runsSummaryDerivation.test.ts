@@ -23,13 +23,12 @@ const baseRun = (overrides: Partial<RunRead>): RunRead => ({
 describe('deriveRunsSummary', () => {
   const now = new Date('2026-04-19T12:00:00Z');
 
-  it('counts running runs from active+completing states', () => {
+  it('counts running runs from active state', () => {
     const runs = [
       baseRun({ id: 'a', state: 'active' }),
-      baseRun({ id: 'b', state: 'completing' }),
       baseRun({ id: 'c', state: 'pending' }),
     ];
-    expect(deriveRunsSummary(runs, now).running).toBe(2);
+    expect(deriveRunsSummary(runs, now).running).toBe(1);
   });
 
   it('counts queued runs from pending+preparing states', () => {

@@ -22,7 +22,7 @@ import { resolvePlatformLabel } from '../lib/labels';
 import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
 const TERMINAL_NON_HAPPY_STATES: ReadonlySet<RunState> = new Set<RunState>(['failed', 'expired', 'cancelled']);
-const STATE_ORDER: RunState[] = ['pending', 'preparing', 'active', 'completing', 'completed'];
+const STATE_ORDER: RunState[] = ['pending', 'preparing', 'active', 'completed'];
 
 function formatDate(dateStr: string | null): string {
   return formatDateTime(dateStr);

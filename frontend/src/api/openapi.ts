@@ -3532,13 +3532,6 @@ export interface components {
             id: string;
             /** Label */
             label: string;
-            /** Required For */
-            required_for?: string[];
-            /**
-             * Required For Discovery
-             * @default false
-             */
-            required_for_discovery: boolean;
             /**
              * Required For Session
              * @default false
@@ -5067,7 +5060,7 @@ export interface components {
          * RunState
          * @enum {string}
          */
-        RunState: "pending" | "preparing" | "active" | "completing" | "completed" | "failed" | "expired" | "cancelled";
+        RunState: "pending" | "preparing" | "active" | "completed" | "failed" | "expired" | "cancelled";
         /** RuntimePolicy */
         RuntimePolicy: {
             /** Appium Driver Version */

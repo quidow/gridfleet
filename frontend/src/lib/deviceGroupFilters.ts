@@ -7,7 +7,7 @@ import type {
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS } from '../pages/devices/devicePageHelpers';
 import { DEVICE_STATUS_LABELS, resolvePlatformLabel } from './labels';
 
-export type DeviceGroupTagDraft = {
+type DeviceGroupTagDraft = {
   key: string;
   value: string;
 };

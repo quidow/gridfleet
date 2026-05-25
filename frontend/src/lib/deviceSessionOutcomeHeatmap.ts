@@ -1,6 +1,6 @@
 import type { SessionOutcomeHeatmapRow } from '../types';
 
-export type SessionOutcomeHeatmapSeverity = 'none' | 'passed' | 'failed' | 'error';
+type SessionOutcomeHeatmapSeverity = 'none' | 'passed' | 'failed' | 'error';
 
 export type SessionOutcomeHeatmapCell = {
   dateKey: string;

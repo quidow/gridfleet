@@ -5,17 +5,7 @@ from uuid import UUID  # noqa: TC003 - Pydantic resolves this field annotation a
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Single-segment identifiers: alphanumeric, underscores, dots, hyphens — no slashes.
-# Used for platform_id values like "android", "ios", "android_mobile", "android-emulator".
-_PLATFORM_ID_PATTERN = r"^[A-Za-z0-9_.\-]+$"
-
-# Full pack-id pattern: slash-separated segments where each segment must contain at least
-# one non-dot character, or be three-or-more consecutive dots. This rejects single-dot
-# and double-dot path traversal segments without requiring lookahead (pydantic-core compat).
-_PACK_ID_PATTERN = (
-    r"^(?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-][A-Za-z0-9_.\-]*|\.{3,})"
-    r"(?:/(?:[A-Za-z0-9_.\-]*[A-Za-z0-9_\-][A-Za-z0-9_.\-]*|\.{3,}))*$"
-)
+from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
 
 
 class AppiumReconfigureRequest(BaseModel):
@@ -39,8 +29,8 @@ class AppiumStartRequest(BaseModel):
     ip_address: str | None = None
     session_override: bool = True
     headless: bool = True
-    pack_id: str = Field(min_length=1, pattern=_PACK_ID_PATTERN)
-    platform_id: str = Field(min_length=1, pattern=_PLATFORM_ID_PATTERN)
+    pack_id: str = Field(min_length=1, pattern=PACK_ID_PATTERN)
+    platform_id: str = Field(min_length=1, pattern=PLATFORM_ID_PATTERN)
 
     appium_platform_name: str | None = None
     workaround_env: dict[str, str] | None = None
