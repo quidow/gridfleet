@@ -350,8 +350,6 @@ def load_manifest_yaml(text: str) -> Manifest:
     if not isinstance(raw, dict):
         raise ManifestValidationError("Manifest YAML must be a dictionary at the top level")
 
-    raw.pop("origin", None)
-
     try:
         return Manifest.model_validate(raw)
     except ValidationError as exc:

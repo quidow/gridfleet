@@ -169,17 +169,17 @@ async def test_upload_rejects_archive_links(db_session: AsyncSession, tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_upload_ignores_legacy_origin_if_present(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_legacy_origin_if_present(db_session: AsyncSession, tmp_path: Path) -> None:
     storage = PackStorageService(root=tmp_path)
     with_origin = _MANIFEST + "origin: uploaded\n"
-    pack = await upload_pack(
-        db_session,
-        storage=storage,
-        username="alice",
-        origin_filename="x.tar.gz",
-        data=_build_tarball(manifest=with_origin),
-    )
-    assert pack.id == "vendor-foo"
+    with pytest.raises(PackUploadValidationError, match="origin"):
+        await upload_pack(
+            db_session,
+            storage=storage,
+            username="alice",
+            origin_filename="x.tar.gz",
+            data=_build_tarball(manifest=with_origin),
+        )
 
 
 @pytest.mark.asyncio
