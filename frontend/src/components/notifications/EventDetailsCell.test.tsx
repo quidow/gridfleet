@@ -48,8 +48,8 @@ describe('EventDetailsCell', () => {
   });
 
   it('does not render undefined artifacts for sparse registered payloads', () => {
-    render(<EventDetailsCell type="run.failed" data={{}} />);
-    expect(screen.getByText('Run failed')).toBeInTheDocument();
+    render(<EventDetailsCell type="run.cancelled" data={{}} />);
+    expect(screen.getByText('Run cancelled')).toBeInTheDocument();
     expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
   });
 });

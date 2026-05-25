@@ -39,6 +39,7 @@ const EVENT_QUERY_MAP: Record<string, string[][]> = {
   'system.cleanup_completed': [['sessions'], ['analytics']],
   'pack_feature.degraded': [['driver-pack-catalog'], ['driver-pack'], ['driver-pack-hosts'], ['host-driver-packs']],
   'pack_feature.recovered': [['driver-pack-catalog'], ['driver-pack'], ['driver-pack-hosts'], ['host-driver-packs']],
+  'webhook.test': [['webhooks']],
 };
 
 type ToastResult = { type: 'success' | 'error' | 'warning' | 'info'; message: string } | null;
