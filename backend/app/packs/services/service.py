@@ -20,7 +20,6 @@ from app.packs.models import (
 )
 from app.packs.schemas import (
     AppiumInstallableOut,
-    DerivedFrom,
     FeatureActionOut,
     FeatureOut,
     ManifestDoctorCheckOut,
@@ -44,14 +43,6 @@ class _RuntimeSummaryAccumulator:
     driver_drift_hosts: int = 0
 
 
-def _derived_from(release: DriverPackRelease | None) -> DerivedFrom | None:
-    if release is None:
-        return None
-    if release.derived_from_pack_id and release.derived_from_release:
-        return DerivedFrom(pack_id=release.derived_from_pack_id, release=release.derived_from_release)
-    return None
-
-
 def build_pack_out(pack: DriverPack, runtime_summary: PackRuntimeSummaryOut | None = None) -> PackOut:
     latest = selected_release(pack.releases, pack.current_release)
     manifest = latest.manifest_json if latest else {}
@@ -70,7 +61,6 @@ def build_pack_out(pack: DriverPack, runtime_summary: PackRuntimeSummaryOut | No
         insecure_features=manifest.get("insecure_features", []),
         features=_features_out(latest) if latest else {},
         runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
-        derived_from=_derived_from(latest),
         runtime_summary=runtime_summary or PackRuntimeSummaryOut(),
     )
 
@@ -200,7 +190,6 @@ async def list_catalog(session: AsyncSession) -> PackCatalog:
                 runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
                 active_runs=drain_info["active_runs"],
                 live_sessions=drain_info["live_sessions"],
-                derived_from=_derived_from(latest),
                 runtime_summary=runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
             )
         )

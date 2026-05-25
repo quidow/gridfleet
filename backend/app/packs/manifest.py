@@ -291,15 +291,6 @@ class Workaround(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-class DerivedFromManifest(BaseModel):
-    """Reference to the source manifest this pack was derived from."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    pack_id: str
-    release: str
-
-
 class FeatureManifest(BaseModel):
     """Descriptor for a single feature declared in a driver-pack manifest.
 
@@ -336,8 +327,6 @@ class Manifest(BaseModel):
     doctor: list[DoctorCheck] = []
     insecure_features: list[str] = Field(default_factory=list)
     workarounds: list[Workaround] = Field(default_factory=list)
-    derived_from: DerivedFromManifest | None = None
-    template_id: str | None = None
     features: dict[str, FeatureManifest] = Field(default_factory=dict)
 
 

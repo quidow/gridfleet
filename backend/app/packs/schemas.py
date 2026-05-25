@@ -81,12 +81,6 @@ class CurrentReleasePatch(BaseModel):
     release: str
 
 
-class DerivedFrom(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    pack_id: str
-    release: str
-
-
 class PlatformOut(BaseModel):
     id: str
     display_name: str
@@ -165,7 +159,6 @@ class PackOut(BaseModel):
     runtime_policy: RuntimePolicy = Field(default_factory=RuntimePolicy)
     active_runs: int = 0
     live_sessions: int = 0
-    derived_from: DerivedFrom | None = None
     runtime_summary: PackRuntimeSummaryOut = Field(default_factory=PackRuntimeSummaryOut)
 
 
