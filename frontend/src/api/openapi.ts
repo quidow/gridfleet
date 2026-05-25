@@ -1084,40 +1084,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/driver-packs/from-template/{template_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create From Template */
-        post: operations["create_from_template_api_driver_packs_from_template__template_id__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/driver-packs/templates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Templates */
-        get: operations["get_templates_api_driver_packs_templates_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/driver-packs/uploads": {
         parameters: {
             query?: never;
@@ -1288,23 +1254,6 @@ export interface paths {
         get: operations["fetch_tarball_api_driver_packs__pack_id__releases__release__tarball_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/driver-packs/{source_pack_id}/fork": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Fork */
-        post: operations["fork_api_driver_packs__source_pack_id__fork_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2520,13 +2469,6 @@ export interface components {
             /** Release */
             release: string;
         };
-        /** DerivedFrom */
-        DerivedFrom: {
-            /** Pack Id */
-            pack_id: string;
-            /** Release */
-            release: string;
-        };
         /**
          * DesiredNodeState
          * @enum {string}
@@ -3718,22 +3660,6 @@ export interface components {
             /** Total Hosts */
             total_hosts: number;
         };
-        /** ForkPackBody */
-        ForkPackBody: {
-            /** Display Name */
-            display_name?: string | null;
-            /** New Pack Id */
-            new_pack_id: string;
-        };
-        /** FromTemplateBody */
-        FromTemplateBody: {
-            /** Display Name */
-            display_name?: string | null;
-            /** Pack Id */
-            pack_id: string;
-            /** Release */
-            release: string;
-        };
         /** GridQueueRead */
         GridQueueRead: {
             /** Queue Size */
@@ -4650,7 +4576,6 @@ export interface components {
             appium_server?: components["schemas"]["AppiumInstallableOut"] | null;
             /** Current Release */
             current_release: string | null;
-            derived_from?: components["schemas"]["DerivedFrom"] | null;
             /** Display Name */
             display_name: string;
             /** Doctor */
@@ -5462,24 +5387,6 @@ export interface components {
             timestamp: string;
             /** Type */
             type: string;
-        };
-        /** TemplateDescriptorOut */
-        TemplateDescriptorOut: {
-            /** Display Name */
-            display_name: string;
-            /** Prerequisite Host Tools */
-            prerequisite_host_tools: string[];
-            /** Source Pack Id */
-            source_pack_id: string;
-            /** Target Driver Summary */
-            target_driver_summary: string;
-            /** Template Id */
-            template_id: string;
-        };
-        /** TemplatesList */
-        TemplatesList: {
-            /** Templates */
-            templates: components["schemas"]["TemplateDescriptorOut"][];
         };
         /** TestDataAuditEntryRead */
         TestDataAuditEntryRead: {
@@ -9770,61 +9677,6 @@ export interface operations {
             };
         };
     };
-    create_from_template_api_driver_packs_from_template__template_id__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                template_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FromTemplateBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PackOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_templates_api_driver_packs_templates_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TemplatesList"];
-                };
-            };
-        };
-    };
     upload_api_driver_packs_uploads_post: {
         parameters: {
             query?: never;
@@ -10168,41 +10020,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    fork_api_driver_packs__source_pack_id__fork_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                source_pack_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ForkPackBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PackOut"];
                 };
             };
             /** @description Validation Error */
