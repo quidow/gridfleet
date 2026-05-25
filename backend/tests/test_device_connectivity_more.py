@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
+from app.devices.services import health as device_health
+from app.devices.services import lifecycle_policy
 from app.hosts.models import Host, HostStatus, OSType
 from tests.helpers import create_device_record
 
@@ -244,3 +247,58 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         await device_connectivity.device_connectivity_loop()
 
     sleep.assert_awaited()
+
+
+async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The connectivity loop must NOT call handle_health_failure for a device
+    already in offline state. The crash already happened — calling the handler
+    again emits a redundant device.crashed event on every tick."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="already-offline-conn-1",
+            connection_target="already-offline-conn-1",
+            name="Already Offline Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.commit()
+
+    handler_called = False
+    original = lifecycle_policy.handle_health_failure
+
+    async def spy(*args: object, **kwargs: object) -> str:
+        nonlocal handler_called
+        handler_called = True
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(lifecycle_policy, "handle_health_failure", spy)
+
+    from app.devices.services.connectivity import _summarize_unhealthy_result
+
+    health_result: dict[str, object] = {
+        "healthy": False,
+        "checks": [
+            {"check_id": "adb_connected", "ok": False},
+            {"check_id": "adb_responsive", "ok": False},
+        ],
+    }
+    summary = _summarize_unhealthy_result(health_result)
+    await device_health.update_device_checks(db_session, device, healthy=False, summary=summary)
+
+    if device.operational_state != DeviceOperationalState.offline:
+        await lifecycle_policy.handle_health_failure(db_session, device, source="device_checks", reason=summary)
+
+    assert handler_called is False, "handle_health_failure must not be called for already-offline device"
