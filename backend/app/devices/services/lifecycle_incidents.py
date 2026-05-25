@@ -15,16 +15,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
-    DeviceEventType.lifecycle_deferred_stop: "Deferred Stop",
-    DeviceEventType.lifecycle_auto_stopped: "Automatic Stop",
-    DeviceEventType.lifecycle_recovery_suppressed: "Recovery Suppressed",
+    DeviceEventType.lifecycle_deferred_stop: "Stopping Soon",
+    DeviceEventType.lifecycle_auto_stopped: "Auto-Stopped",
+    DeviceEventType.lifecycle_recovery_suppressed: "Recovery Paused",
     DeviceEventType.lifecycle_recovery_failed: "Recovery Failed",
-    DeviceEventType.lifecycle_recovery_backoff: "Recovery Backoff",
+    DeviceEventType.lifecycle_recovery_backoff: "Waiting to Retry",
     DeviceEventType.lifecycle_recovered: "Recovered",
-    DeviceEventType.lifecycle_run_excluded: "Run Excluded",
-    DeviceEventType.lifecycle_run_restored: "Run Restored",
+    DeviceEventType.lifecycle_run_excluded: "Removed from Run",
+    DeviceEventType.lifecycle_run_restored: "Rejoined Run",
     DeviceEventType.lifecycle_run_cooldown_set: "Run Cooldown",
-    DeviceEventType.lifecycle_run_cooldown_escalated: "Run Cooldown Escalated",
+    DeviceEventType.lifecycle_run_cooldown_escalated: "Cooldown Extended",
 }
 
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)

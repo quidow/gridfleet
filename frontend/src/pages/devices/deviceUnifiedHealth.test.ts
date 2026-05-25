@@ -161,7 +161,7 @@ describe('deriveUnifiedHealth', () => {
     const device = makeDevice({
       lifecycle_policy_summary: {
         state: 'suppressed',
-        label: 'Suppressed',
+        label: 'Recovery Paused',
         detail: 'Node restart failed',
         backoff_until: null,
       },
@@ -175,7 +175,7 @@ describe('deriveUnifiedHealth', () => {
     const device = makeDevice({
       lifecycle_policy_summary: {
         state: 'backoff',
-        label: 'Backing Off',
+        label: 'Waiting to Retry',
         detail: 'Agent failed to start node: port occupied',
         backoff_until: '2026-04-16T12:01:00Z',
       },
@@ -225,7 +225,7 @@ describe('deriveUnifiedHealth', () => {
       health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null },
       lifecycle_policy_summary: {
         state: 'suppressed',
-        label: 'Suppressed',
+        label: 'Recovery Paused',
         detail: 'Node restart failed',
         backoff_until: null,
       },

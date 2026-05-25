@@ -120,7 +120,7 @@ describe('DevicesTable', () => {
           needs_attention: true,
           lifecycle_policy_summary: {
             state: 'suppressed',
-            label: 'Suppressed',
+            label: 'Recovery Paused',
             detail: null,
             backoff_until: null,
           },

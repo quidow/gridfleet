@@ -20,11 +20,11 @@ export function formatRecoveryState(status: DeviceHealth['lifecycle_policy']['re
     case 'eligible':
       return 'Eligible';
     case 'suppressed':
-      return 'Suppressed';
+      return 'Recovery Paused';
     case 'backoff':
-      return 'Backing Off';
+      return 'Waiting to Retry';
     case 'waiting_for_session_end':
-      return 'Waiting For Session End';
+      return 'Stopping Soon';
     case 'manual':
       return 'Manual Recovery';
     default:

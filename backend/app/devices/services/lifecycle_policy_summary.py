@@ -75,20 +75,20 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
 
     if policy.get("stop_pending"):
         summary_state = DeviceLifecyclePolicySummaryState.deferred_stop
-        label = "Deferred Stop"
+        label = "Stopping Soon"
         detail = policy.get("stop_pending_reason") or "Waiting for the active client session to finish"
     elif current_state == "backoff":
         summary_state = DeviceLifecyclePolicySummaryState.backoff
-        label = "Backing Off"
+        label = "Waiting to Retry"
         detail = policy.get("recovery_suppressed_reason") or policy.get("last_failure_reason")
     elif policy.get("excluded_from_run"):
         summary_state = DeviceLifecyclePolicySummaryState.excluded
-        label = "Excluded"
+        label = "Excluded from Run"
         run_name = policy.get("excluded_run_name") or "active run"
         detail = f"Excluded from {run_name}"
     elif current_state == "suppressed":
         summary_state = DeviceLifecyclePolicySummaryState.suppressed
-        label = "Suppressed"
+        label = "Recovery Paused"
         suppression = policy.get("recovery_suppressed_reason")
         if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
             detail = policy.get("maintenance_reason") or suppression
@@ -96,12 +96,12 @@ def build_lifecycle_policy_summary(policy: dict[str, Any]) -> dict[str, Any]:
             detail = suppression or policy.get("last_failure_reason")
     elif policy.get("last_failure_source") == "appium_reconciler" and policy.get("last_failure_reason"):
         summary_state = DeviceLifecyclePolicySummaryState.recoverable
-        label = "Node Start Failed"
+        label = "Start Failed"
         detail = policy.get("last_failure_reason")
     elif current_state == "eligible":
         if policy.get("last_action") or policy.get("last_failure_reason"):
             summary_state = DeviceLifecyclePolicySummaryState.recoverable
-            label = "Recovery Eligible"
+            label = "Offline - Can Recover"
             detail = policy.get("last_failure_reason") or "Automatic recovery can run when the next check succeeds"
     return {
         "state": summary_state,

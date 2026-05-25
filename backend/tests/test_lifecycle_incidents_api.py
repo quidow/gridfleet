@@ -88,7 +88,7 @@ async def test_lifecycle_incidents_api_lists_recent_fleet_incidents(
     assert len(items) == 2
     assert items[0]["event_type"] == "lifecycle_recovery_backoff"
     assert items[0]["summary_state"] == "backoff"
-    assert items[0]["label"] == "Recovery Backoff"
+    assert items[0]["label"] == "Waiting to Retry"
     assert items[0]["device_name"] == "Lifecycle One"
     assert items[1]["event_type"] == "lifecycle_deferred_stop"
 

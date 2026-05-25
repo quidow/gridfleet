@@ -1333,7 +1333,7 @@ test.describe('Devices page', () => {
       name: 'Attention Device',
       lifecycle_policy_summary: {
         state: 'backoff',
-        label: 'Backing Off',
+        label: 'Waiting to Retry',
         detail: 'Waiting before retry',
         backoff_until: '2026-03-30T10:10:03Z',
       },
@@ -1516,7 +1516,7 @@ test.describe('Devices page', () => {
         reservation: null,
         lifecycle_policy_summary: {
           state: 'backoff',
-          label: 'Backing Off',
+          label: 'Waiting to Retry',
           detail: 'Automatic recovery is backing off before the next retry',
           backoff_until: '2026-03-31T10:10:00Z',
         },
@@ -2250,7 +2250,7 @@ test.describe('Devices page', () => {
         reservation: null,
         lifecycle_policy_summary: {
           state: 'backoff',
-          label: 'Backing Off',
+          label: 'Waiting to Retry',
           detail: 'ADB not responsive',
           backoff_until: null,
         },

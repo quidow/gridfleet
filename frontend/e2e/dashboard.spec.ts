@@ -181,7 +181,7 @@ test.describe('Dashboard', () => {
             reservation: null,
             lifecycle_policy_summary: {
               state: 'backoff',
-              label: 'Backing Off',
+              label: 'Waiting to Retry',
               detail: 'Backing off until 2026-03-30T10:10:00Z',
               backoff_until: '2026-03-30T10:10:00Z',
             },
@@ -209,7 +209,7 @@ test.describe('Dashboard', () => {
             device_name: 'Backoff Device',
             device_identity_value: 'device-1',
             event_type: 'lifecycle_recovery_backoff',
-            label: 'Backing Off',
+            label: 'Waiting to Retry',
             summary_state: 'backoff',
             reason: 'Recovery probe failed',
             detail: 'Automatic recovery is backing off before the next retry',
@@ -237,7 +237,7 @@ test.describe('Dashboard', () => {
     await expect(page.getByRole('heading', { name: 'Device recovery' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/1 affected/i)).toBeVisible();
     await expect(page.getByRole('link', { name: 'Backoff Device' }).first()).toBeVisible();
-    await expect(page.getByText(/Backing Off/i, { exact: false }).first()).toBeVisible();
+    await expect(page.getByText(/Waiting to Retry/i, { exact: false }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: /^View all$/i }).first()).toBeVisible();
 
     await expectHeadingStyle(page.getByRole('heading', { name: 'Dashboard' }), '24px');
@@ -421,7 +421,7 @@ test.describe('Dashboard', () => {
           reservation: null,
           lifecycle_policy_summary: {
             state: 'backoff',
-            label: 'Backing Off',
+            label: 'Waiting to Retry',
             detail: 'Backing off until 2026-03-30T10:10:00Z',
             backoff_until: '2026-03-30T10:10:00Z',
           },
@@ -448,7 +448,7 @@ test.describe('Dashboard', () => {
             device_name: 'Backoff Device',
             device_identity_value: 'device-1',
             event_type: 'lifecycle_recovery_backoff',
-            label: 'Backing Off',
+            label: 'Waiting to Retry',
             summary_state: 'backoff',
             reason: 'Recovery probe failed',
             detail: 'Automatic recovery is backing off before the next retry',
