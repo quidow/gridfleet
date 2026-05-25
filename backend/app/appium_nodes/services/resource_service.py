@@ -110,15 +110,6 @@ async def get_capabilities(db: AsyncSession, *, node_id: uuid.UUID) -> dict[str,
     return merged
 
 
-async def list_claims_for_node(db: AsyncSession, *, node_id: uuid.UUID) -> list[AppiumNodeResourceClaim]:
-    rows = await db.scalars(
-        select(AppiumNodeResourceClaim)
-        .where(AppiumNodeResourceClaim.node_id == node_id)
-        .order_by(AppiumNodeResourceClaim.capability_key)
-    )
-    return list(rows)
-
-
 async def set_node_extra_capability(
     db: AsyncSession,
     *,

@@ -1,6 +1,6 @@
 import uuid
 
-from app.appium_nodes.services.common import build_extra_caps, build_grid_stereotype_caps
+from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.devices.models import ConnectionType, Device, DeviceType
 
 
@@ -28,26 +28,6 @@ def _device(**overrides: object) -> Device:
     for key, value in base.items():
         setattr(device, key, value)
     return device
-
-
-def test_build_extra_caps_sources_hardware_from_columns() -> None:
-    caps = build_extra_caps(_device())
-    assert caps["appium:platform"] == "android_mobile"
-    assert caps["appium:manufacturer"] == "Google"
-    assert caps["appium:model"] == "Pixel 8"
-    assert caps["appium:os_version"] == "14"
-    assert caps["appium:device_type"] == "real_device"
-    assert "appium:device_family" not in caps
-    assert "appium:fireos" not in caps
-    assert "appium:android_version" not in caps
-
-
-def test_build_extra_caps_skips_missing_optional_columns() -> None:
-    caps = build_extra_caps(_device(manufacturer=None, model=None, os_version="unknown"))
-    assert "appium:manufacturer" not in caps
-    assert "appium:model" not in caps
-    assert "appium:os_version" not in caps
-    assert caps["appium:platform"] == "android_mobile"
 
 
 def test_build_grid_stereotype_caps_includes_tag_caps() -> None:

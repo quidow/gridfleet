@@ -132,13 +132,17 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     device = await create_device(db_session, host_id=db_host.id, name="expired")
     await _seed_node(db_session, device.id)
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="expired",
-        axis=GRID_ROUTING,
-        payload={"accepting_new_sessions": False, "priority": 90},
-        expires_at=datetime.now(UTC) - timedelta(seconds=1),
         reason="expired",
+        intents=[
+            IntentRegistration(
+                source="expired",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 90},
+                expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            ),
+        ],
     )
     await db_session.commit()
 
@@ -172,13 +176,17 @@ async def test_expired_running_metadata_change_is_delivered(
     node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="expired:grid:block",
-        axis=GRID_ROUTING,
-        payload={"accepting_new_sessions": False, "priority": 90},
-        expires_at=datetime.now(UTC) - timedelta(seconds=1),
         reason="expired block",
+        intents=[
+            IntentRegistration(
+                source="expired:grid:block",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 90},
+                expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            ),
+        ],
     )
     await db_session.commit()
     reconfigure = AsyncMock()
@@ -218,13 +226,17 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
-    intent = await service.register_intent(
+    [intent] = await service.register_intents(
         device_id=device.id,
-        source="expired:grid:block",
-        axis=GRID_ROUTING,
-        payload={"accepting_new_sessions": False, "priority": 90},
-        expires_at=datetime.now(UTC) + timedelta(minutes=5),
         reason="expired block",
+        intents=[
+            IntentRegistration(
+                source="expired:grid:block",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 90},
+                expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            ),
+        ],
     )
     await db_session.commit()
     await _reconcile_dirty_devices(db_session, limit=10)
@@ -272,12 +284,16 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
         node.active_connection_target = device.connection_target
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="maintenance:node",
-        axis=NODE_PROCESS,
-        payload={"action": "stop", "stop_mode": "graceful", "priority": 80},
         reason="maintenance",
+        intents=[
+            IntentRegistration(
+                source="maintenance:node",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": 80},
+            ),
+        ],
     )
     await db_session.commit()
 
@@ -322,12 +338,16 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     db_session.add(Session(session_id="active-sess-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source=f"health_failure:node:{device.id}",
-        axis=NODE_PROCESS,
-        payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
         reason="health failure",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
+            ),
+        ],
     )
     await db_session.commit()
 
@@ -363,12 +383,16 @@ async def test_graceful_stop_applies_once_session_ends(
     db_session.add(session)
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source=f"health_failure:node:{device.id}",
-        axis=NODE_PROCESS,
-        payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
         reason="health failure",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
+            ),
+        ],
     )
     await db_session.commit()
 
@@ -398,12 +422,16 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
         node.desired_port = 4723
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="grid:block",
-        axis=GRID_ROUTING,
-        payload={"accepting_new_sessions": False, "priority": 80},
         reason="block",
+        intents=[
+            IntentRegistration(
+                source="grid:block",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 80},
+            ),
+        ],
     )
     await db_session.commit()
 

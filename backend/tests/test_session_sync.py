@@ -440,7 +440,7 @@ async def test_sync_ends_session_marks_offline_when_node_stop_pending(db_session
     """
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
     from app.devices.services.intent import IntentService
-    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, IntentRegistration
 
     with state_write_guard.bypass():
         device = Device(
@@ -476,12 +476,16 @@ async def test_sync_ends_session_marks_offline_when_node_stop_pending(db_session
     await db_session.commit()
 
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source=f"health_failure:node:{device.id}",
-        axis=NODE_PROCESS,
-        payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
         reason="held graceful stop",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+            ),
+        ],
     )
     await db_session.commit()
 

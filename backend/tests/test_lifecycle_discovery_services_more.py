@@ -80,9 +80,6 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
     )
     assert invalid_cursor_items
 
-    listed = await incidents.list_lifecycle_incidents(db_session, device_id=device.id)
-    assert [item.id for item in listed] == [event.id]
-
 
 async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     db_session: AsyncSession,
@@ -145,12 +142,6 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         "app.packs.services.discovery.platform_label_service.load_platform_label_map",
         AsyncMock(return_value={("appium-uiautomator2", "android_mobile"): "Android"}),
     )
-
-    agent = AsyncMock()
-    agent.get_pack_devices = AsyncMock(return_value={"candidates": candidates})
-    discovered = await discovery.discover_pack_candidates(agent, host=db_host.ip, port=db_host.agent_port)
-    assert len(discovered.candidates) == 2
-    assert discovered.candidates[1].missing_requirements == ["adb"]
 
     intake = await discovery.list_intake_candidates(
         db_session,

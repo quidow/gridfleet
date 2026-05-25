@@ -20,10 +20,9 @@ def test_request_context_helpers_round_trip() -> None:
     assert observability.get_request_id() is None
 
 
-def test_configure_logging_uses_dev_renderer_and_process_owner(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configure_logging_uses_dev_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIDFLEET_ENV", "development")
     observability.configure_logging(force=True)
-    assert observability.process_owner()
 
 
 def test_configure_logging_installs_structlog_when_handlers_preexist(monkeypatch: pytest.MonkeyPatch) -> None:

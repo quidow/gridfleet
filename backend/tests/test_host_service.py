@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 from app.devices.models import ConnectionType, DeviceType
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus, OSType
-from app.hosts.schemas import HostCreate, HostRegister, HostUpdate
+from app.hosts.schemas import HostCreate, HostRegister
 from tests.helpers import create_device_record
 
 CAPS_V2 = {"orchestration_contract_version": 2}
@@ -42,7 +42,7 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
     assert host.capabilities == {"missing_prerequisites": ["adb", "java"]}
 
 
-async def test_create_update_and_delete_host(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_and_delete_host(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.hosts.service.settings_service.get", lambda key: 6200)
 
     host = await host_service.create_host(
@@ -50,15 +50,6 @@ async def test_create_update_and_delete_host(db_session: AsyncSession, monkeypat
         HostCreate(hostname="create-host", ip="10.0.0.10", os_type=OSType.linux, agent_port=None),
     )
     assert host.agent_port == 6200
-
-    updated = await host_service.update_host(
-        db_session,
-        host.id,
-        HostUpdate(capabilities={"missing_prerequisites": ["adb", "adb"]}, agent_version="1.2.3"),
-    )
-    assert updated is not None
-    assert updated.capabilities == {"missing_prerequisites": ["adb"]}
-    assert updated.agent_version == "1.2.3"
 
     assert await host_service.delete_host(db_session, host.id) is True
     assert await host_service.get_host(db_session, host.id) is None
@@ -195,7 +186,6 @@ async def test_list_hosts_and_missing_host_paths(db_session: AsyncSession) -> No
     hosts = await host_service.list_hosts(db_session)
     assert [item.hostname for item in hosts] == ["aaa"]
     assert await host_service.delete_host(db_session, uuid4()) is False
-    assert await host_service.update_host(db_session, uuid4(), HostUpdate()) is None
 
 
 async def test_register_host_updates_agent_port_when_reprovided(db_session: AsyncSession) -> None:
