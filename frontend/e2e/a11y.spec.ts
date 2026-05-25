@@ -160,6 +160,19 @@ test.describe('Accessibility', () => {
         prev_cursor: null,
       });
     });
+    await page.route((url) => new URL(url).pathname === '/api/events/catalog', async (route) => {
+      await fulfillJson(route, { events: [{ name: 'device.state_changed', description: 'Device state changed', severity: 'info' }] });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/notifications', async (route) => {
+      await fulfillJson(route, {
+        items: [EVENT],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        next_cursor: null,
+        prev_cursor: null,
+      });
+    });
     await page.route((url) => new URL(url).pathname === '/api/settings', async (route) => {
       await fulfillJson(route, SETTINGS_GROUPED);
     });
@@ -192,11 +205,11 @@ test.describe('Accessibility', () => {
 
   for (const { path, heading } of ROUTES) {
     test(`has no critical automated a11y violations on ${path}`, async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(path);
       await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible({ timeout: 15_000 });
 
       const results = await new AxeBuilder({ page })
-        .disableRules(['color-contrast'])
         .analyze();
 
       expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);

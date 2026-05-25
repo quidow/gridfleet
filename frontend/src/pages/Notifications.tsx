@@ -79,8 +79,8 @@ function SeverityChipFilter({ selected, onToggle }: SeverityChipFilterProps) {
             aria-pressed={active}
             onClick={() => onToggle(s)}
             className={[
-              'rounded-full transition-opacity',
-              active ? '' : 'opacity-50 hover:opacity-75',
+              'rounded-full transition-shadow',
+              active ? 'ring-1 ring-border-strong' : '',
             ].join(' ')}
           >
             <Badge tone={s} dot>
