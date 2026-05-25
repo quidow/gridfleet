@@ -10,13 +10,13 @@ if TYPE_CHECKING:
 
 
 DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
-    "analytics": ("config", "models", "router", "schemas", "service"),
-    "settings": ("config", "models", "registry", "router", "schemas", "service", "service_config"),
-    "webhooks": ("config", "dispatcher", "models", "router", "schemas", "service"),
-    "events": ("catalog", "config", "event_bus", "models", "router", "schemas", "schemas_catalog", "service_system"),
-    "jobs": ("config", "kinds", "models", "queue", "statuses"),
+    "analytics": ("models", "router", "schemas", "service"),
+    "settings": ("models", "registry", "router", "schemas", "service", "service_config"),
+    "webhooks": ("dispatcher", "models", "router", "schemas", "service"),
+    "events": ("catalog", "event_bus", "models", "router", "schemas", "schemas_catalog", "service_system"),
+    "jobs": ("kinds", "models", "queue", "statuses"),
     "grid": ("config", "router", "schemas", "service"),
-    "plugins": ("config", "models", "router", "schemas", "service"),
+    "plugins": ("models", "router", "schemas", "service"),
     "agent_comm": (
         "circuit_breaker",
         "client",
