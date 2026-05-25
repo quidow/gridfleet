@@ -109,7 +109,6 @@ def format_update_dry_run(
     uv_runtime: UvRuntime,
     to_version: str | None = None,
     os_name: str | None = None,
-    current_uid: int | None = None,
 ) -> str:
     resolved_os = os_name or platform.system()
     package_spec = _agent_package_spec(to_version)
@@ -204,7 +203,6 @@ def update_agent(
     uv_runtime: UvRuntime,
     to_version: str | None = None,
     os_name: str | None = None,
-    current_uid: int | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
     drain_check: DrainCheckCallable = wait_for_update_drain,
     health_check: HealthCheckCallable = poll_agent_health,

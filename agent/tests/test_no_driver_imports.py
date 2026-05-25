@@ -43,11 +43,6 @@ BANNED_LITERALS: dict[str, str] = {
     "go_ios": "iOS device management CLI",
 }
 
-CONTEXT_SENSITIVE_LITERALS: dict[str, str] = {
-    "adb": "Android Debug Bridge",
-    "chrome": "browser-specific special-case",
-}
-
 BANNED_IMPORTS: set[tuple[str, str]] = {
     ("agent_app.tools.utils", "_find_adb"),
     ("agent_app.tools.utils", "find_android_home"),

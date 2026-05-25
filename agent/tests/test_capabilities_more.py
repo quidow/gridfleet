@@ -21,11 +21,7 @@ async def test_refresh_and_loop_cover_remaining_paths() -> None:
     with patch("agent_app.host.capabilities.detect_capabilities", new_callable=AsyncMock, return_value=snapshot):
         assert await refresh_capabilities_snapshot() == snapshot
 
-    sleep_calls = 0
-
     async def _sleep(_delay: float) -> None:
-        nonlocal sleep_calls
-        sleep_calls += 1
         raise asyncio.CancelledError
 
     with (

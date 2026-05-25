@@ -81,9 +81,7 @@ def _desired_platform(
     return platform_def, release
 
 
-LatestDesiredDep = Annotated[list[Any], Depends(_latest_desired)]
 OptionalAdapterRegistryDep = Annotated["AdapterRegistry | None", Depends(_optional_adapter_registry)]
-AdapterRegistryDep = Annotated["AdapterRegistry", Depends(_require_adapter_registry)]
 HostIdDep = Annotated[str, Depends(_host_id)]
 PackStateLoopDep = Annotated["PackStateLoop | None", Depends(_pack_state_loop)]
 DesiredPlatformDep = Annotated[tuple["DesiredPlatform", str], Depends(_desired_platform)]
