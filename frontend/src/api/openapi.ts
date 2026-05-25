@@ -4456,8 +4456,6 @@ export interface components {
              * @enum {string}
              */
             id: "state" | "reconnect" | "boot" | "shutdown";
-            /** Label */
-            label?: string | null;
         };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
