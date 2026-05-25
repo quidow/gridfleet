@@ -14,8 +14,8 @@ const STRATEGY_OPTIONS = [
 function policyEquals(a: RuntimePolicy, b: RuntimePolicy): boolean {
   if (a.strategy !== b.strategy) return false;
   if (a.strategy === 'exact') {
-    return a.appium_server_version === b.appium_server_version
-      && a.appium_driver_version === b.appium_driver_version;
+    return (a.appium_server_version ?? null) === (b.appium_server_version ?? null)
+      && (a.appium_driver_version ?? null) === (b.appium_driver_version ?? null);
   }
   return true;
 }
@@ -139,7 +139,7 @@ export function DriverRuntimePanel({ pack }: { pack: DriverPack }) {
     <div className="grid gap-4 lg:grid-cols-2">
       <Card padding="md" className="lg:col-span-2">
         <h2 className="mb-3 text-sm font-semibold text-text-1">Manifest Runtime Contract</h2>
-        <RuntimePolicyEditor pack={pack} />
+        <RuntimePolicyEditor key={pack.id} pack={pack} />
         {(pack.insecure_features?.length ?? 0) > 0 && (
           <div className="mt-3">
             <span className="text-xs font-medium text-text-3">Insecure Appium Features</span>

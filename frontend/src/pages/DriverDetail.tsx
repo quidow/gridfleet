@@ -134,7 +134,7 @@ function ReleasesPanel({ packId }: { packId: string }) {
         isOpen={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => {
-          if (!deleteTarget) return;
+          if (!deleteTarget || deleteMutation.isPending) return;
           deleteMutation.mutate(
             { packId, release: deleteTarget },
             {
