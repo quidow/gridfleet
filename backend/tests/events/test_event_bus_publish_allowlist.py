@@ -11,11 +11,7 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
 
-ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
-    "app/events/event_bus.py:_publish_pending_events": (
-        "Internal recursive dispatch from _publish_pending_events after the writer transaction committed."
-    ),
-}
+ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {}
 
 
 class _PublishSiteVisitor(ast.NodeVisitor):

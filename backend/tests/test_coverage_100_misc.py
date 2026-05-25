@@ -382,7 +382,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(event_bus.event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
     monkeypatch.setattr(event_bus.logger, "exception", Mock())
-    await event_bus._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)])
+    await event_bus._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)], event_bus.event_bus)
     event_bus.logger.exception.assert_called_once()
 
     listeners: dict[str, object] = {}

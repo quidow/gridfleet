@@ -377,10 +377,12 @@ _PENDING_EVENTS_KEY = "_pending_event_bus_events"
 _PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"
 
 
-async def _publish_pending_events(events: list[tuple[str, dict[str, Any], EventSeverity | None]]) -> None:
+async def _publish_pending_events(
+    events: list[tuple[str, dict[str, Any], EventSeverity | None]], bus: EventBus
+) -> None:
     for event_type, data, severity in events:
         try:
-            await event_bus.publish(event_type, data, severity=severity)
+            await bus.publish(event_type, data, severity=severity)
         except Exception:
             logger.exception("Failed to publish deferred event %s", event_type)
 
@@ -391,6 +393,7 @@ def queue_event_for_session(
     data: dict[str, Any],
     *,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     """Queue an event to dispatch after the outer transaction commits.
 
@@ -412,6 +415,7 @@ def queue_event_for_session(
     """
     sync_session = db.sync_session if isinstance(db, AsyncSession) else db
     loop = asyncio.get_running_loop()
+    _bus = publisher if publisher is not None else event_bus
 
     pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
         _PENDING_EVENTS_KEY, []
@@ -427,9 +431,9 @@ def queue_event_for_session(
         sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
         if not events:
             return
-        task = loop.create_task(_publish_pending_events(events))
-        event_bus._handler_tasks.add(task)
-        task.add_done_callback(event_bus._handler_tasks.discard)
+        task = loop.create_task(_publish_pending_events(events, _bus))
+        _bus._handler_tasks.add(task)
+        task.add_done_callback(_bus._handler_tasks.discard)
 
     def _drop_on_rollback(_session: object) -> None:
         sync_session.info.pop(_PENDING_EVENTS_KEY, None)
@@ -452,6 +456,7 @@ def queue_device_crashed_event(
     will_restart: bool,
     process: str | None = None,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
     queue_event_for_session(
@@ -466,4 +471,5 @@ def queue_device_crashed_event(
             "process": process,
         },
         severity=severity,
+        publisher=publisher,
     )
