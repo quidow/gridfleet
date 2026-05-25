@@ -2,11 +2,6 @@ import type { BadgeTone } from '../ui/Badge';
 
 export type EventSeverity = BadgeTone;
 
-export type FormattedEventDetails =
-  | { kind: 'text'; text: string }
-  | { kind: 'json'; text: string }
-  | { kind: 'empty'; text: string };
-
 type EventData = Record<string, unknown>;
 type Renderer = (data: EventData) => string;
 
@@ -251,7 +246,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   },
 };
 
-export function formatEventDetails(type: string, data: EventData | null | undefined): FormattedEventDetails {
+export function formatEventDetails(type: string, data: EventData | null | undefined) {
   const payload = data ?? {};
   const entry = REGISTRY[type];
   if (entry) {

@@ -87,7 +87,6 @@ export type ReservedDeviceInfo = Omit<
   platform_label: string | null;
 };
 export type SessionCounts = Schemas['SessionCounts'];
-export type RunCreate = Schemas['RunCreate'];
 export type RunRead = Omit<
   Schemas['RunRead'],
   'completed_at' | 'created_by' | 'error' | 'last_heartbeat' | 'requirements' | 'reserved_devices' | 'started_at'
