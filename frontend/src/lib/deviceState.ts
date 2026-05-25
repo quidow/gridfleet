@@ -8,8 +8,6 @@ export const DEVICE_STATUSES: DeviceChipStatus[] = [
   'reserved',
   'verifying',
 ];
-export const OPERATIONAL_STATES: DeviceOperationalState[] = ['available', 'busy', 'offline', 'verifying'];
-export const DEVICE_HOLDS: DeviceHold[] = ['maintenance', 'reserved'];
 
 export function deviceChipStatus(device: {
   operational_state: DeviceOperationalState;

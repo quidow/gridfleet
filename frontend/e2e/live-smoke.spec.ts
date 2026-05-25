@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Live stack smoke', () => {
-  test('dashboard, devices, and runs load against the self-started stack', async ({ page }) => {
+  test('dashboard, devices, and runs load against the live stack', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 15_000 });
 

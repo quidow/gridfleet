@@ -24,7 +24,7 @@ export function ReliabilityTab({ params }: Props) {
     <div className="space-y-8">
       <Card padding="none">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium text-text-2">Device Reliability</h3>
+          <h2 className="text-sm font-medium text-text-2">Device Reliability</h2>
           <button
             onClick={() => downloadAnalyticsCsv('devices/reliability', params)}
             className="flex items-center gap-1 text-xs text-text-3 hover:text-text-2"

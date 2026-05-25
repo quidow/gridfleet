@@ -94,7 +94,7 @@ export function FleetCapacityTab({ params }: Props) {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-sm font-medium text-text-2">Fleet Capacity</h3>
+        <h2 className="text-sm font-medium text-text-2">Fleet Capacity</h2>
         <p className="mt-1 text-sm text-text-3">
           Demand includes active sessions, queued Grid requests, and capacity-related session failures.
         </p>

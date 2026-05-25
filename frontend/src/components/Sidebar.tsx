@@ -178,7 +178,7 @@ export function Sidebar() {
           {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
         </button>
       </div>
-      <nav className={`flex-1 ${collapsed ? 'px-1.5' : 'px-3'} py-4`}>
+      <nav aria-label="Main" className={`flex-1 ${collapsed ? 'px-1.5' : 'px-3'} py-4`}>
         {groups.map((group, idx) => (
           <div
             key={group.title}

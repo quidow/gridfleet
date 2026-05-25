@@ -289,6 +289,11 @@ export async function mockDefaultApiFallbacks(page: Page) {
       return;
     }
 
+    if (path === '/api/grid/queue') {
+      await fulfillJson(route, { queue_size: 0, requests: [] });
+      return;
+    }
+
     if (path === '/api/grid/status') {
       await fulfillJson(route, {
         grid: { ready: true, value: { ready: true, nodes: [] } },
@@ -461,6 +466,10 @@ export async function mockAppShellApis(page: Page) {
 
   await page.route('**/api/health', async (route) => {
     await fulfillJson(route, { status: 'ok', checks: { database: 'ok' } });
+  });
+
+  await page.route('**/api/grid/queue', async (route) => {
+    await fulfillJson(route, { queue_size: 0, requests: [] });
   });
 
   await page.route('**/api/grid/status', async (route) => {

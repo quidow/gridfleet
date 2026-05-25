@@ -27,6 +27,7 @@ export function ProportionalBar({ segments, showLegend = true }: ProportionalBar
               segment.count > 0 ? (
                 <div
                   key={segment.key}
+                  role="img"
                   className={segment.barClassName}
                   style={{ width: `${(segment.count / safeTotal) * 100}%` }}
                   aria-label={`${segment.label}: ${segment.count}`}

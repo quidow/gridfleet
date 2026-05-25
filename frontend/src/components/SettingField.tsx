@@ -20,7 +20,7 @@ export function SettingField({ setting, value, onChange, onReset }: Props) {
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <label className="text-sm font-medium text-text-1">
+            <label htmlFor={`setting-${setting.key}`} className="text-sm font-medium text-text-1">
               {formatLabel(setting.key)}
             </label>
             {setting.is_overridden && (
@@ -30,7 +30,7 @@ export function SettingField({ setting, value, onChange, onReset }: Props) {
             )}
           </div>
           <p className="text-xs text-text-3 mb-2">{setting.description}</p>
-          {renderInput(setting, value, onChange)}
+          {renderInput(setting, value, onChange, `setting-${setting.key}`)}
           {hasError && <p className="text-xs text-danger-foreground mt-1">{hasError}</p>}
           {setting.is_overridden && (
             <p className="text-xs text-text-3 mt-1">
@@ -67,11 +67,12 @@ function formatDefault(value: unknown): string {
   return String(value);
 }
 
-function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown) => void) {
+function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown) => void, id: string) {
   switch (setting.type) {
     case 'int':
       return (
         <NumberField
+          id={id}
           name={setting.key}
           value={typeof value === 'number' ? value : null}
           onChange={(v) => onChange(v === null ? '' : v)}
@@ -85,6 +86,7 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
       if (setting.validation?.allowed_values) {
         return (
           <Select
+            id={id}
             name={setting.key}
             value={value as string}
             onChange={onChange}
@@ -95,6 +97,7 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
       }
       return (
         <TextField
+          id={id}
           name={setting.key}
           value={value as string}
           onChange={(v) => onChange(v)}
@@ -106,6 +109,8 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
       return (
         <button
           type="button"
+          id={id}
+          aria-pressed={!!value}
           onClick={() => onChange(!value)}
           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
             value ? 'bg-accent' : 'bg-border-strong'
@@ -141,6 +146,7 @@ function renderInput(setting: SettingRead, value: unknown, onChange: (v: unknown
       }
       return (
         <textarea
+          id={id}
           name={setting.key}
           value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
           onChange={(e) => {

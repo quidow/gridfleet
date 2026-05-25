@@ -31,7 +31,7 @@ export function Tabs({ tabs, activeId, onChange, className }: TabsProps) {
 
     return (
       <div className={`border-b border-border ${className ?? ''}`}>
-        <nav className="-mb-px flex items-end overflow-x-auto">
+        <nav aria-label="Tabs" className="-mb-px flex items-end overflow-x-auto">
           {sections.map((section, sIdx) => {
             const sectionTabs = tabs.filter((t) => (t.section ?? 'Other') === section);
             return (
@@ -64,7 +64,7 @@ export function Tabs({ tabs, activeId, onChange, className }: TabsProps) {
   // Flat strip — mirrors Analytics.tsx:74-90
   return (
     <div className={`border-b border-border ${className ?? ''}`}>
-      <nav className="-mb-px flex space-x-8 overflow-x-auto">
+      <nav aria-label="Tabs" className="-mb-px flex space-x-8 overflow-x-auto">
         {tabs.map((tab) => (
           <button
             key={tab.id}

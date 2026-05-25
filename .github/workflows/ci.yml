@@ -254,22 +254,7 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_USER: gridfleet
-          POSTGRES_PASSWORD: gridfleet
-          POSTGRES_DB: gridfleet
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U gridfleet -d gridfleet"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@127.0.0.1:5432/gridfleet
       UV_LINK_MODE: copy
     steps:
       - name: Checkout
@@ -345,14 +330,6 @@ jobs:
         working-directory: frontend
         run: npm run test:e2e:mocked
 
-      - name: Run backend migrations
-        working-directory: backend
-        run: uv run --locked --extra dev alembic upgrade head
-
-      - name: Test live e2e
-        working-directory: frontend
-        run: npm run test:e2e:live
-
   compose-smoke:
     name: Compose Smoke Test
     runs-on: ubuntu-latest
@@ -384,6 +361,38 @@ jobs:
       - name: Verify backend health
         run: |
           timeout 30 bash -c 'until curl -sf http://localhost:8000/health/live > /dev/null; do sleep 2; done'
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+
+      - name: Install Playwright system deps
+        working-directory: frontend
+        run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+
+      - name: Run live e2e smoke tests
+        working-directory: frontend
+        run: npm run test:e2e:compose
 
       - name: Dump logs on failure
         if: failure()
