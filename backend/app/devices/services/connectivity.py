@@ -342,18 +342,20 @@ async def _check_connectivity(db: AsyncSession) -> None:
 
                     if not healthy:
                         summary = _summarize_unhealthy_result(health_result)
+                        was_offline = device.operational_state == DeviceOperationalState.offline
                         await device_health.update_device_checks(
                             db,
                             device,
                             healthy=False,
                             summary=summary,
                         )
-                        await lifecycle_policy.handle_health_failure(
-                            db,
-                            device,
-                            source="device_checks",
-                            reason=summary,
-                        )
+                        if not was_offline:
+                            await lifecycle_policy.handle_health_failure(
+                                db,
+                                device,
+                                source="device_checks",
+                                reason=summary,
+                            )
                         await control_plane_state_store.set_value(
                             db, CONNECTIVITY_NAMESPACE, device.identity_value, True
                         )

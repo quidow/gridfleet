@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
+from app.devices.services import lifecycle_policy
 from app.hosts.models import Host, HostStatus, OSType
 from tests.helpers import create_device_record
 
@@ -244,3 +245,62 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         await device_connectivity.device_connectivity_loop()
 
     sleep.assert_awaited()
+
+
+async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
+    db_session: AsyncSession,
+) -> None:
+    """The connectivity loop must NOT call handle_health_failure for a device
+    already in offline state — the crash already happened and calling the
+    handler again emits a redundant device.crashed event on every tick.
+
+    Exercises `_check_connectivity` end-to-end with mocked agent calls.
+    """
+    host = Host(
+        hostname="offline-host", ip="10.0.0.20", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
+    )
+    db_session.add(host)
+    await db_session.flush()
+
+    device = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="already-offline-conn-1",
+        connection_target="already-offline-conn-1",
+        name="Already Offline Device",
+    )
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.offline
+    await db_session.commit()
+
+    handle_health_failure_called = False
+    original_handler = lifecycle_policy.handle_health_failure
+
+    async def spy(db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
+        nonlocal handle_health_failure_called
+        handle_health_failure_called = True
+        return await original_handler(db, device, source=source, reason=reason)
+
+    with (
+        patch(
+            "app.devices.services.connectivity._get_agent_devices",
+            new=AsyncMock(return_value={"already-offline-conn-1"}),
+        ),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new=AsyncMock(
+                return_value={
+                    "healthy": False,
+                    "checks": [
+                        {"check_id": "adb_connected", "ok": False},
+                        {"check_id": "adb_responsive", "ok": False},
+                    ],
+                }
+            ),
+        ),
+        patch("app.devices.services.connectivity.assert_current_leader"),
+        patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
+    ):
+        await device_connectivity._check_connectivity(db_session)
+
+    assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"
