@@ -7,14 +7,14 @@ import { CursorPagination } from '../ui/CursorPagination';
 import { formatDate } from './utils';
 
 const EVENT_BADGE_MAP: Record<string, { label: string; tone: BadgeTone }> = {
-  lifecycle_auto_stopped: { label: 'Stopped', tone: 'critical' },
-  lifecycle_deferred_stop: { label: 'Deferred Stop', tone: 'warning' },
-  lifecycle_recovery_suppressed: { label: 'Recovery Blocked', tone: 'warning' },
+  lifecycle_auto_stopped: { label: 'Auto-Stopped', tone: 'critical' },
+  lifecycle_deferred_stop: { label: 'Stopping Soon', tone: 'warning' },
+  lifecycle_recovery_suppressed: { label: 'Recovery Paused', tone: 'warning' },
   lifecycle_recovery_failed: { label: 'Recovery Failed', tone: 'critical' },
-  lifecycle_recovery_backoff: { label: 'Backoff', tone: 'warning' },
+  lifecycle_recovery_backoff: { label: 'Waiting to Retry', tone: 'warning' },
   lifecycle_recovered: { label: 'Recovered', tone: 'success' },
-  lifecycle_run_excluded: { label: 'Run Excluded', tone: 'critical' },
-  lifecycle_run_restored: { label: 'Run Restored', tone: 'success' },
+  lifecycle_run_excluded: { label: 'Removed from Run', tone: 'critical' },
+  lifecycle_run_restored: { label: 'Rejoined Run', tone: 'success' },
   health_check_fail: { label: 'Health Fail', tone: 'critical' },
   connectivity_lost: { label: 'Disconnected', tone: 'critical' },
   connectivity_restored: { label: 'Connected', tone: 'success' },

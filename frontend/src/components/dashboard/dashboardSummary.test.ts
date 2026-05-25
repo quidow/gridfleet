@@ -66,7 +66,7 @@ function makeIncident(overrides: Partial<LifecycleIncidentRead> = {}): Lifecycle
     platform_id: 'android_mobile',
     platform_label: null,
     event_type: 'lifecycle_recovery_backoff',
-    label: 'Recovery Backoff',
+    label: 'Waiting to Retry',
     summary_state: 'backoff',
     reason: 'Recovery probe failed',
     detail: 'Automatic recovery is backing off before the next retry',
@@ -124,9 +124,9 @@ describe('dashboardSummary', () => {
 
   it('counts needsAttention, maintenance, and reserved devices in fleet summary', () => {
     const summary = deriveDashboardFleetSummary([
-      makeDevice({ id: 'backoff1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
-      makeDevice({ id: 'backoff2', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Backing Off', detail: null, backoff_until: null } }),
-      makeDevice({ id: 'excluded1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'excluded', label: 'Excluded', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'backoff1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'backoff2', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'backoff', label: 'Waiting to Retry', detail: null, backoff_until: null } }),
+      makeDevice({ id: 'excluded1', needs_attention: true, operational_state: 'available', hold: null, lifecycle_policy_summary: { state: 'excluded', label: 'Excluded from Run', detail: null, backoff_until: null } }),
       makeDevice({ id: 'maintenance', needs_attention: false, operational_state: 'available', hold: 'maintenance' }),
       makeDevice({ id: 'reserved', needs_attention: false, operational_state: 'available', hold: 'reserved' }),
       makeDevice({ id: 'verifying', needs_attention: false, operational_state: 'verifying', hold: null }),

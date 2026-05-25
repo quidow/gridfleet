@@ -1,6 +1,6 @@
-# Runbook: Stale "Deferred Stop" On The Dashboard
+# Runbook: Stale "Stopping Soon" On The Dashboard
 
-Use this runbook when the **Device Recovery** card on the dashboard pins a device to **Deferred Stop** even though the underlying health failure was resolved long ago and there is no active client session against the device.
+Use this runbook when the **Device Recovery** card on the dashboard pins a device to **Stopping Soon** even though the underlying health failure was resolved long ago and there is no active client session against the device.
 
 When `GRIDFLEET_AUTH_ENABLED=true`, every `/api/*` call below requires HTTP Basic auth with the manager's machine credentials. Export them once and pass with `-u`:
 
@@ -27,7 +27,7 @@ As of the fix in this release:
 - When health recovers before the session ends (e.g. via `node_health` recovery), the deferred-stop intent is cleared in place and the device stays up — the audit trail records a single `lifecycle_recovered` event, and `last_action` advances to `auto_stop_cleared` so the dashboard does not show a stale `auto_stop_deferred`.
 - The session-end helper trusts the typed health columns plus `AppiumNode` row as the canonical health source. If the derived summary reads healthy but `last_failure_*` still describes a recent failure, the intent is cleared rather than auto-stopping a device the row says is working. A subsequent failed probe will re-arm the deferred stop.
 
-If the dashboard still shows a stale "Deferred Stop" entry, the periodic sweep should clear it within one poll interval. If it does not, follow the manual recovery below.
+If the dashboard still shows a stale "Stopping Soon" entry, the periodic sweep should clear it within one poll interval. If it does not, follow the manual recovery below.
 
 ## 1. Inspect the device record first
 

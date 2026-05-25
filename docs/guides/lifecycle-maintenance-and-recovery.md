@@ -57,11 +57,11 @@ The lifecycle summary shown on Devices and triage surfaces uses these states:
 | State | Meaning |
 | --- | --- |
 | `Idle` | No active recovery condition is being surfaced |
-| `Deferred Stop` | The manager wants to stop the device, but is waiting for the active client session to finish |
-| `Backing Off` | Automatic recovery previously failed and is delayed until the backoff timer expires |
-| `Excluded` | The device was excluded from an active run while the manager protects the run from an unhealthy member |
-| `Suppressed` | Automatic recovery is intentionally blocked, for example by maintenance or readiness problems |
-| `Recovery Eligible` | The device can be brought back automatically when the next checks succeed |
+| `Stopping Soon` | The manager wants to stop the device, but is waiting for the active client session to finish |
+| `Waiting to Retry` | Automatic recovery previously failed and is delayed until the backoff timer expires |
+| `Excluded from Run` | The device was excluded from an active run while the manager protects the run from an unhealthy member |
+| `Recovery Paused` | Automatic recovery is intentionally blocked, for example by maintenance or readiness problems |
+| `Offline - Can Recover` | The device can be brought back automatically when the next checks succeed |
 | `Manual Recovery` | The device has recovery work remaining and requires operator intervention to bring it back |
 
 These are lifecycle summaries, not separate editable statuses.
@@ -119,7 +119,7 @@ Lifecycle triage also appears in the broader fleet surfaces, especially the life
 
 ### Active Session Is Still Running
 
-The manager can move into `Deferred Stop` instead of killing the session immediately. The device is stopped only after the client session finishes.
+The manager can move into `Stopping Soon` instead of killing the session immediately. The device is stopped only after the client session finishes.
 
 ### Device Belongs To An Active Run
 
