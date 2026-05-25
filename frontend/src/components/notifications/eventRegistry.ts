@@ -40,16 +40,10 @@ const LEGACY_FALLBACK: Record<string, EventSeverity> = {
   'device.operational_state_changed': 'warning',
   'device.hold_changed': 'warning',
   'device.hardware_health_changed': 'warning',
-  'device.maintenance_start': 'info',
-  'device.maintenance_end': 'success',
-  'device.verified': 'success',
   'device.verification.updated': 'info',
   'node.crash': 'critical',
-  'node.restart': 'info',
   'node.state_changed': 'info',
   'host.registered': 'success',
-  'host.online': 'success',
-  'host.offline': 'critical',
   'host.status_changed': 'warning',
   'host.heartbeat_lost': 'critical',
   'host.discovery_completed': 'info',
@@ -57,23 +51,17 @@ const LEGACY_FALLBACK: Record<string, EventSeverity> = {
   'host.circuit_breaker.closed': 'success',
   'session.started': 'info',
   'session.ended': 'info',
-  'session.stuck': 'warning',
   'run.created': 'info',
   'run.active': 'info',
   'run.completed': 'success',
-  'run.failed': 'critical',
   'run.cancelled': 'warning',
   'run.expired': 'critical',
-  'lifecycle.incident_open': 'warning',
-  'lifecycle.incident_resolved': 'success',
   'device_group.updated': 'info',
   'device_group.members_changed': 'warning',
   'bulk.operation_completed': 'warning',
   'settings.changed': 'neutral',
   'config.updated': 'neutral',
   'test_data.updated': 'neutral',
-  'webhook.delivered': 'success',
-  'webhook.failed': 'critical',
   'webhook.test': 'neutral',
   'system.cleanup_completed': 'neutral',
 };
@@ -109,23 +97,11 @@ const REGISTRY: Record<string, RegistryEntry> = {
       return `${device}: hardware ${firstString(data, ['old_status'], 'unknown')} -> ${firstString(data, ['new_status'], 'unknown')}`;
     },
   },
-  'device.maintenance_start': {
-    render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} entered maintenance`,
-  },
-  'device.maintenance_end': {
-    render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} exited maintenance`,
-  },
-  'device.verified': {
-    render: (data) => `${firstString(data, ['device_name', 'name'], 'Device')} verified`,
-  },
   'device.verification.updated': {
     render: (data) => `Verification ${firstString(data, ['job_id'], 'job')}: ${firstString(data, ['status'], 'updated')}`,
   },
   'node.crash': {
     render: (data) => `Appium node for ${firstString(data, ['device_name', 'name'], 'device')} crashed${appendReason(data)}`,
-  },
-  'node.restart': {
-    render: (data) => `Appium node for ${firstString(data, ['device_name', 'name'], 'device')} restarted`,
   },
   'node.state_changed': {
     render: (data) => {
@@ -136,12 +112,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
   },
   'host.registered': {
     render: (data) => `Host registered: ${firstString(data, ['hostname', 'host', 'name'], 'host')}`,
-  },
-  'host.online': {
-    render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')} came online`,
-  },
-  'host.offline': {
-    render: (data) => `${firstString(data, ['hostname', 'host', 'name'], 'Host')} went offline`,
   },
   'host.status_changed': {
     render: (data) => {
@@ -175,9 +145,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
   'session.ended': {
     render: (data) => `Session ended (${firstString(data, ['status'], 'unknown')})`,
   },
-  'session.stuck': {
-    render: (data) => `Session ${firstString(data, ['session_id'], 'unknown').slice(0, 8)} stuck on ${firstString(data, ['device_name', 'name'], 'device')}`,
-  },
   'run.created': {
     render: (data) => `${firstString(data, ['name'], 'Run')} created`,
   },
@@ -187,20 +154,11 @@ const REGISTRY: Record<string, RegistryEntry> = {
   'run.completed': {
     render: (data) => `${firstString(data, ['name'], 'Run')} completed`,
   },
-  'run.failed': {
-    render: (data) => `${firstString(data, ['name'], 'Run')} failed${appendReason(data)}`,
-  },
   'run.cancelled': {
     render: (data) => `${firstString(data, ['name'], 'Run')} cancelled${appendReason(data)}`,
   },
   'run.expired': {
     render: (data) => `${firstString(data, ['name'], 'Run')} expired${appendReason(data)}`,
-  },
-  'lifecycle.incident_open': {
-    render: (data) => `Incident opened: ${firstString(data, ['device_name', 'name'], 'device')}${appendReason(data)}`,
-  },
-  'lifecycle.incident_resolved': {
-    render: (data) => `Incident resolved: ${firstString(data, ['device_name', 'name'], 'device')}`,
   },
   'device_group.updated': {
     render: (data) => `Device group ${firstString(data, ['group_id'], 'group')}: ${firstString(data, ['action'], 'updated')}`,
@@ -231,12 +189,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
   },
   'test_data.updated': {
     render: (data) => `${firstString(data, ['device_name'], 'Device')} test_data updated${stringValue(data.changed_by) ? ` by ${stringValue(data.changed_by)}` : ''}`,
-  },
-  'webhook.delivered': {
-    render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')} delivered`,
-  },
-  'webhook.failed': {
-    render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')} failed${appendReason(data)}`,
   },
   'webhook.test': {
     render: (data) => `${firstString(data, ['webhook_name', 'name'], 'Webhook')}: test event published`,

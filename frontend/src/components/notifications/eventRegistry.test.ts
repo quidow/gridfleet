@@ -7,13 +7,13 @@ describe('eventRegistry', () => {
       kind: 'text',
       text: 'live-run-00 completed',
     });
-    expect(formatEventDetails('run.failed', { name: 'live-run-01', reason: 'heartbeat timeout' })).toEqual({
+    expect(formatEventDetails('run.cancelled', { name: 'live-run-01', reason: 'heartbeat timeout' })).toEqual({
       kind: 'text',
-      text: 'live-run-01 failed: heartbeat timeout',
+      text: 'live-run-01 cancelled: heartbeat timeout',
     });
-    expect(formatEventDetails('host.offline', { hostname: 'lab-linux-02' })).toEqual({
+    expect(formatEventDetails('host.registered', { hostname: 'lab-linux-02' })).toEqual({
       kind: 'text',
-      text: 'lab-linux-02 went offline',
+      text: 'Host registered: lab-linux-02',
     });
   });
 
@@ -22,9 +22,9 @@ describe('eventRegistry', () => {
       kind: 'text',
       text: 'Appium node for Pixel 7 crashed',
     });
-    expect(formatEventDetails('lifecycle.incident_open', { device_name: 'Pixel 7' })).toEqual({
+    expect(formatEventDetails('host.heartbeat_lost', { hostname: 'lab-linux-01', missed_count: 3 })).toEqual({
       kind: 'text',
-      text: 'Incident opened: Pixel 7',
+      text: 'lab-linux-01: 3 missed heartbeats',
     });
   });
 

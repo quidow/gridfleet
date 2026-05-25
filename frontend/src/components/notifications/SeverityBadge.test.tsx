@@ -14,7 +14,7 @@ describe('SeverityBadge', () => {
   });
 
   it('falls back to legacy map when severity is absent', () => {
-    render(<SeverityBadge event={{ type: 'lifecycle.incident_open' }} />);
+    render(<SeverityBadge event={{ type: 'device.hold_changed' }} />);
     expect(screen.getByText('Warning').className).toMatch(/bg-warning-soft/);
   });
 
