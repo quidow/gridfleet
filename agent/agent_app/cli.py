@@ -12,7 +12,6 @@ from agent_app import __version__
 from agent_app.config import agent_settings
 from agent_app.installer.identity import resolve_operator_identity
 from agent_app.installer.install import (
-    LegacyInstallDetectedError,
     install_no_start,
     install_with_start,
 )
@@ -207,9 +206,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 remove_agent_dir=not args.keep_agent_dir,
                 remove_config_dir=not args.keep_config,
             )
-        except LegacyInstallDetectedError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
         except (RuntimeError, OSError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
