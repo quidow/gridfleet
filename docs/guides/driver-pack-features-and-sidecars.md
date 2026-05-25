@@ -1,92 +1,16 @@
-# Driver Pack Templates, Feature Actions, Sidecars, and Export Guide
+# Driver Pack Feature Actions, Sidecars, and Export Guide
 
-This guide covers GridFleet driver pack templates, feature actions, sidecar management, export-to-tarball, and the diverged-from-upstream badge.
+This guide covers GridFleet driver pack feature actions, sidecar management, and export-to-tarball.
 
 ## Scope and Prerequisites
 
-**Scope.** Templates are curated manifest recipes that create uploaded packs through the same tarball ingestion path as manual uploads. Feature actions and sidecars require an uploaded pack whose adapter wheel implements the relevant hooks. See `docs/guides/driver-pack-tarball-upload.md` for archive format and adapter security details.
+**Scope.** Feature actions and sidecars require an uploaded pack whose adapter wheel implements the relevant hooks. See `docs/guides/driver-pack-tarball-upload.md` for archive format and adapter security details.
 
 **What you need before starting:**
 
-- **Admin role** in GridFleet. All template, export, and feature-action endpoints require admin credentials; non-admin requests are rejected with HTTP 403.
+- **Admin role** in GridFleet. All export and feature-action endpoints require admin credentials; non-admin requests are rejected with HTTP 403.
 - Familiarity with driver pack manifests (schema in `backend/app/pack/manifest.py`).
 - For feature actions and sidecars: an uploaded pack whose adapter wheel implements the `feature_action` and/or `sidecar_lifecycle` hooks.
-
----
-
-## Templates
-
-### What Templates Are
-
-Templates are curated YAML recipes that live under `driver-packs/templates/` by default. Set `GRIDFLEET_DRIVER_PACK_TEMPLATES_DIR` to point the backend at a different template directory. Each template is a complete, validated manifest that targets a specific platform configuration — for example, Android real-device testing or iOS real-device testing. Templates are read from disk and cached in memory for the process lifetime.
-
-A template is not a driver pack itself. It is a recipe that an operator turns into an uploaded pack by choosing a pack id and release. The backend builds a tarball from the template and ingests it through the shared upload pipeline.
-
-Each template YAML carries a `template_metadata:` top-level block (stripped before manifest validation) with these keys:
-
-| Key | Purpose |
-|-----|---------|
-| `id` | Unique template identifier (e.g. `appium-uiautomator2-android-real`) |
-| `display_name` | Human-readable name returned by the template descriptor API |
-| `target_driver_summary` | One-line description returned by the template descriptor API (e.g. `"Android real device — UiAutomator2"`) |
-| `prerequisite_host_tools` | List of host tools the template requires (e.g. `["adb"]`) |
-
-### Shipped Templates
-
-GridFleet ships two templates under `driver-packs/templates/`:
-
-| Template ID | File | Target |
-|-------------|------|--------|
-| `appium-uiautomator2-android-real` | `appium-uiautomator2/templates/android-real.yaml` | Android real device — UiAutomator2; discovery via `adb`; identity scheme `android_serial` |
-| `appium-xcuitest-ios-real` | `appium-xcuitest/templates/ios-real.yaml` | iOS real device — XCUITest; discovery via `apple_devicectl`; identity scheme `apple_udid` |
-
-Both templates produce a manifest with a single platform entry and no adapter wheel. If your target device class requires an adapter (for example, a sidecar or custom probe), upload a full tarball instead.
-
-### How to Use Templates
-
-The current UI exposes direct driver-pack archive upload from the Drivers page. Template creation remains available through the admin API for scripted or internal workflows.
-
-Use `POST /api/driver-packs/from-template/{template_id}` to create a pack from a template:
-
-```bash
-curl -X POST "http://localhost:8000/api/driver-packs/from-template/appium-uiautomator2-android-real" \
-  -H "Authorization: Basic <base64 machine credentials>" \
-  -H "Content-Type: application/json" \
-  -d '{"pack_id": "acme/my-android", "release": "1.0.0", "display_name": "My Android Driver"}'
-```
-
-A successful call returns HTTP 201 with a `DriverPackOut` body.
-
-### Listing Templates via API
-
-```bash
-curl "http://localhost:8000/api/driver-packs/templates" \
-  -H "Authorization: Basic <base64 machine credentials>"
-```
-
-Returns a list of template descriptors:
-
-```json
-[
-  {
-    "template_id": "appium-uiautomator2-android-real",
-    "source_pack_id": "appium-uiautomator2",
-    "display_name": "Android Real Device (UiAutomator2)",
-    "target_driver_summary": "Android real device — UiAutomator2",
-    "prerequisite_host_tools": ["adb"]
-  }
-]
-```
-
-### Adding New Templates
-
-To add a new template, drop a YAML file into `driver-packs/templates/` or the directory configured by `GRIDFLEET_DRIVER_PACK_TEMPLATES_DIR`, then restart the backend. The file must:
-
-- Contain a `template_metadata:` top-level block with at minimum `id` and `display_name`.
-- Validate as a driver pack manifest after the `template_metadata` block is stripped.
-- Use a unique `template_id` (the `template_metadata.id` value) that does not collide with any existing template.
-
-The backend loads templates at startup; there is no hot-reload mechanism. A restart is required after adding, removing, or modifying template files.
 
 ---
 
@@ -298,43 +222,7 @@ To import the exported tarball on another instance, use the standard upload endp
 
 ---
 
-## Diverged-from-Upstream Badge
-
-### What the Badge Means
-
-When an operator forks a curated or uploaded pack, the resulting uploaded pack carries a `derived_from` field pointing to the upstream pack id and the release it was forked from.
-
-If the upstream pack later ships a new release, the fork's `derived_from.release` will lag behind the current upstream release. GridFleet surfaces this as a **Diverged from upstream** badge on the pack row on the Drivers page.
-
-### What the Badge Does Not Do
-
-The badge is a visual cue only. It does not:
-
-- Automatically merge upstream changes into your fork.
-- Block you from using your fork.
-- Delete or deprecate your fork.
-
-To pick up upstream changes, review the new upstream release's manifest, update your pack source, and upload or fork a new release.
-
-### When the Badge Appears
-
-The badge appears on forked pack rows where:
-
-1. `pack.derived_from` is set.
-2. The upstream pack's current release in the catalog differs from `pack.derived_from.release`.
-
-If there is no `derived_from` field, or if the upstream pack cannot be found in the catalog (for example, it was deleted), the badge does not appear.
-
----
-
 ## Troubleshooting
-
-### Template creation fails with HTTP 400
-
-The `from-template` endpoint validates the resulting manifest before persisting. The error body's `detail` field names the constraint. Common causes:
-
-- `pack_id` contains characters not allowed in a driver pack id.
-- A pack with the requested id and release already exists with different content.
 
 ### Feature action returns `{"ok": false, "message": "..."}`
 
