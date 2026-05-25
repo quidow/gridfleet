@@ -20,6 +20,8 @@ _NEW_VALUES = ("pending", "preparing", "active", "completed", "failed", "expired
 
 
 def upgrade() -> None:
+    # Migrate any stray rows before removing the enum value.
+    op.execute("UPDATE test_runs SET state = 'active' WHERE state = 'completing'")
     op.execute("ALTER TYPE runstate RENAME TO runstate_old")
     op.execute(f"CREATE TYPE runstate AS ENUM {_NEW_VALUES!r}")
     op.execute("ALTER TABLE test_runs ALTER COLUMN state TYPE runstate USING state::text::runstate")
