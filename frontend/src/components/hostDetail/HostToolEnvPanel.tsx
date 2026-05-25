@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { useHostToolEnv, useUpdateHostToolEnv } from '../../hooks/useHostToolEnv';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { FetchError } from '../ui/FetchError';
 
 type Props = {
@@ -38,6 +39,7 @@ export function HostToolEnvPanel({ hostId }: Props) {
   const [syncedData, setSyncedData] = useState<Record<string, string> | undefined>(undefined);
   const [rows, setRows] = useState<EnvRow[]>([]);
   const [dirty, setDirty] = useState(false);
+  const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
 
   if (envData !== undefined && envData !== syncedData && !dirty) {
     setSyncedData(envData);
@@ -61,8 +63,25 @@ export function HostToolEnvPanel({ hostId }: Props) {
   }
 
   function handleDeleteRow(index: number) {
-    setRows((prev) => prev.filter((_, i) => i !== index));
-    setDirty(true);
+    const row = rows[index];
+    if (row.key.trim()) {
+      setPendingDeleteIndex(index);
+    } else {
+      setRows((prev) => prev.filter((_, i) => i !== index));
+      setDirty(true);
+    }
+  }
+
+  function confirmDelete() {
+    if (pendingDeleteIndex === null) return;
+    const prevRows = rows;
+    const newRows = rows.filter((_, i) => i !== pendingDeleteIndex);
+    setRows(newRows);
+    setPendingDeleteIndex(null);
+    updateMutation.mutate(rowsToEnvRecord(newRows), {
+      onSuccess: () => setDirty(false),
+      onError: () => setRows(prevRows),
+    });
   }
 
   function handleSave() {
@@ -158,6 +177,20 @@ export function HostToolEnvPanel({ hostId }: Props) {
           Failed to save environment variables. Please try again.
         </p>
       ) : null}
+
+      <ConfirmDialog
+        isOpen={pendingDeleteIndex !== null}
+        onClose={() => setPendingDeleteIndex(null)}
+        onConfirm={confirmDelete}
+        title="Remove variable"
+        message={
+          pendingDeleteIndex !== null
+            ? `Remove "${rows[pendingDeleteIndex]?.key}" from this host's environment?`
+            : ''
+        }
+        confirmLabel="Remove"
+        variant="danger"
+      />
     </Card>
   );
 }
