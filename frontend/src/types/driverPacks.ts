@@ -125,5 +125,3 @@ export type DriverPackHostStatus = Omit<Schemas['DriverPackHostStatusOut'], 'doc
 export type DriverPackHostsResponse = Omit<Schemas['DriverPackHostsOut'], 'hosts'> & {
   hosts: DriverPackHostStatus[];
 };
-
-export type TemplateDescriptor = Schemas['TemplateDescriptorOut'];
