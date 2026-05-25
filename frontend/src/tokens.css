@@ -20,10 +20,8 @@
  *   Sidebar:  --color-sidebar-{surface,text,text-muted,heading,active-bg,hover-bg,border}
  *   Device:   --color-device-type-{real,emulator,simulator}-{bg,fg}
  *   Platform: --color-platform-{0..7,generic}
- *   Lifecycle:--color-lifecycle-{idle,deferred,backoff,excluded,suppressed,recoverable,manual}
  *   Fonts:    --font-sans (body), --font-display (headings), --font-mono (numerics, code)
- *   Motion:   --duration-{instant,fast,base,slow}, --ease-{standard,emphasized}
- *   Sizing:   --max-height-modal (modal body cap)
+ *   Motion:   --duration-{fast,base}, --ease-standard
  *
  * Component tokens (kept small — resist adding colors/typography here):
  *   .page-gutter        — page shell padding with extra bottom breathing room
@@ -33,7 +31,6 @@
  *   .heading-page       — H1/page heading scale
  *   .heading-section    — H2/card section heading scale
  *   .heading-subsection — H3/sub-section heading scale
- *   .section-header-text — supporting label style for section chrome
  *   .metric-numeric     — tabular-nums + slashed-zero for big numbers
  *   .fade-in-stagger    — staggered cold-load entrance for direct children (≤5 children)
  *   .hover-lift         — 1px translateY + soft shadow on hover (160ms)
@@ -112,21 +109,10 @@
   --color-platform-7: #7c3aed;
   --color-platform-generic: #6b7280;
 
-  --color-lifecycle-idle: #cbd5e1;
-  --color-lifecycle-deferred: #94a3b8;
-  --color-lifecycle-backoff: #f59e0b;
-  --color-lifecycle-excluded: #ef4444;
-  --color-lifecycle-suppressed: #a855f7;
-  --color-lifecycle-recoverable: #3b82f6;
-  --color-lifecycle-manual: #64748b;
-
-  --duration-instant: 80ms;
   --duration-fast: 160ms;
   --duration-base: 240ms;
-  --duration-slow: 360ms;
 
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1.2);
 
   --max-height-modal: 90vh;
 }
@@ -201,13 +187,6 @@
     --color-platform-7: #c4b5fd;
     --color-platform-generic: #a1a1aa;
 
-    --color-lifecycle-idle: #52525b;
-    --color-lifecycle-deferred: #6b7280;
-    --color-lifecycle-backoff: #cfa65c;
-    --color-lifecycle-excluded: #d97a7a;
-    --color-lifecycle-suppressed: #c084fc;
-    --color-lifecycle-recoverable: #8f98d6;
-    --color-lifecycle-manual: #94a3b8;
   }
 
   html,
@@ -303,11 +282,6 @@
         display: none;
       }
     }
-  }
-
-  /* Section-header text style — small, medium-weight, gray label above a card's content. */
-  .section-header-text {
-    @apply text-sm font-medium text-text-2;
   }
 
   /* Big-number treatment: tabular figures + slashed zero. */

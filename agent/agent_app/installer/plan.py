@@ -65,11 +65,6 @@ class InstallConfig:
         return f"{self.agent_dir}/venv/bin/gridfleet-agent"
 
     @property
-    def venv_bin_dir(self) -> str:
-        """Deprecated: use resolved_bin_path instead."""
-        return f"{self.agent_dir}/venv/bin"
-
-    @property
     def config_env_path(self) -> str:
         return f"{self.config_dir}/config.env"
 

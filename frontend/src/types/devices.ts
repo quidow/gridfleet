@@ -3,7 +3,6 @@ import type { CursorDirection, DeviceReadinessState, DeviceVerificationJobStatus
 
 type Schemas = components['schemas'];
 
-export type DeviceReservation = Schemas['DeviceReservationRead'];
 export type DeviceRead = Omit<Schemas['DeviceRead'], 'platform_label' | 'readiness_state'> & {
   platform_label: string | null;
   readiness_state: DeviceReadinessState;
@@ -102,4 +101,3 @@ export type SessionListParams = {
 
 // Open-dict shapes (backend JSON columns).
 export type DeviceTestData = Record<string, unknown>;
-export type DeviceCapabilities = Record<string, unknown>;

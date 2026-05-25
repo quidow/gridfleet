@@ -42,5 +42,17 @@ Guide pages should explain:
   - Stack bring-up plus host install/setup instructions.
 - `ci-integration.md`
   - Reservation and CI orchestration guidance.
+- `driver-pack-features-and-sidecars.md`
+  - Driver pack feature declarations and sidecar service lifecycle.
+- `driver-pack-tarball-upload.md`
+  - Building and uploading custom driver pack tarballs.
+- `frontend-development.md`
+  - Frontend dev setup, conventions, and design-system usage.
+- `security.md`
+  - Threat model, auth gate, network boundaries, and pack trust.
+- `testkit-integration.md`
+  - Integrating gridfleet_testkit into pytest suites.
+- `testkit-xdist-recipe.md`
+  - Running testkit tests in parallel with pytest-xdist.
 
 This guide set now covers the main operator workflows. Reference-style contract and glossary material belongs in `docs/reference/`.

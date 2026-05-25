@@ -56,7 +56,6 @@ from app.runs.service_reservation_lookup import (
     reservation_entry_is_excluded,
     restore_device_to_run,
 )
-from app.runs.service_time import now_utc
 
 __all__ = [
     "_UnmetRequirementError",
@@ -103,7 +102,6 @@ __all__ = [
     "list_runs",
     "list_runs_cursor",
     "mark_reserved_device_info_includes_unavailable",
-    "now_utc",
     "parse_includes",
     "report_preparation_failure",
     "reservation_entry_is_excluded",

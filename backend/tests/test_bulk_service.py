@@ -135,7 +135,6 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         capabilities={},
         default_capabilities={},
         device_fields_schema=[],
-        host_fields_schema=[],
         lifecycle_actions=_reconnect_actions,
         health_checks=[],
         connection_behavior={},

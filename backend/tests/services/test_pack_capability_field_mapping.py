@@ -18,7 +18,6 @@ def _make_resolved(device_fields_schema: list[dict]) -> ResolvedPackPlatform:
         capabilities={"stereotype": {"appium:platformName": "roku"}},
         default_capabilities={"appium:ip": "{device.ip_address}"},
         device_fields_schema=device_fields_schema,
-        host_fields_schema=[],
         lifecycle_actions=[],
         health_checks=[],
         connection_behavior={},

@@ -5,8 +5,6 @@ type Schemas = components['schemas'];
 
 export type PlatformIconKind = 'mobile' | 'tv' | 'set_top' | 'generic';
 
-export type PlatformDeviceFieldDefault = string | number | boolean;
-
 // Re-exported from generated OpenAPI types (previously hand-typed).
 export type PlatformDeviceField = Schemas['FieldSchemaOut'];
 export type PlatformConnectionBehavior = Schemas['ConnectionBehaviorOut'];
@@ -109,10 +107,6 @@ export type DriverPackReleasesResponse = Omit<Schemas['PackReleasesOut'], 'relea
   releases: DriverPackRelease[];
 };
 
-// Re-exported from generated OpenAPI types (previously hand-typed).
-export type RuntimePluginStatus = Schemas['HostPluginStatusOut'];
-
-export type HostRuntimeStatus = Schemas['HostRuntimeStatusOut'];
 export type HostPackDoctorStatus = Schemas['HostPackDoctorOut'];
 export type HostPackFeatureStatus = Schemas['HostPackFeatureStatusOut'];
 export type HostPackStatus = Schemas['HostPackStatusOut'];

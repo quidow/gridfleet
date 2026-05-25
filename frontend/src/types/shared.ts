@@ -2,12 +2,6 @@ import type { components } from '../api/openapi';
 
 type Schemas = components['schemas'];
 
-// Core ID aliases (no backend equivalent; these are documentation-only).
-export type PackId = string;
-export type PlatformId = string;
-export type IdentityScheme = string;
-export type IdentityScope = 'global' | 'host';
-
 // Derived from FastAPI Enum schemas.
 export type DeviceType = Schemas['DeviceType'];
 export type ConnectionType = Schemas['ConnectionType'];

@@ -64,28 +64,6 @@ class DeviceCreate(BaseModel):
     device_config: dict[str, Any] | None = None
 
 
-class DeviceUpdate(BaseModel):
-    name: str | None = None
-    pack_id: str | None = None
-    platform_id: str | None = None
-    identity_scheme: str | None = None
-    identity_scope: str | None = None
-    identity_value: str | None = None
-    connection_target: str | None = None
-    os_version: str | None = None
-    os_version_display: str | None = None
-    host_id: uuid.UUID | None = None
-    device_type: DeviceType | None = None
-    connection_type: ConnectionType | None = None
-    tags: DeviceTags | None = None
-    manufacturer: str | None = None
-    model: str | None = None
-    model_number: str | None = None
-    software_versions: dict[str, Any] | None = None
-    ip_address: str | None = None
-    device_config: dict[str, Any] | None = None
-
-
 class DeviceLifecyclePolicySummaryState(enum.StrEnum):
     idle = "idle"
     deferred_stop = "deferred_stop"
@@ -387,13 +365,6 @@ class DeviceRead(BaseModel):
     review_set_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
-
-
-class DeviceListRead(BaseModel):
-    items: list[DeviceRead]
-    total: int
-    limit: int
-    offset: int
 
 
 class DeviceDetail(DeviceRead):

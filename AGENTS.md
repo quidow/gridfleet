@@ -104,7 +104,7 @@ If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, 
 ### Host agent lifecycle
 1. Agent registers with manager (`AGENT_MANAGER_URL`) on a periodic refresh.
 2. Backend signals "start node" → agent allocates an Appium port (`AGENT_APPIUM_PORT_RANGE_*`) and a Grid relay port (`AGENT_GRID_NODE_PORT_START`).
-3. Agent spawns `appium` from the runtime venv and a Selenium Grid relay (Java + `AGENT_SELENIUM_SERVER_JAR`) pointed at `AGENT_GRID_HUB_URL`.
+3. Agent spawns `appium` from the runtime venv and a Python Grid relay node pointed at `AGENT_GRID_HUB_URL`.
 4. Health checks watch ADB / driver viability and gracefully terminate the Appium process when the device disappears.
 5. Backend `node_health_loop` and `device_connectivity_loop` reconcile what the agent reports against DB state.
 

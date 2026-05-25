@@ -24,9 +24,7 @@ Use the upload path when:
 | Imperative pre-session capability logic (capability values computed at session-request time) | Yes |
 | Long-running sidecar service alongside the Appium node | Yes (B.3) |
 | Portable distribution across GridFleet instances | Yes |
-| Simple discovery config, static capabilities, no custom code | Usually no — create from a curated template instead |
-
-Curated templates are a lighter starting point for manifest-only packs. They still create uploaded packs internally, using the same tarball validation and storage path as manual uploads.
+| Simple discovery config, static capabilities, no custom code | Usually no — use a curated pack instead |
 
 Sidecar CI coverage verifies manifest upload, feature persistence,
 desired-state serialization, and agent dispatch contracts. It does not start
@@ -81,7 +79,7 @@ from the Drivers page with **Upload Driver**.
 
 ### `manifest.yaml`
 
-The manifest YAML is driver-agnostic and does not include an origin. The backend assigns origin from ingestion context: curated imports become `curated`, tarball uploads and template forks become `uploaded`. The full manifest schema is defined in `backend/app/pack/manifest.py`. Key top-level fields:
+The manifest YAML is driver-agnostic and does not include an origin. The backend assigns origin from ingestion context: curated imports become `curated`, tarball uploads become `uploaded`. The full manifest schema is defined in `backend/app/packs/manifest.py`. Key top-level fields:
 
 ```yaml
 id: "acme/my-custom-driver"        # required; no "local/" prefix for uploaded packs
