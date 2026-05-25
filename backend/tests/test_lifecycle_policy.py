@@ -920,7 +920,7 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     policy = await build_lifecycle_policy(db_session, device)
     summary = build_lifecycle_policy_summary(policy)
     assert summary["state"] == "deferred_stop"
-    assert summary["label"] == "Deferred Stop"
+    assert summary["label"] == "Stopping Soon"
 
     with state_write_guard.bypass():
         device.lifecycle_policy_state = {
@@ -947,7 +947,7 @@ def test_lifecycle_summary_surfaces_reconciler_start_failure() -> None:
     )
 
     assert summary["state"] == "recoverable"
-    assert summary["label"] == "Node Start Failed"
+    assert summary["label"] == "Start Failed"
     assert summary["detail"] == "port_occupied"
 
 

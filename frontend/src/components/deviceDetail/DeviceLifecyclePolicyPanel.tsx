@@ -47,7 +47,7 @@ export function DeviceLifecyclePolicyPanel({ policy }: Props) {
         <Row label="Recovery State" value={formatRecoveryState(effective.recovery_state)} />
         <Row label="Last Auto Action" value={effective.last_action ?? '-'} />
         <Row label="Failure Source" value={effective.last_failure_source ?? '-'} />
-        <Row label="Deferred Stop" value={effective.stop_pending ? 'Waiting for session end' : 'No'} />
+        <Row label="Stopping Soon" value={effective.stop_pending ? 'Waiting for session end' : 'No'} />
         <Row
           label="Run Exclusion"
           value={effective.excluded_from_run ? `Excluded from ${effective.excluded_run_name ?? 'active run'}` : 'No'}
