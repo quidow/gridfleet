@@ -361,7 +361,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
     assert probe_inflight.is_probe_inflight(device_key) is False
 
 
-async def test_save_verified_context_and_cleanup_error_paths(
+async def test_stop_verification_node_cleanup_error_path(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -374,35 +374,6 @@ async def test_save_verified_context_and_cleanup_error_paths(
         connection_target="verify-save-001",
         name="Verify Save",
     )
-    context = PreparedVerificationContext(
-        mode="update",
-        transient_device=device,
-        save_payload={
-            "pack_id": device.pack_id,
-            "platform_id": device.platform_id,
-            "identity_scheme": device.identity_scheme,
-            "identity_scope": device.identity_scope,
-            "identity_value": device.identity_value,
-            "connection_target": device.connection_target,
-            "name": device.name,
-            "os_version": device.os_version,
-            "host_id": device.host_id,
-            "device_type": device.device_type,
-            "connection_type": device.connection_type,
-        },
-        save_device_id=None,
-    )
-    saved, error = await execution.save_verified_context(_job(), db_session, context)
-    assert saved is None
-    assert error == "Verification context is missing the persisted device id"
-
-    context.save_device_id = __import__("uuid").uuid4()
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.update_device", AsyncMock(return_value=None)
-    )
-    saved, error = await execution.save_verified_context(_job(), db_session, context)
-    assert saved is None
-    assert error == "Device was not found"
 
     with state_write_guard.bypass():
         node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
@@ -445,40 +416,6 @@ async def test_verification_execution_remaining_error_branches(
     assert stopped is node
     assert node.pid is None
 
-    context = PreparedVerificationContext(
-        mode="create",
-        transient_device=device,
-        save_payload={
-            "pack_id": device.pack_id,
-            "platform_id": device.platform_id,
-            "identity_scheme": device.identity_scheme,
-            "identity_scope": device.identity_scope,
-            "identity_value": device.identity_value,
-            "connection_target": device.connection_target,
-            "name": device.name,
-            "os_version": device.os_version,
-            "host_id": device.host_id,
-            "device_type": device.device_type,
-            "connection_type": device.connection_type,
-        },
-        save_device_id=device.id,
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.create_device",
-        AsyncMock(side_effect=execution.DeviceIdentityConflictError("duplicate identity")),
-    )
-    saved, error = await execution.save_verified_context(_job(), db_session, context)
-    assert saved is None
-    assert error == "duplicate identity"
-
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.create_device",
-        AsyncMock(side_effect=ValueError("bad payload")),
-    )
-    saved, error = await execution.save_verified_context(_job(), db_session, context)
-    assert saved is None
-    assert error == "bad payload"
-
     monkeypatch.setattr(
         "app.devices.services.verification_execution.stop_node",
         AsyncMock(side_effect=NodeManagerError("already stopped")),
@@ -512,7 +449,7 @@ async def test_verification_execution_remaining_error_branches(
     assert target.device_config == {"a": 1}
 
 
-async def test_save_finalize_and_execute_success_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
     db = AsyncMock()
     device_id = __import__("uuid").uuid4()
@@ -532,31 +469,12 @@ async def test_save_finalize_and_execute_success_guard_branches(monkeypatch: pyt
         },
         save_device_id=device_id,
     )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.create_device",
-        AsyncMock(return_value=created),
-    )
-
-    saved, error = await execution.save_verified_context(_job(), db, context)
-
-    assert saved is created
-    assert error is None
-
-    updated = SimpleNamespace(id=device_id, verified_at=None)
-    context.mode = "update"
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.update_device",
-        AsyncMock(return_value=updated),
-    )
-    saved, error = await execution.save_verified_context(_job(), db, context)
-    assert saved is updated
-    assert error is None
-    db.refresh.assert_awaited_with(updated)
 
     target = SimpleNamespace(name="unchanged")
     execution._restore_update_original_fields(target, None)
     assert target.name == "unchanged"
 
+    context.mode = "update"
     monkeypatch.setattr(
         "app.devices.services.verification_execution.device_service.update_device",
         AsyncMock(return_value=None),

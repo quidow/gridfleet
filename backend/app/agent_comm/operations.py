@@ -20,7 +20,6 @@ from app.agent_comm.generated import (
     AppiumLogsResponse,
     AppiumReconfigureResponse,
     AppiumStatusResponse,
-    GridNodeReregisterResponse,
     HealthResponse,
     HostTelemetryResponse,
     NormalizeDeviceResponse,
@@ -145,33 +144,6 @@ def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> No
 
 def _as_dict(payload: object) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
-
-
-def _as_list(payload: object) -> list[dict[str, Any]]:
-    if not isinstance(payload, list):
-        return []
-    return [item for item in payload if isinstance(item, dict)]
-
-
-def _response_error_detail(response: httpx.Response) -> str | None:
-    try:
-        payload = response.json()
-    except ValueError:
-        text = response.text.strip()
-        return text or None
-
-    if isinstance(payload, dict):
-        detail = payload.get("detail")
-        if isinstance(detail, str) and detail:
-            return detail
-        if isinstance(detail, dict):
-            message = detail.get("message")
-            if isinstance(message, str) and message:
-                return message
-        message = payload.get("message")
-        if isinstance(message, str) and message:
-            return message
-    return None
 
 
 async def agent_health(
@@ -371,43 +343,6 @@ async def agent_appium_reconfigure(
     except PydanticValidationError as exc:
         raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid payload)") from exc
     return raw
-
-
-async def grid_node_reregister(
-    host: str,
-    agent_port: int,
-    node_id: uuid.UUID,
-    *,
-    target_run_id: uuid.UUID | None,
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = 20,
-) -> uuid.UUID | None:
-    response = await _send_request(
-        "POST",
-        f"{agent_base_url(host, agent_port)}/grid/node/{node_id}/reregister",
-        endpoint="grid_node_reregister",
-        host=host,
-        agent_port=agent_port,
-        http_client_factory=http_client_factory,
-        json_body={"target_run_id": str(target_run_id) if target_run_id is not None else None},
-        timeout=timeout,
-    )
-    _raise_for_status(response, host=host, action="re-register grid node")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent grid node re-register failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        model = GridNodeReregisterResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent grid node re-register failed on host {host} (invalid payload)"
-        ) from exc
-    if model.grid_run_id is None:
-        return None
-    return model.grid_run_id
 
 
 def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:

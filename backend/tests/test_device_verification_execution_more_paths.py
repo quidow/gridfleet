@@ -3,13 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
-from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 
 
 def _device(**overrides: object) -> SimpleNamespace:
@@ -57,53 +55,6 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
 
     no_host = _device(host=None)
     assert await execution.run_device_health(job, no_host, http_client_factory=MagicMock()) is None
-
-
-async def test_save_verified_device_failure_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = MagicMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    job: dict[str, object] = {"stages": []}
-    monkeypatch.setattr(execution, "set_stage", AsyncMock())
-
-    create_context = SimpleNamespace(
-        mode="create",
-        save_payload={"name": "Device", "pack_id": "pack", "platform_id": "platform", "host_id": uuid.uuid4()},
-        save_device_id=None,
-    )
-    monkeypatch.setattr(
-        execution.device_service, "create_device", AsyncMock(side_effect=DeviceIdentityConflictError("dupe"))
-    )
-    saved, detail = await execution.save_verified_context(job, db, create_context)
-    assert saved is None
-    assert detail == "dupe"
-
-    update_context_missing_id = SimpleNamespace(mode="update", save_payload={}, save_device_id=None)
-    saved, detail = await execution.save_verified_context(job, db, update_context_missing_id)
-    assert saved is None
-    assert detail == "Verification context is missing the persisted device id"
-
-    update_context = SimpleNamespace(
-        mode="update",
-        save_payload={"host_id": uuid.uuid4()},
-        save_device_id=uuid.uuid4(),
-    )
-    monkeypatch.setattr(execution.device_service, "update_device", AsyncMock(return_value=None))
-    saved, detail = await execution.save_verified_context(job, db, update_context)
-    assert saved is None
-    assert detail == "Device was not found"
-
-    monkeypatch.setattr(
-        execution.device_service, "update_device", AsyncMock(side_effect=IntegrityError("s", "p", Exception()))
-    )
-    saved, detail = await execution.save_verified_context(job, db, update_context)
-    assert saved is None
-    assert detail == "Device identity conflict"
-
-    monkeypatch.setattr(execution.device_service, "update_device", AsyncMock(side_effect=ValueError("invalid")))
-    saved, detail = await execution.save_verified_context(job, db, update_context)
-    assert saved is None
-    assert detail == "invalid"
 
 
 async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.MonkeyPatch) -> None:

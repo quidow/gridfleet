@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING
 
 import httpx
@@ -94,28 +93,6 @@ def test_pack_device_health_percent_encodes_connection_target() -> None:
     assert quote("serial/with spaces", safe="") == "serial%2Fwith%20spaces"
 
 
-@pytest.mark.parametrize(
-    ("response", "expected"),
-    [
-        (_response("GET", "http://example.test", payload={"detail": "boom"}), "boom"),
-        (_response("GET", "http://example.test", payload={"message": "oops"}), "oops"),
-        (_text_response("GET", "http://example.test", status_code=500, text="plain error"), "plain error"),
-    ],
-)
-def test_response_error_detail_extracts_useful_message(response: httpx.Response, expected: str) -> None:
-    assert agent_operations._response_error_detail(response) == expected
-
-
-def test_response_error_detail_returns_none_for_unstructured_payload() -> None:
-    response = _response("GET", "http://example.test", payload={"detail": []})
-    assert agent_operations._response_error_detail(response) is None
-
-
-def test_response_error_detail_extracts_nested_message() -> None:
-    response = _response("GET", "http://example.test", payload={"detail": {"message": "nested boom"}})
-    assert agent_operations._response_error_detail(response) == "nested boom"
-
-
 def test_parse_agent_error_detail_handles_all_payload_shapes() -> None:
     assert agent_operations.parse_agent_error_detail(None) == (None, "no response")
     assert agent_operations.parse_agent_error_detail(
@@ -141,10 +118,6 @@ def test_raise_for_status_wraps_http_errors() -> None:
 
     assert exc_info.value.http_status == 503
     assert exc_info.value.host == "10.0.0.5"
-
-
-def test_as_list_returns_empty_for_non_list_payload() -> None:
-    assert agent_operations._as_list({"bad": True}) == []
 
 
 async def test_pack_device_properties_returns_none_for_404() -> None:
@@ -376,7 +349,7 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
         )
 
 
-async def test_agent_reconfigure_and_grid_reregister_invalid_payloads() -> None:
+async def test_agent_reconfigure_invalid_payload() -> None:
     reconfigure_client = StrictAgentClient(
         post_response=_response("POST", "http://10.0.0.5:5100/agent/appium/node/reconfigure", payload=["bad"])
     )
@@ -390,52 +363,6 @@ async def test_agent_reconfigure_and_grid_reregister_invalid_payloads() -> None:
             grid_run_id=None,
             http_client_factory=_strict_client_factory(reconfigure_client),
         )
-
-    missing_grid_run_id = StrictAgentClient(
-        post_response=_response("POST", "http://10.0.0.5:5100/agent/grid/node/demo/reregister", payload={})
-    )
-    with pytest.raises(AgentUnreachableError, match="invalid payload"):
-        await agent_operations.grid_node_reregister(
-            "10.0.0.5",
-            5100,
-            uuid.uuid4(),
-            target_run_id=None,
-            http_client_factory=_strict_client_factory(missing_grid_run_id),
-        )
-
-    bad_grid_run_id = StrictAgentClient(
-        post_response=_response(
-            "POST",
-            "http://10.0.0.5:5100/agent/grid/node/demo/reregister",
-            payload={"grid_run_id": "not-a-uuid"},
-        )
-    )
-    with pytest.raises(AgentUnreachableError, match="invalid payload"):
-        await agent_operations.grid_node_reregister(
-            "10.0.0.5",
-            5100,
-            uuid.uuid4(),
-            target_run_id=None,
-            http_client_factory=_strict_client_factory(bad_grid_run_id),
-        )
-
-    none_grid_run_id = StrictAgentClient(
-        post_response=_response(
-            "POST",
-            "http://10.0.0.5:5100/agent/grid/node/demo/reregister",
-            payload={"grid_run_id": None},
-        )
-    )
-    assert (
-        await agent_operations.grid_node_reregister(
-            "10.0.0.5",
-            5100,
-            uuid.uuid4(),
-            target_run_id=None,
-            http_client_factory=_strict_client_factory(none_grid_run_id),
-        )
-        is None
-    )
 
 
 async def test_pack_device_health_includes_optional_probe_params() -> None:

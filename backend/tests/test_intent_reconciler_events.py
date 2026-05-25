@@ -9,7 +9,7 @@ from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.intent_types import GRID_ROUTING, RECOVERY
+from app.devices.services.intent_types import GRID_ROUTING, RECOVERY, IntentRegistration
 from tests.helpers import create_device
 from tests.test_intent_reconciler import _seed_node
 
@@ -28,19 +28,27 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
         node.desired_port = 4723
     await db_session.commit()
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="grid:block",
-        axis=GRID_ROUTING,
-        payload={"accepting_new_sessions": False, "priority": 80},
         reason="block sessions",
+        intents=[
+            IntentRegistration(
+                source="grid:block",
+                axis=GRID_ROUTING,
+                payload={"accepting_new_sessions": False, "priority": 80},
+            ),
+        ],
     )
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source="recovery:block",
-        axis=RECOVERY,
-        payload={"allowed": False, "priority": 80, "reason": "blocked by test"},
         reason="block recovery",
+        intents=[
+            IntentRegistration(
+                source="recovery:block",
+                axis=RECOVERY,
+                payload={"allowed": False, "priority": 80, "reason": "blocked by test"},
+            ),
+        ],
     )
     await db_session.commit()
 

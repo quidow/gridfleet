@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import IntegrityError
-
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -16,11 +14,10 @@ from app.appium_nodes.services.reconciler import converge_device_now
 from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wait_for_node_running
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
-from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services import capability as capability_service
 from app.devices.services import service as device_service
 from app.devices.services.identity import appium_connection_target
-from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -319,64 +316,6 @@ async def run_probe(
         return started_node, failure
     finally:
         await db.commit()
-
-
-async def save_verified_context(
-    job: dict[str, Any],
-    db: AsyncSession,
-    context: PreparedVerificationContext,
-) -> tuple[Device | None, str | None]:
-    await set_stage(job, "save_device", "running")
-    try:
-        if context.mode == "create":
-            saved_device = await device_service.create_device(
-                db,
-                DeviceVerificationCreate.model_validate(context.save_payload),
-                mark_verified=True,
-            )
-            detail = "Device saved after verification"
-        else:
-            if context.save_device_id is None:
-                detail = "Verification context is missing the persisted device id"
-                await set_stage(job, "save_device", "failed", detail=detail)
-                return None, detail
-
-            updated_device = await device_service.update_device(
-                db,
-                context.save_device_id,
-                DeviceVerificationUpdate.model_validate(context.save_payload),
-                enforce_patch_contract=False,
-            )
-            if updated_device is None:
-                detail = "Device was not found"
-                await set_stage(job, "save_device", "failed", detail=detail)
-                return None, detail
-            updated_device.verified_at = datetime.now(UTC)
-            await db.commit()
-            await db.refresh(updated_device)
-            saved_device = updated_device
-            detail = "Device updated after verification"
-    except DeviceIdentityConflictError as exc:
-        detail = str(exc)
-        await set_stage(job, "save_device", "failed", detail=detail)
-        return None, detail
-    except IntegrityError:
-        detail = "Device identity conflict"
-        await set_stage(job, "save_device", "failed", detail=detail)
-        return None, detail
-    except ValueError as exc:
-        detail = str(exc)
-        await set_stage(job, "save_device", "failed", detail=detail)
-        return None, detail
-
-    await set_stage(
-        job,
-        "save_device",
-        "passed",
-        detail=detail,
-        data={"device_id": str(saved_device.id)},
-    )
-    return saved_device, None
 
 
 async def _stop_verification_node_if_running(

@@ -10,7 +10,7 @@ from app.devices.models import Device
 from app.events import queue_event_for_session
 from app.events.catalog import EventSeverity
 from app.hosts.models import Host, HostStatus
-from app.hosts.schemas import HostCreate, HostRegister, HostUpdate
+from app.hosts.schemas import HostCreate, HostRegister
 from app.settings import settings_service
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
@@ -102,19 +102,6 @@ async def get_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
     stmt = select(Host).where(Host.id == host_id).options(selectinload(Host.devices).selectinload(Device.appium_node))
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
-
-
-async def update_host(db: AsyncSession, host_id: uuid.UUID, data: HostUpdate) -> Host | None:
-    host = await get_host(db, host_id)
-    if host is None:
-        return None
-    for field, value in data.model_dump(exclude_unset=True).items():
-        if field == "capabilities":
-            value = normalize_capabilities(value)
-        setattr(host, field, value)
-    await db.commit()
-    await db.refresh(host)
-    return host
 
 
 async def delete_host(db: AsyncSession, host_id: uuid.UUID) -> bool:

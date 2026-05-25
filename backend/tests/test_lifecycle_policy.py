@@ -1366,12 +1366,16 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     await db_session.commit()
 
     service = IntentService(db_session)
-    await service.register_intent(
+    await service.register_intents(
         device_id=device.id,
-        source=f"health_failure:node:{device.id}",
-        axis=NODE_PROCESS,
-        payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
         reason="held intent integration",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": PRIORITY_HEALTH_FAILURE},
+            ),
+        ],
     )
     await db_session.commit()
 

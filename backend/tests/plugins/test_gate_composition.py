@@ -6,30 +6,10 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackInstallation, HostRuntimeInstallation
 from app.packs.services.capability import render_stereotype
 from app.packs.services.desired_state import compute_desired
-from app.packs.services.discovery import PackDiscoveredCandidate, discover_pack_candidates
 from app.packs.services.service import list_catalog
 from app.packs.services.start_shim import build_pack_start_payload
 from app.packs.services.status import apply_status
 from tests.pack.factories import seed_test_packs
-
-
-class _FakeAgentClient:
-    async def get_pack_devices(self, host: str, port: int) -> dict:
-        return {
-            "candidates": [
-                {
-                    "pack_id": "appium-uiautomator2",
-                    "platform_id": "android_mobile",
-                    "identity_scheme": "android_serial",
-                    "identity_scope": "host",
-                    "identity_value": "ABCD1234",
-                    "suggested_name": "Pixel 6",
-                    "detected_properties": {"os_version": "14"},
-                    "runnable": True,
-                    "missing_requirements": [],
-                }
-            ],
-        }
 
 
 class _FakeDevice:
@@ -111,15 +91,7 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
     assert caps["platformName"] == "Android"
     assert caps["appium:automationName"] == "UiAutomator2"
 
-    # 6+7. Discovery.
-    result = await discover_pack_candidates(_FakeAgentClient(), host="h.local", port=5100)
-    assert len(result.candidates) == 1
-    candidate: PackDiscoveredCandidate = result.candidates[0]
-    assert candidate.pack_id == "appium-uiautomator2"
-    assert candidate.platform_id == "android_mobile"
-    assert candidate.identity_value == "ABCD1234"
-
-    # 8. Start payload.
+    # 6. Start payload.
     payload = await build_pack_start_payload(db_session, device=_FakeDevice())
     assert payload is not None
     assert payload["pack_id"] == "appium-uiautomator2"

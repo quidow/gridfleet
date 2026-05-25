@@ -177,23 +177,3 @@ async def list_lifecycle_incidents_paginated(
         prev_cursor = items[0].created_at.isoformat() if cursor else None
 
     return items, next_cursor, prev_cursor
-
-
-async def list_lifecycle_incidents(
-    db: AsyncSession,
-    *,
-    limit: int = 50,
-    device_id: uuid.UUID | None = None,
-) -> list[LifecycleIncidentRead]:
-    stmt = (
-        select(DeviceEvent, Device)
-        .join(Device, Device.id == DeviceEvent.device_id)
-        .where(DeviceEvent.event_type.in_(LIFECYCLE_INCIDENT_TYPES))
-        .order_by(DeviceEvent.created_at.desc())
-        .limit(limit)
-    )
-    if device_id is not None:
-        stmt = stmt.where(DeviceEvent.device_id == device_id)
-
-    result = await db.execute(stmt)
-    return [serialize_lifecycle_incident(event, device) for event, device in result.all()]

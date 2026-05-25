@@ -18,20 +18,18 @@ def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSessio
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
 
-async def test_create_get_and_delete_jobs_by_kind(db_session: AsyncSession) -> None:
+async def test_create_and_delete_jobs_by_kind(db_session: AsyncSession) -> None:
     job = await job_queue.create_job(
         db_session,
         kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
         payload={"device_id": "1"},
         snapshot={"status": job_queue.JOB_STATUS_PENDING},
     )
-
-    loaded = await job_queue.get_job(db_session, job.id)
-    assert loaded is not None
-    assert loaded.payload == {"device_id": "1"}
+    assert job.payload == {"device_id": "1"}
 
     await job_queue.delete_jobs_by_kind(db_session, kind=job_queue.JOB_KIND_DEVICE_VERIFICATION)
-    assert await job_queue.get_job(db_session, job.id) is None
+    loaded = await db_session.get(Job, job.id)
+    assert loaded is None
 
 
 async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_session: AsyncSession) -> None:

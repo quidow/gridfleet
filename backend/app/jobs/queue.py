@@ -70,10 +70,6 @@ async def create_job(
     return job
 
 
-async def get_job(db: AsyncSession, job_id: uuid.UUID) -> Job | None:
-    return await db.get(Job, job_id)
-
-
 async def delete_jobs_by_kind(db: AsyncSession, *, kind: str) -> None:
     result = await db.execute(select(Job).where(Job.kind == kind))
     for row in result.scalars().all():

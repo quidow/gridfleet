@@ -77,25 +77,6 @@ def _device_identity_key(device: Device) -> IdentityKey:
     )
 
 
-async def discover_pack_candidates(agent: AgentClient, *, host: str, port: int) -> PackDiscoveryResult:
-    raw = await agent.get_pack_devices(host, port)
-    candidates = [
-        PackDiscoveredCandidate(
-            pack_id=c["pack_id"],
-            platform_id=c["platform_id"],
-            identity_scheme=c["identity_scheme"],
-            identity_scope=c["identity_scope"],
-            identity_value=c["identity_value"],
-            suggested_name=c.get("suggested_name", c["identity_value"]),
-            detected_properties=c.get("detected_properties") or {},
-            runnable=bool(c.get("runnable", False)),
-            missing_requirements=list(c.get("missing_requirements") or []),
-        )
-        for c in raw.get("candidates", [])
-    ]
-    return PackDiscoveryResult(candidates=candidates)
-
-
 def _candidate_to_discovered(c: dict[str, Any], *, platform_label: str | None = None) -> DiscoveredDevice:
     props: dict[str, Any] = c.get("detected_properties") or {}
     return DiscoveredDevice(

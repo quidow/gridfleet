@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -14,58 +14,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.services.intent_types import IntentAxis, IntentRegistration
+    from app.devices.services.intent_types import IntentRegistration
 
 
 class IntentService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
-
-    async def register_intent(
-        self,
-        *,
-        device_id: UUID,
-        source: str,
-        axis: IntentAxis,
-        payload: dict[str, Any],
-        reason: str,
-        run_id: UUID | None = None,
-        expires_at: datetime | None = None,
-        precondition: dict[str, Any] | None = None,
-    ) -> DeviceIntent:
-        now = datetime.now(UTC)
-        stmt = (
-            insert(DeviceIntent)
-            .values(
-                device_id=device_id,
-                source=source,
-                axis=axis,
-                run_id=run_id,
-                payload=dict(payload),
-                precondition=dict(precondition) if precondition is not None else None,
-                expires_at=expires_at,
-                created_at=now,
-                updated_at=now,
-            )
-            .on_conflict_do_update(
-                index_elements=[DeviceIntent.device_id, DeviceIntent.source],
-                set_={
-                    "axis": axis,
-                    "run_id": run_id,
-                    "payload": dict(payload),
-                    "precondition": dict(precondition) if precondition is not None else None,
-                    "expires_at": expires_at,
-                    "updated_at": now,
-                },
-            )
-            .returning(DeviceIntent.id)
-        )
-        intent_id = (await self._db.execute(stmt)).scalar_one()
-        await self.mark_dirty(device_id, reason=reason)
-        intent = await self._db.get(DeviceIntent, intent_id, populate_existing=True)
-        if intent is None:
-            raise RuntimeError(f"Intent upsert did not return a readable row for {intent_id}")
-        return intent
 
     async def register_intents(
         self,
@@ -167,22 +121,6 @@ class IntentService:
             .returning(DeviceIntentDirty.generation)
         )
         return int((await self._db.execute(stmt)).scalar_one())
-
-    async def get_intents_by_axis(self, device_id: UUID, axis: IntentAxis) -> list[DeviceIntent]:
-        result = await self._db.execute(
-            select(DeviceIntent)
-            .where(DeviceIntent.device_id == device_id, DeviceIntent.axis == axis)
-            .order_by(DeviceIntent.created_at, DeviceIntent.source)
-        )
-        return list(result.scalars().all())
-
-    async def get_intents(self, device_id: UUID) -> list[DeviceIntent]:
-        result = await self._db.execute(
-            select(DeviceIntent)
-            .where(DeviceIntent.device_id == device_id)
-            .order_by(DeviceIntent.axis, DeviceIntent.source)
-        )
-        return list(result.scalars().all())
 
 
 async def register_intents_and_reconcile(

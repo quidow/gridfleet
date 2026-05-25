@@ -178,10 +178,6 @@ def clear_request_context() -> None:
     structlog.contextvars.clear_contextvars()
 
 
-def process_owner() -> str:
-    return _PROCESS_OWNER
-
-
 def parse_timestamp(raw: object) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
