@@ -147,7 +147,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
-    { name = "pytest" },
     { name = "ruff" },
 ]
 
@@ -157,7 +156,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20.2,<3" },
     { name = "pytest", specifier = ">=9.0.3,<10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3,<10" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.12,<1" },
 ]
 provides-extras = ["dev"]
