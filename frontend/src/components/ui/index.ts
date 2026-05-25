@@ -14,10 +14,6 @@ export type { DataTableColumn } from './DataTable';
 export { DateInput } from './DateInput';
 
 export { DefinitionList } from './DefinitionList';
-export type { DefinitionListItem } from './DefinitionList';
-
-export { DividedHealthStrip } from './DividedHealthStrip';
-export type { DividedHealthStripCell, DividedHealthStripTone } from './DividedHealthStrip';
 
 export { EmptyState } from './EmptyState';
 
@@ -35,7 +31,6 @@ export type { RowActionItem } from './RowActionsMenu';
 export { SectionHeader } from './SectionHeader';
 
 export { Select } from './Select';
-export type { SelectOption } from './Select';
 
 export type { SummaryPillTone } from './SummaryPill';
 
