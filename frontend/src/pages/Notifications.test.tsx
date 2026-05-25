@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
@@ -50,41 +50,48 @@ describe('Notifications severity filter', () => {
     vi.mocked(useEventCatalog).mockReturnValue({ data: [], isLoading: false } as never);
   });
 
-  it('renders five severity chips', () => {
+  it('renders severity filter popover with five checkboxes', async () => {
     renderPage();
+    await userEvent.click(screen.getByRole('button', { name: 'Severity filter' }));
     for (const label of ['Info', 'Success', 'Warning', 'Critical', 'Neutral']) {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: label })).toBeInTheDocument();
     }
   });
 
-  it('clicking a chip adds severity to URL and refetches', async () => {
+  it('unchecking a severity filters to the rest', async () => {
     const { seen } = renderPage();
-    await userEvent.click(screen.getByRole('button', { name: 'Critical' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Severity filter' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }));
     await waitFor(() => {
-      expect(seen.some((p) => p.includes('severity=critical'))).toBe(true);
+      expect(seen.some((p) => p.includes('severity='))).toBe(true);
     });
     await waitFor(() => {
       const lastCall = vi.mocked(fetchNotifications).mock.calls.at(-1)?.[0];
-      expect(lastCall?.severities).toEqual(['critical']);
+      expect(lastCall?.severities).toEqual(['info', 'success', 'warning', 'neutral']);
     });
   });
 
-  it('clicking same chip again removes it from URL', async () => {
+  it('re-checking all severities clears the filter', async () => {
     const { seen } = renderPage('/notifications?severity=critical');
-    await userEvent.click(screen.getByRole('button', { name: 'Critical' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Severity filter' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Info' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Success' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Warning' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Neutral' }));
     await waitFor(() => {
       const last = seen.at(-1) ?? '';
       expect(last.includes('severity=')).toBe(false);
     });
   });
 
-  it('clicking two chips appends both', async () => {
+  it('unchecking two leaves three', async () => {
     const { seen } = renderPage();
-    await userEvent.click(screen.getByRole('button', { name: 'Warning' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Critical' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Severity filter' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Warning' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Critical' }));
     await waitFor(() => {
       const last = seen.at(-1) ?? '';
-      expect(last).toMatch(/severity=warning%2Ccritical|severity=warning,critical/);
+      expect(last).toMatch(/severity=info%2Csuccess%2Cneutral|severity=info,success,neutral/);
     });
   });
 
