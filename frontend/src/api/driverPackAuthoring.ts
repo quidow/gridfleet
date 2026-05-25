@@ -11,17 +11,6 @@ export async function uploadDriverPack(file: File, displayHint?: string): Promis
   return data;
 }
 
-export async function forkDriverPack(
-  sourcePackId: string,
-  body: { new_pack_id: string; display_name?: string },
-): Promise<DriverPack> {
-  const { data } = await api.post<DriverPack>(
-    `/driver-packs/${encodeURIComponent(sourcePackId)}/fork`,
-    body,
-  );
-  return data;
-}
-
 export async function exportPack(packId: string, release: string): Promise<void> {
   const res = await api.post(
     `/driver-packs/${encodeURIComponent(packId)}/releases/${encodeURIComponent(release)}/export`,
