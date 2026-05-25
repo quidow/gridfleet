@@ -11,7 +11,7 @@ export function AnalyticsEmptyState({ title, description }: Props) {
       <div className="mb-3 rounded-full bg-surface-1 p-3 text-text-3 shadow-sm">
         <BarChart3 size={20} />
       </div>
-      <h4 className="text-sm font-medium text-text-1">{title}</h4>
+      <p className="text-sm font-medium text-text-1">{title}</p>
       <p className="mt-1 max-w-md text-sm text-text-3">{description}</p>
     </div>
   );

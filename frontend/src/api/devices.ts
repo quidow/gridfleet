@@ -159,14 +159,6 @@ export async function replaceDeviceTestData(
   return data;
 }
 
-export async function mergeDeviceTestData(
-  id: string,
-  body: DeviceTestData,
-): Promise<DeviceTestData> {
-  const { data } = await api.patch(`/devices/${id}/test_data`, body);
-  return data;
-}
-
 export async function getTestDataHistory(
   id: string,
   limit = 50,

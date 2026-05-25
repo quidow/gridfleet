@@ -44,7 +44,7 @@ export function DeviceUtilizationTab({ params }: Props) {
       {/* Per-device busy % */}
       <Card padding="md">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-text-2">Device Utilization (%)</h3>
+          <h2 className="text-sm font-medium text-text-2">Device Utilization (%)</h2>
           <button
             onClick={() => downloadAnalyticsCsv('devices/utilization', params)}
             className="flex items-center gap-1 text-xs text-text-3 hover:text-text-2"
@@ -77,9 +77,9 @@ export function DeviceUtilizationTab({ params }: Props) {
       {/* Highlight cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card padding="md">
-          <h3 className="text-sm font-medium text-warning-foreground mb-3">
+          <h2 className="text-sm font-medium text-warning-foreground mb-3">
             Underutilized ({'<'}10%) — {underutilized.length}
-          </h3>
+          </h2>
           {underutilized.length === 0 ? (
             <p className="text-sm text-text-3">None</p>
           ) : (
@@ -93,9 +93,9 @@ export function DeviceUtilizationTab({ params }: Props) {
           )}
         </Card>
         <Card padding="md">
-          <h3 className="text-sm font-medium text-danger-foreground mb-3">
+          <h2 className="text-sm font-medium text-danger-foreground mb-3">
             Overloaded ({'>'}90%) — {overloaded.length}
-          </h3>
+          </h2>
           {overloaded.length === 0 ? (
             <p className="text-sm text-text-3">None</p>
           ) : (
@@ -112,7 +112,7 @@ export function DeviceUtilizationTab({ params }: Props) {
 
       {/* Fleet pie chart */}
       <Card padding="md">
-        <h3 className="text-sm font-medium text-text-2 mb-4">Fleet Time Breakdown</h3>
+        <h2 className="text-sm font-medium text-text-2 mb-4">Fleet Time Breakdown</h2>
         {rows.length === 0 ? (
           <AnalyticsEmptyState
             title="No fleet time breakdown yet"

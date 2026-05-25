@@ -2,7 +2,6 @@ import api from './client';
 import type { components } from './openapi';
 
 export type DiagnosticExportResponse = components['schemas']['DiagnosticExportResponse'];
-export type DiagnosticSnapshotSummary = components['schemas']['DiagnosticSnapshotSummary'];
 export type DiagnosticSnapshotDetail = components['schemas']['DiagnosticSnapshotDetail'];
 export type DiagnosticSnapshotListResponse = components['schemas']['DiagnosticSnapshotListResponse'];
 

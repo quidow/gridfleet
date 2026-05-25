@@ -27,6 +27,7 @@
     "test:e2e": "npm run test:e2e:mocked && npm run test:e2e:live",
     "test:e2e:mocked": "node scripts/run-playwright.mjs test --config playwright.config.ts",
     "test:e2e:live": "node scripts/run-playwright.mjs test --config playwright.live.config.ts",
+    "test:e2e:compose": "node scripts/run-playwright.mjs test --config playwright.compose.config.ts",
     "openapi:dump": "cd ../backend && uv run python -m app.scripts.dump_openapi --out ../frontend/openapi.json",
     "openapi:generate": "openapi-typescript ./openapi.json --output ./src/api/openapi.ts",
     "types:generate": "npm run openapi:dump && npm run openapi:generate",

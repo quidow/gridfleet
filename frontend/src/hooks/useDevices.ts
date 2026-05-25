@@ -25,7 +25,6 @@ import {
   updateDevice,
   getDeviceTestData,
   replaceDeviceTestData,
-  mergeDeviceTestData,
   getTestDataHistory,
 } from '../api/devices';
 import type { DeviceSortBy, DeviceSortDir } from '../api/devices';
@@ -343,17 +342,6 @@ export function useReplaceDeviceTestData(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: DeviceTestData) => replaceDeviceTestData(id, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['device-test-data', id] });
-      queryClient.invalidateQueries({ queryKey: ['test-data-history', id] });
-    },
-  });
-}
-
-export function useMergeDeviceTestData(id: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: DeviceTestData) => mergeDeviceTestData(id, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['device-test-data', id] });
       queryClient.invalidateQueries({ queryKey: ['test-data-history', id] });

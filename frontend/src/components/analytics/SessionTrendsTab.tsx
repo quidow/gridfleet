@@ -41,7 +41,7 @@ export function SessionTrendsTab({ params }: Props) {
       {/* Sessions per day */}
       <Card padding="md">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-text-2">Sessions per Day</h3>
+          <h2 className="text-sm font-medium text-text-2">Sessions per Day</h2>
           <button
             onClick={() => downloadAnalyticsCsv('sessions/summary', { ...params, group_by: 'day' })}
             className="flex items-center gap-1 text-xs text-text-3 hover:text-text-2"
@@ -73,7 +73,7 @@ export function SessionTrendsTab({ params }: Props) {
       {/* Sessions by platform */}
       <Card padding="md">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-text-2">Sessions by Platform</h3>
+          <h2 className="text-sm font-medium text-text-2">Sessions by Platform</h2>
           <button
             onClick={() => downloadAnalyticsCsv('sessions/summary', { ...params, group_by: 'platform' })}
             className="flex items-center gap-1 text-xs text-text-3 hover:text-text-2"
@@ -105,7 +105,7 @@ export function SessionTrendsTab({ params }: Props) {
       {/* Avg duration by platform table */}
       <Card padding="none">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium text-text-2">Average Session Duration by Platform</h3>
+          <h2 className="text-sm font-medium text-text-2">Average Session Duration by Platform</h2>
           <button
             onClick={() => downloadAnalyticsCsv('sessions/summary', { ...params, group_by: 'platform' })}
             className="flex items-center gap-1 text-xs text-text-3 hover:text-text-2"

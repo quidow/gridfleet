@@ -7,7 +7,6 @@ export default defineConfig({
   testDir: './e2e',
   testIgnore: [
     'live-smoke.spec.ts',
-    'a11y.spec.ts',
   ],
   timeout: 30_000,
   retries: 0,
