@@ -42,8 +42,6 @@ dist/
 
 # Misc
 *.log
-.idea
-testing/screenshots
 frontend/test-results
 
 # Worktrees

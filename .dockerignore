@@ -24,7 +24,6 @@
 agent/
 docker/
 docs/
-e2e-examples/
 frontend/
 scripts/
 testkit/
@@ -33,8 +32,6 @@ tmp/
 !driver-packs/
 !driver-packs/curated/
 !driver-packs/curated/**/manifest.yaml
-!driver-packs/templates/
-!driver-packs/templates/*.yaml
 !driver-packs/adapters/
 !driver-packs/adapters/*/
 !driver-packs/adapters/*/pyproject.toml
