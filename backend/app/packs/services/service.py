@@ -27,7 +27,6 @@ from app.packs.schemas import (
     ManifestWorkaroundOut,
     PackCatalog,
     PackOut,
-    PackPlatforms,
     PackRuntimeSummaryOut,
     PlatformOut,
     RuntimePolicy,
@@ -290,21 +289,3 @@ def _runtime_driver_version(runtime: HostRuntimeInstallation) -> str | None:
         version = runtime.driver_specs[0].get("version")
         return str(version) if version is not None else None
     return None
-
-
-async def get_platforms(session: AsyncSession, pack_id: str) -> PackPlatforms | None:
-    pack = await session.scalar(
-        select(DriverPack)
-        .where(DriverPack.id == pack_id)
-        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
-    )
-    if pack is None:
-        return None
-    release = selected_release(pack.releases, pack.current_release)
-    if release is None:
-        return None
-    return PackPlatforms(
-        pack_id=pack_id,
-        release=release.release,
-        platforms=[_platform_out(platform) for platform in release.platforms],
-    )

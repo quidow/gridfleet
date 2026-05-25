@@ -214,24 +214,3 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     detail = await pack_service.get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
     assert detail is not None
     assert detail.id == "local/pack"
-
-
-async def test_pack_platforms_returns_missing_empty_and_selected_release() -> None:
-    assert await pack_service.get_platforms(ScalarSession(None), "missing") is None  # type: ignore[arg-type]
-
-    empty_pack = DriverPack(
-        id="local/empty",
-        origin="uploaded",
-        display_name="Empty",
-        maintainer="",
-        license="",
-        state=PackState.enabled,
-        runtime_policy={"strategy": "recommended"},
-        releases=[],
-    )
-    assert await pack_service.get_platforms(ScalarSession(empty_pack), "local/empty") is None  # type: ignore[arg-type]
-
-    platforms = await pack_service.get_platforms(ScalarSession(_pack()), "local/pack")  # type: ignore[arg-type]
-    assert platforms is not None
-    assert platforms.release == "1.0.0"
-    assert platforms.platforms[0].id == "android"

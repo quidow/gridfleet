@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Badge } from '../../components/ui';
-import type { AppiumInstallable, DriverPack, RuntimePolicy } from '../../types/driverPacks';
+import type { AppiumInstallable, DriverPack } from '../../types/driverPacks';
 
 export function objectEntries(value: Record<string, unknown> | undefined): Array<[string, unknown]> {
   return Object.entries(value ?? {});
@@ -11,12 +11,6 @@ export function scalarValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   return JSON.stringify(value);
-}
-
-export function runtimePolicyLabel(policy: RuntimePolicy | undefined): string {
-  if (!policy || policy.strategy === 'recommended') return 'recommended';
-  if (policy.strategy === 'latest_patch') return 'latest patch';
-  return `exact ${policy.appium_server_version}/${policy.appium_driver_version}`;
 }
 
 export function installableSummary(spec: AppiumInstallable | null | undefined): ReactNode {

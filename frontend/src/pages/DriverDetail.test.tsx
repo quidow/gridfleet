@@ -133,6 +133,16 @@ vi.mock('../hooks/useDriverDetail', () => ({
     isPending: false,
     error: null,
   }),
+  useUpdateRuntimePolicy: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
+  useDeleteRelease: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
   useDriverPackHosts: () => ({
     data: {
       pack_id: 'appium-uiautomator2',

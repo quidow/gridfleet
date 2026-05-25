@@ -1983,7 +1983,6 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
     with (
         patch("app.packs.routers.catalog.list_catalog", new=AsyncMock(return_value={"packs": []})),
         patch("app.packs.routers.catalog.get_pack_detail", new=AsyncMock(side_effect=[None, pack_out, None, pack_out])),
-        patch("app.packs.routers.catalog.get_platforms", new=AsyncMock(side_effect=[None, {"platforms": []}])),
         patch(
             "app.packs.routers.catalog.get_driver_pack_host_status",
             new=AsyncMock(return_value={"pack_id": pack_id, "hosts": []}),
@@ -1994,10 +1993,6 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
             await driver_packs.get_pack(pack_id, session=object())
         assert exc.value.status_code == 404
         assert await driver_packs.get_pack(pack_id, session=object()) is pack_out
-        with pytest.raises(HTTPException) as exc:
-            await driver_packs.platforms(pack_id, session=object())
-        assert exc.value.status_code == 404
-        assert await driver_packs.platforms(pack_id, session=object()) == {"platforms": []}
         with pytest.raises(HTTPException) as exc:
             await driver_packs.hosts(pack_id, session=object())
         assert exc.value.status_code == 404

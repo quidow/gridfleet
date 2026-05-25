@@ -60,10 +60,6 @@ export type DriverPackPlatform = Omit<
   };
 };
 
-export type DriverPackPlatformsResponse = Omit<Schemas['PackPlatforms'], 'platforms'> & {
-  platforms: DriverPackPlatform[];
-};
-
 export type PackState = 'draft' | 'enabled' | 'draining' | 'disabled';
 
 export type PackFeatureAction = Schemas['FeatureActionOut'];

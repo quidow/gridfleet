@@ -10,13 +10,12 @@ from app.packs.schemas import (
     PackCatalog,
     PackOut,
     PackPatch,
-    PackPlatforms,
     RuntimePolicyPatch,
 )
 from app.packs.services.delete import delete_pack
 from app.packs.services.lifecycle import transition_pack_state
 from app.packs.services.policy import set_runtime_policy
-from app.packs.services.service import build_pack_out, get_pack_detail, get_platforms, list_catalog
+from app.packs.services.service import build_pack_out, get_pack_detail, list_catalog
 from app.packs.services.status import get_driver_pack_host_status
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
@@ -32,14 +31,6 @@ async def get_pack(pack_id: str, session: DbDep) -> PackOut:
     result = await get_pack_detail(session, pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
-    return result
-
-
-@router.get("/{pack_id}/platforms", response_model=PackPlatforms)
-async def platforms(pack_id: str, session: DbDep) -> PackPlatforms:
-    result = await get_platforms(session, pack_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="pack not found")
     return result
 
 

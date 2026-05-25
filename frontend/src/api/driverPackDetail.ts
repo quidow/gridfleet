@@ -1,5 +1,5 @@
 import api from './client';
-import type { DriverPack, DriverPackHostsResponse, DriverPackReleasesResponse } from '../types/driverPacks';
+import type { DriverPack, DriverPackHostsResponse, DriverPackReleasesResponse, RuntimePolicy } from '../types/driverPacks';
 
 export async function fetchDriverPack(packId: string): Promise<DriverPack> {
   const { data } = await api.get<DriverPack>(`/driver-packs/${encodeURIComponent(packId)}`);
@@ -29,4 +29,21 @@ export async function setDriverPackCurrentRelease(packId: string, release: strin
     release,
   });
   return data;
+}
+
+export async function updateRuntimePolicy(
+  packId: string,
+  runtimePolicy: RuntimePolicy,
+): Promise<DriverPack> {
+  const { data } = await api.patch<DriverPack>(
+    `/driver-packs/${encodeURIComponent(packId)}/policy`,
+    { runtime_policy: runtimePolicy },
+  );
+  return data;
+}
+
+export async function deleteRelease(packId: string, release: string): Promise<void> {
+  await api.delete(
+    `/driver-packs/${encodeURIComponent(packId)}/releases/${encodeURIComponent(release)}`,
+  );
 }

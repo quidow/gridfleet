@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deleteDriverPack,
+  deleteRelease,
   fetchDriverPack,
   fetchDriverPackHosts,
   fetchDriverPackReleases,
   setDriverPackCurrentRelease,
+  updateRuntimePolicy,
 } from '../api/driverPackDetail';
+import type { RuntimePolicy } from '../types/driverPacks';
 import { useEventStreamStatus } from '../context/EventStreamContext';
 import { sseAdaptivePolling } from './polling';
 
@@ -61,6 +64,31 @@ export function useSetDriverPackCurrentRelease() {
       void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
       void qc.invalidateQueries({ queryKey: ['driver-pack-releases', variables.packId] });
       void qc.invalidateQueries({ queryKey: ['driver-pack-hosts', variables.packId] });
+      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
+    },
+  });
+}
+
+export function useUpdateRuntimePolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ packId, runtimePolicy }: { packId: string; runtimePolicy: RuntimePolicy }) =>
+      updateRuntimePolicy(packId, runtimePolicy),
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
+      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
+    },
+  });
+}
+
+export function useDeleteRelease() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ packId, release }: { packId: string; release: string }) =>
+      deleteRelease(packId, release),
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: ['driver-pack-releases', variables.packId] });
+      void qc.invalidateQueries({ queryKey: ['driver-pack', variables.packId] });
       void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
     },
   });
