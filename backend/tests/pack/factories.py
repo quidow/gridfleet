@@ -65,9 +65,6 @@ async def seed_manifest_pack(
         pack_id=manifest.id,
         release=manifest.release,
         manifest_json=manifest_json,
-        derived_from_pack_id=manifest.derived_from.pack_id if manifest.derived_from else None,
-        derived_from_release=manifest.derived_from.release if manifest.derived_from else None,
-        template_id=manifest.template_id,
     )
     session.add(release)
     await session.flush()

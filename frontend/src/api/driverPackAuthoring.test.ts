@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { forkDriverPack, uploadDriverPack } from './driverPackAuthoring';
+import { uploadDriverPack } from './driverPackAuthoring';
 import api from './client';
 
 vi.mock('./client', () => ({
@@ -10,21 +10,6 @@ vi.mock('./client', () => ({
 describe('driver pack authoring api', () => {
   beforeEach(() => {
     (api.post as ReturnType<typeof vi.fn>).mockReset();
-  });
-
-  it('POSTs the fork request', async () => {
-    (api.post as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: { id: 'vendor/my-android', state: 'enabled' },
-    });
-    const pack = await forkDriverPack('appium-uiautomator2', {
-      new_pack_id: 'vendor/my-android',
-      display_name: 'My Android',
-    });
-    expect(api.post).toHaveBeenCalledWith(
-      `/driver-packs/${encodeURIComponent('appium-uiautomator2')}/fork`,
-      { new_pack_id: 'vendor/my-android', display_name: 'My Android' },
-    );
-    expect(pack.id).toBe('vendor/my-android');
   });
 
   it('POSTs a FormData to /driver-packs/uploads for uploadDriverPack', async () => {

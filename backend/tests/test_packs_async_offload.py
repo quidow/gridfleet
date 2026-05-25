@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.packs.routers import authoring as pack_authoring
 from app.packs.services import export as pack_export
 from app.packs.services import ingest as pack_ingest
 
@@ -63,33 +62,6 @@ def _spy_to_thread(calls: list[str]) -> Callable[..., object]:
         return fn(*args, **kwargs)
 
     return spy
-
-
-async def test_fork_builds_tarball_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(pack_authoring.asyncio, "to_thread", _spy_to_thread(calls))
-
-    release = SimpleNamespace(release="1.0.0", manifest_json={"id": "source", "release": "1.0.0", "platforms": []})
-    source = SimpleNamespace(id="source", current_release="1.0.0", releases=[release])
-    session = AsyncMock()
-    session.get.return_value = None
-    session.execute.return_value = _ScalarResult(one_or_none=source)
-    monkeypatch.setattr(pack_authoring, "selected_release", lambda _releases, _current: release)
-    monkeypatch.setattr(pack_authoring, "PackStorageService", lambda _root: object())
-
-    async def fake_ingest_pack_tarball(*_args: object, data: bytes, **_kwargs: object) -> object:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            assert tar.getmember("manifest.yaml").isfile()
-        return SimpleNamespace(id="local/fork")
-
-    monkeypatch.setattr(pack_authoring, "ingest_pack_tarball", fake_ingest_pack_tarball)
-    monkeypatch.setattr(pack_authoring, "build_pack_out", lambda pack: {"id": pack.id})
-
-    body = pack_authoring.ForkPackBody(new_pack_id="local/fork")
-
-    assert await pack_authoring.fork("source", body, _username="admin", session=session) == {"id": "local/fork"}
-    assert "_build_fork_tarball" in calls
-    session.commit.assert_awaited_once()
 
 
 async def test_export_reads_stored_artifact_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:

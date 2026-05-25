@@ -193,9 +193,6 @@ async def ingest_pack_tarball(
         manifest_json=manifest_dict,
         artifact_sha256=record.sha256,
         artifact_path=record.path,
-        derived_from_pack_id=manifest.derived_from.pack_id if manifest.derived_from else None,
-        derived_from_release=manifest.derived_from.release if manifest.derived_from else None,
-        template_id=manifest.template_id,
     )
     session.add(release_row)
     pack.current_release = release_id

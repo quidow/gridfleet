@@ -81,9 +81,6 @@ class DriverPackRelease(Base):
     manifest_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     artifact_path: Mapped[str | None] = mapped_column(String, nullable=True)
     artifact_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
-    derived_from_pack_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    derived_from_release: Mapped[str | None] = mapped_column(String, nullable=True)
-    template_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     pack: Mapped[DriverPack] = relationship("DriverPack", back_populates="releases")

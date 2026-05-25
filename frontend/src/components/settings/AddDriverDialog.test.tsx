@@ -18,12 +18,6 @@ function renderDialog() {
 }
 
 describe('AddDriverDialog', () => {
-  it('does not render template picker', () => {
-    renderDialog();
-    expect(screen.queryByText('Choose a driver or template')).not.toBeInTheDocument();
-    expect(screen.queryByText('Use this template')).not.toBeInTheDocument();
-  });
-
   it('renders upload form directly', () => {
     renderDialog();
     expect(screen.getByRole('dialog', { name: /upload driver pack/i })).toBeInTheDocument();

@@ -101,9 +101,6 @@ from app.packs.services import (
 from app.packs.services import (
     storage as pack_storage_service,
 )
-from app.packs.services import (
-    template as pack_template_service,
-)
 from app.plugins import service as plugin_service
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
@@ -777,13 +774,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             "pack",
             "release",
         )
-
-    monkeypatch.setattr(pack_template_service, "_TEMPLATES_DIR", tmp_path / "missing")
-    assert pack_template_service._load_all_templates() == {}
-    invalid_template = tmp_path / "bad.yaml"
-    invalid_template.write_text("- bad\n", encoding="utf-8")
-    monkeypatch.setattr(pack_template_service, "_TEMPLATES_DIR", tmp_path)
-    assert pack_template_service._load_all_templates() == {}
 
     desired_db = AsyncMock()
     desired_db.get = AsyncMock(return_value=None)

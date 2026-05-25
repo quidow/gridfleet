@@ -313,8 +313,6 @@ app.include_router(
     device_routers.lifecycle_incidents.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
 )
 app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(pack_routers.authoring.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(pack_routers.templates.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.uploads.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

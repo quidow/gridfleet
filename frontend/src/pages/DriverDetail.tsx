@@ -58,14 +58,6 @@ function ManifestPanel({ pack }: { pack: DriverPack }) {
         <dd className="text-text-1">{pack.doctor?.length ?? 0}</dd>
         <dt className="text-text-3">Insecure Features</dt>
         <dd className="text-text-1">{pack.insecure_features?.length ?? 0}</dd>
-        {pack.derived_from && (
-          <>
-            <dt className="text-text-3">Derived From</dt>
-            <dd className="text-text-1">
-              {pack.derived_from.pack_id} @ {pack.derived_from.release}
-            </dd>
-          </>
-        )}
       </dl>
     </Card>
   );
