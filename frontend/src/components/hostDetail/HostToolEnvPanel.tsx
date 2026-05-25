@@ -74,11 +74,13 @@ export function HostToolEnvPanel({ hostId }: Props) {
 
   function confirmDelete() {
     if (pendingDeleteIndex === null) return;
+    const prevRows = rows;
     const newRows = rows.filter((_, i) => i !== pendingDeleteIndex);
     setRows(newRows);
     setPendingDeleteIndex(null);
     updateMutation.mutate(rowsToEnvRecord(newRows), {
       onSuccess: () => setDirty(false),
+      onError: () => setRows(prevRows),
     });
   }
 
