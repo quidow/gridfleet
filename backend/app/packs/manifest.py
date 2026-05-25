@@ -93,9 +93,7 @@ class FieldSchema(BaseModel):
     id: str
     label: str
     type: Literal["string", "int", "bool", "path", "network_endpoint", "file_upload"]
-    required_for_discovery: bool = False
     required_for_session: bool = False
-    required_for: list[str] = Field(default_factory=list)
     sensitive: bool = False
     default: str | int | bool | None = None
     capability_name: str | None = None
@@ -269,8 +267,6 @@ class Requires(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    gridfleet: str | None = None
-    node: str | None = None
     host_os: list[Literal["linux", "macos"]] = Field(default_factory=list)
     tool_dependencies: list[ToolDependency] = Field(default_factory=list)
 
