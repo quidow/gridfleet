@@ -117,7 +117,7 @@ def test_install_no_start_writes_config_runtime_dir_and_service(
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     result = install_no_start(
@@ -152,7 +152,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
         user="gridfleet",
     )
     operator = OperatorIdentity(login="gridfleet", uid=1001, home=tmp_path / "home/gridfleet")
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
@@ -184,7 +184,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     config = _make_config(tmp_path)
     operator = _make_operator(home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
@@ -206,7 +206,7 @@ def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest
 def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     commands: list[list[str]] = []
@@ -252,7 +252,7 @@ def test_install_with_start_runs_systemd_commands_and_health_check(tmp_path: Pat
 def test_install_with_start_checks_manager_registration_after_health_passes(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     registration_checks: list[InstallConfig] = []
@@ -279,7 +279,7 @@ def test_install_with_start_checks_manager_registration_after_health_passes(tmp_
 def test_install_with_start_skips_manager_registration_when_health_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 
@@ -306,7 +306,7 @@ def test_install_with_start_runs_launchctl_bootstrap_on_macos(monkeypatch: pytes
     monkeypatch.setattr("os.getuid", lambda: 1729)
     config = _make_config(tmp_path)
     operator = _make_operator(login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     commands: list[list[str]] = []
@@ -395,7 +395,7 @@ def test_poll_manager_registration_explains_auth_required_on_401() -> None:
 def test_install_with_start_raises_when_service_command_fails(tmp_path: Path, os_name: str) -> None:
     config = _make_config(tmp_path)
     operator = _make_operator(config, login=config.user, home=tmp_path)
-    executable = Path(config.venv_bin_dir) / "gridfleet-agent"
+    executable = Path(config.resolved_bin_path)
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
 

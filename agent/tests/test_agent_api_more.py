@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import contextmanager
-from types import SimpleNamespace
 from typing import Protocol, cast
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +8,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
-from agent_app.appium.process import _get_network_devices
 from agent_app.lifespan import lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -38,18 +36,6 @@ def _latest_desired_override(*packs: DesiredPack) -> Iterator[None]:
         yield
     finally:
         app.dependency_overrides.pop(_latest_desired, None)
-
-
-def test_get_network_devices_filters_non_network_targets() -> None:
-    infos = [
-        SimpleNamespace(connection_target="192.168.1.10:5555"),
-        SimpleNamespace(connection_target="emulator-5554"),
-    ]
-
-    with patch("agent_app.appium.appium_mgr.list_running", return_value=infos):
-        assert _get_network_devices() == [
-            {"connection_target": "192.168.1.10:5555", "ip_address": "192.168.1.10", "port": 5555}
-        ]
 
 
 async def test_lifespan_refreshes_and_cleans_up_background_tasks() -> None:
