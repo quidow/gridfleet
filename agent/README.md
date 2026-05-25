@@ -12,7 +12,6 @@ The agent installs entirely under the operator's home directory — no `sudo` is
 - [Commands](#commands)
 - [Configuration reference](#configuration-reference)
 - [Logs and service control](#logs-and-service-control)
-- [Migrating from a pre-2026-05-14 install](#migrating-from-a-pre-2026-05-14-install)
 - [Troubleshooting](#troubleshooting)
 - [Security note](#security-note)
 
@@ -85,7 +84,7 @@ gridfleet-agent install --no-start --manager-url http://manager.example.com:8000
 gridfleet-agent install --start    --manager-url http://manager.example.com:8000
 ```
 
-Exit codes: `0` success (including registration pending — printed as a WARNING); `1` files installed but local `/agent/health` failed; `2` invalid args, setup error, or legacy `/opt`+`/etc` install detected.
+Exit codes: `0` success (including registration pending — printed as a WARNING); `1` files installed but local `/agent/health` failed; `2` invalid args or setup error.
 
 ### `status`
 Read-only. Reports config file, service file, service active/enabled, local `/agent/health`, operator identity, uv path, and the configured environment with secrets redacted.
@@ -164,22 +163,10 @@ launchctl print "gui/$(id -u)/com.gridfleet.agent"
 launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"
 ```
 
-## Migrating from a pre-2026-05-14 install
-
-Older versions of this installer placed files under `/opt/gridfleet-agent` and `/etc/gridfleet-agent` and required `sudo`. If those paths still exist, `gridfleet-agent install` will refuse to run and tell you to remove them first. Run the one-shot legacy uninstaller:
-
-```bash
-curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/uninstall-legacy-agent.sh \
-    | sudo sh
-```
-
-Then run the normal installer without `sudo`. Agent state is ephemeral (registration with the manager re-happens on next start; runtimes re-download from manager-served tarballs), so there is no data to back up.
-
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `gridfleet-agent install` aborts with `Legacy root-scope install detected` | Old `/opt` or `/etc` paths still present | Run the legacy uninstaller (see migration section), then retry. |
 | Install ends with `WARNING: agent registration pending` | Manager requires manual approval or machine auth | Approve in the manager UI, or pass `--manager-auth-username` / `--manager-auth-password`. |
 | `WARNING: user-instance linger is off` | Linux headless host without lingering enabled | `sudo loginctl enable-linger "$USER"`. |
 | `systemctl --user start gridfleet-agent` says `Failed to connect to bus` | No `$XDG_RUNTIME_DIR`; SSH session has no D-Bus user session | Log in via console or `loginctl enable-linger` so a user systemd instance always runs. |
