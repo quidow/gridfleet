@@ -13,7 +13,10 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime } from '../utils/dateFormatting';
 import type { SystemEventRead } from '../types';
 import { PageHeader } from '../components/ui/PageHeader';
+import { ChevronDown } from 'lucide-react';
 import { Select } from '../components/ui/Select';
+import { Popover } from '../components/ui/Popover';
+import { Checkbox } from '../components/ui/Checkbox';
 import { Badge } from '../components/ui/Badge';
 import { SeverityBadge } from '../components/notifications/SeverityBadge';
 import { EventDetailsCell } from '../components/notifications/EventDetailsCell';
@@ -61,36 +64,25 @@ function parseSeverities(raw: string | null): EventSeverity[] {
   return Array.from(new Set(tokens));
 }
 
-interface SeverityChipFilterProps {
-  selected: EventSeverity[];
-  onToggle: (severity: EventSeverity) => void;
+function severityPlaceholder(selected: EventSeverity[]): string {
+  if (selected.length === 0 || selected.length === SEVERITIES.length) return 'All Severities';
+  if (selected.length === 1) return EVENT_SEVERITY_LABEL[selected[0]];
+  return `${selected.length} severities`;
 }
 
-function SeverityChipFilter({ selected, onToggle }: SeverityChipFilterProps) {
-  const selectedSet = new Set(selected);
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {SEVERITIES.map((s) => {
-        const active = selectedSet.has(s);
-        return (
-          <button
-            key={s}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onToggle(s)}
-            className={[
-              'rounded-full transition-opacity',
-              active ? '' : 'opacity-50 hover:opacity-75',
-            ].join(' ')}
-          >
-            <Badge tone={s} dot>
-              {EVENT_SEVERITY_LABEL[s]}
-            </Badge>
-          </button>
-        );
-      })}
-    </div>
-  );
+function isSeverityChecked(severities: EventSeverity[], s: EventSeverity): boolean {
+  return severities.length === 0 || severities.includes(s);
+}
+
+function toggleSeverityInSet(severities: EventSeverity[], target: EventSeverity): EventSeverity[] {
+  if (severities.length === 0) {
+    return SEVERITIES.filter((s) => s !== target);
+  }
+  const next = severities.includes(target)
+    ? severities.filter((s) => s !== target)
+    : [...severities, target];
+  if (next.length === SEVERITIES.length) return [];
+  return next;
 }
 
 function NotificationsContent() {
@@ -128,9 +120,7 @@ function NotificationsContent() {
   }, [events, isLoading, page, setPage]);
 
   function toggleSeverity(target: EventSeverity) {
-    const next = severities.includes(target)
-      ? severities.filter((s) => s !== target)
-      : [...severities, target];
+    const next = toggleSeverityInSet(severities, target);
     updateParams(
       { severity: next.length ? next.join(',') : null },
       { resetPage: true },
@@ -159,7 +149,24 @@ function NotificationsContent() {
             size="sm"
             options={eventTypes.map((t) => ({ value: t, label: t }))}
           />
-          <SeverityChipFilter selected={severities} onToggle={toggleSeverity} />
+          <Popover
+            ariaLabel="Severity filter"
+            triggerClassName="inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-surface-1 px-2 py-1.5 text-xs text-text-1 focus:outline-none focus:ring-2 focus:ring-accent"
+            contentClassName="rounded-lg border border-border bg-surface-1 p-2 shadow-lg"
+            trigger={<>{severityPlaceholder(severities)}<ChevronDown size={14} className="text-text-3" /></>}
+          >
+            <div className="flex flex-col gap-1">
+              {SEVERITIES.map((s) => (
+                <div key={s} className="px-2 py-1">
+                  <Checkbox
+                    checked={isSeverityChecked(severities, s)}
+                    onChange={() => toggleSeverity(s)}
+                    label={<Badge tone={s} dot size="sm">{EVENT_SEVERITY_LABEL[s]}</Badge>}
+                  />
+                </div>
+              ))}
+            </div>
+          </Popover>
         </FilterBar>
 
         <ListPageSubheader title={showingLabel} />

@@ -185,21 +185,42 @@ test.describe('Notifications Page — severity badges', () => {
     await expect(settingsRow.getByText('Neutral')).toBeVisible();
   });
 
-  test('chip filter narrows rows by severity', async ({ page }) => {
+  test('severity popover narrows rows by severity', async ({ page }) => {
     await page.goto('/notifications');
     const table = page.locator('table');
     await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Critical' }).click();
+    const severityTrigger = page.getByRole('button', { name: 'Severity filter' });
+
+    // Uncheck all except Critical: open popover, uncheck Info/Success/Warning/Neutral
+    await severityTrigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Severity filter' });
+    await dialog.getByText('Info', { exact: true }).click();
+    await dialog.getByText('Success', { exact: true }).click();
+    await dialog.getByText('Warning', { exact: true }).click();
+    await dialog.getByText('Neutral', { exact: true }).click();
+    // Close the popover by pressing Escape
+    await page.keyboard.press('Escape');
+
     await expect(page).toHaveURL(/severity=critical/);
     await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toBeVisible();
     await expect(table.locator('tr', { has: page.locator('code', { hasText: 'settings.changed' }) })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Warning' }).click();
+    // Re-add Warning
+    await severityTrigger.click();
+    const dialog2 = page.getByRole('dialog', { name: 'Severity filter' });
+    await dialog2.getByText('Warning', { exact: true }).click();
+    await page.keyboard.press('Escape');
+
     await expect(page).toHaveURL(/severity=critical%2Cwarning|severity=critical,warning|severity=warning%2Ccritical|severity=warning,critical/);
     await expect(table.locator('tr', { has: page.locator('code', { hasText: 'device.hardware_health_changed' }) })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Critical' }).click();
+    // Uncheck Critical, leaving only Warning
+    await severityTrigger.click();
+    const dialog3 = page.getByRole('dialog', { name: 'Severity filter' });
+    await dialog3.getByText('Critical', { exact: true }).click();
+    await page.keyboard.press('Escape');
+
     await expect(page).toHaveURL(/severity=warning(?!.*critical)/);
     await expect(table.locator('tr', { has: page.locator('code', { hasText: 'node.crash' }) })).toHaveCount(0);
   });

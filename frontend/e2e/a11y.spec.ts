@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './helpers/fixtures';
 import { fulfillJson } from './helpers/routes';
 import AxeBuilder from '@axe-core/playwright';
@@ -119,6 +120,18 @@ const SETTINGS_GROUPED = [
   },
 ];
 
+const THEMES: Array<{ name: string; setup: (page: Page) => Promise<void> }> = [
+  { name: 'light', setup: async () => {} },
+  {
+    name: 'dark',
+    setup: async (page) => {
+      await page.addInitScript(() => {
+        window.localStorage.setItem('gridfleet.theme', 'dark');
+      });
+    },
+  },
+];
+
 test.describe('Accessibility', () => {
   test.beforeEach(async ({ page }) => {
     await page.route((url) => new URL(url).pathname === '/api/devices', async (route) => {
@@ -160,6 +173,19 @@ test.describe('Accessibility', () => {
         prev_cursor: null,
       });
     });
+    await page.route((url) => new URL(url).pathname === '/api/events/catalog', async (route) => {
+      await fulfillJson(route, { events: [{ name: 'device.state_changed', description: 'Device state changed', severity: 'info' }] });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/notifications', async (route) => {
+      await fulfillJson(route, {
+        items: [EVENT],
+        total: 1,
+        limit: 50,
+        offset: 0,
+        next_cursor: null,
+        prev_cursor: null,
+      });
+    });
     await page.route((url) => new URL(url).pathname === '/api/settings', async (route) => {
       await fulfillJson(route, SETTINGS_GROUPED);
     });
@@ -178,6 +204,164 @@ test.describe('Accessibility', () => {
     }, async (route) => {
       await fulfillJson(route, []);
     });
+
+    // Device groups
+    await page.route((url) => new URL(url).pathname === '/api/device-groups', async (route) => {
+      await fulfillJson(route, [
+        {
+          id: 'group-1',
+          name: 'QA Devices',
+          description: 'Shared devices for QA workflows',
+          group_type: 'static',
+          device_count: 1,
+          filters: null,
+          created_at: '2026-04-04T10:00:00Z',
+          updated_at: '2026-04-04T10:00:00Z',
+        },
+      ]);
+    });
+
+    // Device detail
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1', async (route) => {
+      await fulfillJson(route, {
+        ...DEVICE,
+        appium_node: {
+          id: 'node-1',
+          port: 4723,
+          grid_url: 'http://127.0.0.1:4444',
+          pid: 4242,
+          container_id: null,
+          state: 'running',
+          started_at: '2026-03-30T10:00:03Z',
+        },
+        sessions: [],
+      });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/health', async (route) => {
+      await fulfillJson(route, {
+        platform: 'android_mobile',
+        healthy: true,
+        node: { running: true, port: 4723, state: 'running' },
+        device_checks: { adb: { status: 'ok' } },
+        session_viability: {
+          status: 'passed',
+          last_attempted_at: '2026-03-30T10:00:03Z',
+          last_succeeded_at: '2026-03-30T10:00:03Z',
+          error: null,
+          checked_by: 'scheduled',
+        },
+        lifecycle_policy: {
+          last_failure_source: null,
+          last_failure_reason: null,
+          last_action: null,
+          last_action_at: null,
+          stop_pending: false,
+          stop_pending_reason: null,
+          stop_pending_since: null,
+          excluded_from_run: false,
+          excluded_run_id: null,
+          excluded_run_name: null,
+          excluded_at: null,
+          will_auto_rejoin_run: false,
+          recovery_suppressed_reason: null,
+          backoff_until: null,
+          recovery_state: 'idle',
+        },
+      });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/session-outcome-heatmap', async (route) => {
+      await fulfillJson(route, [
+        { timestamp: '2026-03-29T12:00:00Z', status: 'passed' },
+        { timestamp: '2026-03-30T12:00:00Z', status: 'failed' },
+      ]);
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/config', async (route) => {
+      await fulfillJson(route, { automationName: 'UiAutomator2' });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/config/history', async (route) => {
+      await fulfillJson(route, []);
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/logs', async (route) => {
+      await fulfillJson(route, { lines: ['2026-03-30 10:00:03 INFO AppiumServer started'], count: 1 });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/capabilities', async (route) => {
+      await fulfillJson(route, { platformName: 'Android', 'appium:udid': 'device-001' });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/test_data', async (route) => {
+      await fulfillJson(route, { test_name: null, test_suite: null, test_result: null });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/diagnostic-snapshots', async (route) => {
+      await fulfillJson(route, { items: [], total: 0, limit: 5, offset: 0, next_cursor: null, prev_cursor: null });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/devices/device-1/diagnostics/snapshots', async (route) => {
+      await fulfillJson(route, { items: [], total: 0, limit: 5, offset: 0, next_cursor: null, prev_cursor: null });
+    });
+
+    // Host detail
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/tools/status', async (route) => {
+      await fulfillJson(route, { tools: [] });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1', async (route) => {
+      await fulfillJson(route, { ...HOST, devices: [DEVICE] });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/diagnostics', async (route) => {
+      await fulfillJson(route, {
+        host_id: 'host-1',
+        circuit_breaker: {
+          status: 'closed',
+          consecutive_failures: 0,
+          cooldown_seconds: 0,
+          retry_after_seconds: 0,
+          probe_in_flight: false,
+          last_error: null,
+        },
+        appium_processes: { reported_at: '2026-03-30T10:00:00Z', running_nodes: [] },
+        recent_recovery_events: [],
+      });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/resource-telemetry', async (route) => {
+      await fulfillJson(route, {
+        samples: [],
+        latest_recorded_at: null,
+        window_start: '2026-03-30T09:00:00Z',
+        window_end: '2026-03-30T10:00:00Z',
+        bucket_minutes: 5,
+      });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/agent-logs', async (route) => {
+      await fulfillJson(route, { lines: [], total: 0, limit: 500, offset: 0 });
+    });
+    await page.route((url) => new URL(url).pathname === '/api/hosts/host-1/events', async (route) => {
+      await fulfillJson(route, { events: [], total: 0, limit: 50, offset: 0 });
+    });
+
+    // Run detail
+    await page.route((url) => new URL(url).pathname === '/api/runs/run-1', async (route) => {
+      await fulfillJson(route, RUN);
+    });
+
+    // Group detail
+    await page.route((url) => new URL(url).pathname === '/api/device-groups/group-1', async (route) => {
+      await fulfillJson(route, {
+        id: 'group-1',
+        name: 'QA Devices',
+        description: 'Shared devices for QA workflows',
+        group_type: 'static',
+        device_count: 1,
+        devices: [DEVICE],
+        filters: null,
+        created_at: '2026-04-04T10:00:00Z',
+        updated_at: '2026-04-04T10:00:00Z',
+      });
+    });
+
+    // Driver-pack releases and hosts (detail page)
+    await page.route((url) => /^\/api\/driver-packs\/[^/]+\/releases$/.test(new URL(url).pathname), async (route) => {
+      await fulfillJson(route, { releases: [], total: 0 });
+    });
+    await page.route((url) => /^\/api\/driver-packs\/[^/]+\/hosts$/.test(new URL(url).pathname), async (route) => {
+      await fulfillJson(route, { hosts: [] });
+    });
   });
 
   const ROUTES: Array<{ path: string; heading: string }> = [
@@ -188,18 +372,50 @@ test.describe('Accessibility', () => {
     { path: '/analytics', heading: 'Analytics' },
     { path: '/notifications', heading: 'Notifications' },
     { path: '/settings', heading: 'Settings' },
+    { path: '/hosts', heading: 'Hosts' },
+    { path: '/groups', heading: 'Device Groups' },
+    { path: '/drivers', heading: 'Driver Packs' },
+    { path: '/devices/device-1', heading: 'Pixel 8' },
+    { path: '/hosts/host-1', heading: 'lab-mac-mini' },
+    { path: '/runs/run-1', heading: 'ci-smoke' },
+    { path: '/groups/group-1', heading: 'QA Devices' },
+    { path: '/drivers/appium-uiautomator2', heading: 'Appium UiAutomator2' },
   ];
 
-  for (const { path, heading } of ROUTES) {
-    test(`has no critical automated a11y violations on ${path}`, async ({ page }) => {
-      await page.goto(path);
-      await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible({ timeout: 15_000 });
+  for (const theme of THEMES) {
+    for (const { path, heading } of ROUTES) {
+      test(`[${theme.name}] no a11y violations on ${path}`, async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await theme.setup(page);
+        await page.goto(path);
+        await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible({ timeout: 15_000 });
 
-      const results = await new AxeBuilder({ page })
-        .disableRules(['color-contrast'])
-        .analyze();
+        const results = await new AxeBuilder({ page }).analyze();
 
-      expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
-    });
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
+  }
+});
+
+test.describe('Accessibility – public pages', () => {
+  const PUBLIC_ROUTES: Array<{ path: string; heading: string }> = [
+    { path: '/login', heading: 'GridFleet' },
+    { path: '/no-such-page', heading: '404' },
+  ];
+
+  for (const theme of THEMES) {
+    for (const { path, heading } of PUBLIC_ROUTES) {
+      test(`[${theme.name}] no a11y violations on ${path}`, async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        await theme.setup(page);
+        await page.goto(path);
+        await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible({ timeout: 15_000 });
+
+        const results = await new AxeBuilder({ page }).analyze();
+
+        expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
+      });
+    }
   }
 });
