@@ -247,8 +247,7 @@ async def handle_node_crash(
     """Record a node crash and stop the underlying Appium node.
 
     Triggered by ``complete_auto_stop`` on ``connectivity_lost`` and
-    ``health_check_fail`` in addition to genuine Appium crashes — every
-    invocation persists a ``node_crash`` event unconditionally.
+    ``health_check_fail`` in addition to genuine Appium crashes.
 
     Operational-state semantics:
     - Node running: writes desired_state='stopped' and lets the reconciler stop
