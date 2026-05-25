@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
+from app.packs.models import DriverPack, DriverPackRelease
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:
@@ -42,14 +42,3 @@ async def uiautomator2_pack(db_session: AsyncSession) -> DriverPack:
         )
     ).scalar_one()
     return pack
-
-
-def _install_for(pack: DriverPack, host: Host) -> HostPackInstallation:
-    """Return a minimal HostPackInstallation linking *host* to the first release of *pack*."""
-    release = pack.releases[0].release if pack.releases else "0.0.0"
-    return HostPackInstallation(
-        host_id=host.id,
-        pack_id=pack.id,
-        pack_release=release,
-        status="installed",
-    )

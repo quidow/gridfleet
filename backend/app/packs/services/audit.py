@@ -30,24 +30,3 @@ async def record_pack_upload(
         },
     )
     session.add(event)
-
-
-async def record_pack_tarball_fetched(
-    session: AsyncSession,
-    *,
-    host_id: str,
-    pack_id: str,
-    release: str,
-    artifact_sha256: str,
-) -> None:
-    event = SystemEvent(
-        event_id=str(uuid.uuid4()),
-        type="driver_pack.tarball_fetched",
-        data={
-            "host_id": host_id,
-            "pack_id": pack_id,
-            "release": release,
-            "artifact_sha256": artifact_sha256,
-        },
-    )
-    session.add(event)
