@@ -82,8 +82,6 @@ def _release() -> DriverPackRelease:
             "doctor": [{"id": "adb", "description": "ADB", "adapter_hook": "doctor_adb"}, "skip"],
             "insecure_features": ["adb_shell"],
         },
-        derived_from_pack_id="source",
-        derived_from_release="0.9.0",
         platforms=[_platform()],
         features=[
             DriverPackFeature(
@@ -119,8 +117,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
 
     assert out.id == "local/pack"
     assert out.current_release == "1.0.0"
-    assert out.derived_from is not None
-    assert out.derived_from.pack_id == "source"
     assert out.appium_server is not None
     assert out.appium_server.known_bad == ["1"]
     assert out.appium_driver is not None
@@ -145,9 +141,6 @@ def test_pack_service_builds_pack_outputs_from_manifest_helpers() -> None:
 
 
 def test_pack_service_helper_branches_handle_empty_and_nested_values() -> None:
-    release = DriverPackRelease(release="1.0.0", manifest_json={})
-    assert pack_service._derived_from(None) is None
-    assert pack_service._derived_from(release) is None
     assert pack_service._installable_out(None) is None
     assert pack_service._workarounds_out({"id": "bad"}) == []
     assert pack_service._doctor_out({"id": "bad"}) == []

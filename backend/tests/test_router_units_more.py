@@ -58,16 +58,10 @@ from app.packs.routers import (
     agent_state as agent_driver_packs,
 )
 from app.packs.routers import (
-    authoring as driver_pack_authoring,
-)
-from app.packs.routers import (
     catalog as driver_packs,
 )
 from app.packs.routers import (
     export as driver_pack_export,
-)
-from app.packs.routers import (
-    templates as driver_pack_templates,
 )
 from app.packs.routers import (
     uploads as driver_pack_uploads,
@@ -1802,7 +1796,7 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     await assert_bulk(device_groups.group_bulk_delete, "bulk_delete")
 
 
-async def test_driver_pack_upload_export_and_template_error_mapping() -> None:
+async def test_driver_pack_upload_export_error_mapping() -> None:
     assert await driver_pack_uploads._read_limited_upload(ChunkUpload([b"abc", b"def"])) == b"abcdef"
 
     with patch("app.packs.routers.uploads.MAX_PACK_TARBALL_BYTES", new=3):
@@ -1915,66 +1909,6 @@ async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) 
         response = await driver_pack_uploads.delete_release("pack", "1.0.0", _username="admin", session=delete_session)
     assert response.status_code == 204
     assert delete_session.committed is True
-
-
-async def test_driver_pack_authoring_fork_error_mapping_and_success() -> None:
-    body = driver_pack_authoring.ForkPackBody(new_pack_id="local/fork", display_name="Fork")
-
-    with pytest.raises(HTTPException) as exc:
-        await driver_pack_authoring.fork("source", body, _username="admin", session=DummySession(get_result=object()))
-    assert exc.value.status_code == 409
-
-    with pytest.raises(HTTPException) as exc:
-        await driver_pack_authoring.fork(
-            "source",
-            body,
-            _username="admin",
-            session=DummySession(execute_result=ScalarResult(None)),
-        )
-    assert exc.value.status_code == 404
-
-    source = SimpleNamespace(id="source", current_release="1.0.0", releases=[])
-    with patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await driver_pack_authoring.fork(
-                "source",
-                body,
-                _username="admin",
-                session=DummySession(execute_result=ScalarResult(source)),
-            )
-    assert exc.value.status_code == 400
-
-    release = SimpleNamespace(release="1.0.0", manifest_json={"id": "source", "release": "1.0.0"})
-    pack = SimpleNamespace(id="local/fork")
-    session = DummySession(execute_result=ScalarResult(source))
-    with (
-        patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=release)),
-        patch("app.packs.routers.authoring.PackStorageService", new=Mock(return_value=object())),
-        patch("app.packs.routers.authoring.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
-        patch("app.packs.routers.authoring.build_pack_out", new=Mock(return_value={"id": "local/fork"})),
-    ):
-        assert await driver_pack_authoring.fork("source", body, _username="admin", session=session) == {
-            "id": "local/fork"
-        }
-    assert session.committed is True
-
-    for error, status_code in (
-        (driver_pack_authoring.PackIngestConflictError("duplicate"), 409),
-        (driver_pack_authoring.PackIngestValidationError("bad manifest"), 400),
-    ):
-        with (
-            patch("app.packs.routers.authoring.selected_release", new=Mock(return_value=release)),
-            patch("app.packs.routers.authoring.PackStorageService", new=Mock(return_value=object())),
-            patch("app.packs.routers.authoring.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await driver_pack_authoring.fork(
-                    "source",
-                    body,
-                    _username="admin",
-                    session=DummySession(execute_result=ScalarResult(source)),
-                )
-        assert exc.value.status_code == status_code
 
 
 async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
@@ -2336,73 +2270,6 @@ async def test_devices_core_router_branches() -> None:
                 "pack", "1.0.0", _username="admin", session=object(), storage=object()
             )
     assert exc.value.status_code == 404
-
-    descriptor = SimpleNamespace(
-        id="android-real",
-        display_name="Android Real",
-        target_driver_summary="UiAutomator2",
-        source_pack_id="appium-uiautomator2",
-        prerequisite_host_tools=("adb",),
-    )
-    with patch("app.packs.routers.templates.list_templates", new=Mock(return_value=[descriptor])):
-        templates = await driver_pack_templates.get_templates(_username="admin")
-    assert templates["templates"][0]["template_id"] == "android-real"
-
-    with pytest.raises(HTTPException) as exc:
-        await driver_pack_templates.create_from_template(
-            "missing",
-            driver_pack_templates.FromTemplateBody(pack_id="local/new", release="1.0.0"),
-            _username="admin",
-            session=DummySession(get_result=object()),
-        )
-    assert exc.value.status_code == 409
-
-    with patch("app.packs.routers.templates.load_template", new=Mock(side_effect=LookupError("missing"))):
-        with pytest.raises(HTTPException) as exc:
-            await driver_pack_templates.create_from_template(
-                "missing",
-                driver_pack_templates.FromTemplateBody(pack_id="local/new", release="1.0.0"),
-                _username="admin",
-                session=DummySession(),
-            )
-    assert exc.value.status_code == 404
-
-    body = driver_pack_templates.FromTemplateBody(pack_id="local/new", release="1.0.0", display_name="New")
-    for error, status_code in (
-        (driver_pack_templates.PackIngestConflictError("duplicate"), 409),
-        (driver_pack_templates.PackIngestValidationError("bad manifest"), 400),
-    ):
-        with (
-            patch("app.packs.routers.templates.load_template", new=Mock(return_value=object())),
-            patch("app.packs.routers.templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
-            patch("app.packs.routers.templates.PackStorageService", new=Mock(return_value=object())),
-            patch("app.packs.routers.templates.ingest_pack_tarball", new=AsyncMock(side_effect=error)),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await driver_pack_templates.create_from_template(
-                    "android-real",
-                    body,
-                    _username="admin",
-                    session=DummySession(),
-                )
-        assert exc.value.status_code == status_code
-
-    template_session = DummySession()
-    pack = SimpleNamespace(id="local/new")
-    with (
-        patch("app.packs.routers.templates.load_template", new=Mock(return_value=object())),
-        patch("app.packs.routers.templates.build_tarball_from_template", new=Mock(return_value=b"tar")),
-        patch("app.packs.routers.templates.PackStorageService", new=Mock(return_value=object())),
-        patch("app.packs.routers.templates.ingest_pack_tarball", new=AsyncMock(return_value=pack)),
-        patch("app.packs.routers.templates.build_pack_out", new=Mock(return_value={"id": pack.id})),
-    ):
-        assert await driver_pack_templates.create_from_template(
-            "android-real",
-            body,
-            _username="admin",
-            session=template_session,
-        ) == {"id": "local/new"}
-    assert template_session.committed is True
 
 
 async def test_devices_verification_router_error_and_success_branches(db_session: AsyncSession) -> None:

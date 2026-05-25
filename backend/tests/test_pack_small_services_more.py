@@ -116,8 +116,6 @@ async def test_pack_ingest_existing_release_storage_conflict(monkeypatch: pytest
         display_name="Test",
         maintainer=None,
         license=None,
-        derived_from=None,
-        template_id=None,
         platforms=[],
         features={},
     )
@@ -152,8 +150,6 @@ async def test_pack_ingest_existing_release_restores_missing_artifact(monkeypatc
         display_name="Test",
         maintainer=None,
         license=None,
-        derived_from=None,
-        template_id=None,
         platforms=[],
         features={},
     )
@@ -198,8 +194,6 @@ async def test_pack_ingest_existing_release_storage_error_becomes_conflict(monke
         display_name="Test",
         maintainer=None,
         license=None,
-        derived_from=None,
-        template_id=None,
         platforms=[],
         features={},
     )
@@ -247,8 +241,6 @@ async def test_pack_ingest_new_release_storage_and_manifest_dict_errors(monkeypa
         display_name="Test",
         maintainer=None,
         license=None,
-        derived_from=None,
-        template_id=None,
         platforms=[],
         features={},
     )
@@ -291,8 +283,6 @@ async def test_pack_ingest_existing_pack_without_release_adds_new_release(monkey
         display_name="Test",
         maintainer=None,
         license=None,
-        derived_from=None,
-        template_id=None,
         platforms=[],
         features={},
     )
