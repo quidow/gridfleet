@@ -141,8 +141,9 @@ function ReleasesPanel({ packId }: { packId: string }) {
               onSuccess: () => setDeleteTarget(null),
               onError: (err: unknown) => {
                 setDeleteTarget(null);
+                const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
                 setDeleteError(
-                  err instanceof Error ? err.message : 'Failed to delete release.',
+                  typeof detail === 'string' ? detail : err instanceof Error ? err.message : 'Failed to delete release.',
                 );
               },
             },

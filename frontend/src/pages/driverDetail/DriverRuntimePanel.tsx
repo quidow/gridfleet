@@ -42,7 +42,9 @@ function RuntimePolicyEditor({ pack }: { pack: DriverPack }) {
       { packId: pack.id, runtimePolicy: draft },
       {
         onError: (err: unknown) => {
-          setError(err instanceof Error ? err.message : 'Failed to update runtime policy.');
+          const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+          const message = typeof detail === 'string' ? detail : err instanceof Error ? err.message : 'Failed to update runtime policy.';
+          setError(message);
         },
       },
     );
