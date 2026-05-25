@@ -81,21 +81,6 @@ def find_emulator() -> str | None:
     return emulator if emulator != "emulator" else None
 
 
-def read_avd_config(avd_name: str) -> dict[str, str]:
-    config_path = os.path.expanduser(f"~/.android/avd/{avd_name}.avd/config.ini")
-    config: dict[str, str] = {}
-    try:
-        with open(config_path) as handle:
-            for line in handle:
-                stripped = line.strip()
-                if "=" in stripped and not stripped.startswith("#"):
-                    key, _, value = stripped.partition("=")
-                    config[key.strip()] = value.strip()
-    except OSError:
-        logger.debug("Failed to read AVD config at %s", config_path, exc_info=True)
-    return config
-
-
 async def get_running_emulator_avd_name(adb: str, serial: str) -> str:
     output = await run_cmd(
         [adb, "-s", serial, "emu", "avd", "name"],

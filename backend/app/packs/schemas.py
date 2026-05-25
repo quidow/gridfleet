@@ -39,7 +39,6 @@ class HealthCheckLabelOut(HealthCheckLabel):
 
 class LifecycleActionOut(LifecycleAction):
     model_config = ConfigDict(extra="ignore")
-    label: str | None = None
 
 
 class PlatformDeviceTypeOverrideOut(PlatformDeviceTypeOverride):

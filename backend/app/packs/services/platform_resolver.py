@@ -46,7 +46,6 @@ class ResolvedPackPlatform:
     capabilities: dict[str, Any]
     default_capabilities: dict[str, Any]
     device_fields_schema: list[dict[str, Any]]
-    host_fields_schema: list[dict[str, Any]]
     lifecycle_actions: list[dict[str, Any]]
     health_checks: list[dict[str, Any]]
     connection_behavior: dict[str, Any]
@@ -108,7 +107,6 @@ async def resolve_pack_platform(
         device_fields_schema=list(
             override.get("device_fields_schema") or platform.data.get("device_fields_schema", [])
         ),
-        host_fields_schema=list(platform.data.get("host_fields_schema", [])),
         lifecycle_actions=list(override.get("lifecycle_actions") or platform.data.get("lifecycle_actions", [])),
         health_checks=list(platform.data.get("health_checks", [])),
         connection_behavior=dict(override.get("connection_behavior") or platform.data.get("connection_behavior", {})),

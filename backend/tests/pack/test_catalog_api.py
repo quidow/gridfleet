@@ -119,11 +119,11 @@ async def test_catalog_exposes_identity_and_lifecycle_actions(client: AsyncClien
     assert platform["identity_scope"] == "host"
     assert platform["device_types"] == ["real_device", "emulator"]
     assert platform["connection_types"] == ["usb", "network", "virtual"]
-    assert platform["lifecycle_actions"] == [{"id": "state", "label": None}, {"id": "reconnect", "label": None}]
+    assert platform["lifecycle_actions"] == [{"id": "state"}, {"id": "reconnect"}]
     assert platform["device_type_overrides"]["emulator"]["lifecycle_actions"] == [
-        {"id": "state", "label": None},
-        {"id": "boot", "label": None},
-        {"id": "shutdown", "label": None},
+        {"id": "state"},
+        {"id": "boot"},
+        {"id": "shutdown"},
     ]
     assert platform["health_checks"] == [
         {"id": "adb_connected", "label": "ADB Connected", "applies_when": None},
