@@ -38,7 +38,7 @@ function PlatformCard({ platform }: { platform: DriverPackPlatform }) {
           <div className="mt-1 flex flex-wrap gap-1">
             {platform.lifecycle_actions.map((action) => (
               <Badge key={action.id} tone="neutral">
-                {action.label ?? action.id}
+                {action.id}
               </Badge>
             ))}
           </div>
