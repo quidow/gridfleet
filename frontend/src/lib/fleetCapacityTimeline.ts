@@ -3,7 +3,7 @@ import { formatDateTime } from '../utils/dateFormatting';
 
 type NullableMetric = number | null;
 
-export interface FleetCapacityChartDatum {
+interface FleetCapacityChartDatum {
   timestamp: string;
   label: string;
   isGap: boolean;

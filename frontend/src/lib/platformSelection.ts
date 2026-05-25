@@ -1,6 +1,6 @@
 import type { ConnectionType, DeviceType, DriverPack, PlatformDescriptor, PlatformIconKind } from '../types';
 
-export type PlatformSelectionKey = `${string}::${string}`;
+type PlatformSelectionKey = `${string}::${string}`;
 
 export function makePlatformKey(packId: string, platformId: string): PlatformSelectionKey {
   return `${packId}::${platformId}`;

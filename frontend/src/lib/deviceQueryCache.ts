@@ -6,16 +6,16 @@ import type {
 } from '../types';
 import type { PaginatedResponse } from '../types/shared';
 
-export type DeviceListData = DeviceRead[] | PaginatedResponse<DeviceRead>;
-export type DeviceQuerySnapshot = Array<[readonly unknown[], DeviceListData | undefined]>;
+type DeviceListData = DeviceRead[] | PaginatedResponse<DeviceRead>;
+type DeviceQuerySnapshot = Array<[readonly unknown[], DeviceListData | undefined]>;
 
-export type OptimisticDeviceContext = {
+type OptimisticDeviceContext = {
   deviceId: string;
   devicesSnapshots: DeviceQuerySnapshot;
   deviceSnapshot: DeviceDetail | undefined;
 };
 
-export type DeviceCacheUpdater = <T extends DeviceRead>(device: T) => T;
+type DeviceCacheUpdater = <T extends DeviceRead>(device: T) => T;
 
 export function rollbackOptimisticDeviceQueries(
   qc: QueryClient,
