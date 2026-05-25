@@ -86,7 +86,6 @@ def test_update_agent_waits_for_drain_then_runs_uv_restart_and_health_check_on_l
         uv_runtime=uv_runtime,
         to_version="0.3.0",
         os_name="Linux",
-        current_uid=1001,
         run_command=record,
         drain_check=lambda url, *, auth=None: drains.append(url) or DrainResult(ok=True, message="drained"),
         health_check=lambda url, *, auth=None: HealthCheckResult(ok=True, message=f"healthy at {url}"),
@@ -119,7 +118,6 @@ def test_update_agent_without_version_upgrades_latest(tmp_path: Path) -> None:
         uv_runtime=uv_runtime,
         to_version=None,
         os_name="Linux",
-        current_uid=1001,
         run_command=record,
         drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -145,7 +143,6 @@ def test_update_agent_restarts_launchd_on_macos(monkeypatch: pytest.MonkeyPatch,
         uv_runtime=uv_runtime,
         to_version="0.3.0",
         os_name="Darwin",
-        current_uid=0,
         run_command=record,
         drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -172,7 +169,6 @@ def test_update_agent_uses_current_uid_for_launchd_restart_on_macos(
         uv_runtime=uv_runtime,
         to_version=None,
         os_name="Darwin",
-        current_uid=1001,
         run_command=record,
         drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
         health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -195,7 +191,6 @@ def test_update_agent_refuses_to_upgrade_when_drain_times_out(tmp_path: Path, os
             uv_runtime=uv_runtime,
             to_version="0.3.0",
             os_name=os_name,
-            current_uid=1001,
             run_command=lambda command: commands.append(command),
             drain_check=lambda _url, *, auth=None: DrainResult(ok=False, message="active local nodes remain"),
             health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -218,7 +213,6 @@ def test_update_agent_raises_when_uv_not_installed(tmp_path: Path, os_name: str)
             uv_runtime=uv_runtime,
             to_version="0.3.0",
             os_name=os_name,
-            current_uid=1001,
             run_command=lambda _command: None,
             drain_check=lambda _url, *, auth=None: DrainResult(ok=True, message="drained"),
             health_check=lambda _url, *, auth=None: HealthCheckResult(ok=True, message="healthy"),
@@ -316,7 +310,6 @@ def test_update_agent_forwards_api_auth_to_drain_and_health(tmp_path: Path) -> N
         uv_runtime=uv_runtime,
         to_version=None,
         os_name="Linux",
-        current_uid=1001,
         run_command=lambda _command: None,
         drain_check=fake_drain,
         health_check=fake_health,
@@ -344,7 +337,6 @@ def test_update_drain_failure_raises_typed_and_skips_upgrade(tmp_path: Path) -> 
             os_name="Linux",
             run_command=lambda cmd: invoked.append(list(cmd)),
             drain_check=lambda url, **kw: DrainResult(ok=False, message="busy"),
-            current_uid=0,
         )
     assert invoked == []
 
@@ -361,7 +353,6 @@ def test_update_uv_missing_raises_typed(tmp_path: Path) -> None:
             os_name="Linux",
             run_command=lambda cmd: None,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
-            current_uid=0,
         )
 
 
@@ -381,7 +372,6 @@ def test_update_runs_uv_pip_install_to_dedicated_venv(tmp_path: Path) -> None:
         run_command=lambda cmd: invoked.append(list(cmd)),
         drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
         health_check=lambda url, **kw: HealthCheckResult(ok=True, message="ok"),
-        current_uid=0,
     )
     upgrade_cmd = invoked[0]
     assert upgrade_cmd[0] == str(bin_path)
@@ -480,7 +470,6 @@ def test_update_health_failure_raises_typed(tmp_path: Path, os_name: str) -> Non
             run_command=lambda cmd: None,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
             health_check=lambda url, **kw: HealthCheckResult(ok=False, message="unhealthy"),
-            current_uid=0,
         )
 
 
@@ -503,7 +492,6 @@ def test_update_upgrade_oserror_wraps_typed(tmp_path: Path) -> None:
             os_name="Linux",
             run_command=_raise_oserror,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
-            current_uid=0,
         )
 
 
@@ -529,5 +517,4 @@ def test_update_restart_oserror_wraps_typed(tmp_path: Path) -> None:
             os_name="Linux",
             run_command=fake_run,
             drain_check=lambda url, **kw: DrainResult(ok=True, message="idle"),
-            current_uid=0,
         )
