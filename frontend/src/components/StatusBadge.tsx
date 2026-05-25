@@ -12,7 +12,6 @@ const STATUS_TONE_MAP: Record<string, BadgeTone> = {
   pending: 'warning',
   ready: 'info',
   active: 'info',
-  completing: 'info',
   reserved: 'info',
   starting: 'info',
   stopping: 'warning',

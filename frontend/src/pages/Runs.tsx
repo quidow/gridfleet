@@ -25,7 +25,7 @@ import { resolvePlatformLabel } from '../lib/labels';
 import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
 const RUN_STATES: RunState[] = [
-  'pending', 'preparing', 'active', 'completing',
+  'pending', 'preparing', 'active',
   'completed', 'failed', 'expired', 'cancelled',
 ];
 
