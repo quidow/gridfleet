@@ -59,7 +59,7 @@ export function DeviceManifestFields({ fields, value, onChange, idPrefix = 'devi
             <TextField
               id={`${idPrefix}-${field.id}`}
               type={field.sensitive ? 'password' : 'text'}
-              required={field.required_for_session || field.required_for_discovery}
+              required={field.required_for_session}
               value={String(value[field.id] ?? '')}
               onChange={(nextValue) => onChange(setDeviceConfigField(value, field.id, nextValue))}
             />
