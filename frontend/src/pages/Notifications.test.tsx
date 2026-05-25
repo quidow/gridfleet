@@ -58,6 +58,7 @@ describe('Notifications severity filter', () => {
     }
   });
 
+  // fireEvent for checkboxes: userEvent fires focusout which closes the Popover portal mid-click sequence
   it('unchecking a severity filters to the rest', async () => {
     const { seen } = renderPage();
     await userEvent.click(screen.getByRole('button', { name: 'Severity filter' }));
