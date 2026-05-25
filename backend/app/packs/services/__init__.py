@@ -23,7 +23,6 @@ __all__ = [
     "start_shim",
     "status",
     "storage",
-    "template",
     "upload",
 ]
 
