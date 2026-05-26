@@ -16,6 +16,7 @@ import contextlib
 import pytest
 
 from app.sessions import service_sync
+from tests.fakes import FakeSettingsReader
 
 
 @pytest.fixture(autouse=True)
@@ -32,12 +33,11 @@ def _reset_doorbell() -> None:
 async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) -> None:
     invocations = 0
 
-    async def fake_sync_sessions(db: object) -> None:
+    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader) -> None:
         nonlocal invocations
         invocations += 1
 
     monkeypatch.setattr(service_sync, "_sync_sessions", fake_sync_sessions)
-    monkeypatch.setattr(service_sync._default_settings, "get", lambda key: 30)
 
     class _NullCtx:
         async def __aenter__(self) -> None:
@@ -48,7 +48,9 @@ async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(service_sync, "async_session", lambda: _NullCtx())
 
-    task = asyncio.create_task(service_sync.session_sync_loop())
+    task = asyncio.create_task(
+        service_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}))
+    )
     try:
         service_sync.wake_session_sync()
         # Loop should observe the doorbell within ~50ms even though interval=30s.
@@ -66,14 +68,13 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
     sync_started = asyncio.Event()
     release_sync = asyncio.Event()
 
-    async def fake_sync_sessions(db: object) -> None:
+    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader) -> None:
         nonlocal invocations
         invocations += 1
         sync_started.set()
         await release_sync.wait()
 
     monkeypatch.setattr(service_sync, "_sync_sessions", fake_sync_sessions)
-    monkeypatch.setattr(service_sync._default_settings, "get", lambda key: 30)
 
     class _NullCtx:
         async def __aenter__(self) -> None:
@@ -84,7 +85,9 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(service_sync, "async_session", lambda: _NullCtx())
 
-    task = asyncio.create_task(service_sync.session_sync_loop())
+    task = asyncio.create_task(
+        service_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}))
+    )
     try:
         service_sync.wake_session_sync()
         await sync_started.wait()

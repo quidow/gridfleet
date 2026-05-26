@@ -13,9 +13,14 @@ from app.devices.services.lifecycle_policy import handle_health_failure
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_sync import _sync_sessions
+from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
+from tests.fakes import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+async def _sync_sessions(db: AsyncSession) -> None:
+    await _sync_sessions_impl(db, settings=FakeSettingsReader({}))
 
 
 @pytest.fixture(autouse=True)
@@ -1153,7 +1158,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
 
     # Old session leaves the Grid (not in active map), triggering ended-session processing.
     with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
-        await session_sync._sync_sessions(db_session)
+        await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(device)
     # The race-prone restore would have moved the device to ``available``.
@@ -1332,12 +1337,12 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     await db_session.refresh(device)
     assert device.lifecycle_policy_state["stop_pending"] is True
 
-    async def _fake_grid_status() -> dict:
+    async def _fake_grid_status(*, settings: FakeSettingsReader) -> dict:
         return {"value": {"ready": True, "nodes": []}}
 
     monkeypatch.setattr(grid_service, "get_grid_status", _fake_grid_status)
 
-    await session_sync._sync_sessions(db_session)
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -1396,14 +1401,14 @@ async def test_sweep_runs_when_grid_is_unreachable(
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["stop_pending"] is True
 
-    async def _grid_unreachable() -> dict[str, Any]:
+    async def _grid_unreachable(*, settings: FakeSettingsReader) -> dict[str, Any]:
         # Shape that triggers the early-return branch in _sync_sessions:
         # ready=False AND an "error" key present.
         return {"value": {"ready": False}, "error": "connection refused"}
 
     monkeypatch.setattr(grid_service, "get_grid_status", _grid_unreachable)
 
-    await session_sync._sync_sessions(db_session)
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None

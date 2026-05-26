@@ -8,7 +8,7 @@ import httpx
 from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
-    from app.settings.service import SettingsService
+    from app.core.protocols import SettingsReader
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ async def close() -> None:
     _client = None
 
 
-async def get_grid_status(*, settings: SettingsService | None = None) -> dict[str, Any]:
+async def get_grid_status(*, settings: SettingsReader | None = None) -> dict[str, Any]:
     """Fetch Selenium Grid /status and return parsed JSON."""
     url = f"{(settings or _default_settings).get('grid.hub_url')}/status"
     try:
@@ -47,7 +47,7 @@ async def get_grid_status(*, settings: SettingsService | None = None) -> dict[st
         return {"ready": False, "error": "grid_unreachable"}
 
 
-async def terminate_grid_session(session_id: str, *, settings: SettingsService | None = None) -> bool:
+async def terminate_grid_session(session_id: str, *, settings: SettingsReader | None = None) -> bool:
     """Delete a WebDriver session through the Selenium Grid hub.
 
     Selenium Grid exposes the normal WebDriver endpoint at DELETE /session/{id}.

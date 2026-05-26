@@ -192,7 +192,7 @@ async def _reload_device(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
-async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any]:
+async def _run_recovery_probe(db: AsyncSession, device: Device, *, settings: SettingsReader) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     try:
         async for attempt in AsyncRetrying(
@@ -203,7 +203,7 @@ async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any
             with attempt:
                 reloaded = await _reload_device(db, device)
                 last_result = await session_viability.run_session_viability_probe(
-                    db, reloaded, checked_by=SessionViabilityCheckedBy.recovery
+                    db, reloaded, checked_by=SessionViabilityCheckedBy.recovery, settings=settings
                 )
             if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
                 attempt.retry_state.set_result(last_result)
@@ -658,7 +658,7 @@ async def attempt_auto_recovery(
                 device.id,
             )
 
-    result = await _run_recovery_probe(db, device)
+    result = await _run_recovery_probe(db, device, settings=settings)
 
     if result.get("status") != "passed":
         failure_reason = result.get("error") or "Recovery viability probe failed"

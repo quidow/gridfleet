@@ -8,6 +8,7 @@ from app.devices.models import DeviceOperationalState
 from app.sessions import service_sync as session_sync
 from app.sessions.models import SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
+from tests.fakes import FakeSettingsReader
 
 
 def test_extract_sessions_from_grid_filters_invalid_reserved_and_probe_sessions() -> None:
@@ -92,7 +93,7 @@ async def test_sync_sessions_unreachable_grid_still_sweeps(monkeypatch: pytest.M
     sweep = AsyncMock()
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", sweep)
 
-    await session_sync._sync_sessions(db)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}))
 
     sweep.assert_awaited_once_with(db)
     db.commit.assert_awaited_once()
@@ -144,7 +145,7 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
 
-    await session_sync._sync_sessions(db)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}))
 
     machine.transition.assert_awaited_once()
     assert machine.transition.await_args.args[1] is session_sync.TransitionEvent.AUTO_STOP_EXECUTED
@@ -255,7 +256,7 @@ async def test_sync_sessions_new_session_race_and_invalid_capability_branches(
     )
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}))
 
     assert db.get.await_count == 1
     db.commit.assert_awaited_once()
@@ -333,7 +334,7 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}))
 
     assert session_sync.lifecycle_policy.handle_session_finished.await_count == 4
     session_sync.device_locking.lock_device.assert_awaited_once()

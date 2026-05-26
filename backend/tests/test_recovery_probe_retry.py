@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.fakes import FakeSettingsReader
+
 
 @pytest.mark.asyncio
 async def test_recovery_probe_stops_on_first_success() -> None:
@@ -17,7 +19,9 @@ async def test_recovery_probe_stops_on_first_success() -> None:
         patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
-        result = await lifecycle_policy._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
+        result = await lifecycle_policy._run_recovery_probe(
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+        )
 
     assert probe_mock.await_count == 1
     assert result == {"status": "passed"}
@@ -36,7 +40,9 @@ async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pyte
         patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
-        result = await lifecycle_policy._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
+        result = await lifecycle_policy._run_recovery_probe(
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+        )
 
     assert probe_mock.await_count == lifecycle_policy.RECOVERY_PROBE_ATTEMPTS
     assert result == {"status": "failed", "error": "boom"}
@@ -60,7 +66,9 @@ async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatc
         patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
-        result = await lifecycle_policy._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
+        result = await lifecycle_policy._run_recovery_probe(
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+        )
 
     assert probe_mock.await_count == 3
     assert result == {"status": "passed"}

@@ -31,6 +31,7 @@ async def _probe_session_via_gridfleet_marker(
     return await session_viability.probe_session_via_grid(
         session_viability.build_probe_capabilities(capabilities),
         timeout_sec,
+        settings=settings_service,
         grid_url=grid_url,
     )
 
