@@ -81,7 +81,9 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         ),
     ]
 
-    async def fake_start_node(_db: AsyncSession, device: Device, caller: str) -> object:
+    async def fake_start_node(
+        _db: AsyncSession, device: Device, caller: str, *, settings: FakeSettingsReader
+    ) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot start")
         return object()
@@ -91,7 +93,9 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             raise RuntimeError("cannot stop")
         return object()
 
-    async def fake_restart_node(_db: AsyncSession, device: Device, caller: str) -> object:
+    async def fake_restart_node(
+        _db: AsyncSession, device: Device, caller: str, *, settings: FakeSettingsReader
+    ) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot restart")
         return object()
@@ -104,7 +108,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     )
     stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices], publisher=event_bus)
     restarted = await bulk_service.bulk_restart_nodes(
-        db_session, [device.id for device in devices], publisher=event_bus
+        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
     )
 
     assert started["succeeded"] == 1

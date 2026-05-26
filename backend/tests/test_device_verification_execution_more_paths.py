@@ -33,15 +33,12 @@ def _device(**overrides: object) -> SimpleNamespace:
 async def test_run_device_health_success_failure_and_agent_error(monkeypatch: pytest.MonkeyPatch) -> None:
     job: dict[str, object] = {"stages": []}
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
-    monkeypatch.setattr(execution._default_settings, "get", lambda key: 30)
+    settings = FakeSettingsReader({"appium.startup_timeout_sec": 30})
     fetch = AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}})
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
     device = _device(device_type=DeviceType.emulator, tags={"emulator_headless": "false"})
 
-    assert (
-        await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=FakeSettingsReader({}))
-        is None
-    )
+    assert await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=settings) is None
     assert device.connection_target == "emulator-5554"
     assert fetch.await_args.kwargs["headless"] is False
 
@@ -215,14 +212,11 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     """
     job: dict[str, object] = {"stages": []}
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
-    monkeypatch.setattr(execution._default_settings, "get", lambda key: 30)
+    settings = FakeSettingsReader({"appium.startup_timeout_sec": 30})
     fetch = AsyncMock(return_value={"healthy": True})
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
 
     device = _device(device_type="real_device", connection_type="usb")
-    assert (
-        await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=FakeSettingsReader({}))
-        is None
-    )
+    assert await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=settings) is None
     assert fetch.await_args.kwargs["device_type"] == "real_device"
     assert fetch.await_args.kwargs["connection_type"] == "usb"

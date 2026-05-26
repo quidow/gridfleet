@@ -470,7 +470,7 @@ async def store_verification_job_for_test(
         )
 
 
-async def run_one_reconciler_cycle() -> None:
+async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:
     """Run a single appium reconciler cycle. Replacement for the removed
     ``reconciler.run_one_cycle_for_test()`` — tests monkeypatch the private
     functions so this just calls through the same code path.
@@ -485,5 +485,5 @@ async def run_one_reconciler_cycle() -> None:
     health_by_host = await appium_reconciler._reconcile_all(hosts, rows)
     if appium_reconciler.reconciler_convergence_enabled():
         await appium_reconciler._drive_convergence(
-            hosts, desired, backoff, health_by_host=health_by_host, settings=FakeSettingsReader({})
+            hosts, desired, backoff, health_by_host=health_by_host, settings=settings or FakeSettingsReader({})
         )

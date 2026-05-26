@@ -20,6 +20,7 @@ from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 from app.settings.services_container import SettingsServices
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -350,9 +351,14 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(device_groups.bulk_service, "bulk_restart_nodes", AsyncMock(return_value={"ok": "restart"}))
     monkeypatch.setattr(device_groups.bulk_service, "bulk_enter_maintenance", AsyncMock(return_value={"ok": "enter"}))
     _bulk_events = SimpleNamespace(publisher=event_bus)
-    assert await device_groups.group_bulk_start(group_id, db=db, events=_bulk_events) == {"ok": "start"}
+    _settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
+    assert await device_groups.group_bulk_start(
+        group_id, db=db, events=_bulk_events, settings_services=_settings_services
+    ) == {"ok": "start"}
     assert await device_groups.group_bulk_stop(group_id, db=db, events=_bulk_events) == {"ok": "stop"}
-    assert await device_groups.group_bulk_restart(group_id, db=db, events=_bulk_events) == {"ok": "restart"}
+    assert await device_groups.group_bulk_restart(
+        group_id, db=db, events=_bulk_events, settings_services=_settings_services
+    ) == {"ok": "restart"}
     assert await device_groups.group_bulk_enter_maintenance(
         group_id,
         BulkMaintenanceEnter(device_ids=[device_id]),

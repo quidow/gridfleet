@@ -155,12 +155,13 @@ def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(
 
     fixed_now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(mod, "datetime", _FrozenDatetime(fixed_now))
-    monkeypatch.setattr(mod, "_default_settings", _FakeSettings())
 
     device_id = uuid.uuid4()
     device = _FakeDevice(device_id)
 
-    intent = operator_restart_intent(device, desired_port=4725, settings=FakeSettingsReader({}))  # type: ignore[arg-type]
+    intent = operator_restart_intent(
+        device, desired_port=4725, settings=FakeSettingsReader({"appium_reconciler.restart_window_sec": 120})
+    )  # type: ignore[arg-type]
 
     expected_deadline = fixed_now + timedelta(seconds=120)
 

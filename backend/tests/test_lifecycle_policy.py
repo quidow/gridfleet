@@ -855,19 +855,18 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    settings = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 5,
+            "general.lifecycle_recovery_backoff_max_sec": 20,
+            "general.lifecycle_recovery_review_threshold": 5,
+            "appium.port_range_start": 4720,
+            "appium.port_range_end": 4800,
+            "grid.hub_url": "http://hub:4444",
+        }
+    )
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.devices.services.lifecycle_policy._default_settings.get",
-            side_effect=lambda key: {
-                "general.lifecycle_recovery_backoff_base_sec": 5,
-                "general.lifecycle_recovery_backoff_max_sec": 20,
-                "general.lifecycle_recovery_review_threshold": 5,
-                "appium.port_range_start": 4720,
-                "appium.port_range_end": 4800,
-                "grid.hub_url": "http://hub:4444",
-            }.get(key),
-        ),
         patch(
             "app.sessions.service_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -882,7 +881,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     ):
         recovery_started_at = datetime.now(UTC)
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session, device, source="device_checks", reason="Healthy again", settings=settings
         )
 
     assert recovered is False
@@ -1847,15 +1846,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(
-        lifecycle_policy_module._default_settings,
-        "get",
-        lambda key: {
-            "general.lifecycle_recovery_backoff_base_sec": 5,
-            "general.lifecycle_recovery_backoff_max_sec": 20,
-            "general.lifecycle_recovery_review_threshold": 5,
-        }.get(key, "http://grid:4444"),
-    )
     monkeypatch.setattr(lifecycle_policy_module, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
@@ -1890,7 +1880,18 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
     assert (
         await attempt_auto_recovery(
-            db, device, source="device_checks", reason="reconnected", settings=FakeSettingsReader({})
+            db,
+            device,
+            source="device_checks",
+            reason="reconnected",
+            settings=FakeSettingsReader(
+                {
+                    "general.lifecycle_recovery_backoff_base_sec": 5,
+                    "general.lifecycle_recovery_backoff_max_sec": 20,
+                    "general.lifecycle_recovery_review_threshold": 5,
+                    "grid.hub_url": "http://grid:4444",
+                }
+            ),
         )
         is True
     )  # type: ignore[arg-type]
@@ -1915,7 +1916,11 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         AsyncMock(return_value={"status": "failed", "error": "probe failed"}),
     )
     monkeypatch.setattr(lifecycle_policy_module, "complete_auto_stop", AsyncMock())
-    monkeypatch.setattr(lifecycle_policy_module, "_set_backoff", lambda state: "2026-05-13T12:00:00+00:00")
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "_set_backoff",
+        lambda state, *, settings: "2026-05-13T12:00:00+00:00",
+    )
 
     assert (
         await attempt_auto_recovery(

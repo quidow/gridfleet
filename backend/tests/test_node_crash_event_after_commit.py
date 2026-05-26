@@ -120,11 +120,6 @@ async def test_probe_failure_threshold_writes_restart_intent(
     _, device, node = await seed_host_and_running_node(db_session, identity="probe-fail-1")
     event_bus_capture.clear()
 
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: 1 if key == "general.node_max_failures" else 30,
-    )
-
     await node_health._process_node_health(
         db_session,
         node,
@@ -134,7 +129,13 @@ async def test_probe_failure_threshold_writes_restart_intent(
         observed_port=node.port,
         observed_pid=node.pid,
         observed_active_connection_target=node.active_connection_target,
-        settings=FakeSettingsReader({}),
+        settings=FakeSettingsReader(
+            {
+                "general.node_max_failures": 1,
+                "appium.startup_timeout_sec": 30,
+                "appium_reconciler.restart_window_sec": 30,
+            }
+        ),
     )
     await db_session.commit()
     await settle_after_commit_tasks()

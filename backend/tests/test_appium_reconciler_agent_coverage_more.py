@@ -671,7 +671,7 @@ async def test_start_stop_restart_node_guard_paths(
     with pytest.raises(NodeManagerError, match="already running"):
         await node_agent.start_node(db_session, device, settings=FakeSettingsReader({}))
 
-    restarted = await node_agent.restart_node(db_session, device)
+    restarted = await node_agent.restart_node(db_session, device, settings=FakeSettingsReader({}))
     assert restarted.transition_token is not None
     assert restarted.transition_deadline is not None
 
@@ -950,7 +950,7 @@ async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch)
 
     start = AsyncMock(return_value="started")
     monkeypatch.setattr(node_agent, "start_node", start)
-    result = await node_agent.restart_node(db, SimpleNamespace(appium_node=None))
+    result = await node_agent.restart_node(db, SimpleNamespace(appium_node=None), settings=FakeSettingsReader({}))
     assert result == "started"
     start.assert_awaited_once()
 

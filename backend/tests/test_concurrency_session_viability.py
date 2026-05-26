@@ -13,7 +13,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.sessions import service_viability as session_viability
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -107,7 +106,7 @@ async def test_session_viability_restore_handles_external_reservation(
                 locked.hold = DeviceHold.reserved
         external_done.set()
 
-    await asyncio.gather(run_probe(settings=FakeSettingsReader({})), reserve_externally())
+    await asyncio.gather(run_probe(), reserve_externally())
     assert observed_grid_url == "http://node-grid:4444/wd/hub"
 
     async with db_session_maker() as verify:

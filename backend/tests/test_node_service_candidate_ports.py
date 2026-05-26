@@ -181,17 +181,18 @@ async def test_candidate_ports_exclude_ports_skips_attempted(db_session: AsyncSe
     assert ports[0] == start + 1
 
 
-async def test_candidate_ports_raises_when_all_ports_used_on_host(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_candidate_ports_raises_when_all_ports_used_on_host(db_session: AsyncSession) -> None:
     host = await _make_host(db_session, ip="10.0.0.60")
     start = settings_service.get("appium.port_range_start")
-    monkeypatch.setitem(settings_service._cache, "appium.port_range_end", start + 3)
-    end = settings_service.get("appium.port_range_end")
+    end = start + 3
     for port in range(start, end + 1):
         await _add_running_node(db_session, host=host, port=port)
     with pytest.raises(NodeManagerError):
-        await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
+        await candidate_ports(
+            db_session,
+            host_id=host.id,
+            settings=FakeSettingsReader({"appium.port_range_start": start, "appium.port_range_end": end}),
+        )
 
 
 async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) -> None:

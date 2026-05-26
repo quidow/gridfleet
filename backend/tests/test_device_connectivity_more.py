@@ -239,11 +239,12 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
         patch("app.devices.services.connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
-        patch("app.devices.services.connectivity._default_settings.get", return_value=1),
         patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await device_connectivity.device_connectivity_loop(settings=FakeSettingsReader({}))
+        await device_connectivity.device_connectivity_loop(
+            settings=FakeSettingsReader({"general.device_check_interval_sec": 1})
+        )
 
     sleep.assert_awaited()
 

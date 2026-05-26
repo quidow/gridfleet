@@ -129,11 +129,10 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             "app.devices.services.property_refresh._refresh_all_properties",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
-        patch("app.devices.services.property_refresh._default_settings.get", return_value=1),
         patch("app.devices.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         patch("app.devices.services.property_refresh.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
-        await property_refresh_loop(settings=FakeSettingsReader({}))
+        await property_refresh_loop(settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}))
 
     log_exception.assert_called_once_with("Property refresh cycle failed")

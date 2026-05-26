@@ -812,7 +812,10 @@ async def test_bulk_router_delegates_all_operations() -> None:
         with patch(
             f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
         ):
-            assert await call(payload, db=object(), events=SimpleNamespace(publisher=event_bus)) == {"ok": service_name}
+            kwargs = {"db": object(), "events": SimpleNamespace(publisher=event_bus)}
+            if service_name in {"bulk_start_nodes", "bulk_restart_nodes"}:
+                kwargs["settings_services"] = SimpleNamespace(reader=FakeSettingsReader({}))
+            assert await call(payload, **kwargs) == {"ok": service_name}
 
 
 async def test_devices_test_data_router_paths() -> None:
@@ -1316,13 +1319,14 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     lifecycle_actions = [{"id": "reconnect"}, {"id": "state"}]
     resolved = SimpleNamespace(lifecycle_actions=lifecycle_actions)
     device = _control_device(id=device_id)
+    settings_services = _mock_settings_svc(FakeSettingsReader({}))
 
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
     ):
         with pytest.raises(HTTPException) as exc:
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=object(), settings_services=settings_services)
     assert exc.value.status_code == 400
 
     for bad_device, detail in (
@@ -1337,7 +1341,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         ):
             with pytest.raises(HTTPException) as exc:
-                await devices_control.reconnect_device(device_id, db=object())
+                await devices_control.reconnect_device(device_id, db=object(), settings_services=settings_services)
         assert detail in str(exc.value.detail)
 
     with (
@@ -1346,7 +1350,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=False)),
     ):
         with pytest.raises(HTTPException) as exc:
-            await devices_control.reconnect_device(device_id, db=object())
+            await devices_control.reconnect_device(device_id, db=object(), settings_services=settings_services)
     assert "not supported" in str(exc.value.detail)
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
@@ -1363,7 +1367,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch("app.devices.routers.control.node_manager.start_node", new=AsyncMock(side_effect=RuntimeError("boom"))),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await devices_control.reconnect_device(device_id, db=auto_db)  # type: ignore[arg-type]
+            await devices_control.reconnect_device(device_id, db=auto_db, settings_services=settings_services)  # type: ignore[arg-type]
 
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -1373,7 +1377,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
     ):
-        reconnect = await devices_control.reconnect_device(device_id, db=object())
+        reconnect = await devices_control.reconnect_device(device_id, db=object(), settings_services=settings_services)
     assert reconnect["message"] == "Reconnected"
 
     with (
@@ -1494,7 +1498,9 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
         patch("app.devices.routers.control.node_manager.start_node", new=start_node),
     ):
-        reconnect = await devices_control.reconnect_device(device_id, db=db)  # type: ignore[arg-type]
+        reconnect = await devices_control.reconnect_device(
+            device_id, db=db, settings_services=_mock_settings_svc(FakeSettingsReader({}))
+        )  # type: ignore[arg-type]
 
     assert reconnect["message"] == "Reconnected"
     assert device.session_viability_status is None
@@ -1631,6 +1637,7 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
 async def test_nodes_router_validation_branches() -> None:
     device_id = uuid.uuid4()
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
+    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
 
     with patch(
         "app.appium_nodes.routers.nodes.run_service.get_device_reservation",
@@ -1671,7 +1678,7 @@ async def test_nodes_router_validation_branches() -> None:
         ),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
+            await nodes_router.start_node(device_id, db=object(), settings_services=node_settings_services)
     assert exc.value.status_code == 400
 
     device.appium_node = None
@@ -1686,7 +1693,7 @@ async def test_nodes_router_validation_branches() -> None:
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
+            await nodes_router.start_node(device_id, db=object(), settings_services=node_settings_services)
     assert "no host assigned" in str(exc.value.detail)
 
     device.host_id = uuid.uuid4()
@@ -1701,11 +1708,15 @@ async def test_nodes_router_validation_branches() -> None:
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
         patch("app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=started_node)),
     ):
-        assert await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({})) is started_node
+        assert (
+            await nodes_router.start_node(device_id, db=object(), settings_services=node_settings_services)
+            is started_node
+        )
 
 
 async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     device_id = uuid.uuid4()
+    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
     stopped_device = SimpleNamespace(id=device_id, hold=None, appium_node=None)
     with (
         patch(
@@ -1736,13 +1747,17 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
             new=AsyncMock(side_effect=RuntimeError("converge failed")),
         ),
     ):
-        assert await nodes_router.restart_node(device_id, db=fake_db) is restarted
+        assert (
+            await nodes_router.restart_node(device_id, db=fake_db, settings_services=node_settings_services)
+            is restarted
+        )
     fake_db.refresh.assert_awaited_once_with(restarted)
 
 
 async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     device_id = uuid.uuid4()
     verified = SimpleNamespace(readiness_state="verified", missing_setup_fields=[])
+    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
 
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
     with (
@@ -1753,7 +1768,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.appium_nodes.routers.nodes.readiness_error_detail_async", new=AsyncMock(return_value="not ready")),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
+            await nodes_router.start_node(device_id, db=object(), settings_services=node_settings_services)
     assert exc.value.status_code == 400
     assert exc.value.detail == "not ready"
 
@@ -1768,7 +1783,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         ),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
+            await nodes_router.start_node(device_id, db=object(), settings_services=node_settings_services)
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4())
@@ -1813,7 +1828,10 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
         patch("app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=fallback_started)),
     ):
-        assert await nodes_router.restart_node(device_id, db=object()) is fallback_started
+        assert (
+            await nodes_router.restart_node(device_id, db=object(), settings_services=node_settings_services)
+            is fallback_started
+        )
 
     restarted = SimpleNamespace(id=uuid.uuid4())
     converged = SimpleNamespace(id=uuid.uuid4())
@@ -1827,7 +1845,10 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.appium_nodes.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
         patch("app.appium_nodes.routers.nodes.converge_device_now", new=AsyncMock(return_value=converged)),
     ):
-        assert await nodes_router.restart_node(device_id, db=fake_db) is converged
+        assert (
+            await nodes_router.restart_node(device_id, db=fake_db, settings_services=node_settings_services)
+            is converged
+        )
     fake_db.refresh.assert_awaited_once_with(converged)
 
 
@@ -1875,7 +1896,10 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
             ),
             patch(f"app.devices.routers.groups.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": 1})),
         ):
-            assert await call(group_id, *args, db=object(), events=SimpleNamespace(publisher=event_bus)) == {"ok": 1}
+            kwargs = {"db": object(), "events": SimpleNamespace(publisher=event_bus)}
+            if service_name in {"bulk_start_nodes", "bulk_restart_nodes"}:
+                kwargs["settings_services"] = _mock_settings_svc(FakeSettingsReader({}))
+            assert await call(group_id, *args, **kwargs) == {"ok": 1}
 
     await assert_bulk(device_groups.group_bulk_start, "bulk_start_nodes")
     await assert_bulk(device_groups.group_bulk_stop, "bulk_stop_nodes")
@@ -2538,7 +2562,11 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(HTTPException) as exc:
-            await devices_control.reconnect_device(device_id, db=reconnect_db)  # type: ignore[arg-type]
+            await devices_control.reconnect_device(
+                device_id,
+                db=reconnect_db,
+                settings_services=_mock_settings_svc(FakeSettingsReader({})),
+            )  # type: ignore[arg-type]
     assert exc.value.status_code == 400
 
     with (

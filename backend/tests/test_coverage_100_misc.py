@@ -253,8 +253,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     ]
     assert host_versioning.normalize_agent_version_setting(123) is None
 
-    monkeypatch.setattr(node_service_common._default_settings, "get", lambda _key: [])
-    assert node_service_common.get_default_plugins() == []
+    assert node_service_common.get_default_plugins(settings=FakeSettingsReader({"appium.default_plugins": []})) == []
     device_for_caps = SimpleNamespace(
         id=uuid.uuid4(),
         name="device",
@@ -473,12 +472,27 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     await agent_reconfigure_delivery.deliver_agent_reconfigures(reconfigure_db, row.device_id)
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
-    monkeypatch.setattr(
-        data_cleanup._default_settings, "get", lambda key: 0 if key == "retention.audit_log_days" else 1
-    )
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
-    await data_cleanup._cleanup_old_data(cleanup_db, publisher=AsyncMock(), settings=FakeSettingsReader({}))
+    await data_cleanup._cleanup_old_data(
+        cleanup_db,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader(
+            {
+                "retention.audit_log_days": 0,
+                "retention.event_log_days": 1,
+                "retention.webhook_delivery_days": 1,
+                "retention.system_event_days": 1,
+                "retention.background_loop_heartbeat_days": 1,
+                "retention.automation_artifact_days": 1,
+                "retention.host_resource_telemetry_hours": 1,
+                "retention.hardware_telemetry_days": 1,
+                "retention.diagnostic_snapshots_days": 1,
+                "retention.agent_log_days": 1,
+                "retention.test_data_audit_days": 1,
+            }
+        ),
+    )
 
     assert session_viability._format_http_error(
         session_viability.httpx.RequestError(

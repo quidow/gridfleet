@@ -35,10 +35,6 @@ async def test_host_offline_cascade_queues_all_events(
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat._ping_agent", AsyncMock(return_value=_DEAD_RESULT))
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: 1 if key == "general.max_missed_heartbeats" else 60,
-    )
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.assert_current_leader", AsyncMock())
     # Inject publisher=event_bus into _apply_host_ping_result and set_operational_state.
     from app.appium_nodes.services import heartbeat as heartbeat_mod
@@ -68,7 +64,15 @@ async def test_host_offline_cascade_queues_all_events(
     # asserting. Reset to None so the guard treats this call as the first cycle.
     monkeypatch.setattr("app.appium_nodes.services.heartbeat._LAST_CYCLE_MONOTONIC", None)
 
-    await _check_hosts(db_session, settings=FakeSettingsReader({}))
+    await _check_hosts(
+        db_session,
+        settings=FakeSettingsReader(
+            {
+                "general.max_missed_heartbeats": 1,
+                "general.heartbeat_interval_sec": 60,
+            }
+        ),
+    )
     await settle_after_commit_tasks()
 
     types_in_order = [n for n, _ in event_bus_capture]

@@ -25,18 +25,12 @@ _VALID_HEALTH_PAYLOAD: dict[str, object] = {
 
 
 @pytest.mark.asyncio
-async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_setting(key: str) -> object:
-        if key == "agent.http_pool_enabled":
-            return True
-        raise KeyError(key)
-
-    monkeypatch.setattr("app.settings.service.settings_service.get", fake_setting)
+async def test_ping_success_returns_payload_and_pooled_mode() -> None:
     with patch(
         "app.appium_nodes.services.heartbeat.agent_health",
         new=AsyncMock(return_value={"status": "ok", "version": "1.2.3"}),
     ):
-        result = await _ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
+        result = await _ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({"agent.http_pool_enabled": True}))
     assert result.outcome is HeartbeatOutcome.success
     assert result.payload == {"status": "ok", "version": "1.2.3"}
     assert result.alive is True
@@ -45,20 +39,14 @@ async def test_ping_success_returns_payload_and_pooled_mode(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_ping_success_reports_fresh_mode_when_pool_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_setting(key: str) -> object:
-        if key == "agent.http_pool_enabled":
-            return False
-        raise KeyError(key)
-
-    monkeypatch.setattr("app.agent_comm.operations._default_settings.get", fake_setting)
+async def test_ping_success_reports_fresh_mode_when_pool_disabled() -> None:
     response = httpx.Response(
         200,
         json=_VALID_HEALTH_PAYLOAD,
         request=httpx.Request("GET", "http://1.2.3.4:5100/agent/health"),
     )
     with patch("app.agent_comm.operations.agent_request", new=AsyncMock(return_value=response)):
-        result = await _ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
+        result = await _ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({"agent.http_pool_enabled": False}))
 
     assert result.outcome is HeartbeatOutcome.success
     assert result.client_mode is ClientMode.fresh

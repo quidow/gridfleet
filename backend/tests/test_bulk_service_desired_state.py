@@ -171,7 +171,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, settings: FakeSettingsReader) -> AppiumNode:
         captured.append(caller)
         with state_write_guard.bypass():
             _bypass_tmp = AppiumNode(
@@ -203,7 +203,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, caller: str) -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, settings: FakeSettingsReader) -> AppiumNode:
         captured.append(caller)
         with state_write_guard.bypass():
             _bypass_tmp = AppiumNode(

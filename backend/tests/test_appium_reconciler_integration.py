@@ -14,6 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.settings import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_reconciler_cycle
 
 if TYPE_CHECKING:
@@ -318,7 +319,7 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
 
     from app.appium_nodes.services import reconciler as appium_reconciler
 
-    monkeypatch.setitem(settings_service._cache, "appium_reconciler.start_failure_threshold", 1)
+    settings = FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1})
     failing_start = AsyncMock(side_effect=RuntimeError("agent start failed"))
     with (
         patch.object(
@@ -328,7 +329,7 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
         patch.object(appium_reconciler, "_start_for_node", new=failing_start),
         patch.object(appium_reconciler, "stop_remote_node", new=AsyncMock()),
     ):
-        await run_one_reconciler_cycle()
+        await run_one_reconciler_cycle(settings=settings)
 
     await db_session.refresh(device)
     failed_state = lifecycle_policy_state(device)
