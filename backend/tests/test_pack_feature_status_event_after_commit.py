@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.events import event_bus
 from app.packs.services.feature_status import record_feature_status
 from tests.helpers import settle_after_commit_tasks
 
@@ -25,6 +26,7 @@ async def test_pack_feature_degraded_queues_after_commit(
         feature_id="adb",
         ok=False,
         detail="missing",
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == []
@@ -49,6 +51,7 @@ async def test_pack_feature_event_dropped_on_rollback(
         feature_id="adb",
         ok=False,
         detail="missing",
+        publisher=event_bus,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

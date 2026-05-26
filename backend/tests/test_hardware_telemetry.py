@@ -77,11 +77,11 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
         "support_status": "supported",
         "reported_at": "2026-04-16T10:05:00Z",
     }
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample)
+    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample)
+    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 

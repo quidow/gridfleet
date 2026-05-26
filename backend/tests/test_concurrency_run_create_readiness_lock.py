@@ -43,7 +43,7 @@ async def test_create_run_rechecks_readiness_after_lock(
 
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", gated_readiness)
 
-    async def create_run(publisher=event_bus) -> None:
+    async def create_run(publisher: object = event_bus) -> None:
         async with db_session_maker() as session:
             with pytest.raises(ValueError, match="Not enough devices"):
                 await run_service.create_run(
@@ -52,6 +52,7 @@ async def test_create_run_rechecks_readiness_after_lock(
                         name="readiness-race-run",
                         requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
                     ),
+                    publisher=publisher,
                 )
 
     async def clear_verification_after_readiness() -> None:

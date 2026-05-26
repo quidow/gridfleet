@@ -504,6 +504,17 @@ async def test_recovery_rejoin_publishes_availability_event(
 
     monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
 
+    from app.devices.services import state as state_mod
+    from app.events import event_bus
+
+    _orig_set_hold = state_mod.set_hold
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_policy.set_hold", _wrapped_set_hold)
+
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",

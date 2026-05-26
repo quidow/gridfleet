@@ -225,9 +225,7 @@ class SettingsService:
             stale_threshold_sec=int(candidate["general.leader_stale_threshold_sec"]),
         )
 
-    async def update(
-        self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventBus
-    ) -> dict[str, Any]:
+    async def update(self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventBus) -> dict[str, Any]:
         """Update a single setting. Validates, persists, updates cache, publishes SSE."""
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")

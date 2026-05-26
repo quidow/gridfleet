@@ -86,6 +86,7 @@ async def test_handle_node_crash_queues_device_crashed(
         locked,
         source="connectivity_lost",
         reason="ADB disconnect",
+        publisher=event_bus,
     )
     await db_session.commit()
     await settle_after_commit_tasks()

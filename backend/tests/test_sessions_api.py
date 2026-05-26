@@ -8,9 +8,44 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.devices.services import state_write_guard
+from app.devices.services.state import set_hold, set_operational_state
 from app.events import event_bus
+from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
+
+
+@pytest.fixture(autouse=True)
+def _inject_publisher_into_session_and_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject publisher=event_bus into session event helpers and state machine writers."""
+    _orig_started = session_module.queue_session_started_event
+    _orig_ended = session_module.queue_session_ended_event
+
+    def _wrapped_started(*args: object, **kwargs: object) -> None:
+        kwargs.setdefault("publisher", event_bus)
+        _orig_started(*args, **kwargs)  # type: ignore[arg-type]
+
+    def _wrapped_ended(*args: object, **kwargs: object) -> None:
+        kwargs.setdefault("publisher", event_bus)
+        _orig_ended(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(session_module, "queue_session_started_event", _wrapped_started)
+    monkeypatch.setattr(session_module, "queue_session_ended_event", _wrapped_ended)
+
+    _orig_set_op = set_operational_state
+    _orig_set_hold = set_hold
+
+    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
+
 
 DEVICE_PAYLOAD = {
     "identity_value": "sess-test-device",

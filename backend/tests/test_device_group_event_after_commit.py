@@ -22,6 +22,7 @@ async def test_create_group_queues_updated(
     group = await device_group_service.create_group(
         db_session,
         DeviceGroupCreate(name="contract", description=None),
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -38,6 +39,7 @@ async def test_update_group_queues_updated(
     group = await device_group_service.create_group(
         db_session,
         DeviceGroupCreate(name="update-me", description=None),
+        publisher=event_bus,
     )
     event_bus_capture.clear()
 
@@ -45,6 +47,7 @@ async def test_update_group_queues_updated(
         db_session,
         group.id,
         DeviceGroupUpdate(name="updated-name"),
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -60,6 +63,7 @@ async def test_delete_group_queues_updated_deleted(
     group = await device_group_service.create_group(
         db_session,
         DeviceGroupCreate(name="to-delete", description=None),
+        publisher=event_bus,
     )
     event_bus_capture.clear()
 
@@ -74,7 +78,9 @@ async def test_add_members_queues_members_changed(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    group = await device_group_service.create_group(db_session, DeviceGroupCreate(name="add-members"))
+    group = await device_group_service.create_group(
+        db_session, DeviceGroupCreate(name="add-members"), publisher=event_bus
+    )
     _, device = await seed_host_and_device(db_session, identity="group-add-1")
     event_bus_capture.clear()
 
@@ -90,7 +96,9 @@ async def test_remove_members_queues_members_changed(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    group = await device_group_service.create_group(db_session, DeviceGroupCreate(name="remove-members"))
+    group = await device_group_service.create_group(
+        db_session, DeviceGroupCreate(name="remove-members"), publisher=event_bus
+    )
     _, device = await seed_host_and_device(db_session, identity="group-remove-1")
     await device_group_service.add_members(db_session, group.id, [device.id], publisher=event_bus)
     event_bus_capture.clear()

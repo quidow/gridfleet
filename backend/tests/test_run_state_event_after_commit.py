@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks

@@ -174,6 +174,7 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
                 "support_status": "supported",
                 "reported_at": "2026-05-01T12:00:00Z",
             },
+            publisher=Mock(),
         )
 
     assert status == HardwareHealthStatus.warning

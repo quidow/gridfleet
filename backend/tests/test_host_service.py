@@ -96,6 +96,7 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
             agent_version="2.0.0",
             capabilities={**CAPS_V2, "missing_prerequisites": ["adb", 5]},
         ),
+        publisher=event_bus,
     )
 
     assert is_new is False
@@ -122,6 +123,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             agent_port=None,
             capabilities=CAPS_V2,
         ),
+        publisher=event_bus,
     )
 
     assert is_new is True
@@ -141,6 +143,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             agent_port=None,
             capabilities=CAPS_V2,
         ),
+        publisher=event_bus,
     )
     assert online_host.status == HostStatus.online
 
@@ -210,6 +213,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             agent_port=5200,
             capabilities=CAPS_V2,
         ),
+        publisher=event_bus,
     )
 
     assert is_new is False
@@ -234,4 +238,5 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
                     agent_port=5100,
                     capabilities=capabilities,
                 ),
+                publisher=event_bus,
             )

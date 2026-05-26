@@ -25,6 +25,7 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     group = await device_group_service.create_group(
         db_session,
         DeviceGroupCreate(name="static phones", description="operator set", group_type="static"),
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -51,6 +52,7 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
         db_session,
         group.id,
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
+        publisher=event_bus,
     )
     assert updated is not None
     assert updated.name == "static phones updated"
@@ -59,7 +61,12 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is True
     assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is False
     assert await device_group_service.get_group(db_session, group.id) is None
-    assert await device_group_service.update_group(db_session, group.id, DeviceGroupUpdate(name="missing")) is None
+    assert (
+        await device_group_service.update_group(
+            db_session, group.id, DeviceGroupUpdate(name="missing"), publisher=event_bus
+        )
+        is None
+    )
 
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
@@ -68,6 +75,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     group = await device_group_service.create_group(
         db_session,
         DeviceGroupCreate(name="dynamic smoke", group_type="dynamic", filters=filters),
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -99,6 +107,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         db_session,
         group.id,
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
+        publisher=event_bus,
     )
     assert updated is not None
     assert updated.filters == {"platform_id": "ios"}

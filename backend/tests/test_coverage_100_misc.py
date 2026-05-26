@@ -111,7 +111,7 @@ from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
 
-event_bus = import_module("app.events.event_bus")
+event_bus_mod = import_module("app.events.event_bus")
 
 
 def test_config_and_error_guard_branches() -> None:
@@ -386,25 +386,27 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     with pytest.raises(SystemExit):
         await control_plane_leader_watcher._exit_after_preempt()
 
-    monkeypatch.setattr(event_bus.event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
-    monkeypatch.setattr(event_bus.logger, "exception", Mock())
-    await event_bus._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)], event_bus.event_bus)
-    event_bus.logger.exception.assert_called_once()
+    monkeypatch.setattr(event_bus_mod.event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
+    monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
+    await event_bus_mod._publish_pending_events(
+        [("device.hold_changed", {"device_id": "d"}, None)], event_bus_mod.event_bus
+    )
+    event_bus_mod.logger.exception.assert_called_once()
 
     listeners: dict[str, object] = {}
 
     def capture_listener(_target: object, identifier: str, fn: object, **_kwargs: object) -> None:
         listeners[identifier] = fn
 
-    monkeypatch.setattr(event_bus.sa_event, "listen", capture_listener)
+    monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
     sync_session = SimpleNamespace(info={})
-    event_bus.queue_event_for_session(
-        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus.event_bus
+    event_bus_mod.queue_event_for_session(
+        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus_mod.event_bus
     )
-    event_bus.queue_event_for_session(
-        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus.event_bus
+    event_bus_mod.queue_event_for_session(
+        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus_mod.event_bus
     )
-    listener = sync_session.info[event_bus._PENDING_EVENTS_LISTENER_KEY]
+    listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
     event_bus.event_bus._handler_tasks.clear()
     sync_session.info[event_bus._PENDING_EVENTS_KEY] = []
@@ -679,7 +681,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
-    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4(publisher=event_bus)) is False
+    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4(), publisher=event_bus) is False
 
     assert device_write._is_transport_identity(identity_value="10.0.0.1:5555", connection_target=None, ip_address=None)
     assert device_write._is_transport_identity(identity_value="10.0.0.1", connection_target=None, ip_address=None)

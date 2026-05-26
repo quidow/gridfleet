@@ -9,12 +9,32 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
+from app.devices.services.state import set_hold, set_operational_state
+from app.events import event_bus
 from app.hosts.models import Host
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+@pytest.fixture
+def inject_publisher_into_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject publisher=event_bus into state machine set_operational_state/set_hold."""
+    _orig_set_op = set_operational_state
+    _orig_set_hold = set_hold
+
+    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 async def test_update_session_status_restores_busy_device_when_last_session_finishes(
@@ -395,6 +415,7 @@ async def test_register_session_running_returns_existing_on_conflict(
     assert len(rows) == 1
 
 
+@pytest.mark.usefixtures("inject_publisher_into_state_machine")
 async def test_update_session_status_does_not_flap_offline_on_session_end(
     db_session: AsyncSession,
     default_host_id: str,
@@ -461,6 +482,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     assert device.operational_state == DeviceOperationalState.available
 
 
+@pytest.mark.usefixtures("inject_publisher_into_state_machine")
 async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     db_session: AsyncSession,
     default_host_id: str,

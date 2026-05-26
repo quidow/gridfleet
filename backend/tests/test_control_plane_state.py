@@ -110,11 +110,13 @@ async def test_set_operational_state_publishes_only_on_change(db_session: AsyncS
     db_session.add(device)
     await db_session.commit()
 
-    changed = await set_operational_state(device, DeviceOperationalState.available)
+    changed = await set_operational_state(device, DeviceOperationalState.available, publisher=event_bus)
     assert changed is False
     assert recent_events(event_bus) == []
 
-    changed = await set_operational_state(device, DeviceOperationalState.busy, reason="Probe started")
+    changed = await set_operational_state(
+        device, DeviceOperationalState.busy, reason="Probe started", publisher=event_bus
+    )
     assert changed is True
     await db_session.commit()
     await drain_handlers(event_bus)

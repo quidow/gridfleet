@@ -43,6 +43,7 @@ async def test_first_record_with_ok_true_does_not_emit(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -62,6 +63,7 @@ async def test_first_record_with_ok_false_emits_degraded(db_session: AsyncSessio
         feature_id=FEATURE_ID,
         ok=False,
         detail="adb offline",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -88,6 +90,7 @@ async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -100,6 +103,7 @@ async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=False,
         detail="probe failed",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -120,6 +124,7 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
         feature_id=FEATURE_ID,
         ok=False,
         detail="boom",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -132,6 +137,7 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
         feature_id=FEATURE_ID,
         ok=True,
         detail="ok now",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -160,6 +166,7 @@ async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host
         feature_id=FEATURE_ID,
         ok=False,
         detail="first",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -173,6 +180,7 @@ async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host
         feature_id=FEATURE_ID,
         ok=False,
         detail="still busted",
+        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -192,6 +200,7 @@ async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncS
         feature_id=FEATURE_ID,
         ok=True,
         detail="initial",
+        publisher=event_bus,
     )
     await db_session.commit()
     first_row = (
@@ -215,6 +224,7 @@ async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncS
         feature_id=FEATURE_ID,
         ok=False,
         detail="something broke",
+        publisher=event_bus,
     )
     await db_session.commit()
     await db_session.refresh(first_row)

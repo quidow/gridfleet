@@ -224,7 +224,7 @@ async def test_run_listing_cursor_and_state_transition_branches(db_session: Asyn
     assert empty_page.items == []
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.signal_ready(db_session, uuid.uuid4(publisher=event_bus))
+        await run_service.signal_ready(db_session, uuid.uuid4(), publisher=event_bus)
     with pytest.raises(ValueError, match="Cannot signal ready"):
         await run_service.signal_ready(db_session, active.id, publisher=event_bus)
 
@@ -273,7 +273,7 @@ async def test_run_terminal_transition_paths(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.complete_run(db_session, uuid.uuid4(publisher=event_bus))
+        await run_service.complete_run(db_session, uuid.uuid4(), publisher=event_bus)
     with pytest.raises(ValueError, match="terminal state"):
         await run_service.complete_run(db_session, terminal.id, publisher=event_bus)
     completed = await run_service.complete_run(db_session, active.id, publisher=event_bus)
@@ -281,12 +281,12 @@ async def test_run_terminal_transition_paths(
     assert completed.completed_at is not None
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cancel_run(db_session, uuid.uuid4(publisher=event_bus))
+        await run_service.cancel_run(db_session, uuid.uuid4(), publisher=event_bus)
     cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus)
     assert cancelled.state == RunState.cancelled
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db_session, uuid.uuid4(publisher=event_bus))
+        await run_service.force_release(db_session, uuid.uuid4(), publisher=event_bus)
     forced = await run_service.force_release(db_session, force.id, publisher=event_bus)
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
