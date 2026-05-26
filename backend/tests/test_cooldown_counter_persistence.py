@@ -113,7 +113,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
             intent.expires_at = past
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
     await db_session.commit()
 
     await db_session.refresh(reservation)
@@ -243,7 +243,7 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
     reservation.cooldown_count = 2
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader())
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False

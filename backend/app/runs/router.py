@@ -290,9 +290,11 @@ async def heartbeat(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
 
 
 @router.post("/{run_id}/complete", response_model=RunRead)
-async def complete_run(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> RunRead:
+async def complete_run(
+    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> RunRead:
     try:
-        run = await run_service.complete_run(db, run_id, publisher=events.publisher)
+        run = await run_service.complete_run(db, run_id, publisher=events.publisher, settings=settings_services.reader)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -300,9 +302,11 @@ async def complete_run(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)
-async def cancel_run(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> RunRead:
+async def cancel_run(
+    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> RunRead:
     try:
-        run = await run_service.cancel_run(db, run_id, publisher=events.publisher)
+        run = await run_service.cancel_run(db, run_id, publisher=events.publisher, settings=settings_services.reader)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -310,9 +314,11 @@ async def cancel_run(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> 
 
 
 @router.post("/{run_id}/force-release", response_model=RunRead)
-async def force_release(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> RunRead:
+async def force_release(
+    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> RunRead:
     try:
-        run = await run_service.force_release(db, run_id, publisher=events.publisher)
+        run = await run_service.force_release(db, run_id, publisher=events.publisher, settings=settings_services.reader)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])

@@ -9,6 +9,7 @@ import pytest
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.core.errors import AgentUnreachableError, CircuitOpenError
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -102,6 +103,7 @@ _VALID_HEALTH_PAYLOAD: dict[str, object] = {
     "appium_processes": {},
     "capabilities": {},
 }
+SETTINGS = FakeSettingsReader()
 
 
 async def test_agent_health_get_request_omits_json_body() -> None:
@@ -114,6 +116,7 @@ async def test_agent_health_get_request_omits_json_body() -> None:
         5100,
         http_client_factory=_strict_client_factory(client),
         timeout=5,
+        settings=SETTINGS,
     )
 
     assert payload is not None
@@ -139,6 +142,7 @@ async def test_agent_health_raises_response_error_on_http_500() -> None:
             5100,
             http_client_factory=_strict_client_factory(client),
             timeout=5,
+            settings=SETTINGS,
         )
 
     assert caught.value.http_status == 503
@@ -174,6 +178,7 @@ async def test_agent_appium_reconfigure_posts_payload() -> None:
         grid_run_id=grid_run_id,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
+        settings=SETTINGS,
     )
 
     assert payload["grid_run_id"] == str(grid_run_id)
@@ -211,6 +216,7 @@ async def test_pack_device_health_get_request() -> None:
         platform_id="android_mobile",
         http_client_factory=_strict_client_factory(client),
         timeout=10,
+        settings=SETTINGS,
     )
 
     assert payload["healthy"] is True
@@ -250,6 +256,7 @@ async def test_pack_device_health_forwards_ip_ping_params() -> None:
         ip_ping_count=2,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
+        settings=SETTINGS,
     )
 
     assert payload["healthy"] is True
@@ -291,6 +298,7 @@ async def test_pack_device_health_forwards_headless_when_explicitly_requested() 
         headless=False,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
+        settings=SETTINGS,
     )
 
     assert payload["healthy"] is True
@@ -328,6 +336,7 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
         lines=200,
         http_client_factory=_strict_client_factory(client),
         timeout=10,
+        settings=SETTINGS,
     )
 
     assert payload["lines"] == ["one", "two"]
@@ -353,6 +362,7 @@ async def test_appium_start_post_request_keeps_json_body() -> None:
         payload={"platform_id": "android_mobile"},
         http_client_factory=_strict_client_factory(client),
         timeout=15,
+        settings=SETTINGS,
     )
 
     assert response.status_code == 200
@@ -384,6 +394,7 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         5100,
         http_client_factory=_strict_client_factory(client),
         timeout=15,
+        settings=SETTINGS,
     )
 
     assert payload["host"]["node_provider"]["version"] == "fnm"
@@ -415,6 +426,7 @@ async def test_pack_device_telemetry_returns_none_for_404() -> None:
         connection_type=None,
         ip_address=None,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
     )
 
     assert payload is None
@@ -443,6 +455,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                     5100,
                     http_client_factory=_strict_client_factory(client),
                     timeout=5,
+                    settings=SETTINGS,
                 )
 
         assert len(client.get_calls) == threshold
@@ -453,6 +466,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                 5100,
                 http_client_factory=_strict_client_factory(client),
                 timeout=5,
+                settings=SETTINGS,
             )
 
     assert len(client.get_calls) == threshold
@@ -475,6 +489,7 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
             "10.0.0.1",
             5100,
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
         )
 
     assert exc_info.value.http_status == 500
@@ -559,6 +574,7 @@ async def test_send_request_supplies_basic_auth_when_configured(
         "host.test",
         agent_port=5100,
         http_client_factory=factory,
+        settings=SETTINGS,
     )
     assert captured == [expected_auth]
 
@@ -567,5 +583,5 @@ async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     captured: list[httpx.Auth | None] = []
     factory = _make_capturing_factory(captured)
-    await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory)
+    await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory, settings=SETTINGS)
     assert captured == [None]

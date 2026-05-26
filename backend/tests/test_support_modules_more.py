@@ -107,7 +107,8 @@ async def test_check_readiness_short_circuits_when_shutting_down(monkeypatch: Mo
     monkeypatch.setattr(health.shutdown_coordinator, "is_shutting_down", lambda: True)
     monkeypatch.setattr(health.shutdown_coordinator, "active_requests", lambda: 2)
 
-    payload, status = await health.check_readiness(AsyncMock())
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(AsyncMock(), settings=settings)
 
     assert status == 503
     assert payload["checks"]["shutdown"]["shutting_down"] is True
@@ -126,7 +127,8 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
         lambda snapshot, now, extra_grace_seconds=0.0: False,
     )
 
-    payload, status = await health.check_readiness(db)
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(db, settings=settings)
 
     assert status == 503
     assert payload["checks"]["control_plane_leader"] is False

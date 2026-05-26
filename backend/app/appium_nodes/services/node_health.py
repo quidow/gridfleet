@@ -57,9 +57,11 @@ async def _bounded_check_node_health(
     semaphore: asyncio.Semaphore,
     node: AppiumNode,
     device: Device,
+    *,
+    settings: SettingsReader,
 ) -> ProbeResult:
     async with semaphore:
-        return await _check_node_health(node, device)
+        return await _check_node_health(node, device, settings=settings)
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,7 @@ class NodeHealthCheckRequest:
     observed_active_connection_target: str | None
 
 
-async def _check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
+async def _check_node_health(node: AppiumNode, device: Device, *, settings: SettingsReader) -> ProbeResult:
     try:
         host = require_management_host(device, action="monitor Appium node health")
     except NodeManagerError:
@@ -83,6 +85,7 @@ async def _check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
             host.agent_port,
             node.port,
             http_client_factory=httpx.AsyncClient,
+            settings=settings,
         )
         return from_status_response(payload)
     except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
@@ -322,11 +325,12 @@ async def _check_nodes(db: AsyncSession, *, settings: SettingsReader) -> None:
                 host_semaphores[request.device.host_id],
                 request.node,
                 request.device,
+                settings=settings,
             )
             for request in requests
         ]
     )
-    grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status())
+    grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status(settings=settings))
 
     # Fence: probes (asyncio.gather above) and Grid /status are slow external
     # calls. If another backend took leadership while we awaited them, drop

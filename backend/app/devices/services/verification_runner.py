@@ -55,6 +55,7 @@ async def run_persisted_verification_job(
                     db,
                     DeviceVerificationCreate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings_service,
                 )
             else:
                 context, validation_error = await validate_update_request(
@@ -63,6 +64,7 @@ async def run_persisted_verification_job(
                     uuid.UUID(str(request["device_id"])),
                     DeviceVerificationUpdate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings_service,
                 )
 
             if validation_error is not None or context is None:

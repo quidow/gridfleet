@@ -922,22 +922,32 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
     host = SimpleNamespace(ip="10.0.0.5", agent_port=5100)
     device = SimpleNamespace(host=host)
     node = SimpleNamespace(port=4723)
+    settings = FakeSettingsReader()
 
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(side_effect=NodeManagerError("missing host")))
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is False
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is False
+    )
 
     response = MagicMock()
     response.raise_for_status.return_value = None
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(return_value=host))
     monkeypatch.setattr(node_agent, "appium_stop", AsyncMock(return_value=response))
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is True
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is True
+    )
 
     response.raise_for_status.side_effect = httpx.HTTPStatusError(
         "bad",
         request=httpx.Request("POST", "http://agent"),
         response=httpx.Response(500, request=httpx.Request("POST", "http://agent")),
     )
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is False
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is False
+    )
 
 
 async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:

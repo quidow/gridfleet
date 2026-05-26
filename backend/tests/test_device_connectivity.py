@@ -90,7 +90,7 @@ async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_ag
         "app.devices.services.connectivity.get_pack_devices",
         AsyncMock(return_value={"candidates": "not-a-list"}),
     )
-    assert await _get_agent_devices(host) == set()
+    assert await _get_agent_devices(host, settings=FakeSettingsReader()) == set()
 
     monkeypatch.setattr(
         "app.devices.services.connectivity.get_pack_devices",
@@ -107,7 +107,7 @@ async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_ag
             }
         ),
     )
-    aliases = await _get_agent_devices(host)
+    aliases = await _get_agent_devices(host, settings=FakeSettingsReader())
     assert aliases is not None
     assert {"serial-1", "serial-2", "10.0.0.5:5555"} <= aliases
 
@@ -115,7 +115,7 @@ async def test_get_agent_devices_handles_malformed_candidates_and_unreachable_ag
         "app.devices.services.connectivity.get_pack_devices",
         AsyncMock(side_effect=AgentCallError("10.0.0.10", "down")),
     )
-    assert await _get_agent_devices(host) is None
+    assert await _get_agent_devices(host, settings=FakeSettingsReader()) is None
 
 
 async def test_connected_device_stays_available(db_session: AsyncSession) -> None:
@@ -410,7 +410,7 @@ async def test_agent_device_aliases_include_running_avd_name(db_session: AsyncSe
             ],
         },
     ):
-        connected = await _get_agent_devices(host)
+        connected = await _get_agent_devices(host, settings=FakeSettingsReader())
 
     assert connected == {"emulator-5554", "Pixel_6_API_35", "avd:Pixel_6_API_35"}
 
@@ -427,7 +427,7 @@ async def test_lifecycle_state_uses_pack_lifecycle_action(
         new_callable=AsyncMock,
         return_value={"state": "running"},
     ) as mock_lifecycle:
-        state = await _get_lifecycle_state(db_session, device)
+        state = await _get_lifecycle_state(db_session, device, settings=FakeSettingsReader())
 
     assert state == "running"
     mock_lifecycle.assert_awaited_once()
@@ -620,7 +620,8 @@ async def test_connectivity_marks_busy_device_offline(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host) -> set[str]:
+    async def fake_get_agent_devices(_host: Host, *, settings: object) -> set[str]:
+        del settings
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -648,7 +649,8 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host) -> set[str]:
+    async def fake_get_agent_devices(_host: Host, *, settings: object) -> set[str]:
+        del settings
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -705,7 +707,8 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host) -> set[str]:
+    async def fake_get_agent_devices(_host: Host, *, settings: object) -> set[str]:
+        del settings
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -769,7 +772,8 @@ def _stub_get_health_sequence(monkeypatch: pytest.MonkeyPatch, payloads: list[ob
 
 
 def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> None:
-    async def _f(host: object) -> set[str]:
+    async def _f(host: object, *, settings: object) -> set[str]:
+        del settings
         return aliases
 
     monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", _f)

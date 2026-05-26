@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     import pytest
 
 from app.grid import service as grid_service
+from tests.fakes.settings import FakeSettingsReader
 
 
 class DummyClient:
@@ -33,22 +34,22 @@ class DummyClient:
 
 async def test_get_grid_status_success(monkeypatch: pytest.MonkeyPatch) -> None:
     response = httpx.Response(200, request=httpx.Request("GET", "http://grid/status"), json={"ready": True})
-    monkeypatch.setattr("app.grid.service._default_settings.get", lambda key: "http://grid")
+    settings = FakeSettingsReader({"grid.hub_url": "http://grid"})
     dummy = DummyClient(response=response)
     monkeypatch.setattr("app.grid.service._get_client", lambda: dummy)
 
-    result = await grid_service.get_grid_status()
+    result = await grid_service.get_grid_status(settings=settings)
 
     assert result == {"ready": True}
 
 
 async def test_get_grid_status_returns_error_payload_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     request = httpx.Request("GET", "http://grid/status")
-    monkeypatch.setattr("app.grid.service._default_settings.get", lambda key: "http://grid")
+    settings = FakeSettingsReader({"grid.hub_url": "http://grid"})
     dummy = DummyClient(error=httpx.ConnectError("boom", request=request))
     monkeypatch.setattr("app.grid.service._get_client", lambda: dummy)
 
-    result = await grid_service.get_grid_status()
+    result = await grid_service.get_grid_status(settings=settings)
 
     assert result == {"ready": False, "error": "grid_unreachable"}
 
@@ -56,26 +57,26 @@ async def test_get_grid_status_returns_error_payload_on_http_error(monkeypatch: 
 async def test_terminate_grid_session_success(monkeypatch: pytest.MonkeyPatch) -> None:
     response = httpx.Response(200, request=httpx.Request("DELETE", "http://grid/session/sid-1"), json={"value": None})
     dummy = DummyClient(response=response)
-    monkeypatch.setattr("app.grid.service._default_settings.get", lambda key: "http://grid")
+    settings = FakeSettingsReader({"grid.hub_url": "http://grid"})
     monkeypatch.setattr("app.grid.service._get_client", lambda: dummy)
 
-    assert await grid_service.terminate_grid_session("sid-1") is True
+    assert await grid_service.terminate_grid_session("sid-1", settings=settings) is True
     dummy.delete.assert_awaited_once_with("http://grid/session/sid-1", timeout=10)
 
 
 async def test_terminate_grid_session_treats_404_as_already_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     response = httpx.Response(404, request=httpx.Request("DELETE", "http://grid/session/sid-missing"))
-    monkeypatch.setattr("app.grid.service._default_settings.get", lambda key: "http://grid")
+    settings = FakeSettingsReader({"grid.hub_url": "http://grid"})
     dummy = DummyClient(response=response)
     monkeypatch.setattr("app.grid.service._get_client", lambda: dummy)
 
-    assert await grid_service.terminate_grid_session("sid-missing") is True
+    assert await grid_service.terminate_grid_session("sid-missing", settings=settings) is True
 
 
 async def test_terminate_grid_session_returns_false_on_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
     request = httpx.Request("DELETE", "http://grid/session/sid-err")
-    monkeypatch.setattr("app.grid.service._default_settings.get", lambda key: "http://grid")
+    settings = FakeSettingsReader({"grid.hub_url": "http://grid"})
     dummy = DummyClient(error=httpx.ConnectError("down", request=request))
     monkeypatch.setattr("app.grid.service._get_client", lambda: dummy)
 
-    assert await grid_service.terminate_grid_session("sid-err") is False
+    assert await grid_service.terminate_grid_session("sid-err", settings=settings) is False

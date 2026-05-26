@@ -145,7 +145,7 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
     await db_session.commit()
 
     remaining = (

@@ -279,6 +279,7 @@ async def cooldown_device(
             device.id,
             agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
             raise_on_failure=True,
+            settings=settings,
         )
         return excluded_until, cooldown_count_after, False, threshold
 
@@ -321,5 +322,6 @@ async def cooldown_device(
         device.id,
         agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
         raise_on_failure=True,
+        settings=settings,
     )
     return None, cooldown_count_after, True, threshold

@@ -264,19 +264,24 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
 
 
 async def test_get_device_telemetry_handles_missing_host_and_agent_errors() -> None:
-    assert await hardware_telemetry._get_device_telemetry(_telemetry_device(host=None)) is None
+    assert (
+        await hardware_telemetry._get_device_telemetry(_telemetry_device(host=None), settings=FakeSettingsReader({}))
+        is None
+    )
     host = SimpleNamespace(ip="10.0.0.1", agent_port=5100)
     device = _telemetry_device(host=host)
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.1", "failed")),
     ):
-        assert await hardware_telemetry._get_device_telemetry(device) is None
+        assert await hardware_telemetry._get_device_telemetry(device, settings=FakeSettingsReader({})) is None
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(return_value={"battery_level_percent": 80}),
     ) as fetch:
-        assert await hardware_telemetry._get_device_telemetry(device) == {"battery_level_percent": 80}
+        assert await hardware_telemetry._get_device_telemetry(device, settings=FakeSettingsReader({})) == {
+            "battery_level_percent": 80
+        }
     fetch.assert_awaited_once()
 
 
@@ -368,7 +373,7 @@ async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors(
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(side_effect=[None, AgentCallError("10.0.0.1", "failed"), RuntimeError("boom")]),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(db)
+        await host_resource_telemetry.poll_host_resource_telemetry_once(db, settings=FakeSettingsReader({}))
 
     assert db.rolled_back is True
 
@@ -392,7 +397,7 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(return_value={"cpu_percent": 50}),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(db)
+        await host_resource_telemetry.poll_host_resource_telemetry_once(db, settings=FakeSettingsReader({}))
 
     assert db.committed is True
     assert db.added

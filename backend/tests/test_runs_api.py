@@ -492,7 +492,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
 
     deleted: list[str] = []
 
-    async def fake_terminate(session_id: str) -> bool:
+    async def fake_terminate(session_id: str, **_kwargs: object) -> bool:
         deleted.append(session_id)
         return True
 
@@ -537,7 +537,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     db_session.add(session)
     await db_session.commit()
 
-    async def fake_terminate(_session_id: str) -> bool:
+    async def fake_terminate(_session_id: str, **_kwargs: object) -> bool:
         return False
 
     monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
@@ -654,7 +654,7 @@ async def test_force_release_restores_busy_run_devices(
         device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
-    async def fake_terminate(_session_id: str) -> bool:
+    async def fake_terminate(_session_id: str, **_kwargs: object) -> bool:
         return True
 
     monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)

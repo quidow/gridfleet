@@ -78,13 +78,14 @@ def _device_expected_aliases(device: Device) -> set[str]:
     return aliases
 
 
-async def _get_agent_devices(host: Host) -> set[str] | None:
+async def _get_agent_devices(host: Host, *, settings: SettingsReader) -> set[str] | None:
     """Fetch connected device targets from the host agent. Returns None if unreachable."""
     try:
         pack_result = await get_pack_devices(
             host.ip,
             host.agent_port,
             http_client_factory=httpx.AsyncClient,
+            settings=settings,
         )
         candidates = pack_result.get("candidates", [])
         if not isinstance(candidates, list):
@@ -113,6 +114,7 @@ async def _get_device_health(
     *,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
@@ -131,6 +133,7 @@ async def _get_device_health(
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
             http_client_factory=httpx.AsyncClient,
+            settings=settings,
         )
     except AgentCallError:
         return None
@@ -153,7 +156,7 @@ async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
     )
 
 
-async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
+async def _get_lifecycle_state(db: AsyncSession, device: Device, *, settings: SettingsReader) -> str | None:
     """Poll the agent for the pack-owned lifecycle state."""
     try:
         resolved = await resolve_pack_platform(
@@ -179,6 +182,7 @@ async def _get_lifecycle_state(db: AsyncSession, device: Device) -> str | None:
             platform_id=device.platform_id,
             action="state",
             http_client_factory=httpx.AsyncClient,
+            settings=settings,
         )
     except AgentCallError:
         return None
@@ -275,14 +279,14 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
         device_result = await db.execute(device_stmt)
         devices = device_result.scalars().all()
 
-        connected_targets = await _get_agent_devices(host)
+        connected_targets = await _get_agent_devices(host, settings=settings)
         if connected_targets is None:
             continue  # Agent unreachable — skip (heartbeat handles host status)
 
         await assert_current_leader(db)
 
         for device in devices:
-            lifecycle_state = await _get_lifecycle_state(db, device)
+            lifecycle_state = await _get_lifecycle_state(db, device, settings=settings)
             await assert_current_leader(db)
             if lifecycle_state is not None:
                 await device_health.update_emulator_state(db, device, lifecycle_state)
@@ -293,6 +297,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                     device,
                     ip_ping_timeout_sec=ip_ping_timeout,
                     ip_ping_count=ip_ping_count,
+                    settings=settings,
                 )
                 await assert_current_leader(db)
                 if health_result is not None:
@@ -397,6 +402,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                         device,
                         ip_ping_timeout_sec=ip_ping_timeout,
                         ip_ping_count=ip_ping_count,
+                        settings=settings,
                     )
                     await assert_current_leader(db)
                     if health_result is not None:
@@ -555,9 +561,9 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
     await db.commit()
 
 
-async def _check_expired_cooldowns(db: AsyncSession) -> None:
+async def _check_expired_cooldowns(db: AsyncSession, *, settings: SettingsReader) -> None:
     """Delegate expired cooldown cleanup to the intent reconciler."""
-    await _reconcile_expired_intents(db)
+    await _reconcile_expired_intents(db, settings=settings)
     now = datetime.now(UTC)
     # Transitional cleanup for pre-intent cooldown reservations. Remove once
     # all cooldown writes are guaranteed to flow through DeviceIntent rows.
@@ -597,7 +603,7 @@ async def device_connectivity_loop(*, settings: SettingsReader) -> None:
         interval = float(settings.get("general.device_check_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_expired_cooldowns(db)
+                await _check_expired_cooldowns(db, settings=settings)
                 await _check_connectivity(db, settings=settings)
         except LeadershipLost as exc:
             logger.error(

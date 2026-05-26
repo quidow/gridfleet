@@ -482,8 +482,9 @@ async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -
         rows = await appium_reconciler._fetch_node_rows(db)
         desired = await appium_reconciler._fetch_desired_rows(db)
         backoff = await appium_reconciler._fetch_backoff_until(db)
-    health_by_host = await appium_reconciler._reconcile_all(hosts, rows)
+    resolved_settings = settings or FakeSettingsReader({})
+    health_by_host = await appium_reconciler._reconcile_all(hosts, rows, settings=resolved_settings)
     if appium_reconciler.reconciler_convergence_enabled():
         await appium_reconciler._drive_convergence(
-            hosts, desired, backoff, health_by_host=health_by_host, settings=settings or FakeSettingsReader({})
+            hosts, desired, backoff, health_by_host=health_by_host, settings=resolved_settings
         )

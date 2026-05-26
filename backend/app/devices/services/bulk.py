@@ -278,7 +278,9 @@ async def bulk_enter_maintenance(
     return _result(len(ordered_ids), succeeded, errors)
 
 
-async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus) -> dict[str, Any]:
+async def bulk_reconnect(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus, settings: SettingsReader
+) -> dict[str, Any]:
     """Reconnect network-connected ADB devices."""
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
@@ -332,6 +334,7 @@ async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID], *, publi
                     action="reconnect",
                     args={"ip_address": device.ip_address, "port": 5555},
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings,
                 )
                 if not data.get("success"):
                     errors[str(device.id)] = "Reconnect failed"

@@ -274,31 +274,33 @@ async def test_run_terminal_transition_paths(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.complete_run(db_session, uuid.uuid4(), publisher=event_bus)
+        await run_service.complete_run(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
     with pytest.raises(ValueError, match="terminal state"):
-        await run_service.complete_run(db_session, terminal.id, publisher=event_bus)
-    completed = await run_service.complete_run(db_session, active.id, publisher=event_bus)
+        await run_service.complete_run(db_session, terminal.id, publisher=event_bus, settings=FakeSettingsReader())
+    completed = await run_service.complete_run(
+        db_session, active.id, publisher=event_bus, settings=FakeSettingsReader()
+    )
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cancel_run(db_session, uuid.uuid4(), publisher=event_bus)
-    cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus)
+        await run_service.cancel_run(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+    cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus, settings=FakeSettingsReader())
     assert cancelled.state == RunState.cancelled
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db_session, uuid.uuid4(), publisher=event_bus)
-    forced = await run_service.force_release(db_session, force.id, publisher=event_bus)
+        await run_service.force_release(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+    forced = await run_service.force_release(db_session, force.id, publisher=event_bus, settings=FakeSettingsReader())
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
-    await run_service.expire_run(db_session, expired, "timeout", publisher=event_bus)
+    await run_service.expire_run(db_session, expired, "timeout", publisher=event_bus, settings=FakeSettingsReader())
     await db_session.refresh(expired)
     assert expired.state == RunState.expired
     assert expired.error == "timeout"
 
     before = terminal.completed_at
-    await run_service.expire_run(db_session, terminal, "ignored", publisher=event_bus)
+    await run_service.expire_run(db_session, terminal, "ignored", publisher=event_bus, settings=FakeSettingsReader())
     await db_session.refresh(terminal)
     assert terminal.completed_at == before
 
@@ -457,7 +459,13 @@ async def test_release_devices_branches_and_session_counts(
 
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=False))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
-    pending_ids = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
+    pending_ids = await run_service._release_devices(
+        db_session,
+        run,
+        commit=False,
+        terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
+    )
     assert pending_ids == [device.id]
     assert run.device_reservations[0].released_at is not None
 
@@ -471,7 +479,7 @@ async def test_release_devices_branches_and_session_counts(
 
     empty = TestRun(name="empty", state=RunState.active, requirements=[], ttl_minutes=1, heartbeat_timeout_sec=1)
     empty.device_reservations = []
-    assert await run_service._release_devices(db_session, empty, commit=True) == []
+    assert await run_service._release_devices(db_session, empty, commit=True, settings=FakeSettingsReader()) == []
 
 
 async def test_mark_running_sessions_released_success_path(
@@ -498,6 +506,7 @@ async def test_mark_running_sessions_released_success_path(
         run,
         datetime.now(UTC),
         terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
     )
 
     assert session.status == SessionStatus.error
@@ -514,6 +523,7 @@ async def test_mark_running_sessions_released_success_path(
         run,
         datetime.now(UTC),
         terminate_grid_sessions=False,
+        settings=FakeSettingsReader(),
     )
     assert untouched.status == SessionStatus.running
 
@@ -634,7 +644,13 @@ async def test_release_devices_unusual_restore_branches(
 
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=True))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
-    pending = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
+    pending = await run_service._release_devices(
+        db_session,
+        run,
+        commit=False,
+        terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
+    )
 
     assert set(pending) == {maintenance.id, busy.id, odd.id}
 
@@ -673,7 +689,7 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
         ),
     )
 
-    pending = await run_service._release_devices(db, run, commit=True)
+    pending = await run_service._release_devices(db, run, commit=True, settings=FakeSettingsReader())
 
     assert pending == [maintenance_id, restored_id]
     assert all(reservation.released_at is not None for reservation in reservations)

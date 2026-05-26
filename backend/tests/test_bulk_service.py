@@ -164,7 +164,10 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
     )
 
     result = await bulk_service.bulk_reconnect(
-        db, [eligible_ok.id, eligible_fail.id, ineligible.id], publisher=event_bus
+        db,
+        [eligible_ok.id, eligible_fail.id, ineligible.id],
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
     )
 
     assert result["succeeded"] == 1

@@ -142,7 +142,12 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         return {"success": True}
 
     monkeypatch.setattr(bulk_service, "pack_device_lifecycle_action", fake_lifecycle_action)
-    reconnect = await bulk_service.bulk_reconnect(db, [eligible.id, unsupported.id, failed.id], publisher=event_bus)
+    reconnect = await bulk_service.bulk_reconnect(
+        db,
+        [eligible.id, unsupported.id, failed.id],
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
+    )
     assert reconnect["total"] == 3
     assert reconnect["succeeded"] == 1
     assert reconnect["errors"][str(unsupported.id)] == "Not a network-connected Android device"

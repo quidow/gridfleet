@@ -63,5 +63,9 @@ async def bulk_exit_maintenance(body: BulkDeviceIds, db: DbDep, events: EventSer
 
 
 @router.post("/reconnect", response_model=BulkOperationResult)
-async def bulk_reconnect(body: BulkDeviceIds, db: DbDep, events: EventServicesDep) -> dict[str, Any]:
-    return await bulk_service.bulk_reconnect(db, body.device_ids, publisher=events.publisher)
+async def bulk_reconnect(
+    body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
+    return await bulk_service.bulk_reconnect(
+        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+    )

@@ -58,20 +58,20 @@ APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
 
 
-async def _auto_sync_plugins_on_recovery(host_id: uuid.UUID) -> None:
+async def _auto_sync_plugins_on_recovery(host_id: uuid.UUID, *, settings: SettingsReader) -> None:
     try:
         async with async_session() as db:
             host = await db.get(Host, host_id)
             if host is None:
                 return
             plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(host, plugins)
+            await plugin_service.auto_sync_host_plugins(host, plugins, settings=settings)
     except Exception:
         logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
 
 
-def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object) -> None:
-    task: asyncio.Task[None] = asyncio.create_task(task_fn(*args))
+def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
+    task: asyncio.Task[None] = asyncio.create_task(task_fn(*args, **kwargs))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -112,7 +112,7 @@ async def _ping_agent(ip: str, port: int, *, settings: SettingsReader) -> Heartb
     started = time.monotonic()
     client_mode = _heartbeat_client_mode(settings=settings)
     try:
-        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
+        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient, settings=settings)
     except CircuitOpenError as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
         return HeartbeatPingResult(
@@ -556,7 +556,7 @@ async def _apply_host_ping_result(
                     publisher=publisher,
                 )
             host.status = HostStatus.online
-            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
+            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id, settings=settings)
         host.last_heartbeat = datetime.now(UTC)
         if health_data is not None:
             if "missing_prerequisites" in health_data:

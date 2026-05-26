@@ -71,7 +71,7 @@ async def apply_host_resource_sample(
     return row
 
 
-async def poll_host_resource_telemetry_once(db: AsyncSession) -> None:
+async def poll_host_resource_telemetry_once(db: AsyncSession, *, settings: SettingsReader) -> None:
     result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
     hosts = result.scalars().all()
 
@@ -81,6 +81,7 @@ async def poll_host_resource_telemetry_once(db: AsyncSession) -> None:
                 host.ip,
                 host.agent_port,
                 http_client_factory=httpx.AsyncClient,
+                settings=settings,
             )
             if payload is None:
                 continue
@@ -182,7 +183,7 @@ async def host_resource_telemetry_loop(*, settings: SettingsReader) -> None:
         interval = float(settings.get("general.host_resource_telemetry_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await poll_host_resource_telemetry_once(db)
+                await poll_host_resource_telemetry_once(db, settings=settings)
         except Exception:
             logger.exception("Host resource telemetry loop failed")
         await asyncio.sleep(interval)

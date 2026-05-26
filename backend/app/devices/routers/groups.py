@@ -174,7 +174,9 @@ async def group_bulk_reconnect(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
-    return await bulk_service.bulk_reconnect(db, device_ids, publisher=events.publisher)
+    return await bulk_service.bulk_reconnect(
+        db, device_ids, publisher=events.publisher, settings=settings_services.reader
+    )
 
 
 @router.post("/{group_id}/bulk/update-tags", response_model=BulkOperationResult)

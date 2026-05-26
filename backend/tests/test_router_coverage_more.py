@@ -175,6 +175,8 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         monkeypatch.setattr(runs.run_service, endpoint_name, AsyncMock(side_effect=ValueError("bad state")))
 
     _events = SimpleNamespace(publisher=event_bus)
+    mock_svc = MagicMock()
+    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     with pytest.raises(HTTPException) as ready_error:
         await runs.signal_ready(run.id, db=db, events=_events)
     assert ready_error.value.status_code == 409
@@ -185,13 +187,13 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db
         )
     with pytest.raises(HTTPException):
-        await runs.complete_run(run.id, db=db, events=_events)
+        await runs.complete_run(run.id, db=db, events=_events, settings_services=mock_ss)
     with pytest.raises(HTTPException):
-        await runs.cancel_run(run.id, db=db, events=_events)
+        await runs.cancel_run(run.id, db=db, events=_events, settings_services=mock_ss)
 
     monkeypatch.setattr(runs.run_service, "force_release", AsyncMock(side_effect=ValueError("missing")))
     with pytest.raises(HTTPException) as force_error:
-        await runs.force_release(run.id, db=db, events=_events)
+        await runs.force_release(run.id, db=db, events=_events, settings_services=mock_ss)
     assert force_error.value.status_code == 404
 
     monkeypatch.setattr(runs.run_service, "heartbeat", AsyncMock(side_effect=ValueError("missing")))
@@ -296,9 +298,13 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
             db=db,
         )
     ).state == RunState.active
-    assert (await runs.complete_run(active.id, db=db, events=_events)).state == RunState.active
-    assert (await runs.cancel_run(active.id, db=db, events=_events)).state == RunState.active
-    assert (await runs.force_release(active.id, db=db, events=_events)).state == RunState.active
+    assert (
+        await runs.complete_run(active.id, db=db, events=_events, settings_services=grid_ss)
+    ).state == RunState.active
+    assert (await runs.cancel_run(active.id, db=db, events=_events, settings_services=grid_ss)).state == RunState.active
+    assert (
+        await runs.force_release(active.id, db=db, events=_events, settings_services=grid_ss)
+    ).state == RunState.active
 
 
 async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -16,6 +16,8 @@ from app.core.shutdown import shutdown_coordinator
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -25,7 +27,7 @@ async def check_liveness() -> dict[str, str]:
     return {"status": "ok"}
 
 
-async def check_readiness(db: AsyncSession) -> tuple[dict[str, Any], int]:
+async def check_readiness(db: AsyncSession, *, settings: SettingsReader) -> tuple[dict[str, Any], int]:
     checks: dict[str, Any] = {}
     shutting_down = shutdown_coordinator.is_shutting_down()
     checks["shutdown"] = {
@@ -55,7 +57,7 @@ async def check_readiness(db: AsyncSession) -> tuple[dict[str, Any], int]:
     # Snapshots live in-memory on the leader and are batch-flushed every
     # `background_loop_flush_interval_sec`; allow that full window as extra
     # grace so a healthy loop is never reported stale during the flush gap.
-    flush_interval = current_background_loop_flush_interval_seconds()
+    flush_interval = current_background_loop_flush_interval_seconds(settings=settings)
     loop_checks: dict[str, Any] = {}
     leader_ready = True
 

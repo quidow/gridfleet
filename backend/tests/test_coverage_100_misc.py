@@ -469,7 +469,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             ExecuteResult(no_host_device),
         ]
     )
-    await agent_reconfigure_delivery.deliver_agent_reconfigures(reconfigure_db, row.device_id)
+    await agent_reconfigure_delivery.deliver_agent_reconfigures(
+        reconfigure_db, row.device_id, settings=FakeSettingsReader()
+    )
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
     cleanup_db = AsyncMock()
@@ -557,7 +559,8 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
 
     class DummyClient:
-        async def get_pack_devices(self, _host: str, _port: int) -> dict[str, object]:
+        async def get_pack_devices(self, _host: str, _port: int, *, settings: object) -> dict[str, object]:
+            del settings
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -569,18 +572,22 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         discovery_db,
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
         agent_get_pack_devices=DummyClient().get_pack_devices,
+        settings=FakeSettingsReader(),
     )
     assert result.new_devices == []
 
     monkeypatch.setattr(plugin_service, "list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
-    assert await plugin_service.fetch_host_plugins(SimpleNamespace(ip="127.0.0.1", agent_port=5100)) == [
-        {"name": "images"}
-    ]
+    assert await plugin_service.fetch_host_plugins(
+        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader()
+    ) == [{"name": "images"}]
 
     offline_host = SimpleNamespace(status=SimpleNamespace(value="offline"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}]) is None
+    assert (
+        await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}], settings=FakeSettingsReader())
+        is None
+    )
     online_host = SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(online_host, []) is None
+    assert await plugin_service.auto_sync_host_plugins(online_host, [], settings=FakeSettingsReader()) is None
 
     class ClientManager:
         async def __aenter__(self) -> object:
@@ -834,6 +841,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     await plugin_service.auto_sync_host_plugins(
         SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host"),
         [{"name": "images"}],
+        settings=FakeSettingsReader(),
     )
     plugin_service.sync_host_plugins.assert_awaited_once()
 

@@ -35,12 +35,11 @@ from app.agent_comm.generated import (
 from app.agent_comm.http_pool import AgentHttpPool
 from app.agent_comm.http_pool import agent_http_pool as _default_pool
 from app.core.errors import AgentResponseError, AgentUnreachableError
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
 
-    from app.settings.service import SettingsService
+    from app.core.protocols import SettingsReader
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
@@ -73,16 +72,17 @@ async def _send_request(
     host: str,
     agent_port: int,
     timeout: float | int,
+    settings: SettingsReader,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     params: QueryParams = None,
     json_body: JsonBody = None,
     pool: AgentHttpPool | None = None,
 ) -> httpx.Response:
     auth = _agent_basic_auth()
-    use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled()
+    use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled(settings=settings)
     if use_pool:
-        max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10)
-        idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60)
+        max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10, settings=settings)
+        idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60, settings=settings)
         client = await (pool or _default_pool).get_client(
             host,
             agent_port,
@@ -119,16 +119,16 @@ async def _send_request(
         )
 
 
-def _pool_enabled(*, settings: SettingsService | None = None) -> bool:
+def _pool_enabled(*, settings: SettingsReader) -> bool:
     try:
-        return bool((settings or _default_settings).get("agent.http_pool_enabled"))
+        return bool(settings.get("agent.http_pool_enabled"))
     except (KeyError, RuntimeError):
         return False
 
 
-def _settings_int(key: str, *, default: int, settings: SettingsService | None = None) -> int:
+def _settings_int(key: str, *, default: int, settings: SettingsReader) -> int:
     try:
-        return int((settings or _default_settings).get(key))
+        return int(settings.get(key))
     except (KeyError, RuntimeError, TypeError, ValueError):
         return default
 
@@ -156,6 +156,7 @@ async def agent_health(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 5,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -165,6 +166,7 @@ async def agent_health(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="health check")
     try:
@@ -184,6 +186,7 @@ async def agent_host_telemetry(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 5,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -193,6 +196,7 @@ async def agent_host_telemetry(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     if response.status_code != 200:
         return None
@@ -215,6 +219,7 @@ async def appium_logs(
     lines: int,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 10,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -225,6 +230,7 @@ async def appium_logs(
         http_client_factory=http_client_factory,
         params={"lines": lines},
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="fetch Appium logs")
     try:
@@ -247,6 +253,7 @@ async def appium_status(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 5,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -256,6 +263,7 @@ async def appium_status(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     if response.status_code != 200:
         return None
@@ -278,6 +286,7 @@ async def appium_start(
     payload: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int,
+    settings: SettingsReader,
 ) -> httpx.Response:
     return await _send_request(
         "POST",
@@ -288,6 +297,7 @@ async def appium_start(
         http_client_factory=http_client_factory,
         json_body=payload,
         timeout=timeout,
+        settings=settings,
     )
 
 
@@ -299,6 +309,7 @@ async def appium_stop(
     port: int,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 10,
+    settings: SettingsReader,
 ) -> httpx.Response:
     return await _send_request(
         "POST",
@@ -309,6 +320,7 @@ async def appium_stop(
         http_client_factory=http_client_factory,
         json_body={"port": port},
         timeout=timeout,
+        settings=settings,
     )
 
 
@@ -322,6 +334,7 @@ async def agent_appium_reconfigure(
     grid_run_id: uuid.UUID | None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 10,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -336,6 +349,7 @@ async def agent_appium_reconfigure(
             "stop_pending": stop_pending,
             "grid_run_id": str(grid_run_id) if grid_run_id else None,
         },
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="reconfigure Appium node")
     try:
@@ -373,6 +387,7 @@ async def list_plugins(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 15,
+    settings: SettingsReader,
 ) -> list[dict[str, Any]]:
     response = await _send_request(
         "GET",
@@ -382,6 +397,7 @@ async def list_plugins(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="list plugins")
     try:
@@ -406,6 +422,7 @@ async def sync_plugins(
     plugins: list[dict[str, Any]],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 180,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -416,6 +433,7 @@ async def sync_plugins(
         http_client_factory=http_client_factory,
         json_body={"plugins": plugins},
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="sync plugins")
     try:
@@ -435,6 +453,7 @@ async def get_tool_status(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 15,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -444,6 +463,7 @@ async def get_tool_status(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="fetch tool status")
     try:
@@ -465,6 +485,7 @@ async def get_pack_devices(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = 45,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -474,6 +495,7 @@ async def get_pack_devices(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="list pack devices")
     try:
@@ -497,6 +519,7 @@ async def get_pack_device_properties(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -507,6 +530,7 @@ async def get_pack_device_properties(
         http_client_factory=http_client_factory,
         params={"pack_id": pack_id},
         timeout=timeout,
+        settings=settings,
     )
     if response.status_code == 404:
         return None
@@ -532,6 +556,7 @@ async def normalize_pack_device(
     raw_input: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "POST",
@@ -547,6 +572,7 @@ async def normalize_pack_device(
             "raw_input": raw_input,
         },
         timeout=timeout,
+        settings=settings,
     )
     if response.status_code == 404:
         return None
@@ -582,6 +608,7 @@ async def pack_device_health(
     ip_ping_count: int | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -608,6 +635,7 @@ async def pack_device_health(
         http_client_factory=http_client_factory,
         params=params,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="fetch pack device health")
     try:
@@ -637,6 +665,7 @@ async def pack_device_telemetry(
     ip_address: str | None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> dict[str, Any] | None:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -656,6 +685,7 @@ async def pack_device_telemetry(
         http_client_factory=http_client_factory,
         params=params,
         timeout=timeout,
+        settings=settings,
     )
     if response.status_code == 404:
         return None
@@ -682,6 +712,7 @@ async def pack_device_lifecycle_action(
     args: dict[str, Any] | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -693,6 +724,7 @@ async def pack_device_lifecycle_action(
         params={"pack_id": pack_id, "platform_id": platform_id},
         json_body=args or {},
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action=f"run pack device lifecycle action {action}")
     try:
@@ -717,6 +749,7 @@ async def pack_doctor(
     *,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
+    settings: SettingsReader,
 ) -> list[dict[str, Any]]:
     response = await _send_request(
         "POST",
@@ -726,6 +759,7 @@ async def pack_doctor(
         agent_port=agent_port,
         http_client_factory=http_client_factory,
         timeout=timeout,
+        settings=settings,
     )
     _raise_for_status(response, host=host, action="pack doctor")
     try:

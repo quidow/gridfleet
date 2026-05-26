@@ -113,6 +113,7 @@ async def run_device_health(
             headless=headless,
             http_client_factory=http_client_factory,
             timeout=_device_health_timeout(device, settings=settings),
+            settings=settings,
         )
     except AgentCallError as exc:
         detail = f"Agent health check failed: {exc}"

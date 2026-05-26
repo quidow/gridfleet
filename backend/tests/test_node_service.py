@@ -789,6 +789,7 @@ async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader(),
         )
     assert result is False
 
@@ -808,6 +809,7 @@ async def test_stop_remote_node_returns_true_on_agent_ack() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader(),
         )
     assert result is True
 

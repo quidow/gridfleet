@@ -252,7 +252,7 @@ async def appium_reconciler_loop(*, settings: SettingsReader) -> None:
                 desired = await _fetch_desired_rows(db)
                 backoff = await _fetch_backoff_until(db)
             # Agent IO and stops happen outside the DB session — no point holding it open.
-            health_by_host = await _reconcile_all(hosts, rows)
+            health_by_host = await _reconcile_all(hosts, rows, settings=settings)
             if reconciler_convergence_enabled():
                 await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host, settings=settings)
         except LeadershipLost as exc:
@@ -274,6 +274,8 @@ async def appium_reconciler_loop(*, settings: SettingsReader) -> None:
 async def _reconcile_all(
     hosts: list[dict[str, object]],
     rows: list[dict[str, object]],
+    *,
+    settings: SettingsReader,
 ) -> dict[uuid.UUID, dict[str, object]]:
     health_by_host: dict[uuid.UUID, dict[str, object]] = {}
 
@@ -285,7 +287,7 @@ async def _reconcile_all(
         db_running_rows: Sequence[dict[str, object]],
     ) -> list[OrphanAppiumNode]:
         async def _fetch_health(*, host: str, agent_port: int) -> dict[str, object]:
-            payload = await agent_health(host, agent_port, http_client_factory=httpx.AsyncClient)
+            payload = await agent_health(host, agent_port, http_client_factory=httpx.AsyncClient, settings=settings)
             health = payload or {}
             health_by_host[host_id] = health
             return health
@@ -297,6 +299,7 @@ async def _reconcile_all(
                 agent_port=agent_port,
                 port=port,
                 http_client_factory=httpx.AsyncClient,
+                settings=settings,
             )
             response.raise_for_status()
 
@@ -484,7 +487,12 @@ async def _drive_convergence(
                         await assert_current_leader(db)
                 payload = (health_by_host or {}).get(host_id)
                 if payload is None:
-                    payload = await agent_health(host_ip, agent_port, http_client_factory=httpx.AsyncClient) or {}
+                    payload = (
+                        await agent_health(
+                            host_ip, agent_port, http_client_factory=httpx.AsyncClient, settings=settings
+                        )
+                        or {}
+                    )
                 appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
                 if not isinstance(appium_processes, dict):
                     return
@@ -503,7 +511,7 @@ async def _drive_convergence(
                     agent_running=observed,
                     now=datetime.now(UTC),
                     start_agent=_make_start_agent(require_leader=require_leader, settings=settings),
-                    stop_agent=_make_stop_agent(host_ip, agent_port),
+                    stop_agent=_make_stop_agent(host_ip, agent_port, settings=settings),
                     write_observed=_write_observed_factory(require_leader=require_leader, settings=settings),
                     clear_token=_clear_token_factory(require_leader=require_leader),
                     reset_start_failure=_make_reset_start_failure(require_leader=require_leader),
@@ -545,7 +553,9 @@ async def converge_device_now(
         if host is None or host.status != HostStatus.online:
             return None
 
-    payload = await agent_health(host.ip, host.agent_port, http_client_factory=httpx.AsyncClient) or {}
+    payload = (
+        await agent_health(host.ip, host.agent_port, http_client_factory=httpx.AsyncClient, settings=settings) or {}
+    )
     appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
     if not isinstance(appium_processes, dict):
         return None
@@ -559,7 +569,7 @@ async def converge_device_now(
         agent_running=observed,
         now=datetime.now(UTC),
         start_agent=_make_start_agent(require_leader=False, session_scope=session_scope, settings=settings),
-        stop_agent=_make_stop_agent(host.ip, host.agent_port),
+        stop_agent=_make_stop_agent(host.ip, host.agent_port, settings=settings),
         write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope, settings=settings),
         clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope),
         reset_start_failure=_make_reset_start_failure(require_leader=False, session_scope=session_scope),
@@ -616,7 +626,7 @@ def _make_start_agent(
     return _start
 
 
-def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[None]]:
+def _make_stop_agent(host_ip: str, agent_port: int, *, settings: SettingsReader) -> Callable[..., Awaitable[None]]:
     async def _stop(*, row: DesiredRow, port: int | None) -> None:
         if port is None or port <= 0:
             return
@@ -627,6 +637,7 @@ def _make_stop_agent(host_ip: str, agent_port: int) -> Callable[..., Awaitable[N
                 host=host_ip,
                 agent_port=agent_port,
                 http_client_factory=httpx.AsyncClient,
+                settings=settings,
             )
         except Exception:
             APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()

@@ -561,7 +561,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader())
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
@@ -685,7 +685,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         device.hold = DeviceHold.maintenance
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader())
 
     # Exclusion should be cleared
     await db_session.refresh(reservation)
@@ -736,7 +736,7 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader())
 
     # Stale released row should be untouched
     await db_session.refresh(reservation)

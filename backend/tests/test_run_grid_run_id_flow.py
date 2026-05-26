@@ -113,7 +113,7 @@ async def test_complete_run_clears_desired_grid_run_id(
     run_id = await _create_run(db_session)
 
     await run_service.signal_ready(db_session, run_id, publisher=event_bus)
-    await run_service.complete_run(db_session, run_id, publisher=event_bus)
+    await run_service.complete_run(db_session, run_id, publisher=event_bus, settings=FakeSettingsReader())
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None

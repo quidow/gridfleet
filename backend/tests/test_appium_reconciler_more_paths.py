@@ -207,6 +207,7 @@ async def test_reconcile_all_stop_callback_raises_for_agent_http_error(monkeypat
         await appium_reconciler._reconcile_all(
             [{"id": host_id, "ip": "10.0.0.1", "agent_port": 5100}],
             [{"host_id": host_id, "device_connection_target": "dev", "node_port": 4723}],
+            settings=FakeSettingsReader(),
         )
         == {}
     )

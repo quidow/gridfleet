@@ -474,6 +474,7 @@ async def start_remote_node(
             payload=payload,
             http_client_factory=http_client_factory,
             timeout=_agent_start_timeout(device, settings=settings),
+            settings=settings,
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -536,6 +537,7 @@ async def stop_remote_node(
     host: str,
     agent_port: int,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
 ) -> bool:
     """Ask the agent to stop the Appium node on ``port``.
 
@@ -552,6 +554,7 @@ async def stop_remote_node(
             agent_port=agent_port,
             port=port,
             http_client_factory=http_client_factory,
+            settings=settings,
         )
         resp.raise_for_status()
         return True
@@ -564,6 +567,7 @@ async def stop_node_via_agent(
     node: AppiumNode,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
 ) -> bool:
     try:
         host = require_management_host(device, action="stop Appium nodes")
@@ -576,6 +580,7 @@ async def stop_node_via_agent(
             agent_port=host.agent_port,
             port=node.port,
             http_client_factory=http_client_factory,
+            settings=settings,
         )
         resp.raise_for_status()
         return True
@@ -612,6 +617,7 @@ async def restart_node_via_agent(
             host=host.ip,
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
+            settings=settings,
         )
         if not stopped:
             # Agent did not acknowledge the stop. Starting on a different
@@ -664,6 +670,7 @@ async def restart_node_via_agent(
             host=host.ip,
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
+            settings=settings,
         )
         return False
 

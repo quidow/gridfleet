@@ -276,7 +276,7 @@ async def apply_telemetry_sample(
     return next_status
 
 
-async def _get_device_telemetry(device: Device) -> dict[str, Any] | None:
+async def _get_device_telemetry(device: Device, *, settings: SettingsReader) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
         return None
@@ -292,6 +292,7 @@ async def _get_device_telemetry(device: Device) -> dict[str, Any] | None:
             connection_type=device.connection_type.value if device.connection_type is not None else None,
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
+            settings=settings,
         )
     except AgentCallError:
         return None
@@ -313,7 +314,7 @@ async def poll_hardware_telemetry_once(db: AsyncSession, *, settings: SettingsRe
 
     for device in devices:
         try:
-            telemetry = await _get_device_telemetry(device)
+            telemetry = await _get_device_telemetry(device, settings=settings)
             if telemetry is None:
                 continue
             await apply_telemetry_sample(db, device, telemetry, settings=settings)

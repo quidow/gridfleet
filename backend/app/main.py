@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     set_bus_ref(bus)
     svc = SettingsService()
     pool = AgentHttpPool()
-    breaker = AgentCircuitBreaker(publisher=bus)
+    breaker = AgentCircuitBreaker(publisher=bus, settings=svc)
 
     app_services = compose_app(
         engine=engine,
@@ -237,7 +237,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (pack_drain_loop(), "pack_drain_loop"),
             (appium_reconciler_loop(settings=svc), "appium_reconciler_loop"),
             (device_intent_reconciler_loop(settings=svc), "device_intent_reconciler_loop"),
-            (background_loop_flush_loop(session_factory), "background_loop_flush_loop"),
+            (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
@@ -339,14 +339,14 @@ async def live_health() -> dict[str, str]:
 
 
 @app.get("/health/ready", response_model=HealthStatusRead)
-async def ready_health(db: DbDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db)
+async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, settings=settings_services.reader)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
-async def health(db: DbDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db)
+async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, settings=settings_services.reader)
     return JSONResponse(content=payload, status_code=status_code)
 
 

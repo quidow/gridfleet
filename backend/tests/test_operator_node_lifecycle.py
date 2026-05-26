@@ -203,7 +203,7 @@ async def test_reconcile_expired_intents_deletes_expired_restart_intent(
     db_session.add(expired_intent)
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
     await db_session.commit()
 
     remaining = (

@@ -148,6 +148,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_session,
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
+        settings=FakeSettingsReader(),
     )
     assert [item.already_registered for item in intake] == [True, False]
     assert intake[0].platform_label == "Android"
@@ -156,6 +157,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_session,
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
+        settings=FakeSettingsReader(),
     )
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]

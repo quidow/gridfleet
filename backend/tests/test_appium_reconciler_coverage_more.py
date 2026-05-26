@@ -173,7 +173,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
 
 async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _desired_row()
-    stop_agent = appium_reconciler._make_stop_agent("10.0.0.1", 5100)
+    stop_agent = appium_reconciler._make_stop_agent("10.0.0.1", 5100, settings=FakeSettingsReader())
     assert await stop_agent(row=row, port=None) is None
     assert await stop_agent(row=row, port=0) is None
 

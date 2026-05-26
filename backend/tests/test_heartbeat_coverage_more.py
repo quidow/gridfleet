@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -30,18 +30,18 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
             return self.host
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(None))
-    await heartbeat._auto_sync_plugins_on_recovery(uuid.uuid4())
+    await heartbeat._auto_sync_plugins_on_recovery(uuid.uuid4(), settings=FakeSettingsReader({}))
 
     host = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host))
     monkeypatch.setattr(heartbeat.plugin_service, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
     monkeypatch.setattr(heartbeat.plugin_service, "auto_sync_host_plugins", sync)
-    await heartbeat._auto_sync_plugins_on_recovery(host.id)
-    sync.assert_awaited_once_with(host, ["plugin"])
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
+    sync.assert_awaited_once_with(host, ["plugin"], settings=ANY)
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host, fail_get=True))
-    await heartbeat._auto_sync_plugins_on_recovery(host.id)
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
 
 
 async def test_background_task_scheduler_and_shutdown_paths() -> None:

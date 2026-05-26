@@ -808,7 +808,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
     both_started = asyncio.Event()
     release_checks = asyncio.Event()
 
-    async def fake_check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
+    async def fake_check_node_health(node: AppiumNode, device: Device, **_kwargs: object) -> ProbeResult:
         _ = device
         started_ports.add(node.port)
         if len(started_ports) == 2:
@@ -879,7 +879,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "boom")),
     ):
-        result = await _check_node_health(node, device)
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
 
     assert result.status == "indeterminate"
 
@@ -903,7 +903,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentResponseError(db_host.ip, "boom", http_status=503)),
     ):
-        result = await _check_node_health(node, device)
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
 
     assert result.status == "indeterminate"
 
@@ -927,7 +927,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=CircuitOpenError(db_host.ip, retry_after_seconds=10.0)),
     ):
-        result = await _check_node_health(node, device)
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
 
     assert result.status == "indeterminate"
 
@@ -949,7 +949,7 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
             active_connection_target="target",
         )
 
-    result = await _check_node_health(node, device)
+    result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
     assert result.status == "refused"
 
 
@@ -972,7 +972,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value={"running": True}),
     ):
-        result = await _check_node_health(node, device)
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
 
     assert result.status == "ack"
 
@@ -1000,7 +1000,7 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value=None),
     ):
-        result = await _check_node_health(node, device)
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
 
     assert result.status == "indeterminate"
 

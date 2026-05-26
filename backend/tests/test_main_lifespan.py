@@ -372,8 +372,9 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert await main.live_health() == {"status": "ok"}
 
     monkeypatch.setattr(main, "check_readiness", AsyncMock(return_value=({"status": "ready"}, 202)))
-    ready = await main.ready_health(db=AsyncMock())
-    health = await main.health(db=AsyncMock())
+    fake_settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
+    ready = await main.ready_health(db=AsyncMock(), settings_services=fake_settings_services)
+    health = await main.health(db=AsyncMock(), settings_services=fake_settings_services)
     assert isinstance(ready, JSONResponse)
     assert isinstance(health, JSONResponse)
     assert ready.status_code == 202

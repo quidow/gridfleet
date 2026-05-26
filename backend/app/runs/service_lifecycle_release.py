@@ -1,10 +1,19 @@
+from __future__ import annotations
+
 import logging
-import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
+    from app.runs.models import TestRun
 
 import app.devices.services.lifecycle_policy as lifecycle_policy
 from app.devices import locking as device_locking
@@ -17,7 +26,6 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.state import ready_operational_state, set_hold, set_operational_state
 from app.grid import service as grid_service
-from app.runs.models import TestRun
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -29,6 +37,7 @@ async def _mark_running_sessions_released(
     released_at: datetime,
     *,
     terminate_grid_sessions: bool,
+    settings: SettingsReader,
 ) -> None:
     if not terminate_grid_sessions:
         # complete_run path: session lifecycle is owned by the testkit/operator.
@@ -48,7 +57,7 @@ async def _mark_running_sessions_released(
 
     error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
     for session in sessions:
-        if not await grid_service.terminate_grid_session(session.session_id):
+        if not await grid_service.terminate_grid_session(session.session_id, settings=settings):
             logger.warning(
                 "Leaving session %s running because Grid deletion failed during run %s release",
                 session.session_id,
@@ -132,6 +141,7 @@ async def _release_devices(
     *,
     commit: bool = True,
     terminate_grid_sessions: bool = False,
+    settings: SettingsReader,
 ) -> list[uuid.UUID]:
     """Release all active reservations for this run and restore device statuses.
 
@@ -151,6 +161,7 @@ async def _release_devices(
         run,
         released_at,
         terminate_grid_sessions=terminate_grid_sessions,
+        settings=settings,
     )
 
     if not active_reservations:

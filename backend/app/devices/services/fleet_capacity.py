@@ -333,8 +333,9 @@ async def collect_capacity_snapshot_once(
     db: AsyncSession,
     *,
     captured_at: datetime | None = None,
+    settings: SettingsReader,
 ) -> AnalyticsCapacitySnapshot | None:
-    grid_data = await grid_service.get_grid_status()
+    grid_data = await grid_service.get_grid_status(settings=settings)
     grid_counts = _extract_grid_counts(grid_data)
     if grid_counts is None:
         logger.warning("Fleet capacity snapshot skipped because Grid status was unavailable")
@@ -369,7 +370,7 @@ async def fleet_capacity_collector_loop(*, settings: SettingsReader) -> None:
         interval = float(settings.get("general.fleet_capacity_snapshot_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await collect_capacity_snapshot_once(db)
+                await collect_capacity_snapshot_once(db, settings=settings)
         except Exception:
             logger.exception("Fleet capacity collector failed")
         await asyncio.sleep(interval)

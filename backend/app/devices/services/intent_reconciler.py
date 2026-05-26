@@ -73,14 +73,14 @@ async def device_intent_reconciler_loop(*, settings: SettingsReader) -> None:
 async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int, settings: SettingsReader) -> None:
     await assert_current_leader(db)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
-    await deliver_pending_agent_reconfigures(db)
-    await _reconcile_expired_intents(db)
+    await deliver_pending_agent_reconfigures(db, settings=settings)
+    await _reconcile_expired_intents(db, settings=settings)
     try:
         await _sweep_orphaned_intents(db)
     except Exception:
         await db.rollback()
         logger.exception("stale_intent_sweep_failed")
-    await _reconcile_terminal_run_intents(db)
+    await _reconcile_terminal_run_intents(db, settings=settings)
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
@@ -89,22 +89,22 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int, set
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, affected_id)
+        await deliver_agent_reconfigures(db, affected_id, settings=settings)
     if cycle % full_scan_every == 0:
-        await _reconcile_all_devices_once(db)
+        await _reconcile_all_devices_once(db, settings=settings)
     else:
-        await _reconcile_dirty_devices(db)
+        await _reconcile_dirty_devices(db, settings=settings)
 
 
-async def _reconcile_all_devices_once(db: AsyncSession) -> None:
+async def _reconcile_all_devices_once(db: AsyncSession, *, settings: SettingsReader) -> None:
     rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     for device_id in rows:
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings)
 
 
-async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> None:
+async def _reconcile_dirty_devices(db: AsyncSession, *, settings: SettingsReader, limit: int = 100) -> None:
     queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
     metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
     rows = (
@@ -118,10 +118,10 @@ async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> Non
         if current is not None and current.generation == generation:
             await db.delete(current)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings)
 
 
-async def _reconcile_expired_intents(db: AsyncSession) -> None:
+async def _reconcile_expired_intents(db: AsyncSession, *, settings: SettingsReader) -> None:
     now = datetime.now(UTC)
     device_ids = (
         (
@@ -140,7 +140,7 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings)
 
 
 async def _sweep_orphaned_intents(db: AsyncSession) -> None:
@@ -214,7 +214,7 @@ async def _sweep_orphaned_intents(db: AsyncSession) -> None:
     await db.flush()
 
 
-async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
+async def _reconcile_terminal_run_intents(db: AsyncSession, *, settings: SettingsReader) -> None:
     """Defense-in-depth sweep for intents tied to runs that are already terminal.
 
     The release path (``_clear_desired_grid_run_id_for_run``) is the primary
@@ -244,7 +244,7 @@ async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings)
 
 
 async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:

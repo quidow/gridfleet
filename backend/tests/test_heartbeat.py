@@ -271,7 +271,7 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
 
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_task(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_task(task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object) -> None:
         scheduled.append((task_fn, args))
 
     with (
@@ -313,7 +313,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def blocking_sync(_: uuid.UUID) -> None:
+    async def blocking_sync(_: uuid.UUID, *, settings: object) -> None:
         started.set()
         await release.wait()
 

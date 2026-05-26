@@ -26,7 +26,7 @@ LOOP_NAME = "property_refresh"
 MAX_PARALLEL_HOST_FETCHES = 8
 
 
-async def _refresh_all_properties() -> None:
+async def _refresh_all_properties(*, settings: SettingsReader) -> None:
     async with async_session() as db:
         host_result = await db.execute(select(Host).where(Host.status == HostStatus.online))
         online_host_ids = [host.id for host in host_result.scalars().all()]
@@ -66,7 +66,7 @@ async def _refresh_all_properties() -> None:
                         continue
                     try:
                         data = await pack_discovery.fetch_pack_device_properties(
-                            host, device, agent_get_pack_device_properties=get_pack_device_properties
+                            host, device, agent_get_pack_device_properties=get_pack_device_properties, settings=settings
                         )
                     except Exception:
                         logger.exception("Failed to fetch properties for device %s", device.identity_value)
@@ -92,7 +92,7 @@ async def property_refresh_loop(*, settings: SettingsReader) -> None:
         interval = float(settings.get("general.property_refresh_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle():
-                await _refresh_all_properties()
+                await _refresh_all_properties(settings=settings)
         except Exception:
             logger.exception("Property refresh cycle failed")
         await asyncio.sleep(interval)

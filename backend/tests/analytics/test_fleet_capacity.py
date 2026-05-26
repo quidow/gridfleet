@@ -21,6 +21,7 @@ from app.devices.services.fleet_capacity import (
 )
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -426,7 +427,11 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value=_grid_status(active_sessions=3, queued_requests=2)),
     ):
-        snapshot = await collect_capacity_snapshot_once(db_session, captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC))
+        snapshot = await collect_capacity_snapshot_once(
+            db_session,
+            captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
+            settings=FakeSettingsReader(),
+        )
 
     assert snapshot is not None
     assert snapshot.total_capacity_slots == 2
@@ -471,7 +476,7 @@ async def test_capacity_snapshot_collector_skips_unreachable_grid(db_session: As
         "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value={"ready": False, "error": "connect failed"}),
     ):
-        snapshot = await collect_capacity_snapshot_once(db_session)
+        snapshot = await collect_capacity_snapshot_once(db_session, settings=FakeSettingsReader())
 
     assert snapshot is None
     assert (await db_session.execute(select(AnalyticsCapacitySnapshot))).scalars().all() == []
@@ -537,7 +542,11 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
         "app.devices.services.fleet_capacity.grid_service.get_grid_status",
         new=AsyncMock(return_value=_grid_status(active_sessions=0, queued_requests=0)),
     ):
-        snapshot = await collect_capacity_snapshot_once(db_session, captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC))
+        snapshot = await collect_capacity_snapshot_once(
+            db_session,
+            captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC),
+            settings=FakeSettingsReader(),
+        )
 
     assert snapshot is not None
     assert snapshot.hosts_total == hosts_total
