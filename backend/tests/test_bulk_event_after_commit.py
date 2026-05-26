@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services import bulk as bulk_service
+from app.events import event_bus
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -20,7 +21,7 @@ async def test_bulk_update_tags_queues_summary(
     _, device = await seed_host_and_device(db_session, identity="bulk-tags-1")
     event_bus_capture.clear()
 
-    await bulk_service.bulk_update_tags(db_session, [device.id], {"suite": "contract"})
+    await bulk_service.bulk_update_tags(db_session, [device.id], {"suite": "contract"}, publisher=event_bus)
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
@@ -35,7 +36,7 @@ async def test_bulk_enter_maintenance_queues_summary(
     _, device = await seed_host_and_device(db_session, identity="bulk-enter-maint-1")
     event_bus_capture.clear()
 
-    await bulk_service.bulk_enter_maintenance(db_session, [device.id])
+    await bulk_service.bulk_enter_maintenance(db_session, [device.id], publisher=event_bus)
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
@@ -48,10 +49,10 @@ async def test_bulk_exit_maintenance_queues_summary(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="bulk-exit-maint-1")
-    await bulk_service.bulk_enter_maintenance(db_session, [device.id])
+    await bulk_service.bulk_enter_maintenance(db_session, [device.id], publisher=event_bus)
     event_bus_capture.clear()
 
-    await bulk_service.bulk_exit_maintenance(db_session, [device.id])
+    await bulk_service.bulk_exit_maintenance(db_session, [device.id], publisher=event_bus)
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]

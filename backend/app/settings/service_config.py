@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.devices.services import readiness as device_readiness
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.settings.models import ConfigAuditLog
 
@@ -55,7 +54,7 @@ async def merge_device_config(
     partial_config: dict[str, Any],
     changed_by: str | None = None,
     *,
-    publisher: EventBus | None = None,
+    publisher: EventBus,
 ) -> dict[str, Any]:
     previous = device.device_config or {}
     merged = _deep_merge(previous, partial_config)
@@ -78,7 +77,7 @@ async def merge_device_config(
             "device_name": device.name,
             "changed_by": changed_by,
         },
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(device)

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
+from app.events import event_bus
 from app.grid import service as grid_service
 from app.hosts.models import Host
 from app.runs import service as run_service
@@ -74,7 +75,7 @@ async def test_force_release_clears_stop_pending(
 
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id)
+    await run_service.force_release(db_session, run.id, publisher=event_bus)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -172,7 +173,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     )
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id)
+    await run_service.force_release(db_session, run.id, publisher=event_bus)
 
     # _release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could

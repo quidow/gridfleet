@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from app.events import event_bus
 from app.hosts.service import _host_status_severity
 from app.hosts.service_hardware_telemetry import _hardware_severity
 
@@ -128,7 +129,7 @@ async def test_approve_host_pending_to_online_emits_success(
     db_session.add(host)
     await db_session.flush()
 
-    approved = await host_service.approve_host(db_session, host.id)
+    approved = await host_service.approve_host(db_session, host.id, publisher=event_bus)
     assert approved is not None
 
     events = [e for e in captured if e["type"] == "host.status_changed"]

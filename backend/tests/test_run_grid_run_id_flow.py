@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
+from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
@@ -71,6 +72,7 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
             heartbeat_timeout_sec=120,
             created_by="tester",
         ),
+        publisher=event_bus,
     )
     return run.id
 
@@ -108,8 +110,8 @@ async def test_complete_run_clears_desired_grid_run_id(
     )
     run_id = await _create_run(db_session)
 
-    await run_service.signal_ready(db_session, run_id)
-    await run_service.complete_run(db_session, run_id)
+    await run_service.signal_ready(db_session, run_id, publisher=event_bus)
+    await run_service.complete_run(db_session, run_id, publisher=event_bus)
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None

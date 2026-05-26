@@ -31,7 +31,6 @@ from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.events import event_bus as _default_event_bus
 from app.events import queue_device_crashed_event
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
@@ -277,17 +276,18 @@ async def handle_node_crash(
             DeviceEventType.node_crash,
             {"error": reason, "source": source, "will_restart": True},
         )
-        queue_device_crashed_event(
-            db,
-            device_id=str(device.id),
-            device_name=device.name,
-            source=source,
-            reason=reason,
-            will_restart=True,
-            process=None,
-            severity="warning",
-            publisher=publisher or _default_event_bus,
-        )
+        if publisher is not None:
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source=source,
+                reason=reason,
+                will_restart=True,
+                process=None,
+                severity="warning",
+                publisher=publisher,
+            )
 
     if node is not None and node.observed_running:
         await _MACHINE.transition(

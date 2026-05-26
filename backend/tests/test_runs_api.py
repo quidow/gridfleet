@@ -13,6 +13,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.events import event_bus
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
@@ -67,9 +68,11 @@ async def _create_run(client: AsyncClient, **overrides: object) -> dict[str, Any
     return dict(resp.json())
 
 
-async def test_create_run(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+async def test_create_run(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
     await _create_available_device(db_session, default_host_id, "run-001", "Device 1")
-    data = await _create_run(client)
+    data = await _create_run(client, publisher=event_bus)
     assert data["name"] == "Test Run"
     assert data["state"] == "preparing"
     assert len(data["devices"]) == 1
@@ -269,8 +272,8 @@ async def test_create_run_rejects_removed_wait_field(client: AsyncClient) -> Non
 async def test_list_runs(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-list-1", "D1")
     await _create_available_device(db_session, default_host_id, "run-list-2", "D2")
-    await _create_run(client, name="Run A")
-    await _create_run(client, name="Run B")
+    await _create_run(client, name="Run A", publisher=event_bus)
+    await _create_run(client, name="Run B", publisher=event_bus)
 
     resp = await client.get("/api/runs")
     assert resp.status_code == 200
@@ -281,7 +284,7 @@ async def test_list_runs(client: AsyncClient, db_session: AsyncSession, default_
 
 async def test_list_runs_filter_state(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-filter-1", "D1")
-    await _create_run(client, name="Preparing Run")
+    await _create_run(client, name="Preparing Run", publisher=event_bus)
 
     resp = await client.get("/api/runs?state=preparing")
     assert resp.status_code == 200
@@ -296,7 +299,7 @@ async def test_list_runs_filter_created_range(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await _create_available_device(db_session, default_host_id, "run-date-1", "D1")
-    run = await _create_run(client, name="Dated Run")
+    run = await _create_run(client, name="Dated Run", publisher=event_bus)
     created_at = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")).astimezone(UTC)
     same_day = created_at.date().isoformat()
     next_day = (created_at + timedelta(days=1)).date().isoformat()
@@ -316,9 +319,9 @@ async def test_list_runs_paginates_and_sorts(
     await _create_available_device(db_session, default_host_id, "run-sort-1", "D1")
     await _create_available_device(db_session, default_host_id, "run-sort-2", "D2")
     await _create_available_device(db_session, default_host_id, "run-sort-3", "D3")
-    await _create_run(client, name="Zulu Run")
-    await _create_run(client, name="Alpha Run")
-    await _create_run(client, name="Middle Run")
+    await _create_run(client, name="Zulu Run", publisher=event_bus)
+    await _create_run(client, name="Alpha Run", publisher=event_bus)
+    await _create_run(client, name="Middle Run", publisher=event_bus)
 
     response = await client.get(
         "/api/runs",
@@ -337,7 +340,7 @@ async def test_list_runs_out_of_range_offset_returns_empty_items_with_total(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await _create_available_device(db_session, default_host_id, "run-offset-1", "D1")
-    await _create_run(client, name="Only Run")
+    await _create_run(client, name="Only Run", publisher=event_bus)
 
     response = await client.get("/api/runs", params={"offset": 10})
 
@@ -403,7 +406,7 @@ async def test_list_runs_cursor_rejects_invalid_cursor(client: AsyncClient) -> N
 
 async def test_get_run(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-get-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     resp = await client.get(f"/api/runs/{run['id']}")
     assert resp.status_code == 200
     data = resp.json()
@@ -415,7 +418,7 @@ async def test_device_payload_surfaces_reservation_owner(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "run-device-1", "Reserved Device")
-    run = await _create_run(client, name="Owner Run")
+    run = await _create_run(client, name="Owner Run", publisher=event_bus)
 
     device_resp = await client.get(f"/api/devices/{device['id']}")
     assert device_resp.status_code == 200
@@ -433,7 +436,7 @@ async def test_get_run_not_found(client: AsyncClient) -> None:
 
 async def test_run_lifecycle(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-life-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
 
     # preparing -> active
@@ -454,7 +457,7 @@ async def test_run_lifecycle(client: AsyncClient, db_session: AsyncSession, defa
 
 async def test_run_cancel(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-cancel-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(f"/api/runs/{run['id']}/cancel")
     assert resp.status_code == 200
@@ -562,7 +565,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
 
 async def test_run_heartbeat(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-hb-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(f"/api/runs/{run['id']}/heartbeat")
     assert resp.status_code == 200
@@ -575,7 +578,7 @@ async def test_run_heartbeat_terminal_state(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await _create_available_device(db_session, default_host_id, "run-hbt-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     await client.post(f"/api/runs/{run['id']}/complete")
 
     resp = await client.post(f"/api/runs/{run['id']}/heartbeat")
@@ -585,7 +588,7 @@ async def test_run_heartbeat_terminal_state(
 
 async def test_signal_ready_wrong_state(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-wrong-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     await client.post(f"/api/runs/{run['id']}/ready")
 
     # Try ready again from ready state
@@ -597,16 +600,18 @@ async def test_signal_active_from_preparing(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await _create_available_device(db_session, default_host_id, "run-wrong-2", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(f"/api/runs/{run['id']}/active")
     assert resp.status_code == 200
     assert resp.json()["state"] == "active"
 
 
-async def test_force_release(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+async def test_force_release(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
     await _create_available_device(db_session, default_host_id, "run-fr-1", "D1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200
@@ -634,7 +639,7 @@ async def test_force_release_restores_busy_run_devices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "run-fr-busy-1", "Busy Force Release")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
     device_id = uuid.UUID(device["id"])
 
@@ -682,6 +687,7 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
     run = await _create_run(
         client,
         requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 2}],
+        publisher=event_bus,
     )
 
     resp = await client.post(
@@ -712,7 +718,7 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 ) -> None:
     reserved = await _create_available_device(db_session, default_host_id, "run-prep-3", "Reserved Device")
     other = await _create_available_device(db_session, default_host_id, "run-prep-4", "Other Device")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(
         f"/api/runs/{run['id']}/devices/{other['id']}/preparation-failed",
@@ -732,7 +738,7 @@ async def test_complete_run_releases_reservation_rows(
     default_host_id: str,
 ) -> None:
     await _create_available_device(db_session, default_host_id, "run-release-1", "Device 1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
 
     resp = await client.post(f"/api/runs/{run['id']}/complete")
     assert resp.status_code == 200
@@ -762,7 +768,7 @@ async def test_concurrent_create_run_reserves_device_once(
         async with session_factory() as session:
             run_payload = payload.model_copy(update={"name": name})
             try:
-                run, _devices = await run_service.create_run(session, run_payload)
+                run, _devices = await run_service.create_run(session, run_payload, publisher=event_bus)
                 return "success", str(run.id)
             except ValueError as exc:
                 return "error", str(exc)
@@ -784,7 +790,7 @@ async def test_run_read_includes_session_counts_default_zero(
     default_host_id: str,
 ) -> None:
     await _create_available_device(db_session, default_host_id, "sc-001", "Device SC1")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     resp = await client.get(f"/api/runs/{run['id']}")
     assert resp.status_code == 200
     body = resp.json()
@@ -921,7 +927,7 @@ async def test_cancel_run_response_includes_session_counts(
         name="Device CSC1",
         operational_state="available",
     )
-    created = await _create_run(client)
+    created = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(created["id"])
 
     db_session.add_all(
@@ -1057,7 +1063,7 @@ async def test_sessions_straddle_active_signal_boundary(
 
     await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
-    await run_service.signal_active(db_session, run.id)
+    await run_service.signal_active(db_session, run.id, publisher=event_bus)
     await db_session.refresh(run)
     assert run.state == RunState.active
     assert run.started_at is not None
@@ -1119,6 +1125,6 @@ async def test_create_run_excludes_device_mid_appium_restart(
         )
     await db_session.commit()
 
-    data = await _create_run(client)
+    data = await _create_run(client, publisher=event_bus)
 
     assert [device["device_id"] for device in data["devices"]] == [str(available.id)]

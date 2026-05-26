@@ -20,7 +20,6 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import appium_node_stop_in_flight
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.runs import service as run_service
 from app.runs.models import RunState
@@ -111,11 +110,13 @@ def queue_session_started_event(
     run_id: str | None = None,
     publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     queue_event_for_session(
         db,
         "session.started",
         build_session_started_event_payload(session, device=device, run_id=run_id),
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
 
 
@@ -126,12 +127,14 @@ def queue_session_ended_event(
     device: Device | None,
     publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     queue_event_for_session(
         db,
         "session.ended",
         build_session_ended_event_payload(session, device=device),
         severity=_session_ended_severity(str(session.status), session.error_type),
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
 
 

@@ -19,7 +19,6 @@ from app.core.observability import get_logger
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import is_ready_for_use_async
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -57,7 +56,7 @@ async def set_operational_state(
     if old == new_state:
         return False
     device.operational_state = new_state
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -71,7 +70,7 @@ async def set_operational_state(
             "device.operational_state_changed",
             payload,
             severity=severity,
-            publisher=publisher or _default_event_bus,
+            publisher=publisher,
         )
     return True
 
@@ -90,7 +89,7 @@ async def set_hold(
     if old == new_hold:
         return False
     device.hold = new_hold
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -99,9 +98,7 @@ async def set_hold(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(
-            session, "device.hold_changed", payload, severity=severity, publisher=publisher or _default_event_bus
-        )
+        queue_event_for_session(session, "device.hold_changed", payload, severity=severity, publisher=publisher)
     return True
 
 

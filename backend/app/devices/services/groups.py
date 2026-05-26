@@ -9,7 +9,6 @@ from sqlalchemy.orm import selectinload
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters, DeviceQueryFilters
 from app.devices.services import service as device_service
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
     from app.events.event_bus import EventBus
 
 
-async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventBus | None = None) -> DeviceGroup:
+async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventBus) -> DeviceGroup:
     group = DeviceGroup(
         name=data.name,
         description=data.description,
@@ -34,7 +33,7 @@ async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: 
         db,
         "device_group.updated",
         {"group_id": str(group.id), "action": "created"},
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(group)
@@ -91,7 +90,7 @@ async def get_group(db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | N
 
 
 async def update_group(
-    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventBus | None = None
+    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventBus
 ) -> DeviceGroup | None:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
@@ -108,14 +107,14 @@ async def update_group(
         db,
         "device_group.updated",
         {"group_id": str(group.id), "action": "updated"},
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(group)
     return group
 
 
-async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventBus | None = None) -> bool:
+async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventBus) -> bool:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
     group = result.scalar_one_or_none()
@@ -126,14 +125,14 @@ async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: Even
         db,
         "device_group.updated",
         {"group_id": str(group_id), "action": "deleted"},
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     return True
 
 
 async def add_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus
 ) -> int:
     if not device_ids:
         return 0
@@ -155,14 +154,14 @@ async def add_members(
             db,
             "device_group.members_changed",
             {"group_id": str(group_id), "added": added},
-            publisher=publisher or _default_event_bus,
+            publisher=publisher,
         )
     await db.commit()
     return added
 
 
 async def remove_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus
 ) -> int:
     stmt = delete(DeviceGroupMembership).where(
         DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
@@ -174,7 +173,7 @@ async def remove_members(
             db,
             "device_group.members_changed",
             {"group_id": str(group_id), "removed": removed},
-            publisher=publisher or _default_event_bus,
+            publisher=publisher,
         )
     await db.commit()
     return removed

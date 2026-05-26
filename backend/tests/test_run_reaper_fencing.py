@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.leader.advisory import LeadershipLost
+from app.events import event_bus
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
 
@@ -44,7 +45,7 @@ async def test_reaper_aborts_before_expiring_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])
@@ -80,7 +81,7 @@ async def test_reaper_aborts_before_ttl_expiry_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])

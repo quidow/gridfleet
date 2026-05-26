@@ -39,7 +39,6 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.grid import service as grid_service
 from app.settings import settings_service as _default_settings
@@ -220,19 +219,20 @@ async def _process_node_health(
                 reason="Node health checks recovered",
                 record_incident=False,
             )
-            queue_event_for_session(
-                db,
-                "node.state_changed",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "old_state": "error",
-                    "new_state": "running",
-                    "port": node.port,
-                },
-                severity=node_state_severity("error", "running"),
-                publisher=publisher or _default_event_bus,
-            )
+            if publisher is not None:
+                queue_event_for_session(
+                    db,
+                    "node.state_changed",
+                    {
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "old_state": "error",
+                        "new_state": "running",
+                        "port": node.port,
+                    },
+                    severity=node_state_severity("error", "running"),
+                    publisher=publisher,
+                )
             await record_event(
                 db,
                 device.id,

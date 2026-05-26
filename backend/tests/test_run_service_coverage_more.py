@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.events import event_bus
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
@@ -223,18 +224,18 @@ async def test_run_listing_cursor_and_state_transition_branches(db_session: Asyn
     assert empty_page.items == []
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.signal_ready(db_session, uuid.uuid4())
+        await run_service.signal_ready(db_session, uuid.uuid4(publisher=event_bus))
     with pytest.raises(ValueError, match="Cannot signal ready"):
-        await run_service.signal_ready(db_session, active.id)
+        await run_service.signal_ready(db_session, active.id, publisher=event_bus)
 
-    ready = await run_service.signal_ready(db_session, older.id)
+    ready = await run_service.signal_ready(db_session, older.id, publisher=event_bus)
     assert ready.state == RunState.active
     assert ready.started_at is not None
 
-    already_active = await run_service.signal_active(db_session, active.id)
+    already_active = await run_service.signal_active(db_session, active.id, publisher=event_bus)
     assert already_active.state == RunState.active
     with pytest.raises(ValueError, match="Cannot signal active"):
-        await run_service.signal_active(db_session, terminal.id)
+        await run_service.signal_active(db_session, terminal.id, publisher=event_bus)
 
     before = terminal.last_heartbeat
     heartbeat_terminal = await run_service.heartbeat(db_session, terminal.id)
@@ -272,31 +273,31 @@ async def test_run_terminal_transition_paths(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.complete_run(db_session, uuid.uuid4())
+        await run_service.complete_run(db_session, uuid.uuid4(publisher=event_bus))
     with pytest.raises(ValueError, match="terminal state"):
-        await run_service.complete_run(db_session, terminal.id)
-    completed = await run_service.complete_run(db_session, active.id)
+        await run_service.complete_run(db_session, terminal.id, publisher=event_bus)
+    completed = await run_service.complete_run(db_session, active.id, publisher=event_bus)
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cancel_run(db_session, uuid.uuid4())
-    cancelled = await run_service.cancel_run(db_session, cancel.id)
+        await run_service.cancel_run(db_session, uuid.uuid4(publisher=event_bus))
+    cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus)
     assert cancelled.state == RunState.cancelled
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db_session, uuid.uuid4())
-    forced = await run_service.force_release(db_session, force.id)
+        await run_service.force_release(db_session, uuid.uuid4(publisher=event_bus))
+    forced = await run_service.force_release(db_session, force.id, publisher=event_bus)
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
-    await run_service.expire_run(db_session, expired, "timeout")
+    await run_service.expire_run(db_session, expired, "timeout", publisher=event_bus)
     await db_session.refresh(expired)
     assert expired.state == RunState.expired
     assert expired.error == "timeout"
 
     before = terminal.completed_at
-    await run_service.expire_run(db_session, terminal, "ignored")
+    await run_service.expire_run(db_session, terminal, "ignored", publisher=event_bus)
     await db_session.refresh(terminal)
     assert terminal.completed_at == before
 

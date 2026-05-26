@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import bulk as bulk_service
+from app.events import event_bus
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -70,7 +71,7 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
     monkeypatch.setattr(bulk_service, "enter_maintenance", fake_enter_maintenance)
 
     async with db_session_maker() as session:
-        result = await bulk_service.bulk_enter_maintenance(session, device_ids)
+        result = await bulk_service.bulk_enter_maintenance(session, device_ids, publisher=event_bus)
 
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
     assert lock_device_calls == expected_lock_order

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.devices.services.bulk import _bulk_severity
+from app.events import event_bus
 
 # ---------------------------------------------------------------------------
 # Unit tests for _bulk_severity helper
@@ -83,7 +84,7 @@ async def test_bulk_completed_succeeds_emits_success(
         return object()
 
     await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
+        db=MagicMock(publisher=event_bus),
         device_ids=[uuid4()],
         operation="start_nodes",
         action_fn=_ok_action,
@@ -121,7 +122,7 @@ async def test_bulk_completed_all_fail_emits_critical(
         raise RuntimeError("simulated failure")
 
     await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
+        db=MagicMock(publisher=event_bus),
         device_ids=[uuid4()],
         operation="start_nodes",
         action_fn=_fail_action,
@@ -164,7 +165,7 @@ async def test_bulk_completed_partial_emits_warning(
         raise RuntimeError("second device fails")
 
     await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
+        db=MagicMock(publisher=event_bus),
         device_ids=[uuid4(), uuid4()],
         operation="start_nodes",
         action_fn=_counting_action,

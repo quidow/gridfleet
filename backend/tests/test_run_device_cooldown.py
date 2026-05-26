@@ -16,6 +16,7 @@ from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
+from app.events import event_bus
 from app.runs.models import RunState, TestRun
 from app.settings import settings_service
 from tests.helpers import create_device_record
@@ -68,7 +69,7 @@ async def _create_run(client: AsyncClient, **overrides: object) -> dict[str, Any
 
 async def test_cooldown_device_success(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-001")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
     device_id = str(device.id)
 
@@ -131,7 +132,7 @@ async def test_cooldown_device_returns_503_when_inline_delivery_fails(
             )
         )
     await db_session.commit()
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
     device_id = str(device.id)
 
@@ -177,7 +178,7 @@ async def test_cooldown_device_not_reserved(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await _create_available_device(db_session, default_host_id, "cooldown-nr")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     # Try to cooldown a different device
     resp = await client.post(
         f"/api/runs/{run['id']}/devices/{uuid.uuid4()}/cooldown",
@@ -190,7 +191,7 @@ async def test_cooldown_device_ttl_too_high(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-ttl")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
     resp = await client.post(
         f"/api/runs/{run['id']}/devices/{device.id}/cooldown",
@@ -203,7 +204,7 @@ async def test_cooldown_device_terminal_run(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-term")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
 
     # Complete the run
@@ -226,7 +227,7 @@ async def test_cooldown_device_escalation(
 ) -> None:
     monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 2)
     device = await _create_available_device(db_session, default_host_id, "cooldown-esc")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
     device_id = str(device.id)
 
@@ -257,7 +258,7 @@ async def test_cooldown_device_increments_count(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-inc")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
     device_id = str(device.id)
 
@@ -284,7 +285,7 @@ async def test_cooldown_preserves_desired_grid_run_id(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-grid")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
 
     # Set up an AppiumNode with the run's grid_run_id
@@ -331,7 +332,7 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
     """
     monkeypatch.setitem(settings_service._cache, "general.device_cooldown_escalation_threshold", 1)
     device = await _create_available_device(db_session, default_host_id, "cooldown-esc-inline")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
 
     with state_write_guard.bypass():
@@ -378,7 +379,7 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     same relay because hub-side caps still match.
     """
     device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
 
     with state_write_guard.bypass():
@@ -418,7 +419,7 @@ async def test_cooldown_does_not_mutate_operational_state(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-state")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = run["id"]
 
     # Simulate an active session by flipping to busy after reservation.
@@ -482,7 +483,7 @@ async def test_reserved_device_info_reflects_expired_cooldown(db_session: AsyncS
 
 async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_available_device(db_session, default_host_id, "cooldown-stop")
-    run = await _create_run(client)
+    run = await _create_run(client, publisher=event_bus)
     run_id = uuid.UUID(run["id"])
 
     with state_write_guard.bypass():

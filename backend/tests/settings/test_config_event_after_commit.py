@@ -14,6 +14,8 @@ from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 if TYPE_CHECKING:
     import pytest
 
+from app.events import event_bus
+
 CAPS_V2 = {"orchestration_contract_version": 2}
 
 
@@ -24,7 +26,7 @@ async def test_register_host_queues_host_registered(
     payload = HostRegister(
         hostname="contract-host", ip="10.0.0.42", os_type="linux", agent_port=5100, capabilities=CAPS_V2
     )
-    host, _is_new = await host_service.register_host(db_session, payload)
+    host, _is_new = await host_service.register_host(db_session, payload, publisher=event_bus)
     await settle_after_commit_tasks()
 
     registered = [p for n, p in event_bus_capture if n == "host.registered"]
@@ -48,11 +50,11 @@ async def test_approve_host_queues_status_changed(
     payload = HostRegister(
         hostname="approve-host", ip="10.0.0.43", os_type="linux", agent_port=5100, capabilities=CAPS_V2
     )
-    host, _ = await host_service.register_host(db_session, payload)
+    host, _ = await host_service.register_host(db_session, payload, publisher=event_bus)
     assert host.status.value == "pending"
     event_bus_capture.clear()
 
-    approved = await host_service.approve_host(db_session, host.id)
+    approved = await host_service.approve_host(db_session, host.id, publisher=event_bus)
     assert approved is not None
     await settle_after_commit_tasks()
 
@@ -68,7 +70,9 @@ async def test_merge_device_config_queues_config_updated(
     _, device = await seed_host_and_device(db_session, identity="config-merge-1")
     event_bus_capture.clear()
 
-    await config_service.merge_device_config(db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester")
+    await config_service.merge_device_config(
+        db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester", publisher=event_bus
+    )
     await settle_after_commit_tasks()
 
     updated = [p for n, p in event_bus_capture if n == "config.updated"]

@@ -227,7 +227,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (host_resource_telemetry_loop(), "host_resource_telemetry_loop"),
             (job_queue.durable_job_worker_loop(session_factory, publisher=bus), "durable_job_worker_loop"),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
-            (run_reaper_loop(), "run_reaper_loop"),
+            (run_reaper_loop(publisher=bus), "run_reaper_loop"),
             (data_cleanup_loop(publisher=bus), "data_cleanup_loop"),
             (session_viability_loop(), "session_viability_loop"),
             (fleet_capacity_collector_loop(), "fleet_capacity_collector_loop"),

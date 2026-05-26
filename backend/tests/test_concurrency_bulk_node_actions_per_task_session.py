@@ -10,6 +10,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import bulk as bulk_service
 from app.devices.services import state_write_guard
+from app.events import event_bus
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -102,7 +103,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                     await racer_db.rollback()
 
     async def runner() -> dict[str, object]:
-        return await bulk_service.bulk_start_nodes(db_session, [device_a_id, device_b_id])
+        return await bulk_service.bulk_start_nodes(db_session, [device_a_id, device_b_id], publisher=event_bus)
 
     runner_task = asyncio.create_task(runner())
     racer_task = asyncio.create_task(racer())

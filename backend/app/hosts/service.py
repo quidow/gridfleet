@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
 from app.settings import settings_service as _default_settings
@@ -143,7 +142,7 @@ async def _apply_reregister(db: AsyncSession, host: Host, data: HostRegister) ->
 
 
 async def register_host(
-    db: AsyncSession, data: HostRegister, *, publisher: EventBus | None = None, settings: SettingsService | None = None
+    db: AsyncSession, data: HostRegister, *, publisher: EventBus, settings: SettingsService | None = None
 ) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
     validate_orchestration_contract(data.capabilities, host_label=data.hostname)
@@ -194,14 +193,14 @@ async def register_host(
             "hostname": host.hostname,
             "status": host.status.value,
         },
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(host)
     return host, True
 
 
-async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: EventBus | None = None) -> Host | None:
+async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: EventBus) -> Host | None:
     """Approve a pending host. Returns None if not found or not pending."""
     # Acquire SELECT ... FOR UPDATE so a concurrent reject_host (which
     # deletes the row) cannot land between the predicate check and the
@@ -225,7 +224,7 @@ async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: Event
             "new_status": "online",
         },
         severity=_host_status_severity(old_status, "online"),
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(host)

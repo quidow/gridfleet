@@ -21,6 +21,7 @@ from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
+from app.events import event_bus
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
 
@@ -177,7 +178,7 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await run_reaper.run_reaper_loop()
+        await run_reaper.run_reaper_loop(publisher=event_bus)
 
     sleep.assert_awaited()
 

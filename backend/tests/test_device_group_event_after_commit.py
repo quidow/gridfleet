@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
+from app.events import event_bus
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -62,7 +63,7 @@ async def test_delete_group_queues_updated_deleted(
     )
     event_bus_capture.clear()
 
-    await device_group_service.delete_group(db_session, group.id)
+    await device_group_service.delete_group(db_session, group.id, publisher=event_bus)
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]
@@ -77,7 +78,7 @@ async def test_add_members_queues_members_changed(
     _, device = await seed_host_and_device(db_session, identity="group-add-1")
     event_bus_capture.clear()
 
-    await device_group_service.add_members(db_session, group.id, [device.id])
+    await device_group_service.add_members(db_session, group.id, [device.id], publisher=event_bus)
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]
@@ -91,10 +92,10 @@ async def test_remove_members_queues_members_changed(
 ) -> None:
     group = await device_group_service.create_group(db_session, DeviceGroupCreate(name="remove-members"))
     _, device = await seed_host_and_device(db_session, identity="group-remove-1")
-    await device_group_service.add_members(db_session, group.id, [device.id])
+    await device_group_service.add_members(db_session, group.id, [device.id], publisher=event_bus)
     event_bus_capture.clear()
 
-    await device_group_service.remove_members(db_session, group.id, [device.id])
+    await device_group_service.remove_members(db_session, group.id, [device.id], publisher=event_bus)
     await settle_after_commit_tasks()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]

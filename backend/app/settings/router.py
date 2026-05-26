@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.events.dependencies import EventServicesDep  # noqa: TC001
 from app.settings.dependencies import SettingsServicesDep  # noqa: TC001
 from app.settings.schemas import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
 
@@ -21,9 +22,10 @@ async def bulk_update_settings(
     body: SettingsBulkUpdate,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    events: EventServicesDep,
 ) -> list[dict[str, Any]]:
     try:
-        return await settings_services.service.bulk_update(db, body.settings)
+        return await settings_services.service.bulk_update(db, body.settings, publisher=events.publisher)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -31,8 +33,10 @@ async def bulk_update_settings(
 
 
 @router.post("/reset-all")
-async def reset_all_settings(db: DbDep, settings_services: SettingsServicesDep) -> dict[str, str]:
-    await settings_services.service.reset_all(db)
+async def reset_all_settings(
+    db: DbDep, settings_services: SettingsServicesDep, events: EventServicesDep
+) -> dict[str, str]:
+    await settings_services.service.reset_all(db, publisher=events.publisher)
     return {"status": "all settings reset to defaults"}
 
 
@@ -50,9 +54,10 @@ async def update_setting(
     body: SettingUpdate,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     try:
-        return await settings_services.service.update(db, key, body.value)
+        return await settings_services.service.update(db, key, body.value, publisher=events.publisher)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -64,8 +69,9 @@ async def reset_setting(
     key: str,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     try:
-        return await settings_services.service.reset(db, key)
+        return await settings_services.service.reset(db, key, publisher=events.publisher)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

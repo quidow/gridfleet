@@ -62,6 +62,7 @@ from app.devices.services import (
     write as device_write,
 )
 from app.events import catalog as event_catalog
+from app.events import event_bus
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
 from app.jobs import queue as job_queue
@@ -678,7 +679,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
-    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4()) is False
+    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4(publisher=event_bus)) is False
 
     assert device_write._is_transport_identity(identity_value="10.0.0.1:5555", connection_target=None, ip_address=None)
     assert device_write._is_transport_identity(identity_value="10.0.0.1", connection_target=None, ip_address=None)
@@ -720,9 +721,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     test_data_db = TestDataDb()
     monkeypatch.setattr(test_data_service, "queue_event_for_session", Mock())
     device = SimpleNamespace(id=uuid.uuid4(), name="device", test_data={"a": 1})
-    assert await test_data_service.replace_device_test_data(test_data_db, device, {"b": 2}, changed_by="operator") == {
-        "b": 2
-    }
+    assert await test_data_service.replace_device_test_data(
+        test_data_db, device, {"b": 2}, changed_by="operator", publisher=event_bus
+    ) == {"b": 2}
 
     host_db = AsyncMock()
     host_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))

@@ -20,7 +20,6 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -59,6 +58,8 @@ def _maybe_emit_health_changed(
     *,
     publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     nxt = build_public_summary(device)
     if previous.get("healthy") == nxt.get("healthy"):
         return
@@ -70,7 +71,7 @@ def _maybe_emit_health_changed(
             "healthy": nxt.get("healthy"),
             "summary": nxt.get("summary"),
         },
-        publisher=publisher or _default_event_bus,
+        publisher=publisher,
     )
 
 

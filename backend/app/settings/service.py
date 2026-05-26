@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import delete, select
 
 from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names, queue_event_for_session
-from app.events import event_bus as _default_event_bus
 from app.settings.models import Setting
 
 if TYPE_CHECKING:
@@ -27,8 +26,8 @@ from app.settings.registry import (
 )
 
 
-def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publisher: EventBus | None = None) -> None:
-    queue_event_for_session(db, "settings.changed", payload, publisher=publisher or _default_event_bus)
+def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publisher: EventBus) -> None:
+    queue_event_for_session(db, "settings.changed", payload, publisher=publisher)
 
 
 if TYPE_CHECKING:
@@ -227,7 +226,7 @@ class SettingsService:
         )
 
     async def update(
-        self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventBus | None = None
+        self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventBus
     ) -> dict[str, Any]:
         """Update a single setting. Validates, persists, updates cache, publishes SSE."""
         if key not in SETTINGS_REGISTRY:
@@ -265,7 +264,7 @@ class SettingsService:
         return self.get_setting_response(key)
 
     async def bulk_update(
-        self, db: AsyncSession, updates: dict[str, Any], *, publisher: EventBus | None = None
+        self, db: AsyncSession, updates: dict[str, Any], *, publisher: EventBus
     ) -> list[dict[str, Any]]:
         """Update multiple settings in one transaction."""
         # Validate all first
@@ -306,7 +305,7 @@ class SettingsService:
 
         return [self.get_setting_response(key) for key in updates]
 
-    async def reset(self, db: AsyncSession, key: str, *, publisher: EventBus | None = None) -> dict[str, Any]:
+    async def reset(self, db: AsyncSession, key: str, *, publisher: EventBus) -> dict[str, Any]:
         """Reset a single setting to its default."""
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")
@@ -320,7 +319,7 @@ class SettingsService:
         self._cache[key] = self._defaults[key]
         return self.get_setting_response(key)
 
-    async def reset_all(self, db: AsyncSession, *, publisher: EventBus | None = None) -> None:
+    async def reset_all(self, db: AsyncSession, *, publisher: EventBus) -> None:
         """Reset all settings to defaults."""
         await self._cancel_refresh_task()
         await db.execute(delete(Setting))

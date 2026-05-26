@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.events import event_bus
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostRegister
 from app.hosts.service import register_host
@@ -82,6 +83,7 @@ async def test_register_host_races_concurrent_same_hostname(
                     agent_version="0.3.0",
                     capabilities={"orchestration_contract_version": 2},
                 ),
+                publisher=event_bus,
             )
         except IntegrityError as exc:
             pytest.fail(f"register_host raised IntegrityError on concurrent same-hostname insert: {exc}")

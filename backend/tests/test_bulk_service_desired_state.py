@@ -9,6 +9,7 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
+from app.events import event_bus
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -188,7 +189,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
-    await bulk_service.bulk_start_nodes(db_session, [device.id])
+    await bulk_service.bulk_start_nodes(db_session, [device.id], publisher=event_bus)
 
     assert captured == ["bulk"]
 
@@ -221,6 +222,6 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
     monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
-    await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group")
+    await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group", publisher=event_bus)
 
     assert captured == ["group"]

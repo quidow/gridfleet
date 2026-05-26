@@ -9,6 +9,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
+from app.events import event_bus
 
 
 def _db() -> MagicMock:
@@ -88,7 +89,9 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[first, second]))
     monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
 
-    result = await bulk_service.bulk_update_tags(db, [first.id, second.id], {"new": "tag"}, merge=False)
+    result = await bulk_service.bulk_update_tags(
+        db, [first.id, second.id], {"new": "tag"}, merge=False, publisher=event_bus
+    )
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
     assert first.tags == {"new": "tag"}
     assert db.commit.await_count == 1
@@ -104,7 +107,7 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
     publish = AsyncMock()
     monkeypatch.setattr(bulk_service, "delete_device", fake_delete)
     monkeypatch.setattr(bulk_service._default_event_bus, "publish", publish)
-    deleted = await bulk_service.bulk_delete(db, [first.id, second.id])
+    deleted = await bulk_service.bulk_delete(db, [first.id, second.id], publisher=event_bus)
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"
     assert deleted["errors"][str(second.id)] == "delete boom"
@@ -138,7 +141,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     monkeypatch.setattr(bulk_service, "pack_device_lifecycle_action", fake_lifecycle_action)
     monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
 
-    reconnect = await bulk_service.bulk_reconnect(db, [eligible.id, unsupported.id, failed.id])
+    reconnect = await bulk_service.bulk_reconnect(db, [eligible.id, unsupported.id, failed.id], publisher=event_bus)
     assert reconnect["total"] == 3
     assert reconnect["succeeded"] == 1
     assert reconnect["errors"][str(unsupported.id)] == "Not a network-connected Android device"
@@ -152,7 +155,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(bulk_service, "schedule_device_recovery", AsyncMock(side_effect=RuntimeError("queue down")))
     monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
-    exited = await bulk_service.bulk_exit_maintenance(db, [success.id, failure.id])
+    exited = await bulk_service.bulk_exit_maintenance(db, [success.id, failure.id], publisher=event_bus)
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure.id)] == "not in maintenance"
 
@@ -163,7 +166,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
     monkeypatch.setattr(bulk_service.device_locking, "lock_device", AsyncMock(side_effect=[success, failure]))
     monkeypatch.setattr(bulk_service, "enter_maintenance", fake_enter)
-    entered = await bulk_service.bulk_enter_maintenance(db, [success.id, failure.id])
+    entered = await bulk_service.bulk_enter_maintenance(db, [success.id, failure.id], publisher=event_bus)
     assert entered["succeeded"] == 1
     assert entered["errors"][str(failure.id)] == "enter failed"
 
@@ -221,11 +224,7 @@ async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch
     monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
 
     result = await bulk_service._run_per_device_node_action(
-        db,
-        [first, second, third],
-        operation="restart",
-        action_fn=action,
-        caller="bulk",
+        db, [first, second, third], operation="restart", action_fn=action, caller="bulk", publisher=event_bus
     )
 
     assert result["succeeded"] == 1

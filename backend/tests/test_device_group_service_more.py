@@ -7,6 +7,7 @@ from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
+from app.events import event_bus
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 
 if TYPE_CHECKING:
@@ -27,8 +28,13 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     )
     await settle_after_commit_tasks()
 
-    assert await device_group_service.add_members(db_session, group.id, [first_device.id, second_device.id]) == 2
-    assert await device_group_service.add_members(db_session, group.id, [first_device.id]) == 0
+    assert (
+        await device_group_service.add_members(
+            db_session, group.id, [first_device.id, second_device.id], publisher=event_bus
+        )
+        == 2
+    )
+    assert await device_group_service.add_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
 
     groups = await device_group_service.list_groups(db_session)
     assert groups[0]["device_count"] == 2
@@ -38,8 +44,8 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     assert [device.id for device in detail["devices"]] == [first_device.id, second_device.id]
     assert await device_group_service.get_group_device_ids(db_session, group.id) == [first_device.id, second_device.id]
 
-    assert await device_group_service.remove_members(db_session, group.id, [first_device.id]) == 1
-    assert await device_group_service.remove_members(db_session, group.id, [first_device.id]) == 0
+    assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 1
+    assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
 
     updated = await device_group_service.update_group(
         db_session,
@@ -50,8 +56,8 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     assert updated.name == "static phones updated"
     assert updated.description == "renamed"
 
-    assert await device_group_service.delete_group(db_session, group.id) is True
-    assert await device_group_service.delete_group(db_session, group.id) is False
+    assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is True
+    assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is False
     assert await device_group_service.get_group(db_session, group.id) is None
     assert await device_group_service.update_group(db_session, group.id, DeviceGroupUpdate(name="missing")) is None
 

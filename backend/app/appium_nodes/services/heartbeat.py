@@ -31,7 +31,6 @@ from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.state import set_operational_state
-from app.events import event_bus as _default_event_bus
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
@@ -428,7 +427,7 @@ async def _ingest_appium_restart_events(
             if process == "appium" and pid is not None:
                 locked_node.pid = pid
             locked_node.consecutive_health_failures = 0
-            if process == "appium":
+            if process == "appium" and publisher is not None:
                 queue_event_for_session(
                     db,
                     "node.state_changed",
@@ -440,7 +439,7 @@ async def _ingest_appium_restart_events(
                         "port": port,
                     },
                     severity=node_state_severity("error", "running"),
-                    publisher=publisher or _default_event_bus,
+                    publisher=publisher,
                 )
             await record_event(
                 db,
@@ -461,30 +460,31 @@ async def _ingest_appium_restart_events(
             continue
 
         error_message = _restart_error_message(kind, process, exit_code)
-        queue_event_for_session(
-            db,
-            "node.crash",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "error": error_message,
-                "will_restart": will_retry,
-                "process": process,
-            },
-            severity="warning" if will_retry else None,
-            publisher=publisher or _default_event_bus,
-        )
-        queue_device_crashed_event(
-            db,
-            device_id=str(device.id),
-            device_name=device.name,
-            source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
-            reason=error_message,
-            will_restart=will_retry,
-            process=process,
-            severity="warning" if will_retry else None,
-            publisher=publisher or _default_event_bus,
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "node.crash",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "error": error_message,
+                    "will_restart": will_retry,
+                    "process": process,
+                },
+                severity="warning" if will_retry else None,
+                publisher=publisher,
+            )
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
+                reason=error_message,
+                will_restart=will_retry,
+                process=process,
+                severity="warning" if will_retry else None,
+                publisher=publisher,
+            )
         await record_event(
             db,
             device.id,
@@ -543,17 +543,18 @@ async def _apply_host_ping_result(
             host.agent_version = agent_version
         if host.status != HostStatus.online:
             logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-            queue_event_for_session(
-                db,
-                "host.status_changed",
-                {
-                    "host_id": str(host.id),
-                    "hostname": host.hostname,
-                    "old_status": host.status.value,
-                    "new_status": "online",
-                },
-                publisher=publisher or _default_event_bus,
-            )
+            if publisher is not None:
+                queue_event_for_session(
+                    db,
+                    "host.status_changed",
+                    {
+                        "host_id": str(host.id),
+                        "hostname": host.hostname,
+                        "old_status": host.status.value,
+                        "new_status": "online",
+                    },
+                    publisher=publisher,
+                )
             host.status = HostStatus.online
             _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
         host.last_heartbeat = datetime.now(UTC)
@@ -585,27 +586,28 @@ async def _apply_host_ping_result(
 
     if count >= _default_settings.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
         logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-        queue_event_for_session(
-            db,
-            "host.status_changed",
-            {
-                "host_id": str(host.id),
-                "hostname": host.hostname,
-                "old_status": host.status.value,
-                "new_status": "offline",
-            },
-            publisher=publisher or _default_event_bus,
-        )
-        queue_event_for_session(
-            db,
-            "host.heartbeat_lost",
-            {
-                "host_id": str(host.id),
-                "hostname": host.hostname,
-                "missed_count": count,
-            },
-            publisher=publisher or _default_event_bus,
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "host.status_changed",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "old_status": host.status.value,
+                    "new_status": "offline",
+                },
+                publisher=publisher,
+            )
+            queue_event_for_session(
+                db,
+                "host.heartbeat_lost",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "missed_count": count,
+                },
+                publisher=publisher,
+            )
         host.status = HostStatus.offline
         # Mark all devices on this host as offline. lock_devices
         # acquires SELECT FOR UPDATE on each row in id order so

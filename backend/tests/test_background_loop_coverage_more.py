@@ -20,6 +20,7 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
+from app.events import event_bus
 from app.runs import service_reaper as run_reaper
 
 if TYPE_CHECKING:
@@ -136,7 +137,7 @@ async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pyt
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop()
+        await run_reaper.run_reaper_loop(publisher=event_bus)
 
     run_reaper.os._exit.assert_called_once_with(70)
 
@@ -154,7 +155,7 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop()
+        await run_reaper.run_reaper_loop(publisher=event_bus)
 
     run_reaper.os._exit.assert_called_once_with(70)
 

@@ -1,7 +1,9 @@
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest_asyncio
+import pytest
+
+from app.events import event_bus_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,7 +95,7 @@ def _mock_agent_client(*, post_responses: list[MagicMock], get_responses: list[M
 
 
 async def test_create_static_group(client: AsyncClient) -> None:
-    data = await _create_group(client)
+    data = await _create_group(client, publisher=event_bus)
     assert data["name"] == "Test Group"
     assert data["group_type"] == "static"
     assert "id" in data
@@ -105,6 +107,7 @@ async def test_create_dynamic_group(client: AsyncClient) -> None:
         name="Android Devices",
         group_type="dynamic",
         filters={"platform_id": "android_mobile"},
+        publisher=event_bus,
     )
     assert data["name"] == "Android Devices"
     assert data["group_type"] == "dynamic"
@@ -112,8 +115,8 @@ async def test_create_dynamic_group(client: AsyncClient) -> None:
 
 
 async def test_list_groups(client: AsyncClient) -> None:
-    await _create_group(client, name="group-a")
-    await _create_group(client, name="group-b")
+    await _create_group(client, name="group-a", publisher=event_bus)
+    await _create_group(client, name="group-b", publisher=event_bus)
 
     resp = await client.get("/api/device-groups")
     assert resp.status_code == 200
@@ -121,7 +124,7 @@ async def test_list_groups(client: AsyncClient) -> None:
 
 
 async def test_get_group(client: AsyncClient) -> None:
-    group = await _create_group(client)
+    group = await _create_group(client, publisher=event_bus)
     resp = await client.get(f"/api/device-groups/{group['id']}")
     assert resp.status_code == 200
     data = resp.json()
@@ -134,8 +137,8 @@ async def test_get_group_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_update_group(client: AsyncClient) -> None:
-    group = await _create_group(client)
+async def test_update_group(client: AsyncClient, publisher=event_bus) -> None:
+    group = await _create_group(client, publisher=event_bus)
     resp = await client.patch(
         f"/api/device-groups/{group['id']}",
         json={"name": "Updated Group", "description": "new desc"},
@@ -146,8 +149,8 @@ async def test_update_group(client: AsyncClient) -> None:
     assert data["description"] == "new desc"
 
 
-async def test_delete_group(client: AsyncClient) -> None:
-    group = await _create_group(client)
+async def test_delete_group(client: AsyncClient, publisher=event_bus) -> None:
+    group = await _create_group(client, publisher=event_bus)
     resp = await client.delete(f"/api/device-groups/{group['id']}")
     assert resp.status_code == 204
 
@@ -155,8 +158,10 @@ async def test_delete_group(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_add_members(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
+async def test_add_members(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
+    group = await _create_group(client, publisher=event_bus)
     d1 = await _create_device(db_session, "grp-001", "D1", default_host_id)
     d2 = await _create_device(db_session, "grp-002", "D2", default_host_id)
 
@@ -172,8 +177,10 @@ async def test_add_members(client: AsyncClient, db_session: AsyncSession, defaul
     assert detail.json()["device_count"] == 2
 
 
-async def test_remove_members(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
+async def test_remove_members(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
+    group = await _create_group(client, publisher=event_bus)
     d1 = await _create_device(db_session, "grp-003", "D3", default_host_id)
 
     await client.post(
@@ -193,10 +200,7 @@ async def test_add_members_to_dynamic_group_fails(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     group = await _create_group(
-        client,
-        name="Dynamic",
-        group_type="dynamic",
-        filters={"platform_id": "android_mobile"},
+        client, name="Dynamic", group_type="dynamic", filters={"platform_id": "android_mobile"}, publisher=event_bus
     )
     d1 = await _create_device(db_session, "grp-dyn-001", "D-dyn", default_host_id)
 
@@ -223,10 +227,7 @@ async def test_dynamic_group_resolves_members(
     )
 
     group = await _create_group(
-        client,
-        name="All Android",
-        group_type="dynamic",
-        filters={"platform_id": "android_mobile"},
+        client, name="All Android", group_type="dynamic", filters={"platform_id": "android_mobile"}, publisher=event_bus
     )
 
     detail = await client.get(f"/api/device-groups/{group['id']}")
@@ -257,6 +258,7 @@ async def test_dynamic_group_filters_by_pack_id(
         name="Android Pack Devices",
         group_type="dynamic",
         filters={"pack_id": "appium-uiautomator2"},
+        publisher=event_bus,
     )
 
     detail = await client.get(f"/api/device-groups/{group['id']}")
@@ -329,6 +331,7 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
             "status": "offline",
             "tags": {"team": "qa", "lane": "smoke"},
         },
+        publisher=event_bus,
     )
 
     detail = await client.get(f"/api/device-groups/{group['id']}")
@@ -338,8 +341,10 @@ async def test_dynamic_group_resolves_identity_target_lifecycle_and_tags(
     assert data["filters"]["tags"] == {"team": "qa", "lane": "smoke"}
 
 
-async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
+async def test_group_bulk_restart_nodes(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
+    group = await _create_group(client, publisher=event_bus)
     device = await _create_device(db_session, "grp-restart-001", "Restart Me", default_host_id)
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 
@@ -365,8 +370,10 @@ async def test_group_bulk_restart_nodes(client: AsyncClient, db_session: AsyncSe
     assert resp.json()["succeeded"] == 1
 
 
-async def test_group_bulk_update_tags(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
+async def test_group_bulk_update_tags(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, publisher=event_bus
+) -> None:
+    group = await _create_group(client, publisher=event_bus)
     device = await _create_device(db_session, "grp-tags-001", "Tags Me", default_host_id)
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 
@@ -382,7 +389,7 @@ async def test_group_bulk_update_tags(client: AsyncClient, db_session: AsyncSess
 
 
 async def test_group_bulk_delete_devices(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    group = await _create_group(client)
+    group = await _create_group(client, publisher=event_bus)
     device = await _create_device(db_session, "grp-delete-001", "Delete Me", default_host_id)
     await client.post(f"/api/device-groups/{group['id']}/members", json={"device_ids": [device["id"]]})
 
@@ -394,9 +401,9 @@ async def test_group_bulk_delete_devices(client: AsyncClient, db_session: AsyncS
     assert detail.status_code == 404
 
 
-async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSession, publisher=event_bus) -> None:
     host = await create_host(client, hostname="agent-1", ip="10.0.0.5", os_type="linux")
-    group = await _create_group(client)
+    group = await _create_group(client, publisher=event_bus)
     device = await _create_device(
         db_session,
         "192.168.1.20:5555",
@@ -424,7 +431,7 @@ async def test_group_bulk_reconnect(client: AsyncClient, db_session: AsyncSessio
 
 
 async def test_group_bulk_set_status_route_removed(client: AsyncClient) -> None:
-    group = await _create_group(client)
+    group = await _create_group(client, publisher=event_bus)
     resp = await client.post(
         f"/api/device-groups/{group['id']}/bulk/set-status",
         json={"device_ids": [], "status": "available"},

@@ -7,6 +7,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
+from app.events import event_bus
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,9 +100,11 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
     monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", AsyncMock())
 
-    started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])
-    stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices])
-    restarted = await bulk_service.bulk_restart_nodes(db_session, [device.id for device in devices])
+    started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices], publisher=event_bus)
+    stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices], publisher=event_bus)
+    restarted = await bulk_service.bulk_restart_nodes(
+        db_session, [device.id for device in devices], publisher=event_bus
+    )
 
     assert started["succeeded"] == 1
     assert stopped["failed"] == 1
@@ -155,7 +159,9 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         AsyncMock(side_effect=[{"success": True}, AgentCallError("10.0.0.10", "boom")]),
     )
 
-    result = await bulk_service.bulk_reconnect(db, [eligible_ok.id, eligible_fail.id, ineligible.id])
+    result = await bulk_service.bulk_reconnect(
+        db, [eligible_ok.id, eligible_fail.id, ineligible.id], publisher=event_bus
+    )
 
     assert result["succeeded"] == 1
     assert result["failed"] == 2
@@ -192,9 +198,9 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")]),
     )
 
-    deleted = await bulk_service.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
-    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices])
-    exited = await bulk_service.bulk_exit_maintenance(db, [device.id for device in devices])
+    deleted = await bulk_service.bulk_delete(db, [devices[0].id, devices[1].id, uuid4(publisher=event_bus)])
+    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices], publisher=event_bus)
+    exited = await bulk_service.bulk_exit_maintenance(db, [device.id for device in devices], publisher=event_bus)
 
     assert deleted["failed"] == 2
     assert entered["failed"] == 1
@@ -224,7 +230,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
     ]
     await db_session.commit()
 
-    result = await bulk_service.bulk_exit_maintenance(db_session, [d.id for d in devices])
+    result = await bulk_service.bulk_exit_maintenance(db_session, [d.id for d in devices], publisher=event_bus)
 
     assert result["succeeded"] == 3
     assert result["failed"] == 0

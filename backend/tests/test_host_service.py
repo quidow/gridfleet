@@ -5,6 +5,8 @@ from uuid import uuid4
 
 import pytest
 
+from app.events import event_bus
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -168,10 +170,10 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     db_session.add_all([pending, online, reject_me])
     await db_session.commit()
 
-    approved = await host_service.approve_host(db_session, pending.id)
+    approved = await host_service.approve_host(db_session, pending.id, publisher=event_bus)
     assert approved is not None
     assert approved.status == HostStatus.online
-    assert await host_service.approve_host(db_session, online.id) is None
+    assert await host_service.approve_host(db_session, online.id, publisher=event_bus) is None
 
     assert await host_service.reject_host(db_session, reject_me.id) is True
     assert db_session.in_transaction() is False

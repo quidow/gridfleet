@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.schemas import RunCreate
 from tests.helpers import create_device
@@ -42,7 +43,7 @@ async def test_create_run_rechecks_readiness_after_lock(
 
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", gated_readiness)
 
-    async def create_run() -> None:
+    async def create_run(publisher=event_bus) -> None:
         async with db_session_maker() as session:
             with pytest.raises(ValueError, match="Not enough devices"):
                 await run_service.create_run(
@@ -61,7 +62,7 @@ async def test_create_run_rechecks_readiness_after_lock(
             await session.commit()
         allow_reservation.set()
 
-    await asyncio.gather(create_run(), clear_verification_after_readiness())
+    await asyncio.gather(create_run(publisher=event_bus), clear_verification_after_readiness())
 
     async with db_session_maker() as verify:
         reservation = (

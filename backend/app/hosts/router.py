@@ -153,7 +153,7 @@ async def register_host(
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
-        host, is_new = await host_service.register_host(db, data)
+        host, is_new = await host_service.register_host(db, data, publisher=event_services.publisher)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
@@ -168,7 +168,7 @@ async def register_host(
 
 @router.post("/{host_id}/approve", response_model=HostRead)
 async def approve_host(host_id: uuid.UUID, db: DbDep, event_services: EventServicesDep) -> dict[str, Any]:
-    host = await host_service.approve_host(db, host_id)
+    host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
     _fire_and_forget(_auto_discover, host.id, event_services.publisher)

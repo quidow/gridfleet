@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.packs.models import HostPackFeatureStatus
 
@@ -86,7 +85,7 @@ async def record_feature_status(
     if existing is not None:
         await session.refresh(existing)
 
-    if event_type is not None:
+    if event_type is not None and publisher is not None:
         queue_event_for_session(
             session,
             event_type,
@@ -97,7 +96,7 @@ async def record_feature_status(
                 "ok": ok,
                 "detail": detail,
             },
-            publisher=publisher or _default_event_bus,
+            publisher=publisher,
         )
 
     return transitioned

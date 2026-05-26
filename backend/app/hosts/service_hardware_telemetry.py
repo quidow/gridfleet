@@ -24,7 +24,6 @@ from app.devices.models import (
 )
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
-from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
 from app.settings import settings_service as _default_settings
@@ -261,13 +260,14 @@ async def apply_telemetry_sample(
             DeviceEventType.hardware_health_changed,
             payload,
         )
-        queue_event_for_session(
-            db,
-            "device.hardware_health_changed",
-            payload,
-            severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
-            publisher=publisher or _default_event_bus,
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "device.hardware_health_changed",
+                payload,
+                severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+                publisher=publisher,
+            )
 
     return next_status
 

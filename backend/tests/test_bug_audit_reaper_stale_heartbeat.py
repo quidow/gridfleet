@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.events import event_bus
 from app.runs import service_reaper as _service_reaper
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
@@ -63,7 +64,7 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
         patch("app.runs.service_reaper.assert_current_leader"),
         patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock),
     ):
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     # Re-read the run on a fresh session so we observe the persisted state,
     # not the in-memory ORM cache.
