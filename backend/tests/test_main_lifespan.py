@@ -77,25 +77,25 @@ def _setting_value(key: str) -> int:
 
 
 def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
-    """Prevent compose_app from replacing the test-patched singletons."""
-    import app.composition as _comp_mod
+    """Prevent main.py lifespan from replacing the test-patched singletons."""
+    import app.main as _main_mod
 
-    def _reuse_eb() -> object:
+    def _reuse_eb(**_: object) -> object:
         return importlib.import_module("app.events.event_bus").event_bus
 
-    def _reuse_ss() -> object:
+    def _reuse_ss(**_: object) -> object:
         return importlib.import_module("app.settings.service").settings_service
 
-    def _reuse_pool() -> object:
+    def _reuse_pool(**_: object) -> object:
         return importlib.import_module("app.agent_comm.http_pool").agent_http_pool
 
-    def _reuse_cb() -> object:
+    def _reuse_cb(**_: object) -> object:
         return importlib.import_module("app.agent_comm.circuit_breaker").agent_circuit_breaker
 
-    monkeypatch.setattr(_comp_mod, "EventBus", _reuse_eb)
-    monkeypatch.setattr(_comp_mod, "SettingsService", _reuse_ss)
-    monkeypatch.setattr(_comp_mod, "AgentHttpPool", _reuse_pool)
-    monkeypatch.setattr(_comp_mod, "AgentCircuitBreaker", _reuse_cb)
+    monkeypatch.setattr(_main_mod, "EventBus", _reuse_eb)
+    monkeypatch.setattr(_main_mod, "SettingsService", _reuse_ss)
+    monkeypatch.setattr(_main_mod, "AgentHttpPool", _reuse_pool)
+    monkeypatch.setattr(_main_mod, "AgentCircuitBreaker", _reuse_cb)
 
 
 def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:

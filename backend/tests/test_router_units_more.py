@@ -394,8 +394,12 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(events, "_wait_for_queue_event", fake_wait_then_cancel)
     monkeypatch.setattr(events, "KEEPALIVE_INTERVAL", 0.01)
+    mock_event_services = SimpleNamespace(
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=asyncio.Queue()), unsubscribe=Mock()),
+    )
     event_response = await events.event_stream(
         SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+        events=mock_event_services,
         types=None,
         device_ids=None,
     )
@@ -411,7 +415,9 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=[False, True]))
     initial_job = {"job_id": "job-stream", "status": "running", "current_stage": "probe"}
 
-    mock_event_services = SimpleNamespace(bus=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock()))
+    mock_event_services = SimpleNamespace(
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock())
+    )
 
     monkeypatch.setattr(
         devices_verification_router.device_verification,
@@ -521,14 +527,14 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
 
     host = SimpleNamespace(id=host_id, hostname="host-a")
     discovery_result = SimpleNamespace(new_devices=[SimpleNamespace(id=uuid.uuid4())])
+    mock_publisher = AsyncMock()
     with (
         patch.object(hosts, "async_session", return_value=SessionCtx()),
         patch.object(hosts.host_service, "get_host", new=AsyncMock(return_value=host)),
         patch.object(hosts.pack_discovery_service, "discover_devices", new=AsyncMock(return_value=discovery_result)),
-        patch.object(hosts.event_bus, "publish", new=AsyncMock()) as publish,
     ):
-        await hosts._auto_discover(host_id)
-    publish.assert_awaited_once()
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
+    mock_publisher.publish.assert_awaited_once()
 
     with (
         patch.object(hosts, "async_session", return_value=SessionCtx()),
@@ -543,7 +549,7 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         patch.object(hosts, "async_session", return_value=SessionCtx()),
         patch.object(hosts.host_service, "get_host", new=AsyncMock(return_value=None)),
     ):
-        await hosts._auto_discover(host_id)
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
         await hosts._auto_prepare_host_diagnostics(host_id)
 
     with (
@@ -551,7 +557,7 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         patch.object(hosts.host_service, "get_host", new=AsyncMock(side_effect=RuntimeError("db"))),
         patch.object(hosts.logger, "exception", new=Mock()) as log_exception,
     ):
-        await hosts._auto_discover(host_id)
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
         await hosts._auto_prepare_host_diagnostics(host_id)
     assert log_exception.call_count == 2
 
@@ -975,7 +981,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
     response = SimpleNamespace(status_code=200)
 
-    mock_event_services = SimpleNamespace(bus=object())
+    mock_event_services = SimpleNamespace(publisher=object())
 
     host_settings_svc = Mock()
     host_settings_svc.get = Mock(return_value=True)
@@ -2348,7 +2354,7 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
     unsubscribe = Mock()
     mock_event_services = SimpleNamespace(
-        bus=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
     )
     with patch.object(
         devices_verification_router.device_verification,

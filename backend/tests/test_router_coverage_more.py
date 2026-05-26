@@ -487,7 +487,7 @@ async def test_device_verification_event_stream_initial_completed_job(monkeypatc
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
     unsubscribe = MagicMock()
     mock_event_services = SimpleNamespace(
-        bus=SimpleNamespace(subscribe=MagicMock(return_value=queue), unsubscribe=unsubscribe)
+        subscriber=SimpleNamespace(subscribe=MagicMock(return_value=queue), unsubscribe=unsubscribe)
     )
     monkeypatch.setattr(
         devices_verification.device_verification,
