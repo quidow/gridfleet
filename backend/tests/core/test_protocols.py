@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.core.protocols import EmitProtocol, SettingsReader, SettingsWriter
+    from app.core.type_defs import SettingValue
 
 
 class _FakeEmit:
@@ -14,11 +15,8 @@ class _FakeEmit:
 
 
 class _FakeSettingsReader:
-    def get(self, key: str) -> str:
+    def get(self, key: str) -> SettingValue:
         return ""
-
-    def get_int(self, key: str) -> int:
-        return 0
 
 
 class _FakeSettingsWriter:
@@ -34,7 +32,6 @@ def test_fake_emit_satisfies_protocol() -> None:
 def test_fake_settings_reader_satisfies_protocol() -> None:
     reader: SettingsReader = _FakeSettingsReader()
     assert reader.get("x") == ""
-    assert reader.get_int("x") == 0
 
 
 def test_fake_settings_writer_satisfies_protocol() -> None:

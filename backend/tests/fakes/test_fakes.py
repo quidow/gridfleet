@@ -27,13 +27,12 @@ def test_fake_emit_satisfies_protocol() -> None:
 def test_fake_settings_reader_returns_defaults() -> None:
     reader = FakeSettingsReader()
     assert reader.get("any.key") == ""
-    assert reader.get_int("any.key") == 0
 
 
 def test_fake_settings_reader_returns_overrides() -> None:
-    reader = FakeSettingsReader({"timeout": "30", "retries": "3"})
-    assert reader.get("timeout") == "30"
-    assert reader.get_int("retries") == 3
+    reader = FakeSettingsReader({"timeout": 30, "retries": 3})
+    assert reader.get("timeout") == 30
+    assert reader.get("retries") == 3
 
 
 def test_fake_settings_reader_satisfies_protocol() -> None:
