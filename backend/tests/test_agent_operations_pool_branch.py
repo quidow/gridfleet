@@ -41,7 +41,7 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch(
             "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else None,
@@ -75,7 +75,7 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch(
             "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else 10 if "max_keepalive" in key else 60,
@@ -118,7 +118,7 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch("app.agent_comm.operations._default_settings.get", side_effect=KeyError("not initialised")),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
@@ -147,7 +147,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
 
     fresh_pool = AgentHttpPool()
     with (
-        patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
+        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch(
             "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: False if key == "agent.http_pool_enabled" else 10,

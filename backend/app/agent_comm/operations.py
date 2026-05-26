@@ -32,7 +32,8 @@ from app.agent_comm.generated import (
     PluginSyncResponse,
     ToolsStatusResponse,
 )
-from app.agent_comm.http_pool import agent_http_pool
+from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.http_pool import agent_http_pool as _default_pool
 from app.core.errors import AgentResponseError, AgentUnreachableError
 from app.settings import settings_service as _default_settings
 
@@ -75,13 +76,14 @@ async def _send_request(
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     params: QueryParams = None,
     json_body: JsonBody = None,
+    pool: AgentHttpPool | None = None,
 ) -> httpx.Response:
     auth = _agent_basic_auth()
     use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled()
     if use_pool:
         max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10)
         idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60)
-        client = await agent_http_pool.get_client(
+        client = await (pool or _default_pool).get_client(
             host,
             agent_port,
             timeout=timeout,
