@@ -69,7 +69,7 @@ async def test_bulk_completed_succeeds_emits_success(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", _fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)
@@ -107,7 +107,7 @@ async def test_bulk_completed_all_fail_emits_critical(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", _fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)
@@ -145,7 +145,7 @@ async def test_bulk_completed_partial_emits_warning(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", _fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)

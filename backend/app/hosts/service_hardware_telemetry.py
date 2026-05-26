@@ -24,6 +24,7 @@ from app.devices.models import (
 )
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
 from app.settings import settings_service
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -234,6 +236,8 @@ async def apply_telemetry_sample(
     db: AsyncSession,
     device: Device,
     sample: dict[str, Any],
+    *,
+    publisher: EventBus | None = None,
 ) -> HardwareHealthStatus:
     device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))
     device.battery_temperature_c = _coerce_float(sample.get("battery_temperature_c"))
@@ -262,6 +266,7 @@ async def apply_telemetry_sample(
             "device.hardware_health_changed",
             payload,
             severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+            publisher=publisher or _default_event_bus,
         )
 
     return next_status

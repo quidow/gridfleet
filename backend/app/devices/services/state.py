@@ -19,6 +19,7 @@ from app.core.observability import get_logger
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import is_ready_for_use_async
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -48,6 +50,7 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.operational_state
@@ -63,7 +66,13 @@ async def set_operational_state(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(session, "device.operational_state_changed", payload, severity=severity)
+        queue_event_for_session(
+            session,
+            "device.operational_state_changed",
+            payload,
+            severity=severity,
+            publisher=publisher or _default_event_bus,
+        )
     return True
 
 
@@ -74,6 +83,7 @@ async def set_hold(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.hold
@@ -89,7 +99,9 @@ async def set_hold(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(session, "device.hold_changed", payload, severity=severity)
+        queue_event_for_session(
+            session, "device.hold_changed", payload, severity=severity, publisher=publisher or _default_event_bus
+        )
     return True
 
 

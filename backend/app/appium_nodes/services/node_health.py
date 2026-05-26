@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import appium_status as fetch_appium_status
@@ -37,9 +39,15 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.grid import service as grid_service
 from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -140,6 +148,7 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None:
@@ -221,6 +230,7 @@ async def _process_node_health(
                     "port": node.port,
                 },
                 severity=node_state_severity("error", "running"),
+                publisher=publisher or _default_event_bus,
             )
             await record_event(
                 db,

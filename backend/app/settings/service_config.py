@@ -1,14 +1,22 @@
+from __future__ import annotations
+
 import copy
-import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import Device
 from app.devices.services import readiness as device_readiness
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.settings.models import ConfigAuditLog
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.models import Device
+    from app.events.event_bus import EventBus
 
 
 def _filter_keys(config: dict[str, Any], keys: list[str]) -> dict[str, Any]:
@@ -46,6 +54,8 @@ async def merge_device_config(
     device: Device,
     partial_config: dict[str, Any],
     changed_by: str | None = None,
+    *,
+    publisher: EventBus | None = None,
 ) -> dict[str, Any]:
     previous = device.device_config or {}
     merged = _deep_merge(previous, partial_config)
@@ -68,6 +78,7 @@ async def merge_device_config(
             "device_name": device.name,
             "changed_by": changed_by,
         },
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await db.refresh(device)

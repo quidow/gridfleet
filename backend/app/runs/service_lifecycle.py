@@ -1,10 +1,10 @@
-import uuid
+from __future__ import annotations
+
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
-from app.events.catalog import EventSeverity
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_lifecycle_release import (
     _clear_desired_grid_run_id_for_run,
@@ -13,6 +13,14 @@ from app.runs.service_lifecycle_release import (
 )
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -24,7 +32,7 @@ def _run_completed_severity(run: TestRun) -> EventSeverity:
     return "success"
 
 
-async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+async def signal_ready(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus | None = None) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -35,14 +43,16 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.active
     run.started_at = now
     run.last_heartbeat = now
-    queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
+    queue_event_for_session(
+        db, "run.active", {"run_id": str(run.id), "name": run.name}, publisher=publisher or _default_event_bus
+    )
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
     return run
 
 
-async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+async def signal_active(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus | None = None) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -56,7 +66,9 @@ async def signal_active(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     run.state = RunState.active
     run.started_at = now
     run.last_heartbeat = now
-    queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
+    queue_event_for_session(
+        db, "run.active", {"run_id": str(run.id), "name": run.name}, publisher=publisher or _default_event_bus
+    )
     await db.commit()
     run = await get_run(db, run_id)
     assert run is not None
@@ -78,7 +90,7 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+async def complete_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus | None = None) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -103,6 +115,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "duration": duration,
         },
         severity=_run_completed_severity(run),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -111,7 +124,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus | None = None) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -131,6 +144,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "cancelled_by": "user",
         },
         severity="warning",
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -139,7 +153,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+async def force_release(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus | None = None) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -158,6 +172,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
             "cancelled_by": "admin (force release)",
         },
         severity="warning",
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -166,7 +181,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
+async def expire_run(db: AsyncSession, run: TestRun, reason: str, *, publisher: EventBus | None = None) -> None:
     """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
 
     locked_run = await _get_run_for_update(db, run.id)
@@ -199,6 +214,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
                 "reason": effective_reason,
             },
             severity="warning",
+            publisher=publisher or _default_event_bus,
         )
 
     queue_event_for_session(
@@ -210,6 +226,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str) -> None:
             "reason": effective_reason,
         },
         severity="critical",
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await _complete_deferred_stops_post_commit(db, cleanup_ids)

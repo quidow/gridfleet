@@ -52,6 +52,7 @@ from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, Inc
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.devices.services.operator_node_lifecycle import request_restart, request_start, request_stop
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -76,6 +77,7 @@ if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.devices.models import Device
+    from app.events.event_bus import EventBus
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,7 @@ async def mark_node_started(
     active_connection_target: str | None = None,
     allocated_caps: dict[str, Any] | None = None,
     clear_transition: bool = False,
+    publisher: EventBus | None = None,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -239,13 +242,14 @@ async def mark_node_started(
             "port": port,
         },
         severity=node_state_severity("stopped", "running"),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await db.refresh(node)
     return node
 
 
-async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
+async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventBus | None = None) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     assert node is not None
@@ -279,6 +283,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
             "new_state": "stopped",
         },
         severity=node_state_severity("running", "stopped"),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await db.refresh(node)

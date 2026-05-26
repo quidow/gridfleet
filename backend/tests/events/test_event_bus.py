@@ -215,6 +215,7 @@ async def test_queue_event_for_session_carries_severity(
         "host.status_changed",
         {"host_id": "h1", "old_status": "online", "new_status": "offline"},
         severity="warning",
+        publisher=event_bus,
     )
     await db_session.commit()
     await event_bus.drain_handlers()

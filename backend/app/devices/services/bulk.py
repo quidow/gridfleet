@@ -22,7 +22,8 @@ from app.devices.services.operator_node_lifecycle import (
     request_stop,
 )
 from app.devices.services.service import delete_device
-from app.events import event_bus, queue_event_for_session
+from app.events import event_bus as _default_event_bus
+from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
     from app.events.protocols import EventPublisher
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
@@ -123,7 +125,7 @@ async def _run_per_device_node_action(
     succeeded = len(existing_device_ids) - len(errors)
     total = len(existing_device_ids)
     failed = len(errors)
-    _bus = publisher or event_bus
+    _bus = publisher or _default_event_bus
     await _bus.publish(
         "bulk.operation_completed",
         {
@@ -183,7 +185,12 @@ async def bulk_restart_nodes(
 
 
 async def bulk_update_tags(
-    db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    tags: dict[str, str],
+    merge: bool = True,
+    *,
+    publisher: EventBus | None = None,
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     for device in devices:
@@ -202,6 +209,7 @@ async def bulk_update_tags(
             "failed": 0,
         },
         severity=_bulk_severity(len(devices), len(devices), 0),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     return _result(len(devices), len(devices), {})
@@ -221,7 +229,7 @@ async def bulk_delete(
     succeeded = len(device_ids) - len(errors)
     total = len(device_ids)
     failed = len(errors)
-    _bus = publisher or event_bus
+    _bus = publisher or _default_event_bus
     await _bus.publish(
         "bulk.operation_completed",
         {
@@ -235,7 +243,9 @@ async def bulk_delete(
     return _result(len(device_ids), succeeded, errors)
 
 
-async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_enter_maintenance(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     ordered_ids = [device.id for device in devices]
     errors: dict[str, str] = {}
@@ -258,6 +268,7 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) 
             "failed": failed,
         },
         severity=_bulk_severity(total, succeeded, failed),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     return _result(len(ordered_ids), succeeded, errors)
@@ -329,7 +340,7 @@ async def bulk_reconnect(
     succeeded = len(devices) - len(errors)
     total = len(devices)
     failed = len(errors)
-    _bus = publisher or event_bus
+    _bus = publisher or _default_event_bus
     await _bus.publish(
         "bulk.operation_completed",
         {
@@ -343,7 +354,9 @@ async def bulk_reconnect(
     return _result(len(devices), succeeded, errors)
 
 
-async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_exit_maintenance(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
     successful: list[uuid.UUID] = []
@@ -368,6 +381,7 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
             "failed": failed,
         },
         severity=_bulk_severity(total, succeeded, failed),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
 

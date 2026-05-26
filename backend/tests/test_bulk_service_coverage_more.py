@@ -103,7 +103,7 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
 
     publish = AsyncMock()
     monkeypatch.setattr(bulk_service, "delete_device", fake_delete)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", publish)
+    monkeypatch.setattr(bulk_service._default_event_bus, "publish", publish)
     deleted = await bulk_service.bulk_delete(db, [first.id, second.id])
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"
@@ -136,7 +136,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         return {"success": True}
 
     monkeypatch.setattr(bulk_service, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
+    monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
 
     reconnect = await bulk_service.bulk_reconnect(db, [eligible.id, unsupported.id, failed.id])
     assert reconnect["total"] == 3
@@ -218,7 +218,7 @@ async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch
         if device.id == second:
             raise RuntimeError("action failed")
 
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
+    monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
 
     result = await bulk_service._run_per_device_node_action(
         db,

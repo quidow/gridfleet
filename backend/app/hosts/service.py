@@ -1,17 +1,25 @@
-import uuid
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
-from app.events.catalog import EventSeverity
 from app.hosts.models import Host, HostStatus
-from app.hosts.schemas import HostCreate, HostRegister
 from app.settings import settings_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
+    from app.hosts.schemas import HostCreate, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 2
@@ -133,7 +141,9 @@ async def _apply_reregister(db: AsyncSession, host: Host, data: HostRegister) ->
     return host
 
 
-async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, bool]:
+async def register_host(
+    db: AsyncSession, data: HostRegister, *, publisher: EventBus | None = None
+) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
     validate_orchestration_contract(data.capabilities, host_label=data.hostname)
     stmt = select(Host).where(Host.hostname == data.hostname)
@@ -182,13 +192,14 @@ async def register_host(db: AsyncSession, data: HostRegister) -> tuple[Host, boo
             "hostname": host.hostname,
             "status": host.status.value,
         },
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await db.refresh(host)
     return host, True
 
 
-async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
+async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: EventBus | None = None) -> Host | None:
     """Approve a pending host. Returns None if not found or not pending."""
     # Acquire SELECT ... FOR UPDATE so a concurrent reject_host (which
     # deletes the row) cannot land between the predicate check and the
@@ -212,6 +223,7 @@ async def approve_host(db: AsyncSession, host_id: uuid.UUID) -> Host | None:
             "new_status": "online",
         },
         severity=_host_status_severity(old_status, "online"),
+        publisher=publisher or _default_event_bus,
     )
     await db.commit()
     await db.refresh(host)

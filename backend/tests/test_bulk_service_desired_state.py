@@ -187,7 +187,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
+    monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id])
 
     assert captured == ["bulk"]
@@ -220,7 +220,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
+    monkeypatch.setattr(bulk_service._default_event_bus, "publish", AsyncMock())
     await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group")
 
     assert captured == ["group"]

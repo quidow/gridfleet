@@ -392,8 +392,12 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(event_bus.sa_event, "listen", capture_listener)
     sync_session = SimpleNamespace(info={})
-    event_bus.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"})
-    event_bus.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"})
+    event_bus.queue_event_for_session(
+        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus.event_bus
+    )
+    event_bus.queue_event_for_session(
+        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus.event_bus
+    )
     listener = sync_session.info[event_bus._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
     event_bus.event_bus._handler_tasks.clear()

@@ -31,6 +31,7 @@ from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.events import event_bus as _default_event_bus
 from app.events import queue_device_crashed_event
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
+    from app.events.event_bus import EventBus
     from app.runs.models import TestRun
 
 
@@ -243,6 +245,7 @@ async def handle_node_crash(
     *,
     source: str,
     reason: str,
+    publisher: EventBus | None = None,
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 
@@ -283,6 +286,7 @@ async def handle_node_crash(
             will_restart=True,
             process=None,
             severity="warning",
+            publisher=publisher or _default_event_bus,
         )
 
     if node is not None and node.observed_running:

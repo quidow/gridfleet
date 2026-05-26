@@ -1,19 +1,27 @@
-import uuid
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters, DeviceQueryFilters
-from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import service as device_service
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 
+if TYPE_CHECKING:
+    import uuid
 
-async def create_group(db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+    from app.events.event_bus import EventBus
+
+
+async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventBus | None = None) -> DeviceGroup:
     group = DeviceGroup(
         name=data.name,
         description=data.description,
@@ -22,7 +30,12 @@ async def create_group(db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup
     )
     db.add(group)
     await db.flush()
-    queue_event_for_session(db, "device_group.updated", {"group_id": str(group.id), "action": "created"})
+    queue_event_for_session(
+        db,
+        "device_group.updated",
+        {"group_id": str(group.id), "action": "created"},
+        publisher=publisher or _default_event_bus,
+    )
     await db.commit()
     await db.refresh(group)
     return group
@@ -77,7 +90,9 @@ async def get_group(db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | N
     }
 
 
-async def update_group(db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate) -> DeviceGroup | None:
+async def update_group(
+    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventBus | None = None
+) -> DeviceGroup | None:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
     group = result.scalar_one_or_none()
@@ -89,25 +104,37 @@ async def update_group(db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupU
         updates.pop("filters")
     for field, value in updates.items():
         setattr(group, field, value)
-    queue_event_for_session(db, "device_group.updated", {"group_id": str(group.id), "action": "updated"})
+    queue_event_for_session(
+        db,
+        "device_group.updated",
+        {"group_id": str(group.id), "action": "updated"},
+        publisher=publisher or _default_event_bus,
+    )
     await db.commit()
     await db.refresh(group)
     return group
 
 
-async def delete_group(db: AsyncSession, group_id: uuid.UUID) -> bool:
+async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventBus | None = None) -> bool:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
     group = result.scalar_one_or_none()
     if group is None:
         return False
     await db.delete(group)
-    queue_event_for_session(db, "device_group.updated", {"group_id": str(group_id), "action": "deleted"})
+    queue_event_for_session(
+        db,
+        "device_group.updated",
+        {"group_id": str(group_id), "action": "deleted"},
+        publisher=publisher or _default_event_bus,
+    )
     await db.commit()
     return True
 
 
-async def add_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+async def add_members(
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+) -> int:
     if not device_ids:
         return 0
     # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
@@ -124,19 +151,31 @@ async def add_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uu
     result = await db.execute(stmt)
     added = len(result.scalars().all())
     if added:
-        queue_event_for_session(db, "device_group.members_changed", {"group_id": str(group_id), "added": added})
+        queue_event_for_session(
+            db,
+            "device_group.members_changed",
+            {"group_id": str(group_id), "added": added},
+            publisher=publisher or _default_event_bus,
+        )
     await db.commit()
     return added
 
 
-async def remove_members(db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+async def remove_members(
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus | None = None
+) -> int:
     stmt = delete(DeviceGroupMembership).where(
         DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
     )
     result = await db.execute(stmt)
     removed = int(getattr(result, "rowcount", 0) or 0)
     if removed:
-        queue_event_for_session(db, "device_group.members_changed", {"group_id": str(group_id), "removed": removed})
+        queue_event_for_session(
+            db,
+            "device_group.members_changed",
+            {"group_id": str(group_id), "removed": removed},
+            publisher=publisher or _default_event_bus,
+        )
     await db.commit()
     return removed
 

@@ -209,7 +209,9 @@ async def test_expire_run_emits_never_activated_for_preparing_run(
 
     events: list[tuple[str, dict[str, object], str | None]] = []
 
-    def capture(_db: object, name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
+    def capture(
+        _db: object, name: str, payload: dict[str, object], *, severity: str | None = None, publisher: object = None
+    ) -> None:
         events.append((name, payload, severity))
 
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)
@@ -257,7 +259,9 @@ async def test_expire_run_does_not_emit_never_activated_for_active_run(
 
     events: list[tuple[str, dict[str, object], str | None]] = []
 
-    def capture(_db: object, name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
+    def capture(
+        _db: object, name: str, payload: dict[str, object], *, severity: str | None = None, publisher: object = None
+    ) -> None:
         events.append((name, payload, severity))
 
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)

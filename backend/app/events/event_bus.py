@@ -393,7 +393,7 @@ def queue_event_for_session(
     data: dict[str, Any],
     *,
     severity: EventSeverity | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventBus,
 ) -> None:
     """Queue an event to dispatch after the outer transaction commits.
 
@@ -415,7 +415,7 @@ def queue_event_for_session(
     """
     sync_session = db.sync_session if isinstance(db, AsyncSession) else db
     loop = asyncio.get_running_loop()
-    _bus = publisher if publisher is not None else event_bus
+    _bus = publisher
 
     pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
         _PENDING_EVENTS_KEY, []
@@ -456,7 +456,7 @@ def queue_device_crashed_event(
     will_restart: bool,
     process: str | None = None,
     severity: EventSeverity | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventBus,
 ) -> None:
     """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
     queue_event_for_session(

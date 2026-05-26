@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.packs.models import HostPackFeatureStatus
 
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import EventBus
 
 
 EVENT_DEGRADED = "pack_feature.degraded"
@@ -38,6 +41,7 @@ async def record_feature_status(
     feature_id: str,
     ok: bool,
     detail: str,
+    publisher: EventBus | None = None,
 ) -> bool:
     """Upsert the (host, pack, feature) status row and emit a webhook on transition.
 
@@ -93,6 +97,7 @@ async def record_feature_status(
                 "ok": ok,
                 "detail": detail,
             },
+            publisher=publisher or _default_event_bus,
         )
 
     return transitioned

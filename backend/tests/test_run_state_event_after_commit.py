@@ -50,12 +50,13 @@ async def test_run_created_dropped_on_rollback(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    from app.events import queue_event_for_session
+    from app.events import event_bus, queue_event_for_session
 
     queue_event_for_session(
         db_session,
         "run.created",
         {"run_id": "00000000-0000-0000-0000-000000000000", "name": "rollback-test"},
+        publisher=event_bus,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

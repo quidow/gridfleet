@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, exists, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
@@ -17,6 +19,7 @@ from app.devices.services.intent_types import (
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import set_hold
+from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
@@ -27,6 +30,11 @@ from app.runs.schemas import (
 )
 from app.runs.service_reservation import get_run
 from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import EventBus
 
 
 class _UnmetRequirementError(Exception):
@@ -282,7 +290,9 @@ async def _attempt_create_run(
     return run, device_infos
 
 
-async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
+async def create_run(
+    db: AsyncSession, data: RunCreate, *, publisher: EventBus | None = None
+) -> tuple[TestRun, list[ReservedDeviceInfo]]:
     """Create a test run reservation. Returns (run, reserved_device_infos)."""
 
     ttl_minutes, heartbeat_timeout_sec = _resolve_run_options(data)
@@ -303,6 +313,7 @@ async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[R
                 "device_count": len(device_infos),
                 "created_by": run.created_by,
             },
+            publisher=publisher or _default_event_bus,
         )
         await db.commit()
     except _UnmetRequirementError as exc:

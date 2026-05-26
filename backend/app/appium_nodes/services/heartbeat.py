@@ -1,14 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import os
 import time
-import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_health
@@ -26,18 +26,26 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.core.observability import get_logger, observe_background_loop
-from app.core.type_defs import AsyncTaskFactory
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.state import set_operational_state
+from app.events import event_bus as _default_event_bus
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.plugins import service as plugin_service
 from app.settings import settings_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.type_defs import AsyncTaskFactory
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -310,7 +318,9 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
     )
 
 
-async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_data: dict[str, Any]) -> None:
+async def _ingest_appium_restart_events(
+    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventBus | None = None
+) -> None:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
         return
@@ -428,6 +438,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                         "port": port,
                     },
                     severity=node_state_severity("error", "running"),
+                    publisher=publisher or _default_event_bus,
                 )
             await record_event(
                 db,
@@ -459,6 +470,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                 "process": process,
             },
             severity="warning" if will_retry else None,
+            publisher=publisher or _default_event_bus,
         )
         queue_device_crashed_event(
             db,
@@ -469,6 +481,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             will_restart=will_retry,
             process=process,
             severity="warning" if will_retry else None,
+            publisher=publisher or _default_event_bus,
         )
         await record_event(
             db,
@@ -503,6 +516,7 @@ async def _apply_host_ping_result(
     guard_active: bool,
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -536,6 +550,7 @@ async def _apply_host_ping_result(
                     "old_status": host.status.value,
                     "new_status": "online",
                 },
+                publisher=publisher or _default_event_bus,
             )
             host.status = HostStatus.online
             _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
@@ -544,7 +559,7 @@ async def _apply_host_ping_result(
             if "missing_prerequisites" in health_data:
                 host_service.update_missing_prerequisites_from_health(host, health_data.get("missing_prerequisites"))
             await _persist_appium_processes_snapshot(db, host, health_data)
-            await _ingest_appium_restart_events(db, host, health_data)
+            await _ingest_appium_restart_events(db, host, health_data, publisher=publisher)
         return
 
     if guard_active:
@@ -577,6 +592,7 @@ async def _apply_host_ping_result(
                 "old_status": host.status.value,
                 "new_status": "offline",
             },
+            publisher=publisher or _default_event_bus,
         )
         queue_event_for_session(
             db,
@@ -586,6 +602,7 @@ async def _apply_host_ping_result(
                 "hostname": host.hostname,
                 "missed_count": count,
             },
+            publisher=publisher or _default_event_bus,
         )
         host.status = HostStatus.offline
         # Mark all devices on this host as offline. lock_devices

@@ -96,7 +96,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", AsyncMock())
 
     started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices])
     stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices])
@@ -145,7 +145,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         "app.devices.services.bulk._load_devices",
         AsyncMock(return_value=[eligible_ok, eligible_fail, ineligible]),
     )
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", AsyncMock())
     monkeypatch.setattr(
         "app.devices.services.bulk.resolve_pack_platform",
         AsyncMock(return_value=_resolved),
@@ -166,7 +166,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     devices = [_device(), _device()]
     db = AsyncMock()
     monkeypatch.setattr("app.devices.services.bulk._load_devices", AsyncMock(return_value=devices))
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", AsyncMock())
+    monkeypatch.setattr("app.devices.services.bulk._default_event_bus.publish", AsyncMock())
     monkeypatch.setattr("app.devices.services.bulk.queue_event_for_session", Mock())
     # bulk_enter_maintenance calls device_locking.lock_device(db, ...) which does
     # `(await db.execute(stmt)).scalar_one()`. With db = AsyncMock(), the value
