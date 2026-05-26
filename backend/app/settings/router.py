@@ -5,24 +5,25 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.settings import settings_service
+from app.settings.dependencies import SettingsServicesDep  # noqa: TC001
 from app.settings.schemas import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
 @router.get("", response_model=list[SettingsGrouped])
-async def list_settings() -> list[dict[str, Any]]:
-    return settings_service.get_all_grouped()
+async def list_settings(settings_services: SettingsServicesDep) -> list[dict[str, Any]]:
+    return settings_services.service.get_all_grouped()
 
 
 @router.put("/bulk", response_model=list[SettingRead])
 async def bulk_update_settings(
     body: SettingsBulkUpdate,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> list[dict[str, Any]]:
     try:
-        return await settings_service.bulk_update(db, body.settings)
+        return await settings_services.service.bulk_update(db, body.settings)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -30,15 +31,15 @@ async def bulk_update_settings(
 
 
 @router.post("/reset-all")
-async def reset_all_settings(db: DbDep) -> dict[str, str]:
-    await settings_service.reset_all(db)
+async def reset_all_settings(db: DbDep, settings_services: SettingsServicesDep) -> dict[str, str]:
+    await settings_services.service.reset_all(db)
     return {"status": "all settings reset to defaults"}
 
 
 @router.get("/{key:path}", response_model=SettingRead)
-async def get_setting(key: str) -> dict[str, Any]:
+async def get_setting(key: str, settings_services: SettingsServicesDep) -> dict[str, Any]:
     try:
-        return settings_service.get_setting_response(key)
+        return settings_services.service.get_setting_response(key)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -48,9 +49,10 @@ async def update_setting(
     key: str,
     body: SettingUpdate,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
-        return await settings_service.update(db, key, body.value)
+        return await settings_services.service.update(db, key, body.value)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -61,8 +63,9 @@ async def update_setting(
 async def reset_setting(
     key: str,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
-        return await settings_service.reset(db, key)
+        return await settings_services.service.reset(db, key)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

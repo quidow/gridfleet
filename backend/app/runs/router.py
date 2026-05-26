@@ -27,7 +27,7 @@ from app.runs.schemas import (
     RunPreparationFailureReport,
     RunRead,
 )
-from app.settings import settings_service
+from app.settings.dependencies import SettingsServicesDep
 
 RUN_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
 
@@ -53,6 +53,7 @@ def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -
 async def create_run(
     data: RunCreate,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     include: str | None = Query(
         None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
     ),
@@ -107,7 +108,7 @@ async def create_run(
         "name": run.name,
         "state": run.state,
         "devices": device_infos,
-        "grid_url": settings_service.get("grid.hub_url"),
+        "grid_url": settings_services.service.get("grid.hub_url"),
         "ttl_minutes": run.ttl_minutes,
         "heartbeat_timeout_sec": run.heartbeat_timeout_sec,
         "created_at": run.created_at,

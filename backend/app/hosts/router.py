@@ -48,6 +48,7 @@ from app.packs.services import status as pack_status
 from app.packs.services.status import persist_doctor_results
 from app.plugins import service as plugin_service
 from app.settings import settings_service
+from app.settings.dependencies import SettingsServicesDep
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 
@@ -147,7 +148,11 @@ async def _auto_prepare_host_diagnostics(host_id: uuid.UUID) -> None:
 
 @router.post("/register", response_model=HostRead)
 async def register_host(
-    data: HostRegister, response: Response, db: DbDep, event_services: EventServicesDep
+    data: HostRegister,
+    response: Response,
+    db: DbDep,
+    event_services: EventServicesDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
         host, is_new = await host_service.register_host(db, data)
@@ -156,7 +161,7 @@ async def register_host(
 
     if is_new:
         response.status_code = 201
-        if settings_service.get("agent.auto_accept_hosts"):
+        if settings_services.service.get("agent.auto_accept_hosts"):
             _fire_and_forget(_auto_discover, host.id, event_services.bus)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
 
@@ -320,12 +325,13 @@ async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep) -> HostDiagnostics
 async def get_host_resource_telemetry(
     host_id: uuid.UUID,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     since: datetime | None = None,
     until: datetime | None = None,
     bucket_minutes: int = Query(5, ge=1, le=1440),
 ) -> HostResourceTelemetryResponse:
     window_end = until or datetime.now(UTC)
-    default_window_minutes = int(settings_service.get("general.host_resource_telemetry_window_minutes"))
+    default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:
         payload = await host_resource_telemetry.fetch_host_resource_telemetry(
