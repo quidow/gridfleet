@@ -258,7 +258,13 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return EventServices(bus=event_bus, session_factory=sf, engine=db_session.bind)  # type: ignore[arg-type]
+        return EventServices(  # type: ignore[arg-type]
+            publisher=event_bus,
+            subscriber=event_bus,
+            reader=event_bus,
+            session_factory=sf,
+            engine=db_session.bind,
+        )
 
     def override_get_settings_services() -> SettingsServices:
         assert db_session.bind is not None

@@ -2031,7 +2031,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     )
 
     with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
-        mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
+        mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
         for call in (
             lambda: webhooks.get_webhook(webhook_id, db=object()),
             lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
@@ -2044,7 +2044,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
                 await call()
             assert exc.value.status_code == 404
 
-    mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
+    mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
     with (
         patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
         patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
@@ -2052,7 +2052,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     ):
         result = await webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh)
         assert result["webhook_name"] == "alerts"
-        mock_event_services_wh.bus.publish.assert_awaited_once()
+        mock_event_services_wh.publisher.publish.assert_awaited_once()
         deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
         assert deliveries["total"] == 1
         with pytest.raises(HTTPException) as exc:

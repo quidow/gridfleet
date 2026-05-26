@@ -87,7 +87,7 @@ async def stream_device_verification_job_events(
     if initial_job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
 
-    queue = event_services.bus.subscribe()
+    queue = event_services.subscriber.subscribe()
 
     async def generate() -> AsyncGenerator[dict[str, str], None]:
         try:
@@ -116,6 +116,6 @@ async def stream_device_verification_job_events(
                 if payload["status"] in {"completed", "failed"}:
                     return
         finally:
-            event_services.bus.unsubscribe(queue)
+            event_services.subscriber.unsubscribe(queue)
 
     return EventSourceResponse(generate())

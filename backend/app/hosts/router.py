@@ -162,7 +162,7 @@ async def register_host(
     if is_new:
         response.status_code = 201
         if settings_services.service.get("agent.auto_accept_hosts"):
-            _fire_and_forget(_auto_discover, host.id, event_services.bus)
+            _fire_and_forget(_auto_discover, host.id, event_services.publisher)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
 
     return _serialize_host(host)
@@ -173,7 +173,7 @@ async def approve_host(host_id: uuid.UUID, db: DbDep, event_services: EventServi
     host = await host_service.approve_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
-    _fire_and_forget(_auto_discover, host.id, event_services.bus)
+    _fire_and_forget(_auto_discover, host.id, event_services.publisher)
     _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
     return _serialize_host(host)
 

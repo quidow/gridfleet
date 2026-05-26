@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.agent_comm.http_pool import AgentHttpPool
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
@@ -45,6 +47,7 @@ from app.devices import routers as device_routers
 from app.devices import services as device_services
 from app.devices.services import state_write_guard
 from app.events import router as events
+from app.events.event_bus import EventBus
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.grid.event_bus_loop import event_bus_subscriber_loop
@@ -63,6 +66,7 @@ from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
+from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
 
@@ -162,12 +166,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
 
-    app_services = compose_app(engine=engine, session_factory=session_factory)
-    app.state.services = app_services
+    bus = EventBus()
+    svc = SettingsService()
+    pool = AgentHttpPool()
+    breaker = AgentCircuitBreaker()
 
-    bus = app_services.events.bus
-    svc = app_services.settings.service
-    pool = app_services.agent_comm.http_pool
+    app_services = compose_app(
+        engine=engine,
+        session_factory=session_factory,
+        bus=bus,
+        settings_svc=svc,
+        http_pool=pool,
+        circuit_breaker=breaker,
+    )
+    app.state.services = app_services
 
     bus.configure(session_factory=session_factory, engine=engine)
     svc.configure_store_refresh(session_factory)
