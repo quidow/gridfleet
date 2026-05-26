@@ -532,7 +532,7 @@ async def attempt_auto_recovery(
         try:
             if device.host_id is None:
                 raise NodeManagerError(f"Device {device.id} has no host assigned")
-            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+            desired_port = (await candidate_ports(db, host_id=device.host_id, settings=_default_settings))[0]
             if device.appium_node is None:
                 new_node = AppiumNode(
                     device_id=device.id,

@@ -262,7 +262,7 @@ async def run_probe(
         # to appium_reconciler.interval_sec for the leader loop to start the node.
         # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
         try:
-            await converge_device_now(device.id, db=db)
+            await converge_device_now(device.id, db=db, settings=_default_settings)
         except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
             logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 

@@ -36,16 +36,15 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.plugins import service as plugin_service
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
     from app.events.event_bus import EventBus
-    from app.settings.service import SettingsService
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -101,17 +100,17 @@ _TRANSPORT_TO_OUTCOME = {
 }
 
 
-def _heartbeat_client_mode(*, settings: SettingsService | None = None) -> ClientMode:
+def _heartbeat_client_mode(*, settings: SettingsReader) -> ClientMode:
     try:
-        pool_enabled = bool((settings or _default_settings).get("agent.http_pool_enabled"))
+        pool_enabled = bool(settings.get("agent.http_pool_enabled"))
         return ClientMode.pooled if pool_enabled else ClientMode.fresh
     except (KeyError, RuntimeError):
         return ClientMode.fresh
 
 
-async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
+async def _ping_agent(ip: str, port: int, *, settings: SettingsReader) -> HeartbeatPingResult:
     started = time.monotonic()
-    client_mode = _heartbeat_client_mode()
+    client_mode = _heartbeat_client_mode(settings=settings)
     try:
         payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
     except CircuitOpenError as exc:
@@ -519,6 +518,7 @@ async def _apply_host_ping_result(
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
     publisher: EventBus | None = None,
+    settings: SettingsReader,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -581,10 +581,10 @@ async def _apply_host_ping_result(
         host.hostname,
         host.ip,
         count,
-        _default_settings.get("general.max_missed_heartbeats"),
+        settings.get("general.max_missed_heartbeats"),
     )
 
-    if count >= _default_settings.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+    if count >= settings.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
         logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
         if publisher is not None:
             queue_event_for_session(
@@ -635,7 +635,7 @@ async def _apply_host_ping_result(
             )
 
 
-async def _check_hosts(db: AsyncSession) -> None:
+async def _check_hosts(db: AsyncSession, *, settings: SettingsReader) -> None:
     """Ping all non-pending hosts in parallel.
 
     ``db`` is used only to fetch the host id list; per-host work runs in fresh
@@ -644,8 +644,8 @@ async def _check_hosts(db: AsyncSession) -> None:
     iteration = _next_loop_iteration()
     leader_id = str(control_plane_leader.holder_id)
 
-    interval = float(_default_settings.get("general.heartbeat_interval_sec"))
-    max_missed = int(_default_settings.get("general.max_missed_heartbeats"))
+    interval = float(settings.get("general.heartbeat_interval_sec"))
+    max_missed = int(settings.get("general.max_missed_heartbeats"))
     global _LAST_CYCLE_MONOTONIC
     now_mono = time.monotonic()
     prev_mono = _LAST_CYCLE_MONOTONIC
@@ -671,7 +671,7 @@ async def _check_hosts(db: AsyncSession) -> None:
                     host = await host_db.get(Host, host_id)
                     if host is None:
                         return
-                    ping_result = await _ping_agent(host.ip, host.agent_port)
+                    ping_result = await _ping_agent(host.ip, host.agent_port, settings=settings)
                     _emit_heartbeat_log(
                         host_id=str(host.id),
                         host_ip=host.ip,
@@ -697,6 +697,7 @@ async def _check_hosts(db: AsyncSession) -> None:
                         guard_active=guard_active,
                         guard_gap_sec=guard_gap_sec,
                         guard_threshold_sec=guard_threshold_sec,
+                        settings=settings,
                     )
                     await host_db.commit()
             except LeadershipLost:
@@ -707,14 +708,14 @@ async def _check_hosts(db: AsyncSession) -> None:
     await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
 
-async def heartbeat_loop() -> None:
+async def heartbeat_loop(*, settings: SettingsReader) -> None:
     """Background loop that pings all host agents."""
     while True:
-        interval = float(_default_settings.get("general.heartbeat_interval_sec"))
+        interval = float(settings.get("general.heartbeat_interval_sec"))
         cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_hosts(db)
+                await _check_hosts(db, settings=settings)
         except LeadershipLost as exc:
             record_heartbeat_cycle(
                 time.monotonic() - cycle_start,

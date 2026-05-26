@@ -109,6 +109,7 @@ from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 event_bus_mod = import_module("app.events.event_bus")
@@ -642,7 +643,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         is appium_reconciler_agent.async_session
     )
     monkeypatch.setattr(appium_reconciler_agent, "candidate_ports", AsyncMock(return_value=[4799]))
-    assert await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4()) == 4799
+    assert (
+        await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4(), settings=FakeSettingsReader({}))
+        == 4799
+    )
 
     static_group = SimpleNamespace(
         id=uuid.uuid4(),

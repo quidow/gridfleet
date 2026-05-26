@@ -13,6 +13,7 @@ from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
 from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
 from app.runs import service as run_service
+from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/devices", tags=["nodes"])
 logger = get_logger(__name__)
@@ -77,7 +78,7 @@ async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
 
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
-async def restart_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
+async def restart_node(device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
     _assert_startable_outside_maintenance(device)
@@ -87,7 +88,7 @@ async def restart_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
         return await start_node(device_id, db)
     node = await node_manager.restart_node(db, device, caller="operator_restart")
     try:
-        converged_node = await converge_device_now(device.id, db=db)
+        converged_node = await converge_device_now(device.id, db=db, settings=settings_services.reader)
         if converged_node is not None:
             node = converged_node
     except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails

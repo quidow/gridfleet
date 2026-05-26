@@ -55,7 +55,6 @@ from app.devices.services.lifecycle_policy_actions import (
 )
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -64,6 +63,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.snapshot import RunningAppiumNode
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 
@@ -239,10 +239,10 @@ async def appium_reconciler_loop_tick(
 LOOP_NAME = "appium_reconciler_loop"
 
 
-async def appium_reconciler_loop() -> None:
+async def appium_reconciler_loop(*, settings: SettingsReader) -> None:
     """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
     while True:
-        interval = float(_default_settings.get("appium_reconciler.interval_sec"))
+        interval = float(settings.get("appium_reconciler.interval_sec"))
         cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
@@ -254,7 +254,7 @@ async def appium_reconciler_loop() -> None:
             # Agent IO and stops happen outside the DB session — no point holding it open.
             health_by_host = await _reconcile_all(hosts, rows)
             if reconciler_convergence_enabled():
-                await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)
+                await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host, settings=settings)
         except LeadershipLost as exc:
             APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
             logger.error(
@@ -454,8 +454,9 @@ async def _drive_convergence(
     *,
     health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
     require_leader: bool = True,
+    settings: SettingsReader,
 ) -> None:
-    semaphore = asyncio.Semaphore(int(_default_settings.get("appium_reconciler.host_parallelism")))
+    semaphore = asyncio.Semaphore(int(settings.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
     rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
     active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
@@ -501,9 +502,9 @@ async def _drive_convergence(
                     rows=active_rows,
                     agent_running=observed,
                     now=datetime.now(UTC),
-                    start_agent=_make_start_agent(require_leader=require_leader),
+                    start_agent=_make_start_agent(require_leader=require_leader, settings=settings),
                     stop_agent=_make_stop_agent(host_ip, agent_port),
-                    write_observed=_write_observed_factory(require_leader=require_leader),
+                    write_observed=_write_observed_factory(require_leader=require_leader, settings=settings),
                     clear_token=_clear_token_factory(require_leader=require_leader),
                     reset_start_failure=_make_reset_start_failure(require_leader=require_leader),
                 )
@@ -526,7 +527,9 @@ def _session_scope(db: AsyncSession | None) -> SessionScope:
     return _reuse_session
 
 
-async def converge_device_now(device_id: uuid.UUID, *, db: AsyncSession | None = None) -> AppiumNode | None:
+async def converge_device_now(
+    device_id: uuid.UUID, *, db: AsyncSession | None = None, settings: SettingsReader
+) -> AppiumNode | None:
     """Run one desired-state convergence pass for a single operator-requested device.
 
     The periodic leader loop remains the durable fallback. This path only removes
@@ -555,9 +558,9 @@ async def converge_device_now(device_id: uuid.UUID, *, db: AsyncSession | None =
         rows=[row],
         agent_running=observed,
         now=datetime.now(UTC),
-        start_agent=_make_start_agent(require_leader=False, session_scope=session_scope),
+        start_agent=_make_start_agent(require_leader=False, session_scope=session_scope, settings=settings),
         stop_agent=_make_stop_agent(host.ip, host.agent_port),
-        write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope),
+        write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope, settings=settings),
         clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope),
         reset_start_failure=_make_reset_start_failure(require_leader=False, session_scope=session_scope),
         raise_errors=True,
@@ -573,6 +576,7 @@ def _make_start_agent(
     *,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     resolved_session_scope = session_scope or async_session
 
@@ -587,14 +591,18 @@ def _make_start_agent(
                 node = device.appium_node
                 if node is None:
                     raise RuntimeError(f"Device {row.device_id} has no AppiumNode row to converge")
-                handle = await _start_for_node(db, device, node=node, preferred_port=port)
+                handle = await _start_for_node(db, device, node=node, preferred_port=port, settings=settings)
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")
             except Exception as exc:
                 reason = _classify_start_failure(exc)
                 APPIUM_RECONCILER_START_FAILURES.labels(reason=reason).inc()
                 await _record_start_failure(
-                    row, reason=reason, require_leader=require_leader, session_scope=resolved_session_scope
+                    row,
+                    reason=reason,
+                    require_leader=require_leader,
+                    session_scope=resolved_session_scope,
+                    settings=settings,
                 )
                 raise
             await _reset_start_failure(row, require_leader=require_leader, session_scope=resolved_session_scope)
@@ -634,6 +642,7 @@ def _write_observed_factory(
     *,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> Callable[..., Awaitable[None]]:
     resolved_session_scope = session_scope or async_session
 
@@ -663,6 +672,7 @@ def _write_observed_factory(
                     active_connection_target=active_connection_target,
                     allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
                     clear_transition=clear_transition,
+                    settings=settings,
                 )
                 if clear_desired_port:
                     device = await _lock_device_for_reconciler(db, row.device_id)
@@ -791,9 +801,10 @@ async def _record_start_failure(
     reason: str,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> None:
-    threshold = int(_default_settings.get("appium_reconciler.start_failure_threshold"))
-    backoff_seconds = int(_default_settings.get("appium.startup_timeout_sec")) * 4
+    threshold = int(settings.get("appium_reconciler.start_failure_threshold"))
+    backoff_seconds = int(settings.get("appium.startup_timeout_sec")) * 4
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         if require_leader:

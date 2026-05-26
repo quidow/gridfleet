@@ -218,10 +218,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if await control_plane_leader.try_acquire(engine):
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
-            (heartbeat_loop(), "heartbeat_loop"),
+            (heartbeat_loop(settings=svc), "heartbeat_loop"),
             (session_sync_loop(), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
-            (node_health_loop(), "node_health_loop"),
+            (node_health_loop(settings=svc), "node_health_loop"),
             (device_connectivity_loop(), "device_connectivity_loop"),
             (property_refresh_loop(), "property_refresh_loop"),
             (hardware_telemetry_loop(), "hardware_telemetry_loop"),
@@ -233,7 +233,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (session_viability_loop(), "session_viability_loop"),
             (fleet_capacity_collector_loop(), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
-            (appium_reconciler_loop(), "appium_reconciler_loop"),
+            (appium_reconciler_loop(settings=svc), "appium_reconciler_loop"),
             (device_intent_reconciler_loop(), "device_intent_reconciler_loop"),
             (background_loop_flush_loop(session_factory), "background_loop_flush_loop"),
         ]
