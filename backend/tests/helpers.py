@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
-
-from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any, cast
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.runs.models import RunState, TestRun
+
+if TYPE_CHECKING:
+    from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import Event, EventBus
 
 DEFAULT_HOST_PAYLOAD = {
     "hostname": "test-host",
@@ -347,3 +352,32 @@ async def seed_existing_device(
         identity_scheme=identity_scheme,
         identity_scope=identity_scope,
     )
+
+
+# ---------------------------------------------------------------------------
+# EventBus test helpers — replacements for removed test-infrastructure methods
+# ---------------------------------------------------------------------------
+
+
+def recent_events(
+    bus: EventBus,
+    limit: int = 100,
+    event_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read recent events from the bus's in-memory log."""
+    events = list(bus._log)
+    if event_types:
+        events = [e for e in events if e.type in event_types]
+    return [e.to_dict() for e in events[-limit:]]
+
+
+async def drain_handlers(bus: EventBus) -> None:
+    """Wait for all pending handler tasks to complete."""
+    tasks = {t for t in bus._handler_tasks if not t.done()}
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+def set_webhook_queue(bus: EventBus, q: asyncio.Queue[Event]) -> None:
+    """Configure the webhook queue on the bus."""
+    bus._webhook_queue = q

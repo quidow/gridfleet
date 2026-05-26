@@ -7,7 +7,7 @@ from app.devices.models import HardwareChargingState, HardwareHealthStatus, Hard
 from app.events import event_bus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.settings import settings_service
-from tests.helpers import create_device_record, create_host
+from tests.helpers import create_device_record, create_host, drain_handlers
 
 
 async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession, client: AsyncClient) -> None:
@@ -85,7 +85,7 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     events, total = await event_bus.get_recent_events_persisted(limit=10)
     assert total == 1
     assert events[0]["type"] == "device.hardware_health_changed"

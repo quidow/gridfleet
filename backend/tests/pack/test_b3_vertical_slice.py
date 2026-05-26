@@ -47,6 +47,7 @@ from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, H
 from app.packs.routers.uploads import get_pack_storage
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
 from app.packs.services.storage import PackStorageService
+from tests.helpers import drain_handlers, recent_events
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -457,8 +458,8 @@ async def test_b3_feature_action_degraded_and_recovered(
     assert row.detail == "degraded"
 
     # Drain async event handlers so they write to _log.
-    await event_bus.drain_handlers()
-    degraded_events = event_bus.get_recent_events(event_types=["pack_feature.degraded"])
+    await drain_handlers(event_bus)
+    degraded_events = recent_events(event_bus, event_types=["pack_feature.degraded"])
     assert len(degraded_events) == 1, "pack_feature.degraded event must be emitted on first ok=False"
     ev = degraded_events[0]
     assert ev["data"]["pack_id"] == PACK_ID
@@ -486,8 +487,8 @@ async def test_b3_feature_action_degraded_and_recovered(
     assert row.ok is True
     assert row.detail == "recovered"
 
-    await event_bus.drain_handlers()
-    recovered_events = event_bus.get_recent_events(event_types=["pack_feature.recovered"])
+    await drain_handlers(event_bus)
+    recovered_events = recent_events(event_bus, event_types=["pack_feature.recovered"])
     assert len(recovered_events) == 1, "pack_feature.recovered event must be emitted when ok flips True"
     ev2 = recovered_events[0]
     assert ev2["data"]["pack_id"] == PACK_ID

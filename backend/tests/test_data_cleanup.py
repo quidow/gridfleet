@@ -15,6 +15,7 @@ from app.events import event_bus
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
+from tests.helpers import recent_events
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:
@@ -292,7 +293,7 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
     result = await db_session.execute(select(Session))
     remaining = result.scalars().all()
     assert len(remaining) == 1
-    events = event_bus.get_recent_events(event_types=["system.cleanup_completed"])
+    events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["sessions_deleted"] == 4
     assert events[0]["data"]["host_resource_samples_deleted"] == 0
@@ -346,7 +347,7 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
     remaining = result.scalars().all()
     assert len(remaining) == 2
 
-    events = event_bus.get_recent_events(event_types=["system.cleanup_completed"])
+    events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["host_resource_samples_deleted"] == 4
 
@@ -390,6 +391,6 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
     remaining = result.scalars().all()
     assert len(remaining) == 2
 
-    events = event_bus.get_recent_events(event_types=["system.cleanup_completed"])
+    events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["capacity_snapshots_deleted"] == 4

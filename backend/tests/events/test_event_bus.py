@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus, event_bus
+from tests.helpers import drain_handlers, recent_events, set_webhook_queue
 
 
 def _session_bind_engine(session: AsyncSession) -> AsyncEngine:
@@ -56,7 +57,7 @@ async def test_get_recent_events() -> None:
     await bus.publish("b", {"n": 2})
     await bus.publish("c", {"n": 3})
 
-    events = bus.get_recent_events(limit=2)
+    events = recent_events(bus, limit=2)
     assert len(events) == 2
     assert events[0]["data"]["n"] == 2
     assert events[1]["data"]["n"] == 3
@@ -68,7 +69,7 @@ async def test_get_recent_events_filter_types() -> None:
     await bus.publish("session.started", {"n": 2})
     await bus.publish("device.updated", {"n": 3})
 
-    events = bus.get_recent_events(event_types=["device.created", "device.updated"])
+    events = recent_events(bus, event_types=["device.created", "device.updated"])
     assert len(events) == 2
     assert events[0]["type"] == "device.created"
     assert events[1]["type"] == "device.updated"
@@ -77,7 +78,7 @@ async def test_get_recent_events_filter_types() -> None:
 async def test_webhook_queue() -> None:
     bus = EventBus()
     wh_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=100)
-    bus.set_webhook_queue(wh_queue)
+    set_webhook_queue(bus, wh_queue)
 
     await bus.publish("test.event", {"key": "val"})
 
@@ -101,7 +102,7 @@ async def test_snapshot_and_reset() -> None:
     bus = EventBus()
     queue = bus.subscribe()
     webhook_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=10)
-    bus.set_webhook_queue(webhook_queue)
+    set_webhook_queue(bus, webhook_queue)
     await bus.publish("device.updated", {"device_id": "123"})
 
     snapshot = bus.snapshot()
@@ -111,7 +112,7 @@ async def test_snapshot_and_reset() -> None:
 
     bus.reset()
     assert bus.subscriber_count == 0
-    assert bus.get_recent_events() == []
+    assert recent_events(bus) == []
     assert bus.snapshot()["webhook_queue_configured"] is False
     assert queue.qsize() == 1
 
@@ -218,7 +219,7 @@ async def test_queue_event_for_session_carries_severity(
         publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert len(captured) == 1
     event_type, data, severity = captured[0]

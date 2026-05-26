@@ -8,6 +8,7 @@ import pytest
 
 from app.events import event_bus
 from app.hosts.service_host_events import query_host_events
+from tests.helpers import drain_handlers
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,7 @@ async def _emit(host_id: UUID, event_type: str, *, extra: dict[str, object] | No
     if extra:
         payload.update(extra)
     await event_bus.publish(event_type, payload)
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
 
 @pytest.mark.asyncio

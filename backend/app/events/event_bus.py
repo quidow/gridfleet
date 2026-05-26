@@ -104,11 +104,6 @@ class EventBus:
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
 
-    async def drain_handlers(self) -> None:
-        tasks = {task for task in self._handler_tasks if not task.done()}
-        if tasks:
-            await asyncio.gather(*tasks)
-
     async def shutdown(self) -> None:
         cancellable_tasks = [task for task in (self._listener_task, self._poller_task) if task is not None]
         for task in cancellable_tasks:
@@ -186,15 +181,6 @@ class EventBus:
             result = await db.execute(stmt)
             events = [Event.from_system_event(row) for row in result.scalars().all()]
         return [event.to_dict() for event in events], total
-
-    def get_recent_events(self, limit: int = 100, event_types: list[str] | None = None) -> list[dict[str, Any]]:
-        events = list(self._log)
-        if event_types:
-            events = [event for event in events if event.type in event_types]
-        return [event.to_dict() for event in events[-limit:]]
-
-    def set_webhook_queue(self, q: asyncio.Queue[Event]) -> None:
-        self._webhook_queue = q
 
     def snapshot(self) -> dict[str, Any]:
         return {

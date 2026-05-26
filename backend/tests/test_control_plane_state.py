@@ -23,6 +23,7 @@ from app.sessions.service_viability import (
     reset_session_viability_control_plane_state,
     set_session_viability_control_plane_entry,
 )
+from tests.helpers import drain_handlers, recent_events
 
 
 async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncSession, db_host: Host) -> None:
@@ -111,13 +112,13 @@ async def test_set_operational_state_publishes_only_on_change(db_session: AsyncS
 
     changed = await set_operational_state(device, DeviceOperationalState.available)
     assert changed is False
-    assert event_bus.get_recent_events() == []
+    assert recent_events(event_bus) == []
 
     changed = await set_operational_state(device, DeviceOperationalState.busy, reason="Probe started")
     assert changed is True
     await db_session.commit()
-    await event_bus.drain_handlers()
-    events = event_bus.get_recent_events()
+    await drain_handlers(event_bus)
+    events = recent_events(event_bus)
     assert len(events) == 1
     assert events[0]["data"]["old_operational_state"] == "available"
     assert events[0]["data"]["new_operational_state"] == "busy"
