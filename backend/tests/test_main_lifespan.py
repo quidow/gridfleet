@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app import main
 from app.hosts.models import Host, HostStatus
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -403,7 +404,12 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
         Mock(side_effect=[True, False]),
     )
 
-    availability = await main.check_availability(platform_id="android_mobile", count=2, db=AsyncMock())
+    availability = await main.check_availability(
+        platform_id="android_mobile",
+        count=2,
+        db=AsyncMock(),
+        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+    )
 
     assert availability == {
         "available": False,

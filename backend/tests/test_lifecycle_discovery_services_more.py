@@ -10,6 +10,7 @@ from app.devices.services import lifecycle_incidents as incidents
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.packs.services import discovery as discovery
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -179,6 +180,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
             ],
             removed_identity_values=result.removed_identity_values,
         ),
+        settings=FakeSettingsReader({}),
     )
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]

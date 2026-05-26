@@ -41,6 +41,7 @@ from app.core.observability import (
     flush_background_loop_snapshots,
     get_logger,
 )
+from app.core.protocols import SettingsReader
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
@@ -66,6 +67,7 @@ from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
+from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
@@ -94,14 +96,14 @@ session_viability_loop = session_service_viability.session_viability_loop
 close_session_viability_client = session_service_viability.close
 
 
-async def hardware_telemetry_loop() -> None:
+async def hardware_telemetry_loop(*, settings: SettingsReader) -> None:
     service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
-    await service_hardware_telemetry.hardware_telemetry_loop()
+    await service_hardware_telemetry.hardware_telemetry_loop(settings=settings)
 
 
-async def host_resource_telemetry_loop() -> None:
+async def host_resource_telemetry_loop(*, settings: SettingsReader) -> None:
     service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
-    await service_resource_telemetry.host_resource_telemetry_loop()
+    await service_resource_telemetry.host_resource_telemetry_loop(settings=settings)
 
 
 async def pack_drain_loop() -> None:
@@ -224,8 +226,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (node_health_loop(settings=svc), "node_health_loop"),
             (device_connectivity_loop(settings=svc), "device_connectivity_loop"),
             (property_refresh_loop(settings=svc), "property_refresh_loop"),
-            (hardware_telemetry_loop(), "hardware_telemetry_loop"),
-            (host_resource_telemetry_loop(), "host_resource_telemetry_loop"),
+            (hardware_telemetry_loop(settings=svc), "hardware_telemetry_loop"),
+            (host_resource_telemetry_loop(settings=svc), "host_resource_telemetry_loop"),
             (job_queue.durable_job_worker_loop(session_factory, publisher=bus), "durable_job_worker_loop"),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper_loop(publisher=bus), "run_reaper_loop"),
@@ -357,10 +359,13 @@ async def metrics(db: DbDep) -> Response:
 @app.get("/api/availability", dependencies=[Depends(auth_dependencies.require_any_auth)])
 async def check_availability(
     db: DbDep,
+    settings_services: SettingsServicesDep,
     platform_id: str = Query(...),
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    available_devices = await device_service.list_devices(db, platform_id=platform_id, status="available")
+    available_devices = await device_service.list_devices(
+        db, settings=settings_services.reader, platform_id=platform_id, status="available"
+    )
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(
         1

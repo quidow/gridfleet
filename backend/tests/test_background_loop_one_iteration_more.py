@@ -134,7 +134,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
     assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
 
-    monkeypatch.setattr(hardware_telemetry._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(hardware_telemetry, "async_session", _Session)
     monkeypatch.setattr(
@@ -145,7 +144,9 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     monkeypatch.setattr(hardware_telemetry.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     with pytest.raises(asyncio.CancelledError):
-        await hardware_telemetry.hardware_telemetry_loop()
+        await hardware_telemetry.hardware_telemetry_loop(
+            settings=FakeSettingsReader({"general.hardware_telemetry_interval_sec": 0.01})
+        )
 
     assert hardware_telemetry.poll_hardware_telemetry_once.await_count == 2
 

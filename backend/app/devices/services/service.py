@@ -12,6 +12,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import sanitize_log_value
+from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
@@ -93,6 +94,8 @@ async def create_device(
 
 async def list_devices(
     db: AsyncSession,
+    *,
+    settings: SettingsReader,
     pack_id: str | None = None,
     platform_id: str | None = None,
     status: ChipStatus | None = None,
@@ -126,7 +129,7 @@ async def list_devices(
         sort_by=sort_by,
         sort_dir=sort_dir,
     )
-    return await list_devices_by_filters(db, filters)
+    return await list_devices_by_filters(db, filters, settings=settings)
 
 
 def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
@@ -227,6 +230,7 @@ def _build_device_count_stmt(filters: DeviceQueryFilters) -> DeviceCountStatemen
 async def list_devices_by_filters(
     db: AsyncSession,
     filters: DeviceQueryFilters,
+    settings: SettingsReader,
 ) -> list[Device]:
     stmt = _build_device_list_stmt(filters)
     result = await db.execute(stmt)
@@ -259,7 +263,8 @@ async def list_devices_by_filters(
         devices = [
             device
             for device in devices
-            if hardware_telemetry.hardware_telemetry_state_for_device(device) == filters.hardware_telemetry_state
+            if hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
+            == filters.hardware_telemetry_state
         ]
     return devices
 
@@ -269,11 +274,12 @@ async def list_devices_paginated(
     filters: DeviceQueryFilters,
     limit: int,
     offset: int,
+    settings: SettingsReader,
 ) -> tuple[list[Device], int]:
     has_post_filters = filters.needs_attention is not None or filters.hardware_telemetry_state is not None
 
     if has_post_filters:
-        all_devices = await list_devices_by_filters(db, filters)
+        all_devices = await list_devices_by_filters(db, filters, settings=settings)
         total = len(all_devices)
         page = all_devices[offset : offset + limit]
         return page, total
@@ -290,9 +296,10 @@ async def list_devices_paginated(
 async def count_devices_by_filters(
     db: AsyncSession,
     filters: DeviceQueryFilters,
+    settings: SettingsReader,
 ) -> int:
     if filters.needs_attention is not None or filters.hardware_telemetry_state is not None:
-        return len(await list_devices_by_filters(db, filters))
+        return len(await list_devices_by_filters(db, filters, settings=settings))
 
     result = await db.execute(_build_device_count_stmt(filters))
     return int(result.scalar() or 0)

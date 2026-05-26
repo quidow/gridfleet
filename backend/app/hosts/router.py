@@ -46,7 +46,6 @@ from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
 from app.packs.services.status import persist_doctor_results
 from app.plugins import service as plugin_service
-from app.settings import settings_service
 from app.settings.dependencies import SettingsServicesDep
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
@@ -94,11 +93,11 @@ def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
-def _serialize_host(host: Host) -> dict[str, Any]:
-    required_version = host_versioning.normalize_agent_version_setting(settings_service.get("agent.min_version"))
-    recommended_version = host_versioning.normalize_agent_version_setting(
-        settings_service.get("agent.recommended_version")
-    )
+def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[str, Any]:
+    min_version = settings_services.reader.get("agent.min_version")
+    required_version = host_versioning.normalize_agent_version_setting(min_version)
+    rec_version = settings_services.reader.get("agent.recommended_version")
+    recommended_version = host_versioning.normalize_agent_version_setting(rec_version)
     payload = HostRead.model_validate(host).model_dump()
     payload["required_agent_version"] = required_version
     payload["recommended_agent_version"] = recommended_version
@@ -153,7 +152,9 @@ async def register_host(
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
-        host, is_new = await host_service.register_host(db, data, publisher=event_services.publisher)
+        host, is_new = await host_service.register_host(
+            db, data, publisher=event_services.publisher, settings=settings_services.reader
+        )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
@@ -163,17 +164,19 @@ async def register_host(
             _fire_and_forget(_auto_discover, host.id, event_services.publisher)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
 
-    return _serialize_host(host)
+    return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/approve", response_model=HostRead)
-async def approve_host(host_id: uuid.UUID, db: DbDep, event_services: EventServicesDep) -> dict[str, Any]:
+async def approve_host(
+    host_id: uuid.UUID, db: DbDep, event_services: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
     _fire_and_forget(_auto_discover, host.id, event_services.publisher)
     _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
-    return _serialize_host(host)
+    return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/reject", status_code=204)
@@ -184,26 +187,26 @@ async def reject_host(host_id: uuid.UUID, db: DbDep) -> None:
 
 
 @router.post("", response_model=HostRead, status_code=201)
-async def create_host(data: HostCreate, db: DbDep) -> dict[str, Any]:
+async def create_host(data: HostCreate, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     try:
-        host = await host_service.create_host(db, data)
+        host = await host_service.create_host(db, data, settings=settings_services.reader)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
-    return _serialize_host(host)
+    return _serialize_host(host, settings_services)
 
 
 @router.get("", response_model=list[HostRead])
-async def list_hosts(db: DbDep) -> list[dict[str, Any]]:
-    return [_serialize_host(host) for host in await host_service.list_hosts(db)]
+async def list_hosts(db: DbDep, settings_services: SettingsServicesDep) -> list[dict[str, Any]]:
+    return [_serialize_host(host, settings_services) for host in await host_service.list_hosts(db)]
 
 
 @router.get("/{host_id}", response_model=HostDetail)
-async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def get_host(host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
 
-    payload = _serialize_host(host)
+    payload = _serialize_host(host, settings_services)
     label_map = await platform_label_service.load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in host.devices),
@@ -212,6 +215,7 @@ async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         await device_presenter.serialize_device(
             db,
             device,
+            settings=settings_services.reader,
             platform_label=label_map.get((device.pack_id, device.platform_id)),
         )
         for device in host.devices
@@ -338,6 +342,7 @@ async def get_host_resource_telemetry(
             since=window_start,
             until=window_end,
             bucket_minutes=bucket_minutes,
+            settings=settings_services.reader,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -386,7 +391,9 @@ async def intake_candidates(host_id: uuid.UUID, db: DbDep) -> list[IntakeCandida
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
-async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDep) -> DiscoveryConfirmResult:
+async def confirm_discovery(
+    host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDep, settings_services: SettingsServicesDep
+) -> DiscoveryConfirmResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -399,6 +406,7 @@ async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDe
             data.add_identity_values,
             data.remove_identity_values,
             result,
+            settings=settings_services.reader,
         )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

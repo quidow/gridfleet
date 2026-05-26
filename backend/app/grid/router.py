@@ -7,14 +7,15 @@ from app.devices.services import service as device_service
 from app.grid import service as grid_service
 from app.grid.schemas import GridQueueRead, GridStatusRead
 from app.grid.slot_parser import list_slot_sessions
+from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
 @router.get("/status", response_model=GridStatusRead)
-async def grid_status(db: DbDep) -> dict[str, Any]:
+async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     grid_data = await grid_service.get_grid_status()
-    devices = await device_service.list_devices(db)
+    devices = await device_service.list_devices(db, settings=settings_services.reader)
 
     registry_devices = []
     for device in devices:

@@ -53,23 +53,26 @@ async def enter_device_maintenance(
     device_id: uuid.UUID,
     body: DeviceMaintenanceUpdate,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.enter_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
-async def exit_device_maintenance(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def exit_device_maintenance(
+    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.exit_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
 
 
 @router.get("/{device_id}/config", response_model=DeviceConfigRead)

@@ -18,6 +18,7 @@ from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, Discover
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.hosts.models import Host
 
 PackDevicesFetcher = Callable[[str, int], Awaitable[dict[str, object]]]
@@ -291,6 +292,8 @@ async def confirm_discovery(
     add_identity_values: list[str],
     remove_identity_values: list[str],
     discovery_result: DiscoveryResult,
+    *,
+    settings: SettingsReader,
 ) -> DiscoveryConfirmResult:
     """Apply the confirmed discovery changes."""
     added = []
@@ -350,7 +353,7 @@ async def confirm_discovery(
     serialized_added_devices = []
     for device in added_devices:
         await db.refresh(device)
-        serialized_added_devices.append(await device_presenter.serialize_device(db, device))
+        serialized_added_devices.append(await device_presenter.serialize_device(db, device, settings=settings))
 
     return DiscoveryConfirmResult(
         added=added,

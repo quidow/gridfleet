@@ -13,6 +13,7 @@ from app.devices.services import service as device_service
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -379,20 +380,26 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         sort_by="name",
         sort_dir="asc",
     )
-    devices = await device_service.list_devices_by_filters(db_session, filters)
+    devices = await device_service.list_devices_by_filters(db_session, filters, settings=FakeSettingsReader({}))
     assert [device.id for device in devices] == [available.id]
 
-    page, total = await device_service.list_devices_paginated(db_session, filters, limit=1, offset=0)
+    page, total = await device_service.list_devices_paginated(
+        db_session, filters, limit=1, offset=0, settings=FakeSettingsReader({})
+    )
     assert total == 1
     assert [device.id for device in page] == [available.id]
-    assert await device_service.count_devices_by_filters(db_session, filters) == 1
+    assert await device_service.count_devices_by_filters(db_session, filters, settings=FakeSettingsReader({})) == 1
 
     telemetry_filters = DeviceQueryFilters(hardware_telemetry_state=HardwareTelemetryState.fresh)
     monkeypatch.setattr(
         "app.devices.services.service.hardware_telemetry.hardware_telemetry_state_for_device",
-        lambda device: HardwareTelemetryState.fresh if device.id == available.id else HardwareTelemetryState.stale,
+        lambda device, settings=None: (
+            HardwareTelemetryState.fresh if device.id == available.id else HardwareTelemetryState.stale
+        ),
     )
-    telemetry_devices = await device_service.list_devices_by_filters(db_session, telemetry_filters)
+    telemetry_devices = await device_service.list_devices_by_filters(
+        db_session, telemetry_filters, settings=FakeSettingsReader({})
+    )
     assert [device.id for device in telemetry_devices] == [available.id]
 
     page, total = await device_service.list_devices_paginated(
@@ -400,6 +407,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         DeviceQueryFilters(platform_id="android_mobile"),
         limit=10,
         offset=0,
+        settings=FakeSettingsReader({}),
     )
     assert total >= 2
     assert any(device.id == available.id for device in page)
@@ -407,6 +415,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         await device_service.count_devices_by_filters(
             db_session,
             DeviceQueryFilters(platform_id="android_mobile"),
+            settings=FakeSettingsReader({}),
         )
         >= 2
     )
@@ -414,6 +423,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     maintenance_devices = await device_service.list_devices_by_filters(
         db_session,
         DeviceQueryFilters(status="maintenance"),
+        settings=FakeSettingsReader({}),
     )
     assert [device.id for device in maintenance_devices] == [maintenance.id]
 
@@ -435,10 +445,13 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         operational_state=DeviceOperationalState.verifying,
     )
     await db_session.commit()
-    reserved_devices = await device_service.list_devices_by_filters(db_session, DeviceQueryFilters(status="reserved"))
+    reserved_devices = await device_service.list_devices_by_filters(
+        db_session, DeviceQueryFilters(status="reserved"), settings=FakeSettingsReader({})
+    )
     verifying_devices = await device_service.list_devices_by_filters(
         db_session,
         DeviceQueryFilters(status="verifying"),
+        settings=FakeSettingsReader({}),
     )
     assert [device.id for device in reserved_devices] == [reserved.id]
     assert [device.id for device in verifying_devices] == [verifying.id]

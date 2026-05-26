@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.hosts import service as host_service
 from app.hosts.schemas import HostRegister
 from app.settings import service_config as config_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 
 if TYPE_CHECKING:
@@ -26,7 +27,9 @@ async def test_register_host_queues_host_registered(
     payload = HostRegister(
         hostname="contract-host", ip="10.0.0.42", os_type="linux", agent_port=5100, capabilities=CAPS_V2
     )
-    host, _is_new = await host_service.register_host(db_session, payload, publisher=event_bus)
+    host, _is_new = await host_service.register_host(
+        db_session, payload, publisher=event_bus, settings=FakeSettingsReader({})
+    )
     await settle_after_commit_tasks()
 
     registered = [p for n, p in event_bus_capture if n == "host.registered"]
@@ -50,7 +53,9 @@ async def test_approve_host_queues_status_changed(
     payload = HostRegister(
         hostname="approve-host", ip="10.0.0.43", os_type="linux", agent_port=5100, capabilities=CAPS_V2
     )
-    host, _ = await host_service.register_host(db_session, payload, publisher=event_bus)
+    host, _ = await host_service.register_host(
+        db_session, payload, publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": False})
+    )
     assert host.status.value == "pending"
     event_bus_capture.clear()
 

@@ -689,7 +689,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     group_db.execute = AsyncMock(
         side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
     )
-    listed = await device_group_service.list_groups(group_db)
+    listed = await device_group_service.list_groups(group_db, settings=FakeSettingsReader({}))
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))

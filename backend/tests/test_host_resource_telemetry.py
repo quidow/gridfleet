@@ -7,7 +7,7 @@ import pytest
 
 from app.hosts import service_resource_telemetry as host_resource_telemetry
 from app.hosts.models import HostResourceSample
-from app.settings import settings_service
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +71,7 @@ async def test_fetch_host_resource_telemetry_buckets_samples(
         since=base,
         until=base + timedelta(minutes=30),
         bucket_minutes=5,
+        settings=FakeSettingsReader({}),
     )
 
     assert payload is not None
@@ -111,6 +112,7 @@ async def test_fetch_host_resource_telemetry_omits_empty_buckets(
         since=base,
         until=base + timedelta(minutes=15),
         bucket_minutes=5,
+        settings=FakeSettingsReader({}),
     )
 
     assert payload is not None
@@ -154,6 +156,7 @@ async def test_fetch_host_resource_telemetry_validates_window_and_bucket(
             since=since,
             until=until,
             bucket_minutes=bucket_minutes,
+            settings=FakeSettingsReader({}),
         )
 
 
@@ -161,8 +164,6 @@ async def test_fetch_host_resource_telemetry_rejects_window_larger_than_retentio
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    settings_service._cache["retention.host_resource_telemetry_hours"] = 1
-
     with pytest.raises(ValueError):
         await host_resource_telemetry.fetch_host_resource_telemetry(
             db_session,
@@ -170,4 +171,5 @@ async def test_fetch_host_resource_telemetry_rejects_window_larger_than_retentio
             since=datetime(2026, 4, 16, 9, 0, tzinfo=UTC),
             until=datetime(2026, 4, 16, 11, 0, tzinfo=UTC),
             bucket_minutes=5,
+            settings=FakeSettingsReader({"retention.host_resource_telemetry_hours": 1}),
         )
