@@ -30,6 +30,12 @@ def test_compose_app_returns_app_services(mock_engine: MagicMock, mock_session_f
     assert services.events is not None
     assert services.settings is not None
     assert services.agent_comm is not None
+    assert services.devices is not None
+    assert services.hosts is not None
+    assert services.packs is not None
+    assert services.sessions is not None
+    assert services.runs is not None
+    assert services.grid is not None
 
 
 def test_app_services_immutable(mock_engine: MagicMock, mock_session_factory: MagicMock) -> None:
