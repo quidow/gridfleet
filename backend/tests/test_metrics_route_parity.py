@@ -82,7 +82,8 @@ async def test_metrics_route_reports_all_four_cross_domain_gauges(
     )
     await db_session.commit()
 
-    event_bus.reset()
+    event_bus._subscribers.clear()
+    event_bus._log.clear()
     subscriber = event_bus.subscribe()
     try:
         response = await client.get("/metrics")

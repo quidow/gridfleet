@@ -379,4 +379,7 @@ class SettingsService:
         return groups
 
 
+# DEPRECATED: Created at import time for backwards compatibility.
+# New code should access via DI (AppServices.settings.service).
+# Will be removed when all consumers are migrated.
 settings_service = SettingsService()

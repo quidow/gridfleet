@@ -191,18 +191,6 @@ class EventBus:
             "started": self._started,
         }
 
-    def reset(self) -> None:
-        self._subscribers.clear()
-        self._log.clear()
-        self._webhook_queue = None
-        self._handlers.clear()
-        for task in list(self._handler_tasks):
-            task.cancel()
-        self._handler_tasks.clear()
-        self._session_factory = None
-        self._engine = None
-        self._last_seen_system_event_id = 0
-
     @property
     def subscriber_count(self) -> int:
         return len(self._subscribers)
@@ -349,6 +337,9 @@ class EventBus:
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
+# DEPRECATED: Created at import time for backwards compatibility.
+# New code should access via DI (AppServices.events.bus).
+# Will be removed when all consumers are migrated.
 event_bus = EventBus()
 
 

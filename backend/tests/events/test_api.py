@@ -16,6 +16,7 @@ from app.devices.services.verification_job_state import new_job
 from app.events import event_bus
 from app.events.router import event_stream
 from app.events.services_container import EventServices
+from tests.helpers import reset_event_bus
 
 
 def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:
@@ -24,7 +25,7 @@ def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, st
 
 @pytest.fixture(autouse=True)
 def reset_bus() -> None:
-    event_bus.reset()
+    reset_event_bus(event_bus)
 
 
 async def test_notifications_filters_recent_events(client: AsyncClient) -> None:

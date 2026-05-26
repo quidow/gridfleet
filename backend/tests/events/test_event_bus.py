@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus, event_bus
-from tests.helpers import drain_handlers, recent_events, set_webhook_queue
+from tests.helpers import drain_handlers, recent_events, reset_event_bus, set_webhook_queue
 
 
 def _session_bind_engine(session: AsyncSession) -> AsyncEngine:
@@ -110,7 +110,7 @@ async def test_snapshot_and_reset() -> None:
     assert snapshot["webhook_queue_configured"] is True
     assert snapshot["recent_events"][0]["type"] == "device.updated"
 
-    bus.reset()
+    reset_event_bus(bus)
     assert bus.subscriber_count == 0
     assert recent_events(bus) == []
     assert bus.snapshot()["webhook_queue_configured"] is False

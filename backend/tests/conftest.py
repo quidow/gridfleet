@@ -32,7 +32,7 @@ from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
-from tests.helpers import create_host
+from tests.helpers import create_host, reset_event_bus
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:
@@ -174,8 +174,8 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     leader_settings_provider.reset_for_tests()
     leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
-    event_bus.reset()
-    agent_circuit_breaker.reset()
+    reset_event_bus(event_bus)
+    agent_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Ensure circuit-breaker settings are always present even without a DB session.
     for key in (
@@ -187,8 +187,8 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
             settings_service._cache[key] = resolve_default(defn)
     yield
     await _shutdown_control_plane_services()
-    event_bus.reset()
-    agent_circuit_breaker.reset()
+    reset_event_bus(event_bus)
+    agent_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
     # snapshots taken before yield so auth, agent, pack, and grid state

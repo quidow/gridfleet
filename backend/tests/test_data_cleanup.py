@@ -281,7 +281,7 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
     )
     await db_session.commit()
 
-    event_bus.reset()
+    event_bus._log.clear()
     with (
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
@@ -334,7 +334,7 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
     )
     await db_session.commit()
 
-    event_bus.reset()
+    event_bus._log.clear()
     with (
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
@@ -378,7 +378,7 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
     )
     await db_session.commit()
 
-    event_bus.reset()
+    event_bus._log.clear()
     with (
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),

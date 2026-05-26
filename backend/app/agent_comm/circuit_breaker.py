@@ -158,9 +158,6 @@ class AgentCircuitBreaker:
                 payload,
             )
 
-    def reset(self) -> None:
-        self._states.clear()
-
     def snapshot(self, host: str) -> dict[str, str | int | float | None]:
         state = self._states.get(host, CircuitState())
         return {
@@ -186,4 +183,7 @@ class AgentCircuitBreaker:
         }
 
 
+# DEPRECATED: Created at import time for backwards compatibility.
+# New code should access via DI (AppServices.agent_comm.circuit_breaker).
+# Will be removed when all consumers are migrated.
 agent_circuit_breaker = AgentCircuitBreaker()

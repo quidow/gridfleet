@@ -381,3 +381,22 @@ async def drain_handlers(bus: EventBus) -> None:
 def set_webhook_queue(bus: EventBus, q: asyncio.Queue[Event]) -> None:
     """Configure the webhook queue on the bus."""
     bus._webhook_queue = q
+
+
+def reset_event_bus(bus: EventBus) -> None:
+    """Clear all mutable state on an EventBus instance.
+
+    Replacement for the removed ``EventBus.reset()`` method — keeps
+    the reset logic in test infrastructure rather than on the production
+    class.
+    """
+    bus._subscribers.clear()
+    bus._log.clear()
+    bus._webhook_queue = None
+    bus._handlers.clear()
+    for task in list(bus._handler_tasks):
+        task.cancel()
+    bus._handler_tasks.clear()
+    bus._session_factory = None
+    bus._engine = None
+    bus._last_seen_system_event_id = 0
