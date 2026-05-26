@@ -50,7 +50,7 @@ class FakeSessionFactory:
         return False
 
 
-async def _forever() -> None:
+async def _forever(**_: object) -> None:
     await asyncio.Event().wait()
 
 

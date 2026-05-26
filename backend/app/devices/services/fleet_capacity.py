@@ -17,10 +17,11 @@ from app.grid import service as grid_service
 from app.hosts.models import Host, HostStatus
 from app.sessions.filters import exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 LOOP_NAME = "fleet_capacity_collector"
@@ -363,9 +364,9 @@ async def collect_capacity_snapshot_once(
     return snapshot
 
 
-async def fleet_capacity_collector_loop() -> None:
+async def fleet_capacity_collector_loop(*, settings: SettingsReader) -> None:
     while True:
-        interval = float(_default_settings.get("general.fleet_capacity_snapshot_interval_sec"))
+        interval = float(settings.get("general.fleet_capacity_snapshot_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await collect_capacity_snapshot_once(db)

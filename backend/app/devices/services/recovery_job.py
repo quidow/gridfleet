@@ -14,6 +14,7 @@ from app.devices import locking as device_locking
 from app.devices.services import lifecycle_policy
 from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.jobs.models import Job
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -70,7 +71,9 @@ async def run_device_recovery_job(
                     await db.commit()
                 return
 
-            await lifecycle_policy.attempt_auto_recovery(db, device, source=source, reason=reason)
+            await lifecycle_policy.attempt_auto_recovery(
+                db, device, source=source, reason=reason, settings=settings_service
+            )
 
             # Re-load the job row in this session since attempt_auto_recovery
             # commits multiple times internally, expiring the row.

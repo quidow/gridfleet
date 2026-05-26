@@ -22,6 +22,7 @@ from app.devices.services import bulk as bulk_service
 from app.devices.services import groups as device_group_service
 from app.devices.services import presenter as device_presenter
 from app.events.dependencies import EventServicesDep
+from app.settings.dependencies import SettingsServicesDep
 
 DEVICE_GROUP_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -101,9 +102,13 @@ async def remove_members(
 
 
 @router.post("/{group_id}/bulk/start-nodes", response_model=BulkOperationResult)
-async def group_bulk_start(group_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> dict[str, Any]:
+async def group_bulk_start(
+    group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_start_nodes(db, device_ids, caller="group", publisher=events.publisher)
+    return await bulk_service.bulk_start_nodes(
+        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.reader
+    )
 
 
 @router.post("/{group_id}/bulk/stop-nodes", response_model=BulkOperationResult)
@@ -113,9 +118,13 @@ async def group_bulk_stop(group_id: uuid.UUID, db: DbDep, events: EventServicesD
 
 
 @router.post("/{group_id}/bulk/restart-nodes", response_model=BulkOperationResult)
-async def group_bulk_restart(group_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> dict[str, Any]:
+async def group_bulk_restart(
+    group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id)
-    return await bulk_service.bulk_restart_nodes(db, device_ids, caller="group", publisher=events.publisher)
+    return await bulk_service.bulk_restart_nodes(
+        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.reader
+    )
 
 
 @router.post("/{group_id}/bulk/enter-maintenance", response_model=BulkOperationResult)

@@ -13,6 +13,7 @@ from app.devices.models import DeviceOperationalState
 from app.devices.services import health as health_mod
 from app.devices.services.state import set_hold as _orig_set_hold
 from app.devices.services.state import set_operational_state as _orig_set_op
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -54,7 +55,7 @@ async def test_mark_node_started_queues_state_changed_after_availability(
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await mark_node_started(db_session, locked, port=4730, pid=42, publisher=event_bus)
+    await mark_node_started(db_session, locked, port=4730, pid=42, publisher=event_bus, settings=FakeSettingsReader({}))
     await settle_after_commit_tasks()
 
     types_in_order = [name for name, _ in event_bus_capture]
@@ -77,7 +78,7 @@ async def test_mark_node_stopped_queues_state_changed(
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await mark_node_started(db_session, locked, port=4731, pid=43, publisher=event_bus)
+    await mark_node_started(db_session, locked, port=4731, pid=43, publisher=event_bus, settings=FakeSettingsReader({}))
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device(db_session, device.id)

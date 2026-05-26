@@ -11,6 +11,7 @@ import pytest_asyncio
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.exceptions import NodePortConflictError
 from app.appium_nodes.services.reconciler_agent import start_remote_node
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -81,4 +82,5 @@ async def test_port_conflict_detected_via_code(
             allocated_caps={},
             agent_base="http://host:5100",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
         )

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: TC0
 
 from app.appium_nodes.services.heartbeat import _check_hosts
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_with_devices, settle_after_commit_tasks
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -67,7 +68,7 @@ async def test_host_offline_cascade_queues_all_events(
     # asserting. Reset to None so the guard treats this call as the first cycle.
     monkeypatch.setattr("app.appium_nodes.services.heartbeat._LAST_CYCLE_MONOTONIC", None)
 
-    await _check_hosts(db_session)
+    await _check_hosts(db_session, settings=FakeSettingsReader({}))
     await settle_after_commit_tasks()
 
     types_in_order = [n for n, _ in event_bus_capture]

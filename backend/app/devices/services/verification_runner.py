@@ -13,6 +13,7 @@ from app.devices.services.verification_preparation import validate_create_reques
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions import service_viability as session_viability
+from app.settings import settings_service
 
 if TYPE_CHECKING:
     from app.core.type_defs import SessionFactory
@@ -73,6 +74,7 @@ async def run_persisted_verification_job(
                 context,
                 http_client_factory=httpx.AsyncClient,
                 probe_session_fn=_probe_session_via_gridfleet_marker,
+                settings=settings_service,
             )
             await finish_job(
                 job,

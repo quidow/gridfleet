@@ -24,6 +24,7 @@ from app.devices.services.intent_reconciler import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -258,7 +259,7 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     assert dirty_rows == []
     assert intents == []
 
-    await run_device_intent_reconciler_once(db_session, cycle=1)
+    await run_device_intent_reconciler_once(db_session, cycle=1, settings=FakeSettingsReader({}))
 
     await db_session.refresh(outbox)
     assert outbox.delivered_at is not None
@@ -532,6 +533,6 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
     )
 
     with pytest.raises(LeadershipLost):
-        await run_device_intent_reconciler_once(db_session, cycle=1)
+        await run_device_intent_reconciler_once(db_session, cycle=1, settings=FakeSettingsReader({}))
 
     reconcile_expired.assert_not_awaited()

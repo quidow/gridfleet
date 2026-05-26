@@ -12,6 +12,7 @@ from app.devices.schemas.device import (
 )
 from app.devices.services import bulk as bulk_service
 from app.events.dependencies import EventServicesDep
+from app.settings.dependencies import SettingsServicesDep
 
 DEVICE_BULK_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -19,8 +20,12 @@ router = APIRouter(prefix="/api/devices/bulk", tags=["bulk"], responses=DEVICE_B
 
 
 @router.post("/start-nodes", response_model=BulkOperationResult)
-async def bulk_start_nodes(body: BulkDeviceIds, db: DbDep, events: EventServicesDep) -> dict[str, Any]:
-    return await bulk_service.bulk_start_nodes(db, body.device_ids, publisher=events.publisher)
+async def bulk_start_nodes(
+    body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
+    return await bulk_service.bulk_start_nodes(
+        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+    )
 
 
 @router.post("/stop-nodes", response_model=BulkOperationResult)
@@ -29,8 +34,12 @@ async def bulk_stop_nodes(body: BulkDeviceIds, db: DbDep, events: EventServicesD
 
 
 @router.post("/restart-nodes", response_model=BulkOperationResult)
-async def bulk_restart_nodes(body: BulkDeviceIds, db: DbDep, events: EventServicesDep) -> dict[str, Any]:
-    return await bulk_service.bulk_restart_nodes(db, body.device_ids, publisher=events.publisher)
+async def bulk_restart_nodes(
+    body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
+    return await bulk_service.bulk_restart_nodes(
+        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+    )
 
 
 @router.post("/update-tags", response_model=BulkOperationResult)

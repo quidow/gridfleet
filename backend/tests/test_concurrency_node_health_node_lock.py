@@ -11,6 +11,7 @@ from app.appium_nodes.services import node_health as node_health
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -64,6 +65,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     locked_device,
                     result=ProbeResult(status="refused"),
                     grid_device_ids=set(),
+                    settings=FakeSettingsReader({}),
                 )
             await session.commit()
 

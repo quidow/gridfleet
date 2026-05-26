@@ -16,6 +16,7 @@ from app.devices.services import verification_preparation as preparation
 from app.devices.services.verification_job_state import new_job
 from app.devices.services.verification_preparation import PreparedVerificationContext
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -83,7 +84,12 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
 ) -> None:
     monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
     job = _job()
-    assert await execution.run_device_health(job, _device(None), http_client_factory=object) is None
+    assert (
+        await execution.run_device_health(
+            job, _device(None), http_client_factory=object, settings=FakeSettingsReader({})
+        )
+        is None
+    )
     assert job["current_stage"] == "device_health"
     assert job["stages"][1]["status"] == "skipped"
 
@@ -92,21 +98,29 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "down")),
     )
-    detail = await execution.run_device_health(_job(), device, http_client_factory=object)
+    detail = await execution.run_device_health(
+        _job(), device, http_client_factory=object, settings=FakeSettingsReader({})
+    )
     assert detail == "Agent health check failed: down"
 
     monkeypatch.setattr(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}}),
     )
-    assert await execution.run_device_health(_job(), device, http_client_factory=object) is None
+    assert (
+        await execution.run_device_health(_job(), device, http_client_factory=object, settings=FakeSettingsReader({}))
+        is None
+    )
     assert device.connection_target == "emulator-5554"
 
     monkeypatch.setattr(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(return_value={"healthy": False, "checks": [{"check_id": "adb_ready", "ok": False, "message": "no"}]}),
     )
-    assert await execution.run_device_health(_job(), device, http_client_factory=object) == "adb ready failed (no)"
+    assert (
+        await execution.run_device_health(_job(), device, http_client_factory=object, settings=FakeSettingsReader({}))
+        == "adb ready failed (no)"
+    )
 
 
 async def test_stop_existing_node_and_run_probe_failure_paths(
@@ -147,7 +161,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     monkeypatch.setattr(
         "app.devices.services.verification_execution.start_node", AsyncMock(side_effect=NodeManagerError("no node"))
     )
-    started, error = await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    started, error = await execution.run_probe(
+        _job(), db_session, existing, probe_session_fn=AsyncMock(), settings=FakeSettingsReader({})
+    )
     assert started is None
     assert error == "no node"
 
@@ -157,7 +173,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
     )
-    started, error = await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    started, error = await execution.run_probe(
+        _job(), db_session, existing, probe_session_fn=AsyncMock(), settings=FakeSettingsReader({})
+    )
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
 
@@ -179,10 +197,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     )
     probe_session = AsyncMock(return_value=(False, "probe failed"))
     started, error = await execution.run_probe(
-        _job(),
-        db_session,
-        existing,
-        probe_session_fn=probe_session,
+        _job(), db_session, existing, probe_session_fn=probe_session, settings=FakeSettingsReader({})
     )
     assert started is running_node
     assert error == "probe failed"
@@ -245,7 +260,9 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         raising=False,
     )
 
-    await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    await execution.run_probe(
+        _job(), db_session, existing, probe_session_fn=AsyncMock(), settings=FakeSettingsReader({})
+    )
 
     converge_mock.assert_awaited_once()
     call_args = converge_mock.await_args
@@ -305,7 +322,9 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         return True, None
 
     assert probe_inflight.is_probe_inflight(device_key) is False
-    await execution.run_probe(_job(), db_session, existing, probe_session_fn=fake_probe_session)
+    await execution.run_probe(
+        _job(), db_session, existing, probe_session_fn=fake_probe_session, settings=FakeSettingsReader({})
+    )
     assert seen_inflight == [True]
     assert probe_inflight.is_probe_inflight(device_key) is False
 
@@ -357,7 +376,9 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         raise RuntimeError("probe blew up")
 
     with pytest.raises(RuntimeError, match="probe blew up"):
-        await execution.run_probe(_job(), db_session, existing, probe_session_fn=failing_probe_session)
+        await execution.run_probe(
+            _job(), db_session, existing, probe_session_fn=failing_probe_session, settings=FakeSettingsReader({})
+        )
     assert probe_inflight.is_probe_inflight(device_key) is False
 
 
@@ -488,11 +509,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         AsyncMock(return_value="stop failed"),
     )
     outcome = await execution.execute_verification_context(
-        _job(),
-        db,
-        context,
-        http_client_factory=object,
-        probe_session_fn=AsyncMock(),
+        _job(), db, context, http_client_factory=object, probe_session_fn=AsyncMock(), settings=FakeSettingsReader({})
     )
     assert outcome.status == "failed"
     assert outcome.error == "stop failed"
@@ -586,6 +603,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
             update_context,
             http_client_factory=object,
             probe_session_fn=AsyncMock(),
+            settings=FakeSettingsReader({}),
         )
 
     assert update_device.name == "new"

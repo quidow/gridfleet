@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.services.heartbeat import _ingest_appium_restart_events
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -133,6 +134,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         observed_port=node.port,
         observed_pid=node.pid,
         observed_active_connection_target=node.active_connection_target,
+        settings=FakeSettingsReader({}),
     )
     await db_session.commit()
     await settle_after_commit_tasks()

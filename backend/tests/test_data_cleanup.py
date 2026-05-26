@@ -14,6 +14,7 @@ from app.devices.services.data_cleanup import _cleanup_old_data
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
+from tests.fakes import FakeSettingsReader
 from tests.helpers import recent_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -77,7 +78,7 @@ async def test_cleanup_old_sessions(db_session: AsyncSession, db_host: Host) -> 
     db_session.add(running_session)
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=event_bus)
+    await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     result = await db_session.execute(select(Session))
     remaining = result.scalars().all()
@@ -141,7 +142,7 @@ async def test_cleanup_uses_separate_retention_window_for_probes(
     db_session.add_all([real_recent, real_old, probe_recent, probe_old])
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=event_bus)
+    await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
     await db_session.commit()
 
     remaining_ids = set((await db_session.execute(select(Session.session_id))).scalars().all())
@@ -194,7 +195,7 @@ async def test_cleanup_old_agent_reconfigure_outbox_rows(db_session: AsyncSessio
     db_session.add_all([old_delivered, old_abandoned, old_pending, recent_delivered])
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=event_bus)
+    await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     remaining = (await db_session.execute(select(AgentReconfigureOutbox))).scalars().all()
     remaining_ids = {row.id for row in remaining}
@@ -223,7 +224,7 @@ async def test_cleanup_old_audit_logs(db_session: AsyncSession, db_host: Host) -
     db_session.add(recent_log)
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=event_bus)
+    await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     from sqlalchemy import select
 
@@ -254,7 +255,7 @@ async def test_cleanup_old_device_events(db_session: AsyncSession, db_host: Host
     db_session.add(recent_event)
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=event_bus)
+    await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     from sqlalchemy import select
 
@@ -286,7 +287,7 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
-        await _cleanup_old_data(db_session, publisher=event_bus)
+        await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     from sqlalchemy import select
 
@@ -339,7 +340,7 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
-        await _cleanup_old_data(db_session, publisher=event_bus)
+        await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     from sqlalchemy import select
 
@@ -383,7 +384,7 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
         patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
         patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 2),
     ):
-        await _cleanup_old_data(db_session, publisher=event_bus)
+        await _cleanup_old_data(db_session, publisher=event_bus, settings=FakeSettingsReader({}))
 
     from sqlalchemy import select
 

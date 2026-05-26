@@ -9,6 +9,7 @@ import pytest
 from app.devices.models import DeviceTestDataAuditLog
 from app.devices.services import data_cleanup as data_cleanup
 from app.settings import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ async def test_cleanup_deletes_old_test_data_audit_rows(db_session: AsyncSession
     db_session.add(old)
     await db_session.commit()
 
-    await data_cleanup._cleanup_old_data(db_session, publisher=AsyncMock())
+    await data_cleanup._cleanup_old_data(db_session, publisher=AsyncMock(), settings=FakeSettingsReader({}))
 
     refreshed = await db_session.get(DeviceTestDataAuditLog, old.id)
     assert refreshed is None

@@ -35,6 +35,7 @@ from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions import service_viability as session_viability
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import service_config as config_service
+from app.settings.dependencies import SettingsServicesDep
 
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
@@ -194,7 +195,11 @@ async def device_session_test(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]
 
 
 @router.post("/{device_id}/reconnect")
-async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def reconnect_device(
+    device_id: uuid.UUID,
+    db: DbDep,
+    settings_services: SettingsServicesDep,
+) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
     try:
@@ -262,9 +267,11 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
             if node is None or not node.observed_running:
                 if device.host_id is None:
                     raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-                await node_manager.start_node(db, device, caller="operator_route")
+                await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.reader)
             else:
-                await node_manager.restart_node(db, device, caller="operator_restart")
+                await node_manager.restart_node(
+                    db, device, caller="operator_restart", settings=settings_services.reader
+                )
         except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 

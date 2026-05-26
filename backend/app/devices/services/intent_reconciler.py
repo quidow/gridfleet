@@ -37,7 +37,6 @@ from app.devices.services.intent_evaluator import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
@@ -45,18 +44,19 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.models import AppiumNode
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
 
 
-async def device_intent_reconciler_loop() -> None:
+async def device_intent_reconciler_loop(*, settings: SettingsReader) -> None:
     cycle = 0
     while True:
-        interval = int(_default_settings.get("general.intent_reconcile_interval_sec"))
+        interval = int(settings.get("general.intent_reconcile_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, float(interval)).cycle(), async_session() as db:
-                await run_device_intent_reconciler_once(db, cycle=cycle)
+                await run_device_intent_reconciler_once(db, cycle=cycle, settings=settings)
         except LeadershipLost as exc:
             logger.error(
                 "device_intent_reconciler_leadership_lost",
@@ -70,9 +70,9 @@ async def device_intent_reconciler_loop() -> None:
         await asyncio.sleep(interval)
 
 
-async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> None:
+async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int, settings: SettingsReader) -> None:
     await assert_current_leader(db)
-    full_scan_every = int(_default_settings.get("general.intent_reconcile_full_scan_every_cycles"))
+    full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
     try:

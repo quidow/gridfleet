@@ -8,6 +8,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
+from tests.fakes import FakeSettingsReader
 
 
 def _device(**overrides: object) -> SimpleNamespace:
@@ -37,24 +38,34 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
     device = _device(device_type=DeviceType.emulator, tags={"emulator_headless": "false"})
 
-    assert await execution.run_device_health(job, device, http_client_factory=MagicMock()) is None
+    assert (
+        await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=FakeSettingsReader({}))
+        is None
+    )
     assert device.connection_target == "emulator-5554"
     assert fetch.await_args.kwargs["headless"] is False
 
     fetch.side_effect = None
     fetch.return_value = {"healthy": False, "checks": [{"check_id": "boot_completed", "ok": False, "message": "no"}]}
     assert (
-        await execution.run_device_health(job, _device(), http_client_factory=MagicMock())
+        await execution.run_device_health(
+            job, _device(), http_client_factory=MagicMock(), settings=FakeSettingsReader({})
+        )
         == "boot completed failed (no)"
     )
 
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
-    assert await execution.run_device_health(job, _device(), http_client_factory=MagicMock()) == (
-        "Agent health check failed: down"
-    )
+    assert await execution.run_device_health(
+        job, _device(), http_client_factory=MagicMock(), settings=FakeSettingsReader({})
+    ) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
-    assert await execution.run_device_health(job, no_host, http_client_factory=MagicMock()) is None
+    assert (
+        await execution.run_device_health(
+            job, no_host, http_client_factory=MagicMock(), settings=FakeSettingsReader({})
+        )
+        is None
+    )
 
 
 async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,6 +119,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             context,
             http_client_factory=MagicMock(),
             probe_session_fn=AsyncMock(),
+            settings=FakeSettingsReader({}),
         )
 
     context = SimpleNamespace(
@@ -127,6 +139,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             context,
             http_client_factory=MagicMock(),
             probe_session_fn=AsyncMock(),
+            settings=FakeSettingsReader({}),
         )
     finalize.assert_awaited_once()
 
@@ -207,6 +220,9 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
 
     device = _device(device_type="real_device", connection_type="usb")
-    assert await execution.run_device_health(job, device, http_client_factory=MagicMock()) is None
+    assert (
+        await execution.run_device_health(job, device, http_client_factory=MagicMock(), settings=FakeSettingsReader({}))
+        is None
+    )
     assert fetch.await_args.kwargs["device_type"] == "real_device"
     assert fetch.await_args.kwargs["connection_type"] == "usb"

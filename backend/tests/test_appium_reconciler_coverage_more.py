@@ -14,6 +14,7 @@ from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 
@@ -152,8 +153,6 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     converge = AsyncMock()
     monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
     monkeypatch.setattr("app.appium_nodes.services.reconciler.converge_host_rows", converge)
-    monkeypatch.setattr("app.appium_nodes.services.reconciler._default_settings.get", lambda _key: 2)
-
     await appium_reconciler._drive_convergence(
         [
             {"id": "bad", "ip": "10.0.0.1", "agent_port": 5100},
@@ -164,6 +163,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         {backed_off.device_id: datetime.now(UTC) + timedelta(minutes=10)},
         health_by_host={host_id: observed_payload},
         require_leader=False,
+        settings=FakeSettingsReader({}),
     )
 
     touch.assert_awaited_once()
@@ -219,7 +219,9 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
         yield Session()
 
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
-    start = appium_reconciler._make_start_agent(require_leader=False, session_scope=scope)
+    start = appium_reconciler._make_start_agent(
+        require_leader=False, session_scope=scope, settings=FakeSettingsReader({})
+    )
     with pytest.raises(RuntimeError, match="no longer exists"):
         await start(row=row, port=4723)
 
@@ -254,12 +256,13 @@ async def test_record_and_reset_start_failure_state(
     async def _scope() -> AsyncSession:
         yield db_session
 
-    monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler._default_settings.get",
-        lambda key: {"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}[key],
+    await appium_reconciler._record_start_failure(
+        row,
+        reason="timeout",
+        require_leader=False,
+        session_scope=_scope,
+        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
     )
-
-    await appium_reconciler._record_start_failure(row, reason="timeout", require_leader=False, session_scope=_scope)
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["recovery_backoff_attempts"] == 1
@@ -282,6 +285,7 @@ async def test_record_and_reset_start_failure_state(
         reason="timeout",
         require_leader=False,
         session_scope=_scope,
+        settings=FakeSettingsReader({"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}),
     )
 
 

@@ -85,6 +85,7 @@ from app.settings import settings_service
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.webhooks import router as webhooks
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -1670,7 +1671,7 @@ async def test_nodes_router_validation_branches() -> None:
         ),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object())
+            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
     assert exc.value.status_code == 400
 
     device.appium_node = None
@@ -1685,7 +1686,7 @@ async def test_nodes_router_validation_branches() -> None:
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object())
+            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
     assert "no host assigned" in str(exc.value.detail)
 
     device.host_id = uuid.uuid4()
@@ -1700,7 +1701,7 @@ async def test_nodes_router_validation_branches() -> None:
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
         patch("app.appium_nodes.routers.nodes.node_manager.start_node", new=AsyncMock(return_value=started_node)),
     ):
-        assert await nodes_router.start_node(device_id, db=object()) is started_node
+        assert await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({})) is started_node
 
 
 async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
@@ -1752,7 +1753,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.appium_nodes.routers.nodes.readiness_error_detail_async", new=AsyncMock(return_value="not ready")),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.start_node(device_id, db=object())
+            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
     assert exc.value.status_code == 400
     assert exc.value.detail == "not ready"
 
@@ -1767,7 +1768,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         ),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await nodes_router.start_node(device_id, db=object())
+            await nodes_router.start_node(device_id, db=object(), settings=FakeSettingsReader({}))
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4())

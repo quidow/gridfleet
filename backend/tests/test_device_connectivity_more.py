@@ -19,6 +19,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -180,7 +181,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         ) as delete_value,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(db_session)
+        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
 
     assert delete_value.await_count == 1
 
@@ -215,7 +216,7 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         ) as update_emulator_state,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(db_session)
+        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
 
@@ -242,7 +243,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await device_connectivity.device_connectivity_loop()
+        await device_connectivity.device_connectivity_loop(settings=FakeSettingsReader({}))
 
     sleep.assert_awaited()
 
@@ -301,6 +302,6 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         patch("app.devices.services.connectivity.assert_current_leader"),
         patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
-        await device_connectivity._check_connectivity(db_session)
+        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

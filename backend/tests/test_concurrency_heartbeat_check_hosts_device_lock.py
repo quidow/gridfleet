@@ -13,6 +13,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.settings import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -84,7 +85,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         ):
             async with db_session_maker() as db:
                 for _ in range(threshold):
-                    await heartbeat._check_hosts(db)
+                    await heartbeat._check_hosts(db, settings=FakeSettingsReader({}))
 
     async def race_writer() -> None:
         await asyncio.wait_for(inside_offline_branch.wait(), timeout=2.0)

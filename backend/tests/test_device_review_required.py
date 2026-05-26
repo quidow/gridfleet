@@ -18,6 +18,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import attempt_auto_recovery
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance
 from app.devices.services.review import clear_review_required, mark_review_required
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -254,7 +255,9 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     ):
         # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
         # which is below the threshold of 2, so no promotion yet.
-        first = await attempt_auto_recovery(db_session, device, source="device_checks", reason="r1")
+        first = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="r1", settings=FakeSettingsReader({})
+        )
         await db_session.refresh(device)
         assert first is False
         assert device.review_required is False
@@ -272,7 +275,9 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         await db_session.commit()
 
         # Attempt #2 — counter crosses threshold, device gets shelved.
-        second = await attempt_auto_recovery(db_session, device, source="device_checks", reason="r2")
+        second = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="r2", settings=FakeSettingsReader({})
+        )
         await db_session.refresh(device)
         assert second is False
         assert device.review_required is True
@@ -298,7 +303,9 @@ async def test_review_required_short_circuits_auto_recovery(
         ),
         patch("app.sessions.service_viability.run_session_viability_probe", new=probe),
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="ignored")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="ignored", settings=FakeSettingsReader({})
+        )
 
     assert recovered is False
     probe.assert_not_awaited()

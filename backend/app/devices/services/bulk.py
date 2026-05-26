@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.event_bus import EventBus
 
@@ -73,9 +75,9 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-async def _bulk_start_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
+async def _bulk_start_one(db: AsyncSession, device: Device, caller: str, *, settings: SettingsReader) -> AppiumNode:
     return await request_start(
-        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested"
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested", settings=settings
     )
 
 
@@ -86,9 +88,9 @@ async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> Appiu
     return await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
 
 
-async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
+async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str, *, settings: SettingsReader) -> AppiumNode:
     return await request_restart(
-        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested"
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested", settings=settings
     )
 
 
@@ -142,12 +144,13 @@ async def bulk_start_nodes(
     *,
     caller: str = "bulk",
     publisher: EventBus,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
         device_ids,
         operation="start_nodes",
-        action_fn=_bulk_start_one,
+        action_fn=partial(_bulk_start_one, settings=settings),
         caller=caller,
         publisher=publisher,
     )
@@ -176,12 +179,13 @@ async def bulk_restart_nodes(
     *,
     caller: str = "bulk",
     publisher: EventBus,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
         device_ids,
         operation="restart_nodes",
-        action_fn=_bulk_restart_one,
+        action_fn=partial(_bulk_restart_one, settings=settings),
         caller=caller,
         publisher=publisher,
     )

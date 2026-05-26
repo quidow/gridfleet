@@ -8,6 +8,9 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
+
 import httpx
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
@@ -773,6 +776,7 @@ async def start_node(
     device: Device,
     *,
     caller: DesiredStateCaller = "operator_route",
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Operator-initiated single-device start.
 
@@ -786,7 +790,7 @@ async def start_node(
     if caller != "verification" and not await is_ready_for_use_async(db, device):
         raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
-    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested")
+    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested", settings=settings)
     await db.commit()
     await db.refresh(node)
     return node
@@ -836,6 +840,7 @@ async def restart_node(
     device: Device,
     *,
     caller: DesiredStateCaller = "operator_restart",
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Operator-initiated single-device restart. Routes through
     ``operator_node_lifecycle.request_restart`` so the operator:start intent
@@ -843,9 +848,9 @@ async def restart_node(
     expires_at on every restart).
     """
     if not device.appium_node or not device.appium_node.observed_running:
-        return await start_node(db, device, caller=caller)
+        return await start_node(db, device, caller=caller, settings=settings)
 
-    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
+    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested", settings=settings)
     await db.commit()
     await db.refresh(node)
     return node

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.devices.services.property_refresh import _refresh_all_properties, property_refresh_loop
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -133,6 +134,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         patch("app.devices.services.property_refresh.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
-        await property_refresh_loop()
+        await property_refresh_loop(settings=FakeSettingsReader({}))
 
     log_exception.assert_called_once_with("Property refresh cycle failed")

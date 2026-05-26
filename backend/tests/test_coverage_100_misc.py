@@ -478,7 +478,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     )
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
-    await data_cleanup._cleanup_old_data(cleanup_db, publisher=AsyncMock())
+    await data_cleanup._cleanup_old_data(cleanup_db, publisher=AsyncMock(), settings=FakeSettingsReader({}))
 
     assert session_viability._format_http_error(
         session_viability.httpx.RequestError(

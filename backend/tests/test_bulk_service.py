@@ -20,6 +20,7 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
 from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -98,7 +99,9 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
-    started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices], publisher=event_bus)
+    started = await bulk_service.bulk_start_nodes(
+        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
+    )
     stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices], publisher=event_bus)
     restarted = await bulk_service.bulk_restart_nodes(
         db_session, [device.id for device in devices], publisher=event_bus

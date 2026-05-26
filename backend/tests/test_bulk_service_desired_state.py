@@ -8,6 +8,7 @@ import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -72,7 +73,7 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     await db_session.commit()
     assert node.transition_token is None
 
-    await bulk_service._bulk_restart_one(db_session, device, caller="bulk")
+    await bulk_service._bulk_restart_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
     await db_session.refresh(node)
 
     assert node.transition_token is not None, "restart intent's token must reach the node row"
@@ -96,7 +97,7 @@ async def test_operator_start_intent_carries_node_running_precondition(
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-prec", verified=True)
     device.appium_node = None  # avoid lazy-load in the same async context
-    await bulk_service._bulk_start_one(db_session, device, caller="bulk")
+    await bulk_service._bulk_start_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
     await db_session.commit()
 
     row = (
@@ -139,7 +140,7 @@ async def test_operator_restart_intent_carries_node_running_precondition(
     await db_session.flush()
     device.appium_node = node
 
-    await bulk_service._bulk_restart_one(db_session, device, caller="bulk")
+    await bulk_service._bulk_restart_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
     await db_session.commit()
 
     row = (
@@ -187,7 +188,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    await bulk_service.bulk_start_nodes(db_session, [device.id], publisher=event_bus)
+    await bulk_service.bulk_start_nodes(db_session, [device.id], publisher=event_bus, settings=FakeSettingsReader({}))
 
     assert captured == ["bulk"]
 
@@ -219,6 +220,8 @@ async def test_bulk_start_nodes_accepts_group_caller(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group", publisher=event_bus)
+    await bulk_service.bulk_start_nodes(
+        db_session, [device.id], caller="group", publisher=event_bus, settings=FakeSettingsReader({})
+    )
 
     assert captured == ["group"]
