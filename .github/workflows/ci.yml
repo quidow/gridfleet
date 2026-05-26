@@ -84,6 +84,10 @@ jobs:
         working-directory: backend
         run: uv run --locked --extra dev mypy app/
 
+      - name: Dead code check
+        working-directory: backend
+        run: uv run --locked --extra dev vulture app/ .vulture_whitelist.py --min-confidence 80
+
       - name: Install agent dependencies (needed for schema drift test)
         working-directory: agent
         run: uv sync --extra dev --locked
