@@ -76,6 +76,28 @@ def _setting_value(key: str) -> int:
     return values[key]
 
 
+def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
+    """Prevent compose_app from replacing the test-patched singletons."""
+    import app.composition as _comp_mod
+
+    def _reuse_eb() -> object:
+        return importlib.import_module("app.events.event_bus").event_bus
+
+    def _reuse_ss() -> object:
+        return importlib.import_module("app.settings.service").settings_service
+
+    def _reuse_pool() -> object:
+        return importlib.import_module("app.agent_comm.http_pool").agent_http_pool
+
+    def _reuse_cb() -> object:
+        return importlib.import_module("app.agent_comm.circuit_breaker").agent_circuit_breaker
+
+    monkeypatch.setattr(_comp_mod, "EventBus", _reuse_eb)
+    monkeypatch.setattr(_comp_mod, "SettingsService", _reuse_ss)
+    monkeypatch.setattr(_comp_mod, "AgentHttpPool", _reuse_pool)
+    monkeypatch.setattr(_comp_mod, "AgentCircuitBreaker", _reuse_cb)
+
+
 def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
     import app.agent_comm.http_pool as agent_http_pool_module
 
@@ -108,6 +130,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     event_bus_module = importlib.import_module("app.events.event_bus")
 
+    _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
@@ -198,6 +221,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
 
     event_bus_module = importlib.import_module("app.events.event_bus")
 
+    _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
@@ -261,6 +285,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
 
     event_bus_module = importlib.import_module("app.events.event_bus")
 
+    _patch_compose_app_constructors(monkeypatch)
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
