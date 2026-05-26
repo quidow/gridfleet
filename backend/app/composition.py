@@ -73,6 +73,7 @@ def compose_app(
         engine=engine,
     )
     settings_services = SettingsServices(
+        reader=settings_svc,
         service=settings_svc,
         session_factory=session_factory,
     )

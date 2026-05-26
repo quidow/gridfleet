@@ -70,7 +70,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 yield session
 
         def override_get_settings_services() -> SettingsServices:
-            return SettingsServices(service=settings_service, session_factory=db_session_maker)
+            return SettingsServices(reader=settings_service, service=settings_service, session_factory=db_session_maker)
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_settings_services] = override_get_settings_services

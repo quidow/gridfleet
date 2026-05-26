@@ -62,7 +62,7 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     _events = SimpleNamespace(publisher=event_bus)
 
     monkeypatch.setattr(
@@ -247,7 +247,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
     grid_svc = MagicMock()
     grid_svc.get = MagicMock(return_value="http://grid")
-    grid_ss = SettingsServices(service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    grid_ss = SettingsServices(reader=grid_svc, service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     _events = SimpleNamespace(publisher=event_bus)
