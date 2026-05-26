@@ -408,10 +408,10 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     )
     listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
-    event_bus.event_bus._handler_tasks.clear()
-    sync_session.info[event_bus._PENDING_EVENTS_KEY] = []
+    event_bus_mod.event_bus._handler_tasks.clear()
+    sync_session.info[event_bus_mod._PENDING_EVENTS_KEY] = []
     listeners["after_commit"](sync_session)  # type: ignore[operator]
-    assert event_bus.event_bus._handler_tasks == set()
+    assert event_bus_mod.event_bus._handler_tasks == set()
 
     assert (
         appium_reconciler.detect_orphans(
