@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -52,7 +53,7 @@ async def test_prune_deletes_only_old_rows(db_session: AsyncSession, db_host: Ho
     )
     await db_session.commit()
 
-    await _cleanup_old_data(db_session)
+    await _cleanup_old_data(db_session, publisher=AsyncMock())
 
     rows = (
         (await db_session.execute(select(HostAgentLogEntry).where(HostAgentLogEntry.host_id == db_host.id)))

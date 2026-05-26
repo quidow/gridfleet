@@ -4,7 +4,6 @@ import copy
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from app.events import event_bus
 from app.jobs.models import Job
 
 if TYPE_CHECKING:
@@ -37,6 +36,7 @@ def _verification_severity(job_status: str, stage_status: str | None) -> EventSe
 
 _SESSION_FACTORY_KEY = "_session_factory"
 _DB_JOB_ID_KEY = "_db_job_id"
+_PUBLISHER_KEY = "_publisher"
 
 
 def enum_value(value: object) -> object:
@@ -83,10 +83,12 @@ def hydrate_job(
     *,
     db_job_id: str,
     session_factory: SessionFactory,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     job = snapshot(snapshot_data)
     job[_DB_JOB_ID_KEY] = db_job_id
     job[_SESSION_FACTORY_KEY] = session_factory
+    job[_PUBLISHER_KEY] = publisher
     return job
 
 
@@ -106,15 +108,15 @@ def public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def publish(job: dict[str, Any], *, publisher: EventPublisher | None = None) -> None:
+async def publish(job: dict[str, Any]) -> None:
     await persist_job(job)
     snap = snapshot(job)
     job_status = str(snap.get("status", "pending"))
     # Determine current stage status for severity derivation.
     _, current_stage = _resolve_current_stage(snap)
     stage_status = current_stage.get("status") if current_stage else None
-    _bus = publisher or event_bus
-    await _bus.publish(
+    publisher: EventPublisher = job[_PUBLISHER_KEY]
+    await publisher.publish(
         VERIFICATION_EVENT,
         snap,
         severity=_verification_severity(job_status, stage_status),

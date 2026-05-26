@@ -137,6 +137,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         assert (
             await job_queue.run_pending_jobs_once(
                 _session_factory(db_session),
+                publisher=AsyncMock(),
                 kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
             )
             is True
@@ -150,6 +151,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         assert (
             await job_queue.run_pending_jobs_once(
                 _session_factory(db_session),
+                publisher=AsyncMock(),
                 kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
             )
             is True
@@ -169,14 +171,14 @@ async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: As
     db_session.add(unsupported)
     await db_session.commit()
 
-    assert await job_queue.run_pending_jobs_once(_session_factory(db_session)) is True
+    assert await job_queue.run_pending_jobs_once(_session_factory(db_session), publisher=AsyncMock()) is True
     await db_session.refresh(unsupported)
     assert unsupported.status == job_queue.JOB_STATUS_FAILED
     assert "Unsupported job kind" in unsupported.snapshot["error"]
 
 
 async def test_run_pending_jobs_once_returns_false_when_no_jobs(db_session: AsyncSession) -> None:
-    assert await job_queue.run_pending_jobs_once(_session_factory(db_session)) is False
+    assert await job_queue.run_pending_jobs_once(_session_factory(db_session), publisher=AsyncMock()) is False
 
 
 async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
@@ -197,7 +199,7 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
         patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await job_queue.durable_job_worker_loop(session_factory)
+        await job_queue.durable_job_worker_loop(session_factory, publisher=AsyncMock())
 
     assert reset_jobs.await_count == 2
     sleep.assert_awaited()

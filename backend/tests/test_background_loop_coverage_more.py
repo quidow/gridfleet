@@ -169,7 +169,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
 
     with pytest.raises(asyncio.CancelledError):
-        await data_cleanup.data_cleanup_loop()
+        await data_cleanup.data_cleanup_loop(publisher=AsyncMock())
 
     data_cleanup.schedule_background_loop.assert_awaited_once_with(data_cleanup.LOOP_NAME, 3600.0)
     sleep.assert_any_await(3600.0)

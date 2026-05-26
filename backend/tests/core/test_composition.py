@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -35,7 +35,7 @@ def test_compose_app_returns_app_services(mock_engine: MagicMock, mock_session_f
         bus=EventBus(),
         settings_svc=SettingsService(),
         http_pool=AgentHttpPool(),
-        circuit_breaker=AgentCircuitBreaker(),
+        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock()),
     )
     assert isinstance(services, AppServices)
     assert services.events is not None
@@ -56,7 +56,7 @@ def test_app_services_immutable(mock_engine: MagicMock, mock_session_factory: Ma
         bus=EventBus(),
         settings_svc=SettingsService(),
         http_pool=AgentHttpPool(),
-        circuit_breaker=AgentCircuitBreaker(),
+        circuit_breaker=AgentCircuitBreaker(publisher=AsyncMock()),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         services.events = None  # type: ignore[misc]

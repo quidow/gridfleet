@@ -9,13 +9,20 @@ from sqlalchemy import or_, select
 
 from app.core.database import async_session
 from app.core.observability import get_logger
-from app.events import event_bus
 from app.hosts.models.host import Host
 from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.settings.service import SettingsService
+
+
+class _NullPublisher:
+    """No-op publisher used to bootstrap the module-level singleton before DI wires the real bus."""
+
+    async def publish(self, event_type: str, data: dict[str, Any], **_kwargs: Any) -> None:  # noqa: ANN401
+        pass
+
 
 logger = get_logger(__name__)
 
@@ -49,7 +56,7 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, publisher: EventPublisher | None = None, settings: SettingsService | None = None) -> None:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsService | None = None) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
@@ -104,8 +111,7 @@ class AgentCircuitBreaker:
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
             payload: dict[str, Any] = {"host": host, **(await _resolve_host_identity(host))}
-            _bus = self._publisher or event_bus
-            await _bus.publish(
+            await self._publisher.publish(
                 "host.circuit_breaker.closed",
                 payload,
             )
@@ -154,8 +160,7 @@ class AgentCircuitBreaker:
                 "last_error": error,
                 **(await _resolve_host_identity(host)),
             }
-            _bus = self._publisher or event_bus
-            await _bus.publish(
+            await self._publisher.publish(
                 "host.circuit_breaker.opened",
                 payload,
             )
@@ -185,7 +190,7 @@ class AgentCircuitBreaker:
         }
 
 
-# DEPRECATED: Created at import time for backwards compatibility.
+# DEPRECATED: bootstrapped with a no-op publisher; replaced at startup by compose_app.
 # New code should access via DI (AppServices.agent_comm.circuit_breaker).
-# Will be removed when all consumers are migrated.
-agent_circuit_breaker = AgentCircuitBreaker()
+# Will be removed when all consumers are migrated (Task 3.1 / Task 6.2).
+agent_circuit_breaker: AgentCircuitBreaker = AgentCircuitBreaker(publisher=_NullPublisher())

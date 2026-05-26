@@ -13,7 +13,6 @@ from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceTestDataAuditLog
-from app.events import event_bus
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -73,7 +72,7 @@ async def _delete_in_batches(
     return deleted_total
 
 
-async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher | None = None) -> None:
+async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> None:
     now = datetime.now(UTC)
     sessions_deleted = 0
     audit_deleted = 0
@@ -218,8 +217,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher | Non
         diagnostic_snapshots_deleted,
         agent_reconfigure_outbox_deleted,
     )
-    _bus = publisher or event_bus
-    await _bus.publish(
+    await publisher.publish(
         "system.cleanup_completed",
         {
             "sessions_deleted": sessions_deleted,
@@ -236,7 +234,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher | Non
     )
 
 
-async def data_cleanup_loop() -> None:
+async def data_cleanup_loop(*, publisher: EventPublisher) -> None:
     """Background loop that periodically cleans up old data."""
     interval_hours: int = _default_settings.get("retention.cleanup_interval_hours")
     interval_seconds = float(interval_hours * 3600)
@@ -245,6 +243,6 @@ async def data_cleanup_loop() -> None:
         await asyncio.sleep(interval_seconds)
         try:
             async with observe_background_loop(LOOP_NAME, interval_seconds).cycle(), async_session() as db:
-                await _cleanup_old_data(db)
+                await _cleanup_old_data(db, publisher=publisher)
         except Exception:
             logger.exception("Data cleanup failed")

@@ -347,8 +347,13 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    assert await device_verification_runner._load_persisted_job(str(uuid.uuid4()), SessionCtx) is None
-    await device_verification_runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"}, SessionCtx)
+    assert (
+        await device_verification_runner._load_persisted_job(str(uuid.uuid4()), SessionCtx, publisher=AsyncMock())
+        is None
+    )
+    await device_verification_runner.run_persisted_verification_job(
+        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock()
+    )
 
 
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -475,8 +480,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     )
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
-    monkeypatch.setattr(data_cleanup.event_bus, "publish", AsyncMock())
-    await data_cleanup._cleanup_old_data(cleanup_db)
+    await data_cleanup._cleanup_old_data(cleanup_db, publisher=AsyncMock())
 
     assert session_viability._format_http_error(
         session_viability.httpx.RequestError(
@@ -760,7 +764,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
-    assert await job_queue.run_pending_jobs_once(QueueCtx) is True
+    assert await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock()) is True
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"
