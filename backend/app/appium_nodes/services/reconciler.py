@@ -851,14 +851,3 @@ def _make_reset_start_failure(
         await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope)
 
     return _reset
-
-
-async def run_one_cycle_for_test() -> None:
-    async with async_session() as db:
-        hosts = await _fetch_online_hosts(db)
-        rows = await _fetch_node_rows(db)
-        desired = await _fetch_desired_rows(db)
-        backoff = await _fetch_backoff_until(db)
-    health_by_host = await _reconcile_all(hosts, rows)
-    if reconciler_convergence_enabled():
-        await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)

@@ -10,7 +10,7 @@ from app.core import observability as observability
 
 @pytest.fixture(autouse=True)
 def _reset_background_loop_snapshots() -> None:
-    observability.reset_background_loop_snapshots()
+    observability._heartbeat_buffer.clear()
 
 
 def test_request_context_helpers_round_trip() -> None:
@@ -71,7 +71,7 @@ async def test_get_background_loop_snapshots_filters_non_dict_values() -> None:
 async def test_schedule_background_loop_seeds_in_memory_snapshot() -> None:
     await observability.schedule_background_loop("heartbeat", 30.0)
 
-    snapshots = observability.current_background_loop_snapshots()
+    snapshots = observability._heartbeat_buffer.copy()
     assert snapshots["heartbeat"]["loop_name"] == "heartbeat"
     assert snapshots["heartbeat"]["interval_seconds"] == 30.0
     assert "next_expected_at" in snapshots["heartbeat"]
@@ -93,7 +93,7 @@ def test_update_loop_snapshot_merges_previous_and_truncates_errors() -> None:
         error="x" * 800,
     )
 
-    snapshot = observability.current_background_loop_snapshots()["heartbeat"]
+    snapshot = observability._heartbeat_buffer.copy()["heartbeat"]
     assert snapshot["custom"] == "keep"
     assert snapshot["last_duration_seconds"] == 0.5
     assert len(snapshot["last_error"]) == 500
@@ -120,7 +120,7 @@ async def test_observe_background_loop_records_success_and_errors() -> None:
         assert raised
         record_run.assert_called_once()
         record_error.assert_called_once()
-        snapshot = observability.current_background_loop_snapshots()["heartbeat"]
+        snapshot = observability._heartbeat_buffer.copy()["heartbeat"]
         # Final cycle errored — error fields populated, success fields preserved
         # from the first cycle.
         assert snapshot["last_error"] == "boom"

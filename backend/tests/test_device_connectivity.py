@@ -15,10 +15,9 @@ from app.devices.services.connectivity import (
     _check_connectivity,
     _get_agent_devices,
     _get_lifecycle_state,
-    get_connectivity_control_plane_state,
-    track_previously_offline_device,
 )
 from app.hosts.models import Host, HostStatus
+from tests.helpers import get_connectivity_control_plane_state, track_previously_offline_device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

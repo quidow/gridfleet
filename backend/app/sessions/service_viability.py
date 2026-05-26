@@ -41,14 +41,11 @@ __all__ = [
     "close",
     "configure_health_failure_handler",
     "get_session_viability",
-    "get_session_viability_control_plane_state",
     "grid_probe_response_to_result",
     "probe_session_via_grid",
     "record_session_viability_result",
-    "reset_session_viability_control_plane_state",
     "run_session_viability_probe",
     "session_viability_loop",
-    "set_session_viability_control_plane_entry",
 ]
 
 SESSION_VIABILITY_KEY = "session_viability"
@@ -543,26 +540,6 @@ async def run_session_viability_probe(
     finally:
         await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
         await db.commit()
-
-
-async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespaces(
-        db,
-        [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE],
-    )
-    await db.commit()
-
-
-async def get_session_viability_control_plane_state(db: AsyncSession) -> dict[str, Any]:
-    return {
-        "running": sorted((await control_plane_state_store.get_values(db, SESSION_VIABILITY_RUNNING_NAMESPACE)).keys()),
-        "state": await control_plane_state_store.get_values(db, SESSION_VIABILITY_STATE_NAMESPACE),
-    }
-
-
-async def set_session_viability_control_plane_entry(db: AsyncSession, device_key: str, state: dict[str, Any]) -> None:
-    await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, device_key, state)
-    await db.commit()
 
 
 async def _check_due_devices(db: AsyncSession) -> None:

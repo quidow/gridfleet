@@ -281,6 +281,8 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
     monkeypatch.setattr(appium_reconciler, "reconciler_convergence_enabled", lambda: True)
     monkeypatch.setattr(appium_reconciler, "_drive_convergence", AsyncMock())
 
-    await appium_reconciler.run_one_cycle_for_test()
+    from tests.helpers import run_one_reconciler_cycle
+
+    await run_one_reconciler_cycle()
 
     appium_reconciler._drive_convergence.assert_awaited_once()

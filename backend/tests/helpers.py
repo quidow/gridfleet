@@ -6,15 +6,19 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
+from app.jobs import queue as job_queue
 from app.runs.models import RunState, TestRun
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.events.event_bus import Event, EventBus
 
 DEFAULT_HOST_PAYLOAD = {
@@ -400,3 +404,79 @@ def reset_event_bus(bus: EventBus) -> None:
     bus._session_factory = None
     bus._engine = None
     bus._last_seen_system_event_id = 0
+
+
+# ---------------------------------------------------------------------------
+# Control-plane state test helpers — moved from production modules
+# ---------------------------------------------------------------------------
+
+CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
+SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
+SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
+
+
+async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:
+    await control_plane_state_store.delete_namespace(db, CONNECTIVITY_NAMESPACE)
+    await db.commit()
+
+
+async def get_connectivity_control_plane_state(db: AsyncSession) -> set[str]:
+    return set((await control_plane_state_store.get_values(db, CONNECTIVITY_NAMESPACE)).keys())
+
+
+async def track_previously_offline_device(db: AsyncSession, identity_value: str) -> None:
+    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, identity_value, True)
+    await db.commit()
+
+
+async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
+    await control_plane_state_store.delete_namespaces(
+        db,
+        [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE],
+    )
+    await db.commit()
+
+
+async def get_session_viability_control_plane_state(db: AsyncSession) -> dict[str, Any]:
+    return {
+        "running": sorted((await control_plane_state_store.get_values(db, SESSION_VIABILITY_RUNNING_NAMESPACE)).keys()),
+        "state": await control_plane_state_store.get_values(db, SESSION_VIABILITY_STATE_NAMESPACE),
+    }
+
+
+async def set_session_viability_control_plane_entry(db: AsyncSession, device_key: str, state: dict[str, Any]) -> None:
+    await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, device_key, state)
+    await db.commit()
+
+
+async def store_verification_job_for_test(
+    job_id: str,
+    job: dict[str, Any],
+    session_factory: SessionFactory,
+) -> None:
+    async with session_factory() as db:
+        await job_queue.create_job(
+            db,
+            kind=JOB_KIND_DEVICE_VERIFICATION,
+            payload={"mode": "create", "data": {}},
+            snapshot={**job, "job_id": job_id},
+            max_attempts=1,
+            job_id=uuid.UUID(job_id),
+        )
+
+
+async def run_one_reconciler_cycle() -> None:
+    """Run a single appium reconciler cycle. Replacement for the removed
+    ``reconciler.run_one_cycle_for_test()`` — tests monkeypatch the private
+    functions so this just calls through the same code path.
+    """
+    from app.appium_nodes.services import reconciler as appium_reconciler
+
+    async with appium_reconciler.async_session() as db:
+        hosts = await appium_reconciler._fetch_online_hosts(db)
+        rows = await appium_reconciler._fetch_node_rows(db)
+        desired = await appium_reconciler._fetch_desired_rows(db)
+        backoff = await appium_reconciler._fetch_backoff_until(db)
+    health_by_host = await appium_reconciler._reconcile_all(hosts, rows)
+    if appium_reconciler.reconciler_convergence_enabled():
+        await appium_reconciler._drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)

@@ -260,20 +260,6 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> bool | No
     return None
 
 
-async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespace(db, CONNECTIVITY_NAMESPACE)
-    await db.commit()
-
-
-async def get_connectivity_control_plane_state(db: AsyncSession) -> set[str]:
-    return set((await control_plane_state_store.get_values(db, CONNECTIVITY_NAMESPACE)).keys())
-
-
-async def track_previously_offline_device(db: AsyncSession, identity_value: str) -> None:
-    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, identity_value, True)
-    await db.commit()
-
-
 async def _check_connectivity(db: AsyncSession) -> None:
     ip_ping_threshold = int(_default_settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
     ip_ping_timeout = float(_default_settings.get("device_checks.ip_ping.timeout_sec"))

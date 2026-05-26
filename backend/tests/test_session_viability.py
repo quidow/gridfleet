@@ -24,14 +24,13 @@ from app.sessions.service_viability import (
     _parse_timestamp,
     _should_run_scheduled_probe,
     get_session_viability,
-    get_session_viability_control_plane_state,
     grid_probe_response_to_result,
     probe_session_via_grid,
     record_session_viability_result,
     run_session_viability_probe,
-    set_session_viability_control_plane_entry,
 )
 from app.settings import settings_service
+from tests.helpers import get_session_viability_control_plane_state, set_session_viability_control_plane_entry
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

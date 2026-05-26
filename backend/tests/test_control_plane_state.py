@@ -6,24 +6,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.connectivity import (
-    get_connectivity_control_plane_state,
-    reset_connectivity_control_plane_state,
-    track_previously_offline_device,
-)
 from app.devices.services.state import ready_operational_state, set_operational_state
-from app.devices.services.verification import clear_verification_jobs, store_verification_job_for_test
+from app.devices.services.verification import clear_verification_jobs
 from app.events import event_bus
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_viability import (
+from tests.helpers import (
+    drain_handlers,
+    get_connectivity_control_plane_state,
     get_session_viability_control_plane_state,
+    recent_events,
+    reset_connectivity_control_plane_state,
     reset_session_viability_control_plane_state,
     set_session_viability_control_plane_entry,
+    store_verification_job_for_test,
+    track_previously_offline_device,
 )
-from tests.helpers import drain_handlers, recent_events
 
 
 async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncSession, db_host: Host) -> None:

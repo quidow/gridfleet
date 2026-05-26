@@ -360,16 +360,6 @@ async def schedule_background_loop(loop_name: str, interval_seconds: float) -> N
     _update_loop_snapshot(loop_name, interval_seconds=interval_seconds)
 
 
-def reset_background_loop_snapshots() -> None:
-    """Clear the in-memory snapshot cache. Test-only entrypoint."""
-    _heartbeat_buffer.clear()
-
-
-def current_background_loop_snapshots() -> dict[str, dict[str, Any]]:
-    """Return a shallow copy of the in-memory snapshots. Test-only entrypoint."""
-    return _heartbeat_buffer.copy()
-
-
 async def flush_background_loop_snapshots(
     session_factory: SessionFactory | None = None,
 ) -> int:

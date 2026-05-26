@@ -171,7 +171,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     grid_snapshot = grid_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
-    leader_settings_provider.reset_for_tests()
+    leader_settings_provider._provider = None
     leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
     reset_event_bus(event_bus)
@@ -201,7 +201,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
         setattr(grid_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
-    leader_settings_provider.reset_for_tests()
+    leader_settings_provider._provider = None
 
 
 @pytest_asyncio.fixture
