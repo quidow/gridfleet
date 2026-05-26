@@ -13,8 +13,8 @@ from app.devices.models import DeviceOperationalState
 from app.devices.services import health as health_mod
 from app.devices.services.state import set_hold as _orig_set_hold
 from app.devices.services.state import set_operational_state as _orig_set_op
-from app.events import event_bus
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

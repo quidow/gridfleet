@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.events import event_bus
 from app.settings import service as settings_module
 from app.settings.registry import SettingDefinition
+from tests.helpers import test_event_bus as event_bus
 
 
 def test_settings_service_validation_and_normalization_edges() -> None:

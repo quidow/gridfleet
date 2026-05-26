@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services import bulk as bulk_service
-from app.events import event_bus
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

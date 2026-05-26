@@ -12,10 +12,10 @@ from starlette.requests import Request
 
 from app.devices.routers.verification import stream_device_verification_job_events
 from app.devices.services.verification_job_state import new_job
-from app.events import event_bus
 from app.events.router import event_stream
 from app.events.services_container import EventServices
 from tests.helpers import reset_event_bus, store_verification_job_for_test
+from tests.helpers import test_event_bus as event_bus
 
 
 def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:

@@ -62,7 +62,6 @@ from app.devices.services import (
     write as device_write,
 )
 from app.events import catalog as event_catalog
-from app.events import event_bus
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
 from app.jobs import queue as job_queue
@@ -110,6 +109,7 @@ from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
+from tests.helpers import test_event_bus as event_bus
 
 event_bus_mod = import_module("app.events.event_bus")
 
@@ -386,11 +386,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     with pytest.raises(SystemExit):
         await control_plane_leader_watcher._exit_after_preempt()
 
-    monkeypatch.setattr(event_bus_mod.event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
+    monkeypatch.setattr(event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
     monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
-    await event_bus_mod._publish_pending_events(
-        [("device.hold_changed", {"device_id": "d"}, None)], event_bus_mod.event_bus
-    )
+    await event_bus_mod._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)], event_bus)
     event_bus_mod.logger.exception.assert_called_once()
 
     listeners: dict[str, object] = {}
@@ -400,18 +398,14 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
     sync_session = SimpleNamespace(info={})
-    event_bus_mod.queue_event_for_session(
-        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus_mod.event_bus
-    )
-    event_bus_mod.queue_event_for_session(
-        sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus_mod.event_bus
-    )
+    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
+    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
     listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
-    event_bus_mod.event_bus._handler_tasks.clear()
+    event_bus._handler_tasks.clear()
     sync_session.info[event_bus_mod._PENDING_EVENTS_KEY] = []
     listeners["after_commit"](sync_session)  # type: ignore[operator]
-    assert event_bus_mod.event_bus._handler_tasks == set()
+    assert event_bus._handler_tasks == set()
 
     assert (
         appium_reconciler.detect_orphans(

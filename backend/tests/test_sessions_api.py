@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.devices.services import state_write_guard
 from app.devices.services.state import set_hold, set_operational_state
-from app.events import event_bus
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.fixture(autouse=True)

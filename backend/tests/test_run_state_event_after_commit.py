@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -51,7 +51,8 @@ async def test_run_created_dropped_on_rollback(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    from app.events import event_bus, queue_event_for_session
+    from app.events import queue_event_for_session
+    from tests.helpers import test_event_bus as event_bus
 
     queue_event_for_session(
         db_session,

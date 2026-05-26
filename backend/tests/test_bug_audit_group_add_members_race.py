@@ -24,8 +24,8 @@ from sqlalchemy.exc import IntegrityError
 from app.devices.models import DeviceOperationalState
 from app.devices.models.group import DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.services import groups
-from app.events import event_bus
 from tests.helpers import create_device, create_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient

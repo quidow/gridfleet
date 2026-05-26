@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.events import event_bus
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.fixture(autouse=True)

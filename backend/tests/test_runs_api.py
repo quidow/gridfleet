@@ -13,7 +13,6 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
-from app.events import event_bus
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
@@ -21,6 +20,7 @@ from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 

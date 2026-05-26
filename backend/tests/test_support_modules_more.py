@@ -21,9 +21,9 @@ from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
-from app.events import event_bus
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

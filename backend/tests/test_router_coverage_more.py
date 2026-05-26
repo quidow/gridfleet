@@ -16,11 +16,11 @@ from app.devices.routers import verification as devices_verification
 from app.devices.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
-from app.events import event_bus
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 from app.settings.services_container import SettingsServices
+from tests.helpers import test_event_bus as event_bus
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:

@@ -502,10 +502,11 @@ async def test_recovery_rejoin_publishes_availability_event(
     async def fake_publish(name: str, payload: dict[str, object], *, severity: object = None) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
+    from tests.helpers import test_event_bus as event_bus
+
+    monkeypatch.setattr(event_bus, "publish", fake_publish)
 
     from app.devices.services import state as state_mod
-    from app.events import event_bus
 
     _orig_set_hold = state_mod.set_hold
 

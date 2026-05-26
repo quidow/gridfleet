@@ -9,6 +9,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
+from app.events.event_bus import EventBus, set_bus_ref
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
@@ -19,7 +20,12 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory
-    from app.events.event_bus import Event, EventBus
+    from app.events.event_bus import Event
+
+# Shared test-owned EventBus instance. Replaces the removed production singleton.
+# All test files should import this instead of the old ``from app.events import event_bus``.
+test_event_bus = EventBus()
+set_bus_ref(test_event_bus)  # Wire gauge refresher so metrics tests work.
 
 DEFAULT_HOST_PAYLOAD = {
     "hostname": "test-host",
@@ -227,13 +233,11 @@ async def settle_after_commit_tasks() -> None:
     ``event_bus._handler_tasks`` set is deterministic — it only returns after
     every queued publish task has completed.
     """
-    from app.events import event_bus
-
     # Yield once so any after_commit hooks fired during the just-completed
     # await have a chance to call ``loop.create_task`` and register on
     # ``_handler_tasks`` before we snapshot the set.
     await asyncio.sleep(0)
-    pending = {task for task in event_bus._handler_tasks if not task.done()}
+    pending = {task for task in test_event_bus._handler_tasks if not task.done()}
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 

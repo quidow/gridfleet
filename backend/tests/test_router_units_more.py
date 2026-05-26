@@ -51,7 +51,6 @@ from app.devices.schemas.device import (
 )
 from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
-from app.events import event_bus
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
@@ -86,6 +85,7 @@ from app.settings import settings_service
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.webhooks import router as webhooks
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

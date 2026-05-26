@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.services.heartbeat import _ingest_appium_restart_events
-from app.events import event_bus
 from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

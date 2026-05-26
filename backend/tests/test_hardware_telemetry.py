@@ -4,10 +4,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
-from app.events import event_bus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.settings import settings_service
 from tests.helpers import create_device_record, create_host, drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession, client: AsyncClient) -> None:

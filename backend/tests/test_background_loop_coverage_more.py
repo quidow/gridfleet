@@ -20,8 +20,8 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
-from app.events import event_bus
 from app.runs import service_reaper as run_reaper
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

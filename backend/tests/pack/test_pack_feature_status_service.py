@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.events import event_bus
 from app.packs.models import HostPackFeatureStatus
 from app.packs.services.feature_status import record_feature_status
 from tests.helpers import drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

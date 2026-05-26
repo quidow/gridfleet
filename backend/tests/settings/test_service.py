@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app import main
-from app.events import event_bus
 from app.settings import settings_service
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

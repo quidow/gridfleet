@@ -7,9 +7,9 @@ from sqlalchemy import select
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
-from app.events import event_bus
 from app.runs import service as run_service
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

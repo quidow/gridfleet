@@ -14,7 +14,7 @@ from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 if TYPE_CHECKING:
     import pytest
 
-from app.events import event_bus
+from tests.helpers import test_event_bus as event_bus
 
 CAPS_V2 = {"orchestration_contract_version": 2}
 

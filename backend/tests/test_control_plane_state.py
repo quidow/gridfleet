@@ -8,7 +8,6 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services import state_write_guard
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.devices.services.verification import clear_verification_jobs
-from app.events import event_bus
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
@@ -24,6 +23,7 @@ from tests.helpers import (
     store_verification_job_for_test,
     track_previously_offline_device,
 )
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncSession, db_host: Host) -> None:

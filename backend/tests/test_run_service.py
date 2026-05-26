@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
-from app.events import event_bus
 from app.grid import service as grid_service
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_force_release_clears_stop_pending(

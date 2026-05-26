@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
-from app.events import event_bus
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.hosts.models import Host
@@ -18,6 +17,7 @@ from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.services_container import SettingsServices
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 

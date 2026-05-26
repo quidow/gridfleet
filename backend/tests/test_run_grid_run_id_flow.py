@@ -9,11 +9,11 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
-from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:

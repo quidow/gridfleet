@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.events import event_bus
 from app.packs.services.feature_status import record_feature_status
 from tests.helpers import settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from app.hosts.models import Host

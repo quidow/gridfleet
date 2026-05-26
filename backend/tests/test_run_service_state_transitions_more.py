@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.models import RunState
+from tests.helpers import test_event_bus as event_bus
 
 
 def _run(state: RunState = RunState.preparing) -> SimpleNamespace:

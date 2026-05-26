@@ -47,7 +47,7 @@ from app.devices import routers as device_routers
 from app.devices import services as device_services
 from app.devices.services import state_write_guard
 from app.events import router as events
-from app.events.event_bus import EventBus
+from app.events.event_bus import EventBus, set_bus_ref
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.grid.event_bus_loop import event_bus_subscriber_loop
@@ -167,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shutdown_coordinator.reset()
 
     bus = EventBus()
+    set_bus_ref(bus)
     svc = SettingsService()
     pool = AgentHttpPool()
     breaker = AgentCircuitBreaker(publisher=bus)

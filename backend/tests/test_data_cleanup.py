@@ -11,11 +11,11 @@ from app.analytics.models import AnalyticsCapacitySnapshot
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.devices.services.data_cleanup import _cleanup_old_data
-from app.events import event_bus
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
 from tests.helpers import recent_events
+from tests.helpers import test_event_bus as event_bus
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:

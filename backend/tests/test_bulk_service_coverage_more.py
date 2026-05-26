@@ -9,7 +9,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
-from app.events import event_bus
+from tests.helpers import test_event_bus as event_bus
 
 
 def _db() -> MagicMock:

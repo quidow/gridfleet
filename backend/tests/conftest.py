@@ -20,7 +20,6 @@ from app.core.leader import models as _leader_models  # noqa: F401  # Ensure lea
 from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
 from app.devices.services import state_write_guard
-from app.events import event_bus
 from app.events.dependencies import get_event_services
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
@@ -32,7 +31,7 @@ from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
-from tests.helpers import create_host, reset_event_bus
+from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:
@@ -102,7 +101,7 @@ async def _ensure_test_database_exists() -> None:
 async def _shutdown_control_plane_services() -> None:
     await shutdown_heartbeat_background_tasks()
     await settings_service.shutdown()
-    await event_bus.shutdown()
+    await test_event_bus.shutdown()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -174,7 +173,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     leader_settings_provider._provider = None
     leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
-    reset_event_bus(event_bus)
+    reset_event_bus(test_event_bus)
     agent_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Ensure circuit-breaker settings are always present even without a DB session.
@@ -187,7 +186,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
             settings_service._cache[key] = resolve_default(defn)
     yield
     await _shutdown_control_plane_services()
-    reset_event_bus(event_bus)
+    reset_event_bus(test_event_bus)
     agent_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
@@ -215,11 +214,11 @@ async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[As
     session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         setup_database, class_=AsyncSession, expire_on_commit=False
     )
-    event_bus.configure(session_factory=session_factory, engine=setup_database)
+    test_event_bus.configure(session_factory=session_factory, engine=setup_database)
     settings_service.configure_store_refresh(session_factory)
     webhook_dispatcher.configure(session_factory)
-    event_bus.register_handler(settings_service.handle_system_event)
-    event_bus.register_handler(webhook_dispatcher.handle_system_event)
+    test_event_bus.register_handler(settings_service.handle_system_event)
+    test_event_bus.register_handler(webhook_dispatcher.handle_system_event)
     settings_service._cache.clear()
     settings_service._overrides.clear()
     settings_service._defaults.clear()
@@ -259,9 +258,9 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return EventServices(  # type: ignore[arg-type]
-            publisher=event_bus,
-            subscriber=event_bus,
-            reader=event_bus,
+            publisher=test_event_bus,
+            subscriber=test_event_bus,
+            reader=test_event_bus,
             session_factory=sf,
             engine=db_session.bind,
         )
@@ -315,7 +314,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     async def _fake_publish(name: str, payload: dict[str, Any], severity: str | None = None) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
+    monkeypatch.setattr(test_event_bus, "publish", _fake_publish)
     return captured
 
 

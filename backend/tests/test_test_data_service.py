@@ -4,9 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceTestDataAuditLog
 from app.devices.services import test_data as test_data_service
-from app.events import event_bus
 from app.hosts.models import Host
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.db
 

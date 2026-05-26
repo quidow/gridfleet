@@ -279,7 +279,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.appium_nodes.exceptions import NodeManagerError
-    from app.events import event_bus
+    from tests.helpers import test_event_bus as event_bus
 
     host = Host(
         hostname="lock-host-3",

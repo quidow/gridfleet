@@ -4,10 +4,10 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.events import event_bus
 from app.events.models import SystemEvent
 from app.webhooks.models import WebhookDelivery
 from tests.helpers import drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 WEBHOOK_PAYLOAD = {
     "name": "CI Notifications",

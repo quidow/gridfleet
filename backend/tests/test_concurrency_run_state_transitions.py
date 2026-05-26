@@ -5,10 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import DeviceHold, DeviceReservation
-from app.events import event_bus
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device_record, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.mark.asyncio

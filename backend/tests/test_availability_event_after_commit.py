@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import set_operational_state
-from app.events import event_bus
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

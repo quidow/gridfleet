@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.devices.models import DeviceReservation
-from app.events import event_bus
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient

@@ -12,7 +12,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import set_hold, set_operational_state
-from app.events import event_bus
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ def _make_severity_capture(monkeypatch: pytest.MonkeyPatch, *, inject_publisher:
     async def _fake_publish(name: str, payload: dict[str, Any], *, severity: str | None = None) -> None:
         captured.append({"type": name, "severity": severity})
 
-    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
+    monkeypatch.setattr(event_bus, "publish", _fake_publish)
 
     if inject_publisher:
         _orig_set_op = set_operational_state

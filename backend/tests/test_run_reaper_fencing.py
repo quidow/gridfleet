@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.leader.advisory import LeadershipLost
-from app.events import event_bus
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

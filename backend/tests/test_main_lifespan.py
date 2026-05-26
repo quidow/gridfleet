@@ -79,9 +79,10 @@ def _setting_value(key: str) -> int:
 def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
     """Prevent main.py lifespan from replacing the test-patched singletons."""
     import app.main as _main_mod
+    from tests.helpers import test_event_bus
 
     def _reuse_eb(**_: object) -> object:
-        return importlib.import_module("app.events.event_bus").event_bus
+        return test_event_bus
 
     def _reuse_ss(**_: object) -> object:
         return importlib.import_module("app.settings.service").settings_service
@@ -127,18 +128,17 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
 
     import app.core.database as database_module
     import app.settings.service as settings_service_module
-
-    event_bus_module = importlib.import_module("app.events.event_bus")
+    from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
@@ -218,18 +218,17 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
 
     import app.core.database as database_module
     import app.settings.service as settings_service_module
-
-    event_bus_module = importlib.import_module("app.events.event_bus")
+    from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
@@ -282,18 +281,17 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
 
     import app.core.database as database_module
     import app.settings.service as settings_service_module
-
-    event_bus_module = importlib.import_module("app.events.event_bus")
+    from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
     monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
     monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))

@@ -6,9 +6,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.events import event_bus
 from app.hosts.service_host_events import query_host_events
 from tests.helpers import drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

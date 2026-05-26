@@ -40,9 +40,9 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import DBAPIError
 
-from app.events import event_bus
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import approve_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

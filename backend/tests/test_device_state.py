@@ -9,8 +9,8 @@ import pytest
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state as device_state
 from app.devices.services import state_write_guard
-from app.events import event_bus
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

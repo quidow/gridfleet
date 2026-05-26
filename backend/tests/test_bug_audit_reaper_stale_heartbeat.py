@@ -17,10 +17,10 @@ from unittest.mock import patch
 
 import pytest
 
-from app.events import event_bus
 from app.runs import service_reaper as _service_reaper
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

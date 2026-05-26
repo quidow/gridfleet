@@ -42,7 +42,7 @@ async def test_host_offline_cascade_queues_all_events(
     # Inject publisher=event_bus into _apply_host_ping_result and set_operational_state.
     from app.appium_nodes.services import heartbeat as heartbeat_mod
     from app.devices.services.state import set_operational_state as _orig_set_op
-    from app.events import event_bus
+    from tests.helpers import test_event_bus as event_bus
 
     _orig_apply = heartbeat_mod._apply_host_ping_result
 

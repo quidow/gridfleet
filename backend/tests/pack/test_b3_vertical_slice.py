@@ -40,7 +40,6 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.events import event_bus
 from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
@@ -48,6 +47,7 @@ from app.packs.routers.uploads import get_pack_storage
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
 from app.packs.services.storage import PackStorageService
 from tests.helpers import drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

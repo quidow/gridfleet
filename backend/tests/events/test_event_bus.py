@@ -4,8 +4,9 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.events import Event, EventBus, event_bus
+from app.events import Event, EventBus
 from tests.helpers import drain_handlers, recent_events, reset_event_bus, set_webhook_queue
+from tests.helpers import test_event_bus as event_bus
 
 
 def _session_bind_engine(session: AsyncSession) -> AsyncEngine:

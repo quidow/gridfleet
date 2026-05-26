@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.events import event_bus
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostRegister
 from app.hosts.service import register_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
