@@ -13,7 +13,7 @@ from app.appium_nodes.services import node_health as node_health
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 

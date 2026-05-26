@@ -82,7 +82,7 @@ async def test_node_health_failure_path_locks_appium_node(
             )
             await session.commit()
 
-    from app.settings import settings_service
+    from tests.conftest import settings_service
 
     threshold = int(settings_service.get("general.node_max_failures"))
     node.consecutive_health_failures = threshold - 1

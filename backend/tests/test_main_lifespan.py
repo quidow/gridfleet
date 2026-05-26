@@ -80,13 +80,14 @@ def _setting_value(key: str) -> int:
 def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
     """Prevent main.py lifespan from replacing the test-patched singletons."""
     import app.main as _main_mod
+    from tests.conftest import settings_service as _ss
     from tests.helpers import test_event_bus
 
     def _reuse_eb(**_: object) -> object:
         return test_event_bus
 
     def _reuse_ss(**_: object) -> object:
-        return importlib.import_module("app.settings.service").settings_service
+        return _ss
 
     def _reuse_pool(**_: object) -> object:
         return importlib.import_module("app.agent_comm.http_pool").agent_http_pool
@@ -128,7 +129,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         return task
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
     from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
@@ -140,11 +141,11 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(test_event_bus, "register_handler", Mock())
     monkeypatch.setattr(test_event_bus, "start", AsyncMock())
     monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())
@@ -203,7 +204,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         loop.callbacks[signal.SIGTERM]()
         await asyncio.sleep(0)
 
-    assert settings_service_module.settings_service.initialize.await_count == 1
+    assert _ss.initialize.await_count == 1
     assert pool_reopen.await_count == 1
     assert pool_close.await_count == 1
     assert len(loop.removed) == 2
@@ -218,7 +219,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     create_task = Mock(side_effect=asyncio.create_task)
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
     from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
@@ -230,11 +231,11 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(test_event_bus, "register_handler", Mock())
     monkeypatch.setattr(test_event_bus, "start", AsyncMock())
     monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
@@ -281,7 +282,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
         return True
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
     from tests.helpers import test_event_bus
 
     _patch_compose_app_constructors(monkeypatch)
@@ -293,11 +294,11 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(test_event_bus, "register_handler", Mock())
     monkeypatch.setattr(test_event_bus, "start", AsyncMock())
     monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())

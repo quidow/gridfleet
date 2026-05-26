@@ -35,7 +35,7 @@ from app.sessions.service_viability import (
 from app.sessions.service_viability import (
     run_session_viability_probe as _run_session_viability_probe_impl,
 )
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import get_session_viability_control_plane_state, set_session_viability_control_plane_entry
 

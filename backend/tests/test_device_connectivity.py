@@ -782,7 +782,7 @@ def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> N
 def _stub_settings(
     monkeypatch: pytest.MonkeyPatch, *, threshold: int, timeout: float, count: int
 ) -> FakeSettingsReader:
-    from app.settings import settings_service
+    from tests.conftest import settings_service
 
     dispatcher = _settings_dispatch(threshold=threshold, timeout=timeout, count=count)
     monkeypatch.setattr(settings_service, "get", dispatcher)

@@ -13,9 +13,9 @@ from app.devices.services.verification_preparation import validate_create_reques
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions import service_viability as session_viability
-from app.settings import settings_service
 
 if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
@@ -26,12 +26,13 @@ async def _probe_session_via_gridfleet_marker(
     capabilities: dict[str, Any],
     timeout_sec: int,
     *,
+    settings: SettingsReader,
     grid_url: str | None = None,
 ) -> tuple[bool, str | None]:
     return await session_viability.probe_session_via_grid(
         session_viability.build_probe_capabilities(capabilities),
         timeout_sec,
-        settings=settings_service,
+        settings=settings,
         grid_url=grid_url,
     )
 
@@ -42,6 +43,7 @@ async def run_persisted_verification_job(
     session_factory: SessionFactory,
     *,
     publisher: EventPublisher,
+    settings: SettingsReader,
 ) -> None:
     job = await _load_persisted_job(job_id, session_factory, publisher=publisher)
     if job is None:
@@ -55,7 +57,7 @@ async def run_persisted_verification_job(
                     db,
                     DeviceVerificationCreate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
-                    settings=settings_service,
+                    settings=settings,
                 )
             else:
                 context, validation_error = await validate_update_request(
@@ -64,7 +66,7 @@ async def run_persisted_verification_job(
                     uuid.UUID(str(request["device_id"])),
                     DeviceVerificationUpdate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
-                    settings=settings_service,
+                    settings=settings,
                 )
 
             if validation_error is not None or context is None:
@@ -76,8 +78,10 @@ async def run_persisted_verification_job(
                 db,
                 context,
                 http_client_factory=httpx.AsyncClient,
-                probe_session_fn=_probe_session_via_gridfleet_marker,
-                settings=settings_service,
+                probe_session_fn=lambda caps, timeout, grid_url=None: _probe_session_via_gridfleet_marker(
+                    caps, timeout, settings=settings, grid_url=grid_url
+                ),
+                settings=settings,
             )
             await finish_job(
                 job,

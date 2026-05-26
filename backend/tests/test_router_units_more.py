@@ -81,10 +81,10 @@ from app.runs.schemas import (
 )
 from app.sessions import router as sessions
 from app.settings import router as settings_router
-from app.settings import settings_service
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.webhooks import router as webhooks
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 

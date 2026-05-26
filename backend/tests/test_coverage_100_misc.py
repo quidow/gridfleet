@@ -353,7 +353,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         is None
     )
     await device_verification_runner.run_persisted_verification_job(
-        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock()
+        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})
     )
 
 
@@ -773,6 +773,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
         session_factory=RecoveryCtx,
+        settings=FakeSettingsReader({}),
     )
 
     class QueueCtx:
@@ -786,7 +787,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
-    assert await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock()) is True
+    assert (
+        await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})) is True
+    )
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"

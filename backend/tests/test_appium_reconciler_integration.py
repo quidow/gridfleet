@@ -13,7 +13,7 @@ from app.appium_nodes.exceptions import RemoteStartResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_reconciler_cycle
 

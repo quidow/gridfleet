@@ -25,13 +25,15 @@ from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
-from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
+from app.settings.service import SettingsService
 from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
 from tests.helpers import create_host, reset_event_bus, test_event_bus
+
+settings_service = SettingsService()
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:

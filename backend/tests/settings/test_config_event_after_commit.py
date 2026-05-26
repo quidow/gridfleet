@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
@@ -11,10 +11,6 @@ from app.hosts.schemas import HostRegister
 from app.settings import service_config as config_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
-
-if TYPE_CHECKING:
-    import pytest
-
 from tests.helpers import test_event_bus as event_bus
 
 CAPS_V2 = {"orchestration_contract_version": 2}
@@ -40,16 +36,7 @@ async def test_register_host_queues_host_registered(
 async def test_approve_host_queues_status_changed(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.settings import settings_service as _ss
-
-    real_settings_get = _ss.get
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: False if key == "agent.auto_accept_hosts" else real_settings_get(key),
-    )
-
     payload = HostRegister(
         hostname="approve-host", ip="10.0.0.43", os_type="linux", agent_port=5100, capabilities=CAPS_V2
     )

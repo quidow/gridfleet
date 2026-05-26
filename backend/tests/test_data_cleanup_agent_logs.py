@@ -10,7 +10,7 @@ from sqlalchemy import insert, select
 
 from app.devices.services.data_cleanup import _cleanup_old_data
 from app.hosts.models import HostAgentLogEntry
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:

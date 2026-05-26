@@ -2,8 +2,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.settings import settings_service
 from app.settings.models import Setting
+from tests.conftest import settings_service
 
 
 async def test_list_settings(client: AsyncClient) -> None:

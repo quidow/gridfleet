@@ -66,7 +66,7 @@ from app.sessions import router as sessions_router
 from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
-from app.settings import settings_service, validate_leader_keepalive_settings
+from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
@@ -110,9 +110,9 @@ async def pack_drain_loop() -> None:
     await pack_services.drain.pack_drain_loop()
 
 
-def _validate_leader_keepalive_settings() -> None:
-    keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
-    stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
+def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
+    keepalive_interval_sec = int(settings.get("general.leader_keepalive_interval_sec"))
+    stale_threshold_sec = int(settings.get("general.leader_stale_threshold_sec"))
     error = validate_leader_keepalive_settings(
         keepalive_interval_sec=keepalive_interval_sec,
         stale_threshold_sec=stale_threshold_sec,
@@ -193,7 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await svc.initialize(db)
         await _validate_online_agent_contracts(db)
     register_settings_provider(svc.get)
-    _validate_leader_keepalive_settings()
+    _validate_leader_keepalive_settings(settings=svc)
 
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
@@ -228,7 +228,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (property_refresh_loop(settings=svc), "property_refresh_loop"),
             (hardware_telemetry_loop(settings=svc), "hardware_telemetry_loop"),
             (host_resource_telemetry_loop(settings=svc), "host_resource_telemetry_loop"),
-            (job_queue.durable_job_worker_loop(session_factory, publisher=bus), "durable_job_worker_loop"),
+            (
+                job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
+                "durable_job_worker_loop",
+            ),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
             (data_cleanup_loop(publisher=bus, settings=svc), "data_cleanup_loop"),

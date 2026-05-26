@@ -12,9 +12,9 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState, Devic
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.main import app
-from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.services_container import SettingsServices
+from tests.conftest import settings_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 

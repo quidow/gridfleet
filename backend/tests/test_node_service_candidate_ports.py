@@ -29,7 +29,7 @@ from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.devices.models import Device
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 

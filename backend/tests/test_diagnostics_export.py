@@ -15,7 +15,7 @@ from app.devices.services.data_cleanup import _cleanup_old_data
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.devices.services.review import mark_review_required
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 

@@ -92,7 +92,7 @@ async def test_cleanup_uses_separate_retention_window_for_probes(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.sessions.probe_constants import PROBE_TEST_NAME
-    from app.settings import settings_service
+    from tests.conftest import settings_service
 
     overrides: dict[str, int] = {"retention.sessions_days": 30, "retention.probe_sessions_days": 7}
     original_get = settings_service.get
