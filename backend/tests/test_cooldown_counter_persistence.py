@@ -23,6 +23,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
 from app.runs import service as run_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -75,6 +76,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
         device.id,
         reason="probe timeout",
         ttl_seconds=60,
+        settings=FakeSettingsReader({}),
     )
     assert count_1 == 1
     assert not escalated_1
@@ -125,6 +127,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
         device.id,
         reason="probe timeout again",
         ttl_seconds=60,
+        settings=FakeSettingsReader({}),
     )
     assert count_2 == 2, "second cooldown after TTL expiry must yield count=2"
     assert not escalated_2 or threshold == 2
@@ -172,7 +175,9 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     await _seed_node(db_session, device.id)
     run = await create_reserved_run(db_session, name="no-rewind-run", devices=[device])
 
-    await run_service.cooldown_device(db_session, run.id, device.id, reason="flake", ttl_seconds=60)
+    await run_service.cooldown_device(
+        db_session, run.id, device.id, reason="flake", ttl_seconds=60, settings=FakeSettingsReader({})
+    )
     reservation = await _reservation_for(db_session, device.id)
     assert reservation.cooldown_count == 1
 

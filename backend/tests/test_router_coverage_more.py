@@ -202,7 +202,11 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
     monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(side_effect=ValueError("run not found")))
     with pytest.raises(HTTPException) as not_found:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert not_found.value.status_code == 404
 
@@ -211,7 +215,11 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
     )
     with pytest.raises(HTTPException) as invalid_ttl:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert invalid_ttl.value.status_code == 422
 
@@ -221,13 +229,18 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         uuid.uuid4(),
         RunCooldownRequest(reason="bad", ttl_seconds=1),
         db=db,
+        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
     )
     assert escalated.status == "maintenance_escalated"
 
     monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(return_value=(None, 1, False, 2)))
     with pytest.raises(HTTPException) as no_expiry:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert no_expiry.value.status_code == 500
 

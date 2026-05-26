@@ -169,6 +169,7 @@ async def test_cooldown_intent_payload_shape(
         device.id,
         reason=cooldown_reason,
         ttl_seconds=120,
+        settings=FakeSettingsReader({}),
     )
     assert not escalated  # non-escalation path registers the intents we want
 

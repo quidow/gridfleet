@@ -8,6 +8,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.runs import service as run_service
 from app.runs.schemas import RunCreate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -53,6 +54,7 @@ async def test_create_run_rechecks_readiness_after_lock(
                         requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
                     ),
                     publisher=publisher,
+                    settings=FakeSettingsReader({}),
                 )
 
     async def clear_verification_after_readiness() -> None:

@@ -12,6 +12,7 @@ from app.devices.services import state_write_guard
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
@@ -73,6 +74,7 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
             created_by="tester",
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
     return run.id
 

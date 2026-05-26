@@ -19,6 +19,7 @@ from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
@@ -763,7 +764,9 @@ async def test_concurrent_create_run_reserves_device_once(
         async with session_factory() as session:
             run_payload = payload.model_copy(update={"name": name})
             try:
-                run, _devices = await run_service.create_run(session, run_payload, publisher=event_bus)
+                run, _devices = await run_service.create_run(
+                    session, run_payload, publisher=event_bus, settings=FakeSettingsReader({})
+                )
                 return "success", str(run.id)
             except ValueError as exc:
                 return "error", str(exc)
@@ -816,6 +819,7 @@ async def test_fetch_session_counts_groups_by_status(
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
     run_id = run[0].id
 
@@ -857,6 +861,7 @@ async def test_list_runs_returns_session_counts_per_run(
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
     run_id = run[0].id
 
@@ -896,6 +901,7 @@ async def test_get_run_detail_returns_session_counts(
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
     run_id = run[0].id
 
