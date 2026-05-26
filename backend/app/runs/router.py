@@ -74,7 +74,9 @@ async def create_run(
         )
 
     try:
-        run, device_infos = await run_service.create_run(db, data, publisher=events.publisher)
+        run, device_infos = await run_service.create_run(
+            db, data, publisher=events.publisher, settings=settings_services.reader
+        )
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as e:
@@ -231,6 +233,7 @@ async def cooldown_device_endpoint(
     device_id: uuid.UUID,
     payload: RunCooldownRequest,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
         excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
@@ -239,6 +242,7 @@ async def cooldown_device_endpoint(
             device_id,
             reason=payload.reason,
             ttl_seconds=payload.ttl_seconds,
+            settings=settings_services.reader,
         )
     except ValueError as e:
         msg = str(e)

@@ -133,20 +133,20 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 
 
 async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(run_reaper._default_settings, "get", lambda _key: 1)
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(run_reaper, "async_session", _fake_session)
     monkeypatch.setattr(run_reaper, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader")))
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop(publisher=event_bus)
+        await run_reaper.run_reaper_loop(
+            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+        )
 
     run_reaper.os._exit.assert_called_once_with(70)
 
 
 async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(run_reaper._default_settings, "get", lambda _key: 1)
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(run_reaper, "async_session", _fake_session)
     monkeypatch.setattr(
@@ -158,7 +158,9 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop(publisher=event_bus)
+        await run_reaper.run_reaper_loop(
+            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+        )
 
     run_reaper.os._exit.assert_called_once_with(70)
 

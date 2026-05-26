@@ -654,7 +654,11 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
     with patch.object(runs.run_service, "cooldown_device", new=AsyncMock(side_effect=ValueError("Run not found"))):
         with pytest.raises(HTTPException) as caught:
             await runs.cooldown_device_endpoint(
-                uuid.uuid4(), uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=object()
+                uuid.uuid4(),
+                uuid.uuid4(),
+                RunCooldownRequest(reason="bad", ttl_seconds=1),
+                db=object(),
+                settings_services=SimpleNamespace(reader=object()),
             )
     assert caught.value.status_code == 404
 
@@ -665,7 +669,11 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
     ):
         with pytest.raises(HTTPException) as caught:
             await runs.cooldown_device_endpoint(
-                uuid.uuid4(), uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=object()
+                uuid.uuid4(),
+                uuid.uuid4(),
+                RunCooldownRequest(reason="bad", ttl_seconds=1),
+                db=object(),
+                settings_services=SimpleNamespace(reader=object()),
             )
     assert caught.value.status_code == 422
 
@@ -2340,6 +2348,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
                 device_id,
                 RunCooldownRequest(reason="flaky", ttl_seconds=30),
                 db=object(),
+                settings_services=SimpleNamespace(reader=object()),
             )
     assert exc.value.status_code == 404
 
@@ -2352,6 +2361,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             device_id,
             RunCooldownRequest(reason="flaky", ttl_seconds=30),
             db=object(),
+            settings_services=SimpleNamespace(reader=object()),
         )
     assert cooldown.status == "cooldown_set"
 
@@ -2696,5 +2706,6 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
                     uuid.uuid4(),
                     RunCooldownRequest(reason="bad", ttl_seconds=10),
                     db=object(),
+                    settings_services=SimpleNamespace(reader=object()),
                 )
         assert exc.value.status_code == status_code
