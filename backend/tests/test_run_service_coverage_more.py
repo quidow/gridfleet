@@ -370,7 +370,7 @@ async def test_cooldown_device_guard_paths(
         "general.device_cooldown_max_sec": 30,
         "general.device_cooldown_escalation_threshold": 3,
     }
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.settings_service.get", lambda key: settings[key])
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}._default_settings.get", lambda key: settings[key])
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
@@ -542,7 +542,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
     monkeypatch.setattr(
-        f"{RUN_FAILURES_MODULE}.settings_service.get",
+        f"{RUN_FAILURES_MODULE}._default_settings.get",
         lambda key: {
             "general.device_cooldown_max_sec": 60,
             "general.device_cooldown_escalation_threshold": 1,
@@ -689,7 +689,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
     assert run_service._reserved_entry_is_excluded(
         SimpleNamespace(excluded=True, excluded_until=datetime.now(UTC) + timedelta(minutes=1))
     )
-    monkeypatch.setattr("app.runs.service_allocator.settings_service.get", lambda key: 10)
+    monkeypatch.setattr("app.runs.service_allocator._default_settings.get", lambda key: 10)
     with pytest.raises(ValueError, match="exceeds maximum"):
         run_service._resolve_run_options(
             SimpleNamespace(ttl_minutes=20, heartbeat_timeout_sec=None),

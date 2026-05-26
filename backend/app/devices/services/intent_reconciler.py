@@ -37,7 +37,7 @@ from app.devices.services.intent_evaluator import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
@@ -53,7 +53,7 @@ LOOP_NAME = "device_intent_reconciler"
 async def device_intent_reconciler_loop() -> None:
     cycle = 0
     while True:
-        interval = int(settings_service.get("general.intent_reconcile_interval_sec"))
+        interval = int(_default_settings.get("general.intent_reconcile_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, float(interval)).cycle(), async_session() as db:
                 await run_device_intent_reconciler_once(db, cycle=cycle)
@@ -72,7 +72,7 @@ async def device_intent_reconciler_loop() -> None:
 
 async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> None:
     await assert_current_leader(db)
-    full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
+    full_scan_every = int(_default_settings.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db)
     await _reconcile_expired_intents(db)
     try:

@@ -11,7 +11,7 @@ from app.core.observability import get_logger, observe_background_loop
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run_for_update
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 logger = get_logger(__name__)
 LOOP_NAME = "run_reaper"
@@ -101,7 +101,7 @@ async def _reap_stale_runs(db: AsyncSession) -> None:
 
 async def run_reaper_loop() -> None:
     """Background loop that expires stale test runs."""
-    interval = float(settings_service.get("reservations.reaper_interval_sec"))
+    interval = float(_default_settings.get("reservations.reaper_interval_sec"))
     # On startup, immediately check for stale runs (e.g. manager was restarted)
     try:
         async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:

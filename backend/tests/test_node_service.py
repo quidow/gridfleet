@@ -507,7 +507,7 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
         device_type="emulator",
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent._default_settings") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4723)
 
@@ -528,7 +528,7 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
         tags={"emulator_headless": "false"},
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent._default_settings") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4724)
 
@@ -552,7 +552,7 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
         name="Android Browser Device",
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
+    with patch("app.appium_nodes.services.reconciler_agent._default_settings") as mock_settings:
         mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
         payload = build_agent_start_payload(device, 4725)
 
@@ -613,7 +613,7 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
         ),
         patch("app.appium_nodes.services.reconciler_agent.get_default_plugins", return_value=[]),
-        patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings,
+        patch("app.appium_nodes.services.reconciler_agent._default_settings") as mock_settings,
     ):
         mock_settings.get.side_effect = lambda key: {
             "grid.hub_url": "http://selenium-hub:4444",

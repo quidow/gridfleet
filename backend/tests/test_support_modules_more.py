@@ -173,7 +173,7 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
             "app.runs.service_reaper._reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
         ),
-        patch("app.runs.service_reaper.settings_service.get", return_value=1),
+        patch("app.runs.service_reaper._default_settings.get", return_value=1),
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):

@@ -50,7 +50,7 @@ async def test_ping_success_reports_fresh_mode_when_pool_disabled(monkeypatch: p
             return False
         raise KeyError(key)
 
-    monkeypatch.setattr("app.agent_comm.operations.settings_service.get", fake_setting)
+    monkeypatch.setattr("app.agent_comm.operations._default_settings.get", fake_setting)
     response = httpx.Response(
         200,
         json=_VALID_HEALTH_PAYLOAD,

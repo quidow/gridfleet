@@ -11,10 +11,11 @@ from app.core.database import async_session
 from app.core.observability import get_logger
 from app.events import event_bus
 from app.hosts.models.host import Host
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
+    from app.settings.service import SettingsService
 
 logger = get_logger(__name__)
 
@@ -48,16 +49,17 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, publisher: EventPublisher | None = None) -> None:
+    def __init__(self, *, publisher: EventPublisher | None = None, settings: SettingsService | None = None) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
+        self._settings = settings or _default_settings
 
     def _failure_threshold(self) -> int:
-        return int(settings_service.get("agent.circuit_breaker_failure_threshold"))
+        return int(self._settings.get("agent.circuit_breaker_failure_threshold"))
 
     def _cooldown_seconds(self) -> float:
-        return float(settings_service.get("agent.circuit_breaker_cooldown_seconds"))
+        return float(self._settings.get("agent.circuit_breaker_cooldown_seconds"))
 
     def failure_threshold(self) -> int:
         """Public read accessor for the current failure threshold (reads from settings)."""

@@ -226,7 +226,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(appium_reconciler.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(appium_reconciler._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", lambda: Session())
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
@@ -258,7 +258,7 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         active_connection_target=None,
         stop_pending=False,
     )
-    monkeypatch.setattr(appium_reconciler.settings_service, "get", lambda key: 1)
+    monkeypatch.setattr(appium_reconciler._default_settings, "get", lambda key: 1)
     monkeypatch.setattr(appium_reconciler, "async_session", lambda: Session())
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"appium_processes": "bad"}))

@@ -247,7 +247,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
             new=AsyncMock(side_effect=_mark_device_available),
         ),
         patch(
-            "app.devices.services.lifecycle_policy.settings_service.get",
+            "app.devices.services.lifecycle_policy._default_settings.get",
             side_effect=_settings_stub(threshold),
         ),
         patch("app.sessions.service_viability.run_session_viability_probe", new=_failing_probe()),
@@ -293,7 +293,7 @@ async def test_review_required_short_circuits_auto_recovery(
     probe = AsyncMock()
     with (
         patch(
-            "app.devices.services.lifecycle_policy.settings_service.get",
+            "app.devices.services.lifecycle_policy._default_settings.get",
             side_effect=_settings_stub(5),
         ),
         patch("app.sessions.service_viability.run_session_viability_probe", new=probe),

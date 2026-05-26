@@ -10,7 +10,7 @@ from app.devices.models import Device
 from app.events import event_bus as _default_event_bus
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.events.catalog import EventSeverity
     from app.events.event_bus import EventBus
     from app.hosts.schemas import HostCreate, HostRegister
+    from app.settings.service import SettingsService
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
 MIN_ORCHESTRATION_CONTRACT_VERSION = 2
@@ -90,9 +91,9 @@ def update_missing_prerequisites_from_health(host: Host, missing_prerequisites: 
     host.capabilities = capabilities
 
 
-async def create_host(db: AsyncSession, data: HostCreate) -> Host:
+async def create_host(db: AsyncSession, data: HostCreate, *, settings: SettingsService | None = None) -> Host:
     payload = data.model_dump()
-    payload["agent_port"] = payload["agent_port"] or settings_service.get("agent.default_port")
+    payload["agent_port"] = payload["agent_port"] or (settings or _default_settings).get("agent.default_port")
     host = Host(**payload)
     db.add(host)
     await db.commit()
@@ -142,7 +143,7 @@ async def _apply_reregister(db: AsyncSession, host: Host, data: HostRegister) ->
 
 
 async def register_host(
-    db: AsyncSession, data: HostRegister, *, publisher: EventBus | None = None
+    db: AsyncSession, data: HostRegister, *, publisher: EventBus | None = None, settings: SettingsService | None = None
 ) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
     validate_orchestration_contract(data.capabilities, host_label=data.hostname)
@@ -154,8 +155,9 @@ async def register_host(
         return await _apply_reregister(db, host, data), False
 
     # New registration
-    status = HostStatus.online if settings_service.get("agent.auto_accept_hosts") else HostStatus.pending
-    agent_port = data.agent_port or settings_service.get("agent.default_port")
+    _settings = settings or _default_settings
+    status = HostStatus.online if _settings.get("agent.auto_accept_hosts") else HostStatus.pending
+    agent_port = data.agent_port or _settings.get("agent.default_port")
     host = Host(
         hostname=data.hostname,
         ip=data.ip,

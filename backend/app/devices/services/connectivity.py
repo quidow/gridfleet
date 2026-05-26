@@ -32,7 +32,7 @@ from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -275,9 +275,9 @@ async def track_previously_offline_device(db: AsyncSession, identity_value: str)
 
 
 async def _check_connectivity(db: AsyncSession) -> None:
-    ip_ping_threshold = int(settings_service.get("device_checks.ip_ping.consecutive_fail_threshold"))
-    ip_ping_timeout = float(settings_service.get("device_checks.ip_ping.timeout_sec"))
-    ip_ping_count = int(settings_service.get("device_checks.ip_ping.count_per_cycle"))
+    ip_ping_threshold = int(_default_settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
+    ip_ping_timeout = float(_default_settings.get("device_checks.ip_ping.timeout_sec"))
+    ip_ping_count = int(_default_settings.get("device_checks.ip_ping.count_per_cycle"))
 
     stmt = select(Host).where(Host.status == HostStatus.online)
     result = await db.execute(stmt)
@@ -606,7 +606,7 @@ async def _check_expired_cooldowns(db: AsyncSession) -> None:
 async def device_connectivity_loop() -> None:
     """Background loop that checks device connectivity via host agents."""
     while True:
-        interval = float(settings_service.get("general.device_check_interval_sec"))
+        interval = float(_default_settings.get("general.device_check_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_expired_cooldowns(db)

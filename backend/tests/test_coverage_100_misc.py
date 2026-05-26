@@ -251,7 +251,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     ]
     assert host_versioning.normalize_agent_version_setting(123) is None
 
-    monkeypatch.setattr(node_service_common.settings_service, "get", lambda _key: [])
+    monkeypatch.setattr(node_service_common._default_settings, "get", lambda _key: [])
     assert node_service_common.get_default_plugins() == []
     device_for_caps = SimpleNamespace(
         id=uuid.uuid4(),
@@ -470,7 +470,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     await agent_reconfigure_delivery.deliver_agent_reconfigures(reconfigure_db, row.device_id)
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
-    monkeypatch.setattr(data_cleanup.settings_service, "get", lambda key: 0 if key == "retention.audit_log_days" else 1)
+    monkeypatch.setattr(
+        data_cleanup._default_settings, "get", lambda key: 0 if key == "retention.audit_log_days" else 1
+    )
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
     monkeypatch.setattr(data_cleanup.event_bus, "publish", AsyncMock())

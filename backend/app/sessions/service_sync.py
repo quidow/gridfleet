@@ -32,7 +32,7 @@ from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
@@ -534,7 +534,7 @@ async def session_sync_loop() -> None:
     """
     doorbell = _get_doorbell()
     while True:
-        interval = float(settings_service.get("grid.session_poll_interval_sec"))
+        interval = float(_default_settings.get("grid.session_poll_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _sync_sessions(db)

@@ -29,7 +29,7 @@ from app.runs.service_reservation_lookup import (
     exclude_device_from_run,
     get_reservation_entry_for_device,
 )
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 
 async def _enter_maintenance(
@@ -171,14 +171,14 @@ async def cooldown_device(
 
     Returns (excluded_until, cooldown_count, escalated, threshold).
     """
-    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
+    max_ttl = int(_default_settings.get("general.device_cooldown_max_sec"))
     if ttl_seconds > max_ttl:
         raise ValueError(f"ttl_seconds must be <= {max_ttl}")
     clean_reason = reason.strip()
     if not clean_reason:
         raise ValueError("Cooldown reason is required")
 
-    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
+    threshold = int(_default_settings.get("general.device_cooldown_escalation_threshold"))
 
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
     run = run_result.scalar_one_or_none()

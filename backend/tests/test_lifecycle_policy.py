@@ -829,7 +829,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
-            "app.devices.services.lifecycle_policy.settings_service.get",
+            "app.devices.services.lifecycle_policy._default_settings.get",
             side_effect=lambda key: {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 20,
@@ -1798,7 +1798,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
     monkeypatch.setattr(
-        lifecycle_policy_module.settings_service,
+        lifecycle_policy_module._default_settings,
         "get",
         lambda key: {
             "general.lifecycle_recovery_backoff_base_sec": 5,

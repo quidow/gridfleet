@@ -14,7 +14,7 @@ from app.core.errors import AgentCallError
 from app.core.observability import get_logger, observe_background_loop, parse_timestamp
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -121,7 +121,7 @@ async def fetch_host_resource_telemetry(
     if host_exists is None:
         return None
 
-    retention_hours = int(settings_service.get("retention.host_resource_telemetry_hours"))
+    retention_hours = int(_default_settings.get("retention.host_resource_telemetry_hours"))
     if since >= until:
         raise ValueError("since must be earlier than until")
     if not 1 <= bucket_minutes <= 1440:
@@ -177,7 +177,7 @@ async def fetch_host_resource_telemetry(
 
 async def host_resource_telemetry_loop() -> None:
     while True:
-        interval = float(settings_service.get("general.host_resource_telemetry_interval_sec"))
+        interval = float(_default_settings.get("general.host_resource_telemetry_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await poll_host_resource_telemetry_once(db)

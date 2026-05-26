@@ -11,12 +11,14 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import resource_service as resource_claims
 from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.devices.models import Device
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.settings.service import SettingsService
 
 APPIUM_PORT_CAPABILITY = resource_claims.INTERNAL_APPIUM_PORT_CAPABILITY
 
@@ -27,6 +29,7 @@ async def candidate_ports(
     host_id: uuid.UUID,
     preferred_port: int | None = None,
     exclude_ports: set[int] | None = None,
+    settings: SettingsService | None = None,
 ) -> list[int]:
     """Return free main Appium ports for one host, sorted ascending."""
     stmt = (
@@ -43,8 +46,9 @@ async def candidate_ports(
     result = await db.execute(stmt)
     used_ports = {row[0] for row in result.all()}
     excluded = exclude_ports or set()
-    start_port = settings_service.get("appium.port_range_start")
-    end_port = settings_service.get("appium.port_range_end")
+    _settings = settings or _default_settings
+    start_port = _settings.get("appium.port_range_start")
+    end_port = _settings.get("appium.port_range_end")
 
     def is_available(port: int) -> bool:
         return start_port <= port <= end_port and port not in used_ports and port not in excluded

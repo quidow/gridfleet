@@ -43,7 +43,7 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
     with (
         patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.agent_comm.operations.settings_service.get",
+            "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else None,
         ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
@@ -77,7 +77,7 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
     with (
         patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.agent_comm.operations.settings_service.get",
+            "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: True if key == "agent.http_pool_enabled" else 10 if "max_keepalive" in key else 60,
         ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
@@ -100,10 +100,10 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
 def test_pool_enabled_returns_false_when_settings_cache_uninitialized() -> None:
     from app.agent_comm.operations import _pool_enabled
 
-    with patch("app.agent_comm.operations.settings_service.get", side_effect=KeyError("not initialised")):
+    with patch("app.agent_comm.operations._default_settings.get", side_effect=KeyError("not initialised")):
         assert _pool_enabled() is False
 
-    with patch("app.agent_comm.operations.settings_service.get", side_effect=RuntimeError("not initialised")):
+    with patch("app.agent_comm.operations._default_settings.get", side_effect=RuntimeError("not initialised")):
         assert _pool_enabled() is False
 
 
@@ -119,7 +119,7 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
     fresh_pool = AgentHttpPool()
     with (
         patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
-        patch("app.agent_comm.operations.settings_service.get", side_effect=KeyError("not initialised")),
+        patch("app.agent_comm.operations._default_settings.get", side_effect=KeyError("not initialised")),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -149,7 +149,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
     with (
         patch("app.agent_comm.operations.agent_http_pool", fresh_pool),
         patch(
-            "app.agent_comm.operations.settings_service.get",
+            "app.agent_comm.operations._default_settings.get",
             side_effect=lambda key: False if key == "agent.http_pool_enabled" else 10,
         ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),

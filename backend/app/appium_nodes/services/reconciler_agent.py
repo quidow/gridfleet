@@ -58,7 +58,7 @@ from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 assert_runnable = pack_platform_resolver.assert_runnable
 build_device_context = pack_start_shim.build_device_context
@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from app.devices.models import Device
     from app.events.event_bus import EventBus
     from app.hosts.models import Host
+    from app.settings.service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -142,18 +143,21 @@ def upsert_node(
     port: int,
     pid: int | None,
     active_connection_target: str | None,
+    *,
+    settings: SettingsService | None = None,
 ) -> AppiumNode:
+    _settings = settings or _default_settings
     if device.appium_node:
         node = cast("AppiumNode", device.appium_node)
         node.port = port
-        node.grid_url = settings_service.get("grid.hub_url")
+        node.grid_url = _settings.get("grid.hub_url")
         node.pid = pid
         node.active_connection_target = active_connection_target
     else:
         node = AppiumNode(
             device_id=device.id,
             port=port,
-            grid_url=settings_service.get("grid.hub_url"),
+            grid_url=_settings.get("grid.hub_url"),
             pid=pid,
             active_connection_target=active_connection_target,
         )
@@ -308,7 +312,9 @@ def build_agent_start_payload(
     *,
     allocated_caps: dict[str, Any] | None = None,
     extra_caps: dict[str, Any] | None = None,
+    settings: SettingsService | None = None,
 ) -> dict[str, Any]:
+    _settings = settings or _default_settings
     headless = (device.tags or {}).get("emulator_headless", "true") != "false"
     manager_owned_keys = appium_capability_keys.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
     node = (
@@ -327,8 +333,8 @@ def build_agent_start_payload(
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
         "port": port,
-        "grid_url": settings_service.get("grid.hub_url"),
-        "plugins": get_default_plugins() or None,
+        "grid_url": _settings.get("grid.hub_url"),
+        "plugins": get_default_plugins(settings=_settings) or None,
         "extra_caps": extra_caps
         if extra_caps is not None
         else (
@@ -346,7 +352,7 @@ def build_agent_start_payload(
         "device_type": device.device_type.value,
         "ip_address": device.ip_address,
         "allocated_caps": allocated_caps or None,
-        "session_override": settings_service.get("appium.session_override"),
+        "session_override": _settings.get("appium.session_override"),
         "headless": headless,
     }
 
@@ -383,8 +389,8 @@ async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payl
     }
 
 
-def _agent_start_timeout(device: Device) -> float | int:
-    base = int(settings_service.get("appium.startup_timeout_sec")) + 5
+def _agent_start_timeout(device: Device, *, settings: SettingsService | None = None) -> float | int:
+    base = int((settings or _default_settings).get("appium.startup_timeout_sec")) + 5
     if device_is_virtual(device):
         return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
     return base

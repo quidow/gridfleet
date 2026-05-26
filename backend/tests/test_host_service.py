@@ -43,7 +43,7 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
 
 
 async def test_create_and_delete_host(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.hosts.service.settings_service.get", lambda key: 6200)
+    monkeypatch.setattr("app.hosts.service._default_settings.get", lambda key: 6200)
 
     host = await host_service.create_host(
         db_session,
@@ -108,7 +108,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "app.hosts.service.settings_service.get",
+        "app.hosts.service._default_settings.get",
         lambda key: {"agent.auto_accept_hosts": False, "agent.default_port": 5151}[key],
     )
     host, is_new = await host_service.register_host(
@@ -127,7 +127,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
     assert host.agent_port == 5151
 
     monkeypatch.setattr(
-        "app.hosts.service.settings_service.get",
+        "app.hosts.service._default_settings.get",
         lambda key: {"agent.auto_accept_hosts": True, "agent.default_port": 5200}[key],
     )
     online_host, _ = await host_service.register_host(

@@ -37,7 +37,7 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.plugins import service as plugin_service
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from app.core.type_defs import AsyncTaskFactory
     from app.events.event_bus import EventBus
+    from app.settings.service import SettingsService
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -101,9 +102,10 @@ _TRANSPORT_TO_OUTCOME = {
 }
 
 
-def _heartbeat_client_mode() -> ClientMode:
+def _heartbeat_client_mode(*, settings: SettingsService | None = None) -> ClientMode:
     try:
-        return ClientMode.pooled if bool(settings_service.get("agent.http_pool_enabled")) else ClientMode.fresh
+        pool_enabled = bool((settings or _default_settings).get("agent.http_pool_enabled"))
+        return ClientMode.pooled if pool_enabled else ClientMode.fresh
     except (KeyError, RuntimeError):
         return ClientMode.fresh
 
@@ -578,10 +580,10 @@ async def _apply_host_ping_result(
         host.hostname,
         host.ip,
         count,
-        settings_service.get("general.max_missed_heartbeats"),
+        _default_settings.get("general.max_missed_heartbeats"),
     )
 
-    if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+    if count >= _default_settings.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
         logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
         queue_event_for_session(
             db,
@@ -640,8 +642,8 @@ async def _check_hosts(db: AsyncSession) -> None:
     iteration = _next_loop_iteration()
     leader_id = str(control_plane_leader.holder_id)
 
-    interval = float(settings_service.get("general.heartbeat_interval_sec"))
-    max_missed = int(settings_service.get("general.max_missed_heartbeats"))
+    interval = float(_default_settings.get("general.heartbeat_interval_sec"))
+    max_missed = int(_default_settings.get("general.max_missed_heartbeats"))
     global _LAST_CYCLE_MONOTONIC
     now_mono = time.monotonic()
     prev_mono = _LAST_CYCLE_MONOTONIC
@@ -706,7 +708,7 @@ async def _check_hosts(db: AsyncSession) -> None:
 async def heartbeat_loop() -> None:
     """Background loop that pings all host agents."""
     while True:
-        interval = float(settings_service.get("general.heartbeat_interval_sec"))
+        interval = float(_default_settings.get("general.heartbeat_interval_sec"))
         cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:

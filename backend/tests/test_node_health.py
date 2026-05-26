@@ -1243,7 +1243,7 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
     monkeypatch.setattr(node_health, "observe_background_loop", MagicMock(return_value=Observation()))
     monkeypatch.setattr(node_health, "async_session", fake_session)
     monkeypatch.setattr(node_health, "_check_nodes", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(node_health.settings_service, "get", lambda key: 1)
+    monkeypatch.setattr(node_health._default_settings, "get", lambda key: 1)
     monkeypatch.setattr(node_health.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
     log_exception = MagicMock()
     monkeypatch.setattr(node_health.logger, "exception", log_exception)

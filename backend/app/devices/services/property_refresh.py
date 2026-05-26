@@ -13,7 +13,7 @@ from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 from app.packs.services import discovery as pack_discovery
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
@@ -88,7 +88,7 @@ async def _refresh_all_properties() -> None:
 async def property_refresh_loop() -> None:
     """Background loop that periodically refreshes device properties."""
     while True:
-        interval = float(settings_service.get("general.property_refresh_interval_sec"))
+        interval = float(_default_settings.get("general.property_refresh_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle():
                 await _refresh_all_properties()

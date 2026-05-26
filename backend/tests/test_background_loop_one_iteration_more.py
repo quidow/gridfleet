@@ -53,7 +53,7 @@ class _Session:
 
 async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        appium_reconciler.settings_service, "get", lambda key: 0.01 if key.endswith("interval_sec") else 1
+        appium_reconciler._default_settings, "get", lambda key: 0.01 if key.endswith("interval_sec") else 1
     )
     monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", _Session)
@@ -74,7 +74,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(heartbeat._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock())
@@ -101,7 +101,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(session_sync._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
@@ -114,7 +114,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(session_sync._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
@@ -125,7 +125,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fleet_capacity.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(fleet_capacity._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(fleet_capacity, "async_session", _Session)
     monkeypatch.setattr(
@@ -140,7 +140,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
     assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
 
-    monkeypatch.setattr(hardware_telemetry.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(hardware_telemetry._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(hardware_telemetry, "async_session", _Session)
     monkeypatch.setattr(
@@ -182,7 +182,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     def fake_exit(code: int) -> None:
         raise RuntimeError(f"exit {code}")
 
-    monkeypatch.setattr(appium_reconciler.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(appium_reconciler._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", _Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=LeadershipLost("lost")))
@@ -190,7 +190,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(RuntimeError, match="exit 70"):
         await appium_reconciler.appium_reconciler_loop()
 
-    monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(heartbeat._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=LeadershipLost("lost")))
@@ -199,7 +199,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(RuntimeError, match="exit 70"):
         await heartbeat.heartbeat_loop()
 
-    monkeypatch.setattr(session_sync.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(session_sync._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=LeadershipLost("lost")))
