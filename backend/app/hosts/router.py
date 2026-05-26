@@ -333,7 +333,7 @@ async def get_host_resource_telemetry(
     bucket_minutes: int = Query(5, ge=1, le=1440),
 ) -> HostResourceTelemetryResponse:
     window_end = until or datetime.now(UTC)
-    default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
+    default_window_minutes = int(settings_services.reader.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:
         payload = await host_resource_telemetry.fetch_host_resource_telemetry(
