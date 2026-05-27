@@ -28,6 +28,8 @@ from app.events.models import SystemEvent
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+    from app.events.protocols import EventPublisher
+
 logger = get_logger(__name__)
 
 NOTIFY_CHANNEL = "system_events"
@@ -137,6 +139,10 @@ class EventBus:
         self._subscribers.discard(q)
         logger.info("SSE client unsubscribed (total: %d)", len(self._subscribers))
 
+    def track_task(self, task: asyncio.Task[None]) -> None:
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
+
     async def publish(self, event_type: str, data: dict[str, Any], severity: EventSeverity | None = None) -> None:
         if event_type in PUBLIC_EVENT_NAME_SET:
             resolved: EventSeverity = severity if severity is not None else default_severity_for(event_type)
@@ -237,8 +243,7 @@ class EventBus:
             except asyncio.QueueFull:
                 logger.warning("Webhook queue full, dropping event")
         task = asyncio.create_task(self._dispatch_handlers(event))
-        self._handler_tasks.add(task)
-        task.add_done_callback(self._handler_tasks.discard)
+        self.track_task(task)
 
     async def _shutdown_handler_tasks(self, timeout: float = HANDLER_DRAIN_TIMEOUT_SEC) -> None:
         # Handler tasks can spawn additional handler tasks (e.g. an
@@ -361,7 +366,7 @@ _PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"
 
 
 async def _publish_pending_events(
-    events: list[tuple[str, dict[str, Any], EventSeverity | None]], bus: EventBus
+    events: list[tuple[str, dict[str, Any], EventSeverity | None]], bus: EventPublisher
 ) -> None:
     for event_type, data, severity in events:
         try:
@@ -376,7 +381,7 @@ def queue_event_for_session(
     data: dict[str, Any],
     *,
     severity: EventSeverity | None = None,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> None:
     """Queue an event to dispatch after the outer transaction commits.
 
@@ -415,8 +420,7 @@ def queue_event_for_session(
         if not events:
             return
         task = loop.create_task(_publish_pending_events(events, _bus))
-        _bus._handler_tasks.add(task)
-        task.add_done_callback(_bus._handler_tasks.discard)
+        _bus.track_task(task)
 
     def _drop_on_rollback(_session: object) -> None:
         sync_session.info.pop(_PENDING_EVENTS_KEY, None)
@@ -439,7 +443,7 @@ def queue_device_crashed_event(
     will_restart: bool,
     process: str | None = None,
     severity: EventSeverity | None = None,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> None:
     """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
     queue_event_for_session(

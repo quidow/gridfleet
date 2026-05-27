@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.events.catalog import EventSeverity
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
@@ -108,7 +108,7 @@ def queue_session_started_event(
     *,
     device: Device | None,
     run_id: str | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     if publisher is None:
         return
@@ -125,7 +125,7 @@ def queue_session_ended_event(
     session: Session,
     *,
     device: Device | None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     if publisher is None:
         return

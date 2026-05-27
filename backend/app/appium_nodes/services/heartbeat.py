@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -335,7 +335,7 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
 
 
 async def _ingest_appium_restart_events(
-    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventBus | None = None
+    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher | None = None
 ) -> None:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
@@ -533,7 +533,7 @@ async def _apply_host_ping_result(
     guard_active: bool,
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.

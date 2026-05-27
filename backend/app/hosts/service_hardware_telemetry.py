@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 
@@ -239,7 +239,7 @@ async def apply_telemetry_sample(
     device: Device,
     sample: dict[str, Any],
     *,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
 ) -> HardwareHealthStatus:
     device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))

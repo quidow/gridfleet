@@ -79,7 +79,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ async def mark_node_started(
     active_connection_target: str | None = None,
     allocated_caps: dict[str, Any] | None = None,
     clear_transition: bool = False,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
@@ -255,7 +255,7 @@ async def mark_node_started(
     return node
 
 
-async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventBus | None = None) -> AppiumNode:
+async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     assert node is not None

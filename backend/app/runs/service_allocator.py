@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
 class _UnmetRequirementError(Exception):
@@ -290,7 +290,7 @@ async def _attempt_create_run(
 
 
 async def create_run(
-    db: AsyncSession, data: RunCreate, *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, data: RunCreate, *, publisher: EventPublisher, settings: SettingsReader
 ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
     """Create a test run reservation. Returns (run, reserved_device_infos)."""
 

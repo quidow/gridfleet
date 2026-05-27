@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 LOOP_NAME = "run_reaper"
@@ -38,7 +38,7 @@ def _ttl_stale(run: TestRun, now: datetime) -> bool:
     return now > run.created_at + timedelta(minutes=run.ttl_minutes)
 
 
-async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus, settings: SettingsReader) -> None:
+async def _reap_stale_runs(db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader) -> None:
     now = datetime.now(UTC)
 
     # Postgres make_interval(years, months, weeks, days, hours, mins, secs).
@@ -108,7 +108,7 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus, settings: S
             )
 
 
-async def run_reaper_loop(*, publisher: EventBus, settings: SettingsReader) -> None:
+async def run_reaper_loop(*, publisher: EventPublisher, settings: SettingsReader) -> None:
     """Background loop that expires stale test runs."""
     interval = float(settings.get("reservations.reaper_interval_sec"))
     # On startup, immediately check for stale runs (e.g. manager was restarted)

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 
@@ -244,7 +244,7 @@ async def handle_node_crash(
     *,
     source: str,
     reason: str,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 

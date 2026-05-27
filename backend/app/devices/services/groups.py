@@ -18,10 +18,10 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
-async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventBus) -> DeviceGroup:
+async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventPublisher) -> DeviceGroup:
     group = DeviceGroup(
         name=data.name,
         description=data.description,
@@ -91,7 +91,7 @@ async def get_group(db: AsyncSession, group_id: uuid.UUID, *, settings: Settings
 
 
 async def update_group(
-    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventBus
+    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventPublisher
 ) -> DeviceGroup | None:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
@@ -115,7 +115,7 @@ async def update_group(
     return group
 
 
-async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventBus) -> bool:
+async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventPublisher) -> bool:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
     group = result.scalar_one_or_none()
@@ -133,7 +133,7 @@ async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: Even
 
 
 async def add_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventPublisher
 ) -> int:
     if not device_ids:
         return 0
@@ -162,7 +162,7 @@ async def add_members(
 
 
 async def remove_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventBus
+    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventPublisher
 ) -> int:
     stmt = delete(DeviceGroupMembership).where(
         DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)

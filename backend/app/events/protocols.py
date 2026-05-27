@@ -20,6 +20,8 @@ class EventPublisher(Protocol):
         self, event_type: str, data: dict[str, Any], *, severity: EventSeverity | None = None
     ) -> None: ...
 
+    def track_task(self, task: asyncio.Task[None]) -> None: ...
+
 
 @runtime_checkable
 class EventSubscriber(Protocol):

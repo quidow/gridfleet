@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -163,7 +163,7 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
 ) -> None:
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
