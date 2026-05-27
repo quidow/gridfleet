@@ -48,23 +48,16 @@ CLAIM_LEASE_SEC = 30
 POLL_INTERVAL_SEC = 1
 LOOP_NAME = "webhook_delivery"
 
-_session_factory: async_sessionmaker[AsyncSession] | None = None
-
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def configure(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    global _session_factory
-    _session_factory = session_factory
-
-
-async def handle_system_event(event: Event) -> None:
-    if _session_factory is None:
-        return
-
-    async with _session_factory() as db:
+async def handle_system_event(
+    event: Event,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
         row_result = await db.execute(select(SystemEvent).where(SystemEvent.event_id == event.id))
         system_event = row_result.scalar_one_or_none()
         if system_event is None:

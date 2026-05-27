@@ -9,7 +9,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.events.event_bus import EventBus, set_bus_ref
+from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
 # All test files should import this instead of the old ``from app.events import event_bus``.
 test_event_bus = EventBus()
-set_bus_ref(test_event_bus)  # Wire gauge refresher so metrics tests work.
+register_events_gauge_refresher(test_event_bus)  # Wire gauge refresher so metrics tests work.
 
 DEFAULT_HOST_PAYLOAD = {
     "hostname": "test-host",

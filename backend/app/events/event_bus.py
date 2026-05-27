@@ -342,24 +342,19 @@ class EventBus:
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
-# Late-bound reference set once by compose_app at startup.
-# Used only by _refresh_events_gauges; NOT a singleton.
-_bus_ref: EventBus | None = None
+def register_events_gauge_refresher(bus: EventBus) -> None:
+    """Register a gauge refresher that reads subscriber_count from the given bus.
 
+    Called once at startup — the closure captures the bus instance, avoiding
+    module-level mutable state.
+    """
 
-def set_bus_ref(bus: EventBus) -> None:
-    """Set the module-level bus reference for gauge refresh. Called once at startup."""
-    global _bus_ref
-    _bus_ref = bus
+    async def _refresh(db: object) -> None:
+        del db
+        ACTIVE_SSE_CONNECTIONS.set(bus.subscriber_count)
 
+    register_gauge_refresher(_refresh)
 
-async def _refresh_events_gauges(db: object) -> None:
-    del db
-    if _bus_ref is not None:
-        ACTIVE_SSE_CONNECTIONS.set(_bus_ref.subscriber_count)
-
-
-register_gauge_refresher(_refresh_events_gauges)
 
 _PENDING_EVENTS_KEY = "_pending_event_bus_events"
 _PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"

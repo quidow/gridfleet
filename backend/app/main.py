@@ -49,7 +49,7 @@ from app.devices import routers as device_routers
 from app.devices import services as device_services
 from app.devices.services import state_write_guard
 from app.events import router as events
-from app.events.event_bus import EventBus, set_bus_ref
+from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.grid.event_bus_loop import GridEventBusSubscriberLoop
@@ -152,7 +152,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shutdown_coordinator.reset()
 
     bus = EventBus()
-    set_bus_ref(bus)
+    register_events_gauge_refresher(bus)
     svc = SettingsService()
     pool = AgentHttpPool()
     breaker = AgentCircuitBreaker(publisher=bus, settings=svc)
@@ -169,7 +169,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     bus.configure(session_factory=session_factory, engine=engine)
     svc.configure_store_refresh(session_factory)
-    webhook_dispatcher.configure(session_factory)
 
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
@@ -180,7 +179,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
-    bus.register_handler(webhook_dispatcher.handle_system_event)
+    bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))
     await bus.start()
 
     tasks: list[asyncio.Task[None]] = []
