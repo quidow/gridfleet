@@ -89,11 +89,18 @@ def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
     def _reuse_ss(**_: object) -> object:
         return _ss
 
+    _pool = importlib.import_module("app.agent_comm.http_pool").AgentHttpPool()
+
     def _reuse_pool(**_: object) -> object:
-        return importlib.import_module("app.agent_comm.http_pool").agent_http_pool
+        return _pool
+
+    _cb = importlib.import_module("app.agent_comm.circuit_breaker").AgentCircuitBreaker(
+        publisher=test_event_bus,
+        settings=_ss,
+    )
 
     def _reuse_cb(**_: object) -> object:
-        return importlib.import_module("app.agent_comm.circuit_breaker").agent_circuit_breaker
+        return _cb
 
     monkeypatch.setattr(_main_mod, "EventBus", _reuse_eb)
     monkeypatch.setattr(_main_mod, "SettingsService", _reuse_ss)
@@ -102,12 +109,12 @@ def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
 
 
 def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
-    import app.agent_comm.http_pool as agent_http_pool_module
+    from app.agent_comm.http_pool import AgentHttpPool
 
     reopen = AsyncMock()
     close = AsyncMock()
-    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "reopen", reopen)
-    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "close", close)
+    monkeypatch.setattr(AgentHttpPool, "reopen", reopen)
+    monkeypatch.setattr(AgentHttpPool, "close", close)
     return reopen, close
 
 

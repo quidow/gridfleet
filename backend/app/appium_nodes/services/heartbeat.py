@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
     from app.events.event_bus import EventBus
@@ -108,11 +110,25 @@ def _heartbeat_client_mode(*, settings: SettingsReader) -> ClientMode:
         return ClientMode.fresh
 
 
-async def _ping_agent(ip: str, port: int, *, settings: SettingsReader) -> HeartbeatPingResult:
+async def _ping_agent(
+    ip: str,
+    port: int,
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> HeartbeatPingResult:
     started = time.monotonic()
     client_mode = _heartbeat_client_mode(settings=settings)
     try:
-        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient, settings=settings)
+        payload = await agent_health(
+            ip,
+            port,
+            http_client_factory=httpx.AsyncClient,
+            settings=settings,
+            pool=pool,
+            circuit_breaker=circuit_breaker,
+        )
     except CircuitOpenError as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
         return HeartbeatPingResult(
@@ -635,7 +651,13 @@ async def _apply_host_ping_result(
             )
 
 
-async def _check_hosts(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def _check_hosts(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> None:
     """Ping all non-pending hosts in parallel.
 
     ``db`` is used only to fetch the host id list; per-host work runs in fresh
@@ -671,7 +693,9 @@ async def _check_hosts(db: AsyncSession, *, settings: SettingsReader) -> None:
                     host = await host_db.get(Host, host_id)
                     if host is None:
                         return
-                    ping_result = await _ping_agent(host.ip, host.agent_port, settings=settings)
+                    ping_result = await _ping_agent(
+                        host.ip, host.agent_port, settings=settings, pool=pool, circuit_breaker=circuit_breaker
+                    )
                     _emit_heartbeat_log(
                         host_id=str(host.id),
                         host_ip=host.ip,
@@ -708,14 +732,19 @@ async def _check_hosts(db: AsyncSession, *, settings: SettingsReader) -> None:
     await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
 
-async def heartbeat_loop(*, settings: SettingsReader) -> None:
+async def heartbeat_loop(
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> None:
     """Background loop that pings all host agents."""
     while True:
         interval = float(settings.get("general.heartbeat_interval_sec"))
         cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_hosts(db, settings=settings)
+                await _check_hosts(db, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
         except LeadershipLost as exc:
             record_heartbeat_cycle(
                 time.monotonic() - cycle_start,

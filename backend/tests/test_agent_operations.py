@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app.agent_comm import operations as agent_operations
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.errors import AgentUnreachableError, CircuitOpenError
 from tests.fakes import FakeSettingsReader
 
@@ -445,8 +446,9 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
     threshold = 5  # default agent.circuit_breaker_failure_threshold
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.agent_comm.circuit_breaker.monotonic", fake_monotonic)
-        monkeypatch.setattr(agent_circuit_breaker, "_failure_threshold", lambda: threshold)
-        monkeypatch.setattr(agent_circuit_breaker, "_cooldown_seconds", lambda: 30.0)
+        breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=SETTINGS)
+        monkeypatch.setattr(breaker, "_failure_threshold", lambda: threshold)
+        monkeypatch.setattr(breaker, "_cooldown_seconds", lambda: 30.0)
 
         for _ in range(threshold):
             with pytest.raises(AgentUnreachableError):
@@ -456,6 +458,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                     http_client_factory=_strict_client_factory(client),
                     timeout=5,
                     settings=SETTINGS,
+                    circuit_breaker=breaker,
                 )
 
         assert len(client.get_calls) == threshold
@@ -467,6 +470,7 @@ async def test_agent_operations_short_circuit_after_repeated_transport_failures(
                 http_client_factory=_strict_client_factory(client),
                 timeout=5,
                 settings=SETTINGS,
+                circuit_breaker=breaker,
             )
 
     assert len(client.get_calls) == threshold

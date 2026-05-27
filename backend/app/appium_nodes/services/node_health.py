@@ -45,6 +45,8 @@ from app.grid import service as grid_service
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.event_bus import EventBus
 
@@ -59,9 +61,11 @@ async def _bounded_check_node_health(
     device: Device,
     *,
     settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
 ) -> ProbeResult:
     async with semaphore:
-        return await _check_node_health(node, device, settings=settings)
+        return await _check_node_health(node, device, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
 
 
 @dataclass(frozen=True)
@@ -73,7 +77,14 @@ class NodeHealthCheckRequest:
     observed_active_connection_target: str | None
 
 
-async def _check_node_health(node: AppiumNode, device: Device, *, settings: SettingsReader) -> ProbeResult:
+async def _check_node_health(
+    node: AppiumNode,
+    device: Device,
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> ProbeResult:
     try:
         host = require_management_host(device, action="monitor Appium node health")
     except NodeManagerError:
@@ -86,6 +97,8 @@ async def _check_node_health(node: AppiumNode, device: Device, *, settings: Sett
             node.port,
             http_client_factory=httpx.AsyncClient,
             settings=settings,
+            pool=pool,
+            circuit_breaker=circuit_breaker,
         )
         return from_status_response(payload)
     except (AgentUnreachableError, AgentResponseError, CircuitOpenError):
@@ -293,7 +306,13 @@ async def _process_node_health(
         return
 
 
-async def _check_nodes(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def _check_nodes(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> None:
     stmt = (
         select(AppiumNode)
         .where(AppiumNode.pid.is_not(None), AppiumNode.active_connection_target.is_not(None))
@@ -326,6 +345,8 @@ async def _check_nodes(db: AsyncSession, *, settings: SettingsReader) -> None:
                 request.node,
                 request.device,
                 settings=settings,
+                pool=pool,
+                circuit_breaker=circuit_breaker,
             )
             for request in requests
         ]
@@ -362,13 +383,18 @@ async def _check_nodes(db: AsyncSession, *, settings: SettingsReader) -> None:
         await db.commit()
 
 
-async def node_health_loop(*, settings: SettingsReader) -> None:
+async def node_health_loop(
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> None:
     """Background loop that checks Appium node health."""
     while True:
         interval = float(settings.get("general.node_check_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_nodes(db, settings=settings)
+                await _check_nodes(db, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
         except LeadershipLost as exc:
             logger.error(
                 "node_health_loop_leadership_lost",

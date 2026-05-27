@@ -62,6 +62,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.agent_comm.snapshot import RunningAppiumNode
     from app.core.protocols import SettingsReader
 
@@ -239,7 +241,12 @@ async def appium_reconciler_loop_tick(
 LOOP_NAME = "appium_reconciler_loop"
 
 
-async def appium_reconciler_loop(*, settings: SettingsReader) -> None:
+async def appium_reconciler_loop(
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
+) -> None:
     """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
     while True:
         interval = float(settings.get("appium_reconciler.interval_sec"))
@@ -252,9 +259,19 @@ async def appium_reconciler_loop(*, settings: SettingsReader) -> None:
                 desired = await _fetch_desired_rows(db)
                 backoff = await _fetch_backoff_until(db)
             # Agent IO and stops happen outside the DB session — no point holding it open.
-            health_by_host = await _reconcile_all(hosts, rows, settings=settings)
+            health_by_host = await _reconcile_all(
+                hosts, rows, settings=settings, pool=pool, circuit_breaker=circuit_breaker
+            )
             if reconciler_convergence_enabled():
-                await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host, settings=settings)
+                await _drive_convergence(
+                    hosts,
+                    desired,
+                    backoff,
+                    health_by_host=health_by_host,
+                    settings=settings,
+                    pool=pool,
+                    circuit_breaker=circuit_breaker,
+                )
         except LeadershipLost as exc:
             APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
             logger.error(
@@ -276,6 +293,8 @@ async def _reconcile_all(
     rows: list[dict[str, object]],
     *,
     settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
 ) -> dict[uuid.UUID, dict[str, object]]:
     health_by_host: dict[uuid.UUID, dict[str, object]] = {}
 
@@ -287,7 +306,14 @@ async def _reconcile_all(
         db_running_rows: Sequence[dict[str, object]],
     ) -> list[OrphanAppiumNode]:
         async def _fetch_health(*, host: str, agent_port: int) -> dict[str, object]:
-            payload = await agent_health(host, agent_port, http_client_factory=httpx.AsyncClient, settings=settings)
+            payload = await agent_health(
+                host,
+                agent_port,
+                http_client_factory=httpx.AsyncClient,
+                settings=settings,
+                pool=pool,
+                circuit_breaker=circuit_breaker,
+            )
             health = payload or {}
             health_by_host[host_id] = health
             return health
@@ -300,6 +326,8 @@ async def _reconcile_all(
                 port=port,
                 http_client_factory=httpx.AsyncClient,
                 settings=settings,
+                pool=pool,
+                circuit_breaker=circuit_breaker,
             )
             response.raise_for_status()
 
@@ -458,6 +486,8 @@ async def _drive_convergence(
     health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
     require_leader: bool = True,
     settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
 ) -> None:
     semaphore = asyncio.Semaphore(int(settings.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
@@ -489,7 +519,12 @@ async def _drive_convergence(
                 if payload is None:
                     payload = (
                         await agent_health(
-                            host_ip, agent_port, http_client_factory=httpx.AsyncClient, settings=settings
+                            host_ip,
+                            agent_port,
+                            http_client_factory=httpx.AsyncClient,
+                            settings=settings,
+                            pool=pool,
+                            circuit_breaker=circuit_breaker,
                         )
                         or {}
                     )
@@ -536,7 +571,12 @@ def _session_scope(db: AsyncSession | None) -> SessionScope:
 
 
 async def converge_device_now(
-    device_id: uuid.UUID, *, db: AsyncSession | None = None, settings: SettingsReader
+    device_id: uuid.UUID,
+    *,
+    db: AsyncSession | None = None,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol | None = None,
 ) -> AppiumNode | None:
     """Run one desired-state convergence pass for a single operator-requested device.
 
@@ -554,7 +594,15 @@ async def converge_device_now(
             return None
 
     payload = (
-        await agent_health(host.ip, host.agent_port, http_client_factory=httpx.AsyncClient, settings=settings) or {}
+        await agent_health(
+            host.ip,
+            host.agent_port,
+            http_client_factory=httpx.AsyncClient,
+            settings=settings,
+            pool=pool,
+            circuit_breaker=circuit_breaker,
+        )
+        or {}
     )
     appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
     if not isinstance(appium_processes, dict):

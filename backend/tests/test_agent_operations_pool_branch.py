@@ -43,7 +43,6 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
     fresh_pool = AgentHttpPool()
     settings = FakeSettingsReader({"agent.http_pool_enabled": True})
     with (
-        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -81,7 +80,6 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
         }
     )
     with (
-        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -92,6 +90,7 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
             agent_port=5100,
             timeout=5,
             settings=settings,
+            pool=fresh_pool,
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 1
@@ -128,7 +127,6 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
     fresh_pool = AgentHttpPool()
     settings = FakeSettingsReader({"agent.http_pool_enabled": False})
     with (
-        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -158,7 +156,6 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
     fresh_pool = AgentHttpPool()
     settings = FakeSettingsReader({"agent.http_pool_enabled": False, "agent.http_pool_max_keepalive_connections": 10})
     with (
-        patch("app.agent_comm.operations._default_pool", fresh_pool),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -184,7 +181,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pool branch must forward the BasicAuth returned by _agent_basic_auth."""
-    from app.agent_comm.http_pool import agent_http_pool
+    pool = AgentHttpPool()
 
     sentinel = httpx.BasicAuth("ops", "secret")
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: sentinel)
@@ -210,10 +207,10 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
         captured["pool_key"] = (host, agent_port)
         return pooled
 
-    monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
+    monkeypatch.setattr(pool, "get_client", _fake_get_client)
 
     settings = FakeSettingsReader({"agent.http_pool_enabled": True})
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings)
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings, pool=pool)
     assert payload is not None
     assert payload["status"] == "ok"
     assert captured["pool_key"] == ("agent.local", 5100)
@@ -223,7 +220,7 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pool branch must not inject an auth kwarg when _agent_basic_auth returns None."""
-    from app.agent_comm.http_pool import agent_http_pool
+    pool = AgentHttpPool()
 
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     monkeypatch.setattr(agent_operations, "_pool_enabled", lambda *, settings: True)
@@ -245,10 +242,10 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
     async def _fake_get_client(host: str, agent_port: int, **_kwargs: object) -> _PooledStub:
         return _PooledStub()
 
-    monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
+    monkeypatch.setattr(pool, "get_client", _fake_get_client)
 
     settings = FakeSettingsReader({"agent.http_pool_enabled": True})
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings)
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings, pool=pool)
     assert payload is not None, "pool branch did not call .get"
     assert payload["status"] == "ok"
     assert "kwargs" in captured

@@ -96,14 +96,22 @@ session_viability_loop = session_service_viability.session_viability_loop
 close_session_viability_client = session_service_viability.close
 
 
-async def hardware_telemetry_loop(*, settings: SettingsReader) -> None:
+async def hardware_telemetry_loop(
+    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
+) -> None:
     service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
-    await service_hardware_telemetry.hardware_telemetry_loop(settings=settings)
+    await service_hardware_telemetry.hardware_telemetry_loop(
+        settings=settings, pool=pool, circuit_breaker=circuit_breaker
+    )
 
 
-async def host_resource_telemetry_loop(*, settings: SettingsReader) -> None:
+async def host_resource_telemetry_loop(
+    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
+) -> None:
     service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
-    await service_resource_telemetry.host_resource_telemetry_loop(settings=settings)
+    await service_resource_telemetry.host_resource_telemetry_loop(
+        settings=settings, pool=pool, circuit_breaker=circuit_breaker
+    )
 
 
 async def pack_drain_loop() -> None:
@@ -220,14 +228,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if await control_plane_leader.try_acquire(engine):
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
-            (heartbeat_loop(settings=svc), "heartbeat_loop"),
+            (heartbeat_loop(settings=svc, pool=pool, circuit_breaker=breaker), "heartbeat_loop"),
             (session_sync_loop(settings=svc), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
-            (node_health_loop(settings=svc), "node_health_loop"),
+            (node_health_loop(settings=svc, pool=pool, circuit_breaker=breaker), "node_health_loop"),
             (device_connectivity_loop(settings=svc), "device_connectivity_loop"),
             (property_refresh_loop(settings=svc), "property_refresh_loop"),
-            (hardware_telemetry_loop(settings=svc), "hardware_telemetry_loop"),
-            (host_resource_telemetry_loop(settings=svc), "host_resource_telemetry_loop"),
+            (hardware_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker), "hardware_telemetry_loop"),
+            (
+                host_resource_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker),
+                "host_resource_telemetry_loop",
+            ),
             (
                 job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
                 "durable_job_worker_loop",
@@ -238,7 +249,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (session_viability_loop(settings=svc), "session_viability_loop"),
             (fleet_capacity_collector_loop(settings=svc), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
-            (appium_reconciler_loop(settings=svc), "appium_reconciler_loop"),
+            (appium_reconciler_loop(settings=svc, pool=pool, circuit_breaker=breaker), "appium_reconciler_loop"),
             (device_intent_reconciler_loop(settings=svc), "device_intent_reconciler_loop"),
             (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
         ]

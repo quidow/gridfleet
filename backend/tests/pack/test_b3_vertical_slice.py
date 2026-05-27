@@ -289,6 +289,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeAgentClient]:
         args: dict[str, Any],
         http_client_factory: AgentClientFactory = _factory,
         timeout: float | int = 30.0,
+        **extra: object,
     ) -> object:
         return await original(
             session,
@@ -299,6 +300,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeAgentClient]:
             args=args,
             http_client_factory=http_client_factory,
             timeout=timeout,
+            **extra,
         )
 
     import app.packs.routers.host_features as feature_routes

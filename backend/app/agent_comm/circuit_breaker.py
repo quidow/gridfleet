@@ -10,27 +10,10 @@ from sqlalchemy import or_, select
 from app.core.database import async_session
 from app.core.observability import get_logger
 from app.hosts.models.host import Host
-from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 
 if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-
-
-class _NullPublisher:
-    """No-op publisher used to bootstrap the module-level singleton before DI wires the real bus."""
-
-    async def publish(self, event_type: str, data: dict[str, Any], **_kwargs: Any) -> None:  # noqa: ANN401
-        pass
-
-
-class _NullSettingsReader:
-    """No-op settings reader used to bootstrap the module-level singleton before DI wires the real one."""
-
-    def get(self, key: str) -> Any:  # noqa: ANN401
-        if key in SETTINGS_REGISTRY:
-            return resolve_default(SETTINGS_REGISTRY[key])
-        return ""
 
 
 logger = get_logger(__name__)
@@ -197,11 +180,3 @@ class AgentCircuitBreaker:
             "probe_in_flight": state.probe_in_flight,
             "last_error": state.last_error,
         }
-
-
-# DEPRECATED: bootstrapped with a no-op publisher; replaced at startup by compose_app.
-# New code should access via DI (AppServices.agent_comm.circuit_breaker).
-# Will be removed when all consumers are migrated (Task 3.1 / Task 6.2).
-agent_circuit_breaker: AgentCircuitBreaker = AgentCircuitBreaker(
-    publisher=_NullPublisher(), settings=_NullSettingsReader()
-)
