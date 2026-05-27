@@ -19,14 +19,17 @@ if TYPE_CHECKING:
 
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services_container import AppiumNodeServices
+from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
+from app.jobs.queue import DurableJobWorkerLoop
 from app.packs.services_container import PackServices
 from app.runs.services_container import RunServices
 from app.sessions.services_container import SessionServices
 from app.settings.services_container import SettingsServices
+from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +44,9 @@ class AppServices:
     runs: RunServices
     grid: GridServices
     appium_nodes: AppiumNodeServices
+    jobs: DurableJobWorkerLoop
+    webhooks: WebhookDeliveryLoop
+    background_loop_flush: BackgroundLoopFlushLoop
 
 
 def compose_app(
@@ -87,7 +93,7 @@ def compose_app(
             circuit_breaker=circuit_breaker,
             session_factory=session_factory,
         ),
-        sessions=SessionServices(settings=settings_svc, session_factory=session_factory),
+        sessions=SessionServices(settings=settings_svc, session_factory=session_factory, publisher=bus),
         runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
         grid=GridServices(settings=settings_svc, session_factory=session_factory),
         packs=PackServices(session_factory=session_factory),
@@ -98,4 +104,12 @@ def compose_app(
             publisher=bus,
             session_factory=session_factory,
         ),
+        jobs=DurableJobWorkerLoop(
+            session_factory=session_factory,
+            publisher=bus,
+            settings=settings_svc,
+            circuit_breaker=circuit_breaker,
+        ),
+        webhooks=WebhookDeliveryLoop(session_factory=session_factory),
+        background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
     )

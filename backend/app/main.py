@@ -36,7 +36,6 @@ from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
-    BackgroundLoopFlushLoop,
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
@@ -58,7 +57,6 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
 from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
-from app.jobs.queue import DurableJobWorkerLoop
 from app.packs import routers as pack_routers
 from app.packs.services.drain import PackDrainLoop
 from app.plugins import router as plugins
@@ -74,7 +72,6 @@ from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
-from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 configure_logging()
 
@@ -154,7 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_events_gauge_refresher(bus)
     svc = SettingsService()
     pool = AgentHttpPool()
-    breaker = AgentCircuitBreaker(publisher=bus, settings=svc)
+    breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
 
     app_services = compose_app(
         engine=engine,
@@ -195,7 +192,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    leader_watcher = LeaderWatcherLoop(settings=svc)
+    leader_watcher = LeaderWatcherLoop(settings=svc, leader=control_plane_leader, engine=engine)
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
@@ -215,11 +212,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         run_reaper = RunReaperLoop(services=app_services.runs)
         grid_event_bus = GridEventBusSubscriberLoop(services=app_services.grid)
         pack_drain = PackDrainLoop(services=app_services.packs)
-        job_worker = DurableJobWorkerLoop(
-            session_factory=session_factory, publisher=bus, settings=svc, circuit_breaker=breaker
-        )
-        webhook_delivery = WebhookDeliveryLoop(session_factory=session_factory)
-        background_loop_flush = BackgroundLoopFlushLoop(session_factory=session_factory, settings=svc)
+        job_worker = app_services.jobs
+        webhook_delivery = app_services.webhooks
+        background_loop_flush = app_services.background_loop_flush
         leader_keepalive = LeaderKeepaliveLoop(settings=svc)
 
         _leader_loops: list[tuple[Any, str]] = [

@@ -179,7 +179,7 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
     monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
 
-    def transition(device: SimpleNamespace, _event: object, *, reason: str) -> None:
+    def transition(device: SimpleNamespace, _event: object, *, reason: str, **kwargs: object) -> None:
         del reason
         device.operational_state = DeviceOperationalState.available
 

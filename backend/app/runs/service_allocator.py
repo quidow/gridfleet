@@ -218,6 +218,7 @@ async def _attempt_create_run(
     *,
     ttl_minutes: int,
     heartbeat_timeout_sec: int,
+    publisher: EventPublisher | None = None,
 ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
     now = datetime.now(UTC)
     all_matched: list[Device] = []
@@ -243,6 +244,7 @@ async def _attempt_create_run(
             DeviceHold.reserved,
             reason=f"Reserved for run '{data.name}'",
             severity="info",
+            publisher=publisher,
         )
         device_infos.append(
             _build_device_info(
@@ -302,6 +304,7 @@ async def create_run(
             data,
             ttl_minutes=ttl_minutes,
             heartbeat_timeout_sec=heartbeat_timeout_sec,
+            publisher=publisher,
         )
         queue_event_for_session(
             db,

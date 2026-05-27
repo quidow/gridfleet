@@ -14,18 +14,22 @@ if TYPE_CHECKING:
     import contextlib
     from collections.abc import AsyncGenerator
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _hb_services(db: AsyncSession) -> Mock:
+    m = Mock()
+    factory = AsyncMock()
+    factory.__aenter__ = AsyncMock(return_value=db)
+    factory.__aexit__ = AsyncMock(return_value=None)
+    m.session_factory = lambda: factory
+    return m
 
 
 @pytest.fixture(autouse=True)
-async def _skip_leader_fencing(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[None]:
-    """No-op the leader fence and redirect per-host sessions to the test engine."""
-    with (
-        patch("app.appium_nodes.services.heartbeat.assert_current_leader"),
-        patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker),
-    ):
+async def _skip_leader_fencing() -> AsyncGenerator[None]:
+    """No-op the leader fence."""
+    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
         yield
 
 
@@ -66,7 +70,7 @@ async def test_four_slow_hosts_run_in_parallel(
     with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
         started = time.monotonic()
         async with populated_hosts_4_slow as db:
-            await HeartbeatLoop(services=Mock())._check_hosts(
+            await HeartbeatLoop(services=_hb_services(db))._check_hosts(
                 db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
             )
         elapsed = time.monotonic() - started
@@ -93,7 +97,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
         patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)),
     ):
         async with populated_hosts_one_slow_one_fast as db:
-            await HeartbeatLoop(services=Mock())._check_hosts(
+            await HeartbeatLoop(services=_hb_services(db))._check_hosts(
                 db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
             )
 

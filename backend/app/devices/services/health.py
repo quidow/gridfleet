@@ -80,6 +80,7 @@ async def _mark_offline_for_failed_signal(
     *,
     failed: bool,
     reason: str,
+    publisher: EventPublisher | None = None,
 ) -> None:
     if not failed:
         return
@@ -90,12 +91,14 @@ async def _mark_offline_for_failed_signal(
         locked,
         TransitionEvent.CONNECTIVITY_LOST,
         reason=reason,
+        publisher=publisher,
     )
 
 
 async def _restore_available_for_healthy_signal(
     db: AsyncSession,
     locked: Device,
+    publisher: EventPublisher | None = None,
 ) -> None:
     if locked.operational_state != DeviceOperationalState.offline:
         return
@@ -111,6 +114,7 @@ async def _restore_available_for_healthy_signal(
         locked,
         TransitionEvent.CONNECTIVITY_RESTORED,
         reason="Health checks recovered",
+        publisher=publisher,
     )
 
 
@@ -129,8 +133,8 @@ async def update_device_checks(
     locked.device_checks_healthy = healthy
     locked.device_checks_summary = summary
     locked.device_checks_checked_at = _now()
-    await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary)
-    await _restore_available_for_healthy_signal(db, locked)
+    await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary, publisher=publisher)
+    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
     _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 
@@ -153,8 +157,9 @@ async def update_session_viability(
         locked,
         failed=status == "failed",
         reason=error or "Session viability failed",
+        publisher=publisher,
     )
-    await _restore_available_for_healthy_signal(db, locked)
+    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
     _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 
@@ -187,8 +192,9 @@ async def apply_node_state_transition(
             locked,
             failed=not node_running_signal(locked_node),
             reason=reason or f"Node: {node_summary_label(locked_node)}",
+            publisher=publisher,
         )
-    await _restore_available_for_healthy_signal(db, locked)
+    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
     _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 

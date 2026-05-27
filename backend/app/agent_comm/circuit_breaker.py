@@ -12,6 +12,8 @@ from app.core.observability import get_logger
 from app.hosts.models.host import Host
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -19,15 +21,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-async def _resolve_host_identity(host_addr: str) -> dict[str, str]:
+async def _resolve_host_identity(
+    host_addr: str, *, session_factory: async_sessionmaker[AsyncSession] | None = None
+) -> dict[str, str]:
     """Resolve an IP or hostname to ``{"host_id": ..., "hostname": ...}``.
 
     Returns an empty dict when the DB is unreachable or no row matches. The
     breaker must keep emitting even without a resolvable Host row so that
     pre-registration failures still surface in the global event stream.
     """
+    scope = session_factory or async_session
     try:
-        async with async_session() as db:
+        async with scope() as db:
             stmt = select(Host.id, Host.hostname).where(or_(Host.ip == host_addr, Host.hostname == host_addr)).limit(1)
             row = (await db.execute(stmt)).first()
             if row is None:
@@ -48,11 +53,18 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
         self._settings = settings
+        self._session_factory = session_factory
 
     def _failure_threshold(self) -> int:
         return int(self._settings.get("agent.circuit_breaker_failure_threshold"))
@@ -102,7 +114,10 @@ class AgentCircuitBreaker:
 
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
-            payload: dict[str, Any] = {"host": host, **(await _resolve_host_identity(host))}
+            payload: dict[str, Any] = {
+                "host": host,
+                **(await _resolve_host_identity(host, session_factory=self._session_factory)),
+            }
             await self._publisher.publish(
                 "host.circuit_breaker.closed",
                 payload,
@@ -150,7 +165,7 @@ class AgentCircuitBreaker:
                 "consecutive_failures": failure_count,
                 "cooldown_seconds": cooldown,
                 "last_error": error,
-                **(await _resolve_host_identity(host)),
+                **(await _resolve_host_identity(host, session_factory=self._session_factory)),
             }
             await self._publisher.publish(
                 "host.circuit_breaker.opened",

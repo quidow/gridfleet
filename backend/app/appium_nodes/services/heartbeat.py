@@ -20,7 +20,6 @@ from app.appium_nodes.services.heartbeat_outcomes import (
     HeartbeatOutcome,
     HeartbeatPingResult,
 )
-from app.core.database import async_session
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
@@ -40,7 +39,7 @@ from app.plugins import service as plugin_service
 if TYPE_CHECKING:
     import uuid
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
@@ -62,12 +61,16 @@ APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
 
 
 async def _auto_sync_plugins_on_recovery(
-    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol | None
+    host_id: uuid.UUID,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol | None,
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     if circuit_breaker is None:
         return
     try:
-        async with async_session() as db:
+        async with session_factory() as db:
             host = await db.get(Host, host_id)
             if host is None:
                 return
@@ -532,6 +535,7 @@ async def _apply_host_ping_result(
     publisher: EventPublisher | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol | None,
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -570,7 +574,11 @@ async def _apply_host_ping_result(
                 )
             host.status = HostStatus.online
             _schedule_background_task(
-                _auto_sync_plugins_on_recovery, host.id, settings=settings, circuit_breaker=circuit_breaker
+                _auto_sync_plugins_on_recovery,
+                host.id,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
+                session_factory=session_factory,
             )
         host.last_heartbeat = datetime.now(UTC)
         if health_data is not None:
@@ -699,7 +707,7 @@ class HeartbeatLoop:
         async def guarded(host_id: uuid.UUID) -> None:
             async with semaphore:
                 try:
-                    async with async_session() as host_db:
+                    async with self._services.session_factory() as host_db:
                         host = await host_db.get(Host, host_id)
                         if host is None:
                             return
@@ -734,6 +742,7 @@ class HeartbeatLoop:
                             publisher=self._services.publisher,
                             settings=settings,
                             circuit_breaker=circuit_breaker,
+                            session_factory=self._services.session_factory,
                         )
                         await host_db.commit()
                 except LeadershipLost:

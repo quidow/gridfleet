@@ -23,6 +23,7 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import legacy_label_for_audit
+from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ async def enter_maintenance(
     commit: bool = True,
     allow_reserved: bool = False,
     maintenance_reason: str = "Operator entered maintenance",
+    publisher: EventPublisher | None = None,
 ) -> Device:
     if not allow_reserved and device.hold == DeviceHold.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
@@ -90,6 +92,7 @@ async def enter_maintenance(
         device,
         TransitionEvent.MAINTENANCE_ENTERED,
         reason=maintenance_reason,
+        publisher=publisher,
     )
 
     set_maintenance_reason(device, maintenance_reason)
@@ -112,6 +115,7 @@ async def exit_maintenance(
     device: Device,
     *,
     commit: bool = True,
+    publisher: EventPublisher | None = None,
 ) -> Device:
     if device.hold != DeviceHold.maintenance:
         raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
@@ -120,6 +124,7 @@ async def exit_maintenance(
         device,
         TransitionEvent.MAINTENANCE_EXITED,
         reason="Operator exited maintenance",
+        publisher=publisher,
     )
     clear_maintenance_recovery_suppression(device)
     clear_maintenance_reason(device)

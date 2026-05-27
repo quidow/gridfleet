@@ -26,11 +26,13 @@ def inject_publisher_into_state_machine(monkeypatch: pytest.MonkeyPatch) -> None
     _orig_set_hold = set_hold
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = event_bus
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
     async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = event_bus
         return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)

@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -51,6 +51,15 @@ def _dead_result() -> HeartbeatPingResult:
     )
 
 
+def _hb_services(db: AsyncSession) -> Mock:
+    m = Mock()
+    factory = AsyncMock()
+    factory.__aenter__ = AsyncMock(return_value=db)
+    factory.__aexit__ = AsyncMock(return_value=None)
+    m.session_factory = lambda: factory
+    return m
+
+
 @pytest.fixture(autouse=True)
 async def _skip_leader_fencing(
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -59,7 +68,6 @@ async def _skip_leader_fencing(
     with (
         patch("app.appium_nodes.services.heartbeat.assert_current_leader"),
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
-        patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker),
     ):
         yield
 
@@ -90,7 +98,7 @@ async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
             "app.appium_nodes.services.heartbeat._schedule_background_task",
         ),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -123,7 +131,7 @@ async def test_heartbeat_updates_missing_prerequisites(db_session: AsyncSession)
             }
         ),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -155,13 +163,13 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     await db_session.commit()
 
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )  # failure 1
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )  # failure 2
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )  # failure 3
 
@@ -187,7 +195,8 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     from app.devices.services.state import set_operational_state as _orig_set_op
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", _event_bus)
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = _event_bus
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.set_operational_state", _wrapped_set_op)
@@ -221,7 +230,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     db_session.add(device)
     await db_session.commit()
 
-    services = Mock()
+    services = _hb_services(db_session)
     services.publisher = _event_bus
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
         await HeartbeatLoop(services=services)._check_hosts(
@@ -267,7 +276,7 @@ async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
             "app.appium_nodes.services.heartbeat._schedule_background_task",
         ),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -293,7 +302,7 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
         ),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task", side_effect=capture_task),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -327,7 +336,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def blocking_sync(_: uuid.UUID, *, settings: object, circuit_breaker: object) -> None:
+    async def blocking_sync(_: uuid.UUID, *, settings: object, circuit_breaker: object, **kwargs: object) -> None:
         started.set()
         await release.wait()
 
@@ -338,7 +347,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
         ),
         patch("app.appium_nodes.services.heartbeat._auto_sync_plugins_on_recovery", new=blocking_sync),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
         await asyncio.wait_for(started.wait(), 1)
@@ -434,10 +443,10 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -560,7 +569,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(exhausted_payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -682,7 +691,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -794,7 +803,7 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 

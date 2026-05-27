@@ -35,7 +35,7 @@ def _reset_doorbell() -> None:
 async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) -> None:
     invocations = 0
 
-    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader) -> None:
+    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader, publisher: object | None = None) -> None:
         nonlocal invocations
         invocations += 1
 
@@ -70,7 +70,7 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
     sync_started = asyncio.Event()
     release_sync = asyncio.Event()
 
-    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader) -> None:
+    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader, publisher: object | None = None) -> None:
         nonlocal invocations
         invocations += 1
         sync_started.set()

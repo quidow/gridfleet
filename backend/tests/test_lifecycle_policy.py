@@ -520,7 +520,8 @@ async def test_recovery_rejoin_publishes_availability_event(
     _orig_set_hold = state_mod.set_hold
 
     async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = event_bus
         return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr("app.devices.services.lifecycle_policy.set_hold", _wrapped_set_hold)
@@ -1703,6 +1704,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         DeviceHold.reserved,
         reason="Rejoined run after checks: reconnected",
         severity="info",
+        publisher=None,
     )
 
     busy = SimpleNamespace(

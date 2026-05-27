@@ -274,7 +274,12 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
     # observation columns above still get cleared so the convergence loop
     # can drop a stale ``running`` flag without leaving the row wedged.
     if _MACHINE.is_valid(DeviceStateModel.from_device(device), TransitionEvent.AUTO_STOP_EXECUTED):
-        await _MACHINE.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, reason="Node stopped")
+        await _MACHINE.transition(
+            device,
+            TransitionEvent.AUTO_STOP_EXECUTED,
+            reason="Node stopped",
+            publisher=publisher,
+        )
     await device_health.apply_node_state_transition(
         db,
         device,

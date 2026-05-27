@@ -294,6 +294,7 @@ async def handle_node_crash(
             device,
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
+            publisher=publisher,
         )
         await register_intents_and_reconcile(
             db,
@@ -307,6 +308,7 @@ async def handle_node_crash(
             device,
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
+            publisher=publisher,
         )
         if node is not None:
             await register_intents_and_reconcile(
@@ -412,6 +414,7 @@ async def complete_auto_stop(
     reason: str,
     source: str,
     detail: str,
+    publisher: EventPublisher | None = None,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
@@ -420,6 +423,7 @@ async def complete_auto_stop(
         device,
         source=source,
         reason=reason,
+        publisher=publisher,
     )
     next_state["stop_pending"] = False
     next_state["stop_pending_reason"] = None

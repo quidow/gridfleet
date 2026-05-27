@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
     from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
@@ -169,7 +170,9 @@ async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) 
     return None
 
 
-async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str, Any]) -> None:
+async def _hydrate_orphan_session_row(
+    db: AsyncSession, sid: str, info: dict[str, Any], *, publisher: EventPublisher | None = None
+) -> None:
     """Bind a device-less ``Session`` row to its Device and fire the busy
     transition.
 
@@ -251,6 +254,7 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
                 locked_device,
                 TransitionEvent.SESSION_STARTED,
                 suppress_events=True,
+                publisher=publisher,
             )
         except InvalidTransitionError as exc:
             logger.warning(
@@ -280,7 +284,9 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
 
-async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def _sync_sessions(
+    db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher | None = None
+) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status(settings=settings)
 
@@ -319,7 +325,7 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
             # ``device_id`` / ``connection_target`` from driver.capabilities
             # because those caps are not reliable). Hydrate the row now
             # using the prefix-stable hub stereotype.
-            await _hydrate_orphan_session_row(db, sid, info)
+            await _hydrate_orphan_session_row(db, sid, info, publisher=publisher)
             continue
 
         if sid in known_running or sid in known_session_ids:
@@ -399,6 +405,7 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
             locked_device,
             TransitionEvent.SESSION_STARTED,
             suppress_events=True,
+            publisher=publisher,
         )
         await register_intents_and_reconcile(
             db,
@@ -514,6 +521,7 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
                     locked_device,
                     TransitionEvent.SESSION_ENDED,
                     reason="Session ended",
+                    publisher=publisher,
                 )
             else:
                 # Probe failed during the session — auto-stop the device.
@@ -522,6 +530,7 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
                     locked_device,
                     TransitionEvent.AUTO_STOP_EXECUTED,
                     reason="Session ended on unhealthy device",
+                    publisher=publisher,
                 )
 
     await _sweep_stale_stop_pending(db)
@@ -546,7 +555,7 @@ class SessionSyncLoop:
             interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _sync_sessions(db, settings=self._services.settings)
+                    await _sync_sessions(db, settings=self._services.settings, publisher=self._services.publisher)
             except LeadershipLost as exc:
                 logger.error(
                     "session_sync_loop_leadership_lost",

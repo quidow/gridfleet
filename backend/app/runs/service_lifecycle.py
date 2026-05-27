@@ -99,7 +99,9 @@ async def complete_run(
     await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_complete")
     run.state = RunState.completed
     run.completed_at = now
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False, settings=settings)
+    cleanup_ids = await _release_devices(
+        db, run, commit=False, terminate_grid_sessions=False, settings=settings, publisher=publisher
+    )
 
     duration = None
     if run.started_at:
@@ -134,7 +136,9 @@ async def cancel_run(
     await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_cancel")
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True, settings=settings)
+    cleanup_ids = await _release_devices(
+        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+    )
     queue_event_for_session(
         db,
         "run.cancelled",
@@ -164,7 +168,9 @@ async def force_release(
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True, settings=settings)
+    cleanup_ids = await _release_devices(
+        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+    )
     queue_event_for_session(
         db,
         "run.cancelled",
@@ -206,7 +212,9 @@ async def expire_run(
     locked_run.state = RunState.expired
     locked_run.error = effective_reason
     locked_run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True, settings=settings)
+    cleanup_ids = await _release_devices(
+        db, locked_run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+    )
 
     if expired_from_preparing:
         queue_event_for_session(

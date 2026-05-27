@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
     from app.devices.services.verification_preparation import PreparedVerificationContext
+    from app.events.protocols import EventPublisher
 
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 logger = logging.getLogger(__name__)
@@ -387,6 +388,7 @@ async def _finalize_success(
     *,
     job: dict[str, Any],
     node: AppiumNode | None,
+    publisher: EventPublisher | None = None,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")
@@ -411,7 +413,12 @@ async def _finalize_success(
                 await db.commit()
                 return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
             await _revoke_verification_node_intent(db, locked)
-            await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
+            await DeviceStateMachine().transition(
+                locked,
+                TransitionEvent.VERIFICATION_FAILED,
+                reason="verification",
+                publisher=publisher,
+            )
             await db.commit()
             return VerificationExecutionOutcome(
                 status="failed", error=cleanup_error, device_id=str(context.save_device_id)
@@ -426,7 +433,12 @@ async def _finalize_success(
             data=data,
         )
 
-    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_PASSED, reason="verification")
+    await DeviceStateMachine().transition(
+        locked,
+        TransitionEvent.VERIFICATION_PASSED,
+        reason="verification",
+        publisher=publisher,
+    )
     locked.verified_at = datetime.now(UTC)
     # Revoke the verification intent only after ``verified_at`` is set so the
     # reconcile triggered by the revoke sees the device as verified and
@@ -458,6 +470,7 @@ async def _finalize_failure(
     job: dict[str, Any],
     node: AppiumNode | None = None,
     original_fields: dict[str, Any] | None = None,
+    publisher: EventPublisher | None = None,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
@@ -476,7 +489,12 @@ async def _finalize_failure(
     _restore_update_original_fields(locked, original_fields)
     await _stop_verification_node_if_running(job, db, locked, node)
     await _revoke_verification_node_intent(db, locked)
-    await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_FAILED, reason="verification")
+    await DeviceStateMachine().transition(
+        locked,
+        TransitionEvent.VERIFICATION_FAILED,
+        reason="verification",
+        publisher=publisher,
+    )
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
 
@@ -490,6 +508,7 @@ async def execute_verification_context(
     probe_session_fn: ProbeSessionFn,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     node: AppiumNode | None = None
@@ -503,7 +522,12 @@ async def execute_verification_context(
             if existing_stop_error is not None:
                 return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
             locked = await device_locking.lock_device(db, context.save_device_id)
-            await DeviceStateMachine().transition(locked, TransitionEvent.VERIFICATION_STARTED, reason="verification")
+            await DeviceStateMachine().transition(
+                locked,
+                TransitionEvent.VERIFICATION_STARTED,
+                reason="verification",
+                publisher=publisher,
+            )
             await db.commit()
             device = locked
             original_fields = {
@@ -517,7 +541,14 @@ async def execute_verification_context(
             job, device, http_client_factory=http_client_factory, settings=settings, circuit_breaker=circuit_breaker
         )
         if health_error is not None:
-            return await _finalize_failure(db, context, error=health_error, job=job, original_fields=original_fields)
+            return await _finalize_failure(
+                db,
+                context,
+                error=health_error,
+                job=job,
+                original_fields=original_fields,
+                publisher=publisher,
+            )
 
         node, probe_error = await run_probe(
             job,
@@ -529,10 +560,10 @@ async def execute_verification_context(
         )
         if probe_error is not None:
             return await _finalize_failure(
-                db, context, error=probe_error, job=job, node=node, original_fields=original_fields
+                db, context, error=probe_error, job=job, node=node, original_fields=original_fields, publisher=publisher
             )
 
-        return await _finalize_success(db, context, job=job, node=node)
+        return await _finalize_success(db, context, job=job, node=node, publisher=publisher)
     except Exception:
         await _finalize_failure(
             db,
@@ -541,5 +572,6 @@ async def execute_verification_context(
             job=job,
             node=node,
             original_fields=original_fields,
+            publisher=publisher,
         )
         raise

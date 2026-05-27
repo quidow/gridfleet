@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
-from app import main
+from app import composition, main
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 
@@ -162,7 +162,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(_ss, "shutdown", AsyncMock())
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
+    monkeypatch.setattr(composition, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -182,7 +182,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
     monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
-    monkeypatch.setattr(main, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
     monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
     monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
@@ -190,7 +190,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
     monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
-    monkeypatch.setattr(main, "BackgroundLoopFlushLoop", _mock_loop)
+    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -314,7 +314,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(_ss, "shutdown", AsyncMock())
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
+    monkeypatch.setattr(composition, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -334,7 +334,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
     monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
-    monkeypatch.setattr(main, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
     monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
     monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
@@ -342,7 +342,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
     monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
-    monkeypatch.setattr(main, "BackgroundLoopFlushLoop", _mock_loop)
+    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass

@@ -9,9 +9,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 
 @dataclass(frozen=True, slots=True)
 class SessionServices:
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
+    publisher: EventPublisher | None = None

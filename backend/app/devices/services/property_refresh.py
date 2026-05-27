@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -77,9 +76,7 @@ async def _refresh_all_properties(
                         data = await pack_discovery.fetch_pack_device_properties(
                             host,
                             device,
-                            agent_get_pack_device_properties=functools.partial(
-                                get_pack_device_properties, circuit_breaker=circuit_breaker
-                            ),
+                            agent_get_pack_device_properties=get_pack_device_properties,
                             settings=settings,
                             circuit_breaker=circuit_breaker,
                         )

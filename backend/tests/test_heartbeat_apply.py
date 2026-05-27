@@ -39,7 +39,13 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         error_category=None,
     )
     await _apply_host_ping_result(
-        db_session, db_host, success, guard_active=False, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        db_session,
+        db_host,
+        success,
+        guard_active=False,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        session_factory=lambda: db_session,
     )
     await db_session.commit()
     refreshed = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalars().one()
@@ -70,6 +76,7 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         guard_threshold_sec=45.0,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        session_factory=lambda: db_session,
     )
     await db_session.commit()
     await db_session.refresh(db_host)

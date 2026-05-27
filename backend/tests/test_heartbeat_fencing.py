@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -16,18 +16,16 @@ from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
-@pytest.fixture(autouse=True)
-async def _patch_heartbeat_session(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[None]:
-    """Redirect per-host sessions to the test schema engine for fencing tests."""
-    with patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker):
-        yield
+def _hb_services(db: AsyncSession) -> Mock:
+    m = Mock()
+    factory = AsyncMock()
+    factory.__aenter__ = AsyncMock(return_value=db)
+    factory.__aexit__ = AsyncMock(return_value=None)
+    m.session_factory = lambda: factory
+    return m
 
 
 @pytest.mark.db
@@ -60,7 +58,7 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
         ),
         pytest.raises(LeadershipLost),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
@@ -109,7 +107,7 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(
+        await HeartbeatLoop(services=_hb_services(db_session))._check_hosts(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 

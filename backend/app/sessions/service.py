@@ -581,6 +581,7 @@ async def update_session_status(
     db: AsyncSession,
     session_id: str,
     status: SessionStatus,
+    publisher: EventPublisher | None = None,
 ) -> Session | None:
     session = await get_session(db, session_id)
     if session is None:
@@ -648,12 +649,14 @@ async def update_session_status(
                         locked_device,
                         TransitionEvent.AUTO_STOP_EXECUTED,
                         reason="Session ended with pending node stop",
+                        publisher=publisher,
                     )
                 else:
                     await _MACHINE.transition(
                         locked_device,
                         TransitionEvent.SESSION_ENDED,
                         reason="Session ended",
+                        publisher=publisher,
                     )
             deferred_stop_target = locked_device
 

@@ -31,21 +31,28 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
                 raise RuntimeError("db down")
             return self.host
 
-    monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(None))
     await heartbeat._auto_sync_plugins_on_recovery(
-        uuid.uuid4(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        uuid.uuid4(), settings=FakeSettingsReader({}), circuit_breaker=Mock(), session_factory=lambda: FakeSession(None)
     )
 
     host = SimpleNamespace(id=uuid.uuid4())
-    monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host))
     monkeypatch.setattr(heartbeat.plugin_service, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
     monkeypatch.setattr(heartbeat.plugin_service, "auto_sync_host_plugins", sync)
-    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    await heartbeat._auto_sync_plugins_on_recovery(
+        host.id,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        session_factory=lambda: FakeSession(host),
+    )
     sync.assert_awaited_once_with(host, ["plugin"], settings=ANY, circuit_breaker=ANY)
 
-    monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host, fail_get=True))
-    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    await heartbeat._auto_sync_plugins_on_recovery(
+        host.id,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        session_factory=lambda: FakeSession(host, fail_get=True),
+    )
 
 
 async def test_background_task_scheduler_and_shutdown_paths() -> None:
@@ -79,6 +86,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             guard_active=True,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
+            session_factory=MagicMock(),
         )
 
     with pytest.MonkeyPatch.context() as mp:
@@ -180,7 +188,6 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
             return None
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(heartbeat, "async_session", lambda: Session())
     monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 

@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
@@ -303,12 +304,17 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
     converge = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "converge_host_rows", converge)
 
+    @asynccontextmanager
+    async def _mock_session_factory() -> AsyncMock:
+        yield AsyncMock()
+
     await appium_reconciler._drive_convergence(
         [{"id": row.host_id, "ip": "10.0.0.1", "agent_port": 5100}, {"id": "bad"}],
         [row],
         {},
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        session_factory=_mock_session_factory,
     )
     converge.assert_not_awaited()
 

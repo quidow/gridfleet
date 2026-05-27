@@ -71,6 +71,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,7 @@ async def handle_health_failure(
     *,
     source: str,
     reason: str,
+    publisher: EventPublisher | None = None,
 ) -> str:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
@@ -264,11 +266,14 @@ async def handle_health_failure(
         reason=reason,
         source=source,
         detail="Manager stopped the device automatically after a lifecycle failure",
+        publisher=publisher,
     )
     return "stopped"
 
 
-async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredStopOutcome:
+async def handle_session_finished(
+    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
+) -> DeferredStopOutcome:
     device = await _reload_device(db, device)
     # Re-run intent reconciliation now that the session has ended. A previous
     # reconcile may have held a graceful-stop intent because the session was
@@ -342,16 +347,19 @@ async def handle_session_finished(db: AsyncSession, device: Device) -> DeferredS
         reason=reason,
         source=source,
         detail="Manager completed a previously deferred automatic stop",
+        publisher=publisher,
     )
     return DeferredStopOutcome.AUTO_STOPPED
 
 
-async def complete_deferred_stop_if_session_ended(db: AsyncSession, device: Device) -> DeferredStopOutcome:
+async def complete_deferred_stop_if_session_ended(
+    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
+) -> DeferredStopOutcome:
     """Idempotent session-end helper. Authoritative state checks live in
     ``handle_session_finished``, which re-reads under the device row lock —
     so callers do not need to (and must not) pre-validate state.
     """
-    return await handle_session_finished(db, device)
+    return await handle_session_finished(db, device, publisher=publisher)
 
 
 async def note_connectivity_loss(
@@ -390,6 +398,7 @@ async def attempt_auto_recovery(
     source: str,
     reason: str,
     settings: SettingsReader,
+    publisher: EventPublisher | None = None,
 ) -> bool:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
@@ -677,6 +686,7 @@ async def attempt_auto_recovery(
             reason=failure_reason,
             source="session_viability",
             detail="Manager stopped the device after a failed recovery viability probe",
+            publisher=publisher,
         )
 
         # Re-lock and rebuild state from fresh DB row: complete_auto_stop releases
@@ -777,6 +787,7 @@ async def attempt_auto_recovery(
                 DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
                 severity="info",
+                publisher=publisher,
             )
             await db.commit()
         else:
@@ -785,6 +796,7 @@ async def attempt_auto_recovery(
                 DeviceHold.reserved,
                 reason=f"Rejoined run after {source}: {reason}",
                 severity="info",
+                publisher=publisher,
             )
             await db.commit()
     else:
@@ -802,6 +814,7 @@ async def attempt_auto_recovery(
                         device,
                         TransitionEvent.CONNECTIVITY_RESTORED,
                         reason=f"Connectivity restored ({source}): {reason}",
+                        publisher=publisher,
                     )
                 # else: probe still failing — no state change. The next
                 # device_connectivity_loop tick will retry recovery.
@@ -812,6 +825,7 @@ async def attempt_auto_recovery(
                     device,
                     TransitionEvent.AUTO_STOP_EXECUTED,
                     reason=f"Recovery declared device unhealthy ({source}): {reason}",
+                    publisher=publisher,
                 )
             # else: busy device that probe says is available — extremely rare;
             # leave state alone, the next device_connectivity_loop tick will

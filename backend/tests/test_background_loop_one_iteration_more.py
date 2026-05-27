@@ -90,7 +90,6 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
@@ -213,7 +212,7 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     with pytest.raises(asyncio.CancelledError):
-        await watcher.LeaderWatcherLoop(settings=settings).run()
+        await watcher.LeaderWatcherLoop(settings=settings, leader=Mock(), engine=Mock()).run()
 
     assert watcher.run_watcher_once.await_count == 2
 
@@ -238,7 +237,6 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
         ).run()
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(heartbeat, "async_session", _Session)
     monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)

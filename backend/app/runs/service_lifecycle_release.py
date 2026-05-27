@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 import app.devices.services.lifecycle_policy as lifecycle_policy
@@ -142,6 +143,7 @@ async def _release_devices(
     commit: bool = True,
     terminate_grid_sessions: bool = False,
     settings: SettingsReader,
+    publisher: EventPublisher | None = None,
 ) -> list[uuid.UUID]:
     """Release all active reservations for this run and restore device statuses.
 
@@ -190,7 +192,13 @@ async def _release_devices(
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
         if device.hold == DeviceHold.reserved:
-            await set_hold(device, None, reason=f"Run '{run.name}' ended ({run.state.value})", severity="info")
+            await set_hold(
+                device,
+                None,
+                reason=f"Run '{run.name}' ended ({run.state.value})",
+                severity="info",
+                publisher=publisher,
+            )
         if device.operational_state == DeviceOperationalState.busy and await _device_has_running_session(db, device.id):
             devices_pending_lifecycle_cleanup.append(device.id)
             continue
@@ -199,6 +207,7 @@ async def _release_devices(
             await ready_operational_state(db, device),
             reason=f"Run '{run.name}' ended ({run.state.value})",
             severity="info",
+            publisher=publisher,
         )
         devices_pending_lifecycle_cleanup.append(device.id)
     if commit:

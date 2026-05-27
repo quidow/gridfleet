@@ -153,6 +153,11 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     converge = AsyncMock()
     monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
     monkeypatch.setattr("app.appium_nodes.services.reconciler.converge_host_rows", converge)
+
+    @asynccontextmanager
+    async def _mock_session_factory() -> AsyncMock:
+        yield AsyncMock()
+
     await appium_reconciler._drive_convergence(
         [
             {"id": "bad", "ip": "10.0.0.1", "agent_port": 5100},
@@ -165,6 +170,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         require_leader=False,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        session_factory=_mock_session_factory,
     )
 
     touch.assert_awaited_once()
@@ -206,7 +212,14 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
 
 async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     assert appium_reconciler._session_scope(None) is appium_reconciler.async_session
-    await appium_reconciler._touch_last_observed([], settings=FakeSettingsReader({}))
+
+    @asynccontextmanager
+    async def _mock_session_factory() -> AsyncMock:
+        yield AsyncMock()
+
+    await appium_reconciler._touch_last_observed(
+        [], settings=FakeSettingsReader({}), session_factory=_mock_session_factory
+    )
 
     class Session:
         async def __aenter__(self) -> "Session":
@@ -369,7 +382,13 @@ async def test_clear_transition_token_and_touch_noop(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await appium_reconciler._touch_last_observed([], settings=FakeSettingsReader({}))
+    @asynccontextmanager
+    async def _mock_session_factory() -> AsyncMock:
+        yield AsyncMock()
+
+    await appium_reconciler._touch_last_observed(
+        [], settings=FakeSettingsReader({}), session_factory=_mock_session_factory
+    )
     with monkeypatch.context() as ctx:
         ctx.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
         await appium_reconciler._clear_transition_token(db_session, _desired_row(device_id=uuid.uuid4()))

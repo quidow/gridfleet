@@ -40,14 +40,12 @@ async def test_host_offline_cascade_queues_all_events(
     from tests.helpers import test_event_bus as event_bus
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = event_bus
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.set_operational_state", _wrapped_set_op)
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-    # Redirect per-host sessions to the test schema engine so events are queued
-    # on sessions that share the same after-commit event hook configuration.
-    monkeypatch.setattr("app.appium_nodes.services.heartbeat.async_session", db_session_maker)
     # The resume guard uses _last_cycle_monotonic to detect a paused
     # backend (>= max_missed * interval gap between cycles). On slow CI runners the
     # gap between the last unrelated test that called _check_hosts and this one can
@@ -55,6 +53,7 @@ async def test_host_offline_cascade_queues_all_events(
     # asserting. Reset to None so the guard treats this call as the first cycle.
     services = Mock()
     services.publisher = event_bus
+    services.session_factory = db_session_maker
     loop = HeartbeatLoop(services=services)
     loop._last_cycle_monotonic = None
 

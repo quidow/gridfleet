@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from contextlib import AbstractAsyncContextManager
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
@@ -275,6 +275,7 @@ class AppiumReconcilerLoop:
                         settings=self._services.settings,
                         pool=self._services.pool,
                         circuit_breaker=self._services.circuit_breaker,
+                        session_factory=self._services.session_factory,
                     )
             except LeadershipLost as exc:
                 APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
@@ -492,6 +493,7 @@ async def _drive_convergence(
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     semaphore = asyncio.Semaphore(int(settings.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
@@ -516,7 +518,7 @@ async def _drive_convergence(
         async with semaphore:
             cycle_start = time.monotonic()
             try:
-                async with async_session() as db:
+                async with session_factory() as db:
                     if require_leader:
                         await assert_current_leader(db, settings=settings)
                 payload = (health_by_host or {}).get(host_id)
@@ -540,7 +542,7 @@ async def _drive_convergence(
                     ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
                     for entry in running
                 ]
-                await _touch_last_observed(rows, settings=settings)
+                await _touch_last_observed(rows, settings=settings, session_factory=session_factory)
                 active_rows = active_rows_by_host.get(host_id, [])
                 if not active_rows:
                     return
@@ -550,14 +552,23 @@ async def _drive_convergence(
                     agent_running=observed,
                     now=datetime.now(UTC),
                     start_agent=_make_start_agent(
-                        require_leader=require_leader, settings=settings, circuit_breaker=circuit_breaker
+                        require_leader=require_leader,
+                        session_scope=session_factory,
+                        settings=settings,
+                        circuit_breaker=circuit_breaker,
                     ),
                     stop_agent=_make_stop_agent(
                         host_ip, agent_port, settings=settings, circuit_breaker=circuit_breaker
                     ),
-                    write_observed=_write_observed_factory(require_leader=require_leader, settings=settings),
-                    clear_token=_clear_token_factory(require_leader=require_leader, settings=settings),
-                    reset_start_failure=_make_reset_start_failure(require_leader=require_leader, settings=settings),
+                    write_observed=_write_observed_factory(
+                        require_leader=require_leader, session_scope=session_factory, settings=settings
+                    ),
+                    clear_token=_clear_token_factory(
+                        require_leader=require_leader, session_scope=session_factory, settings=settings
+                    ),
+                    reset_start_failure=_make_reset_start_failure(
+                        require_leader=require_leader, session_scope=session_factory, settings=settings
+                    ),
                 )
             finally:
                 APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
@@ -852,10 +863,12 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     await db.commit()
 
 
-async def _touch_last_observed(rows: list[DesiredRow], *, settings: SettingsReader) -> None:
+async def _touch_last_observed(
+    rows: list[DesiredRow], *, settings: SettingsReader, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
     if not rows:
         return
-    async with async_session() as db:
+    async with session_factory() as db:
         await assert_current_leader(db, settings=settings)
         node_ids = [row.node_id for row in rows]
         await db.execute(
