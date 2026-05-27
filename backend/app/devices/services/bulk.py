@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -101,7 +101,7 @@ async def _run_per_device_node_action(
     operation: str,
     action_fn: Callable[..., Awaitable[object]],
     caller: str,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
     session_factory = _session_factory_from_db(db)
@@ -143,7 +143,7 @@ async def bulk_start_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
-    publisher: EventBus,
+    publisher: EventPublisher,
     settings: SettingsReader,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
@@ -161,7 +161,7 @@ async def bulk_stop_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -178,7 +178,7 @@ async def bulk_restart_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
-    publisher: EventBus,
+    publisher: EventPublisher,
     settings: SettingsReader,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
@@ -197,7 +197,7 @@ async def bulk_update_tags(
     tags: dict[str, str],
     merge: bool = True,
     *,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     for device in devices:
@@ -222,7 +222,7 @@ async def bulk_update_tags(
     return _result(len(devices), len(devices), {})
 
 
-async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus) -> dict[str, Any]:
+async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher) -> dict[str, Any]:
     errors: dict[str, str] = {}
     for device_id in device_ids:
         try:
@@ -248,7 +248,7 @@ async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID], *, publishe
 
 
 async def bulk_enter_maintenance(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     ordered_ids = [device.id for device in devices]
@@ -279,7 +279,7 @@ async def bulk_enter_maintenance(
 
 
 async def bulk_reconnect(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher, settings: SettingsReader
 ) -> dict[str, Any]:
     """Reconnect network-connected ADB devices."""
     devices = await _load_devices(db, device_ids)
@@ -359,7 +359,7 @@ async def bulk_reconnect(
 
 
 async def bulk_exit_maintenance(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}

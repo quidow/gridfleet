@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import importlib
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,7 +15,9 @@ from app.agent_comm.http_pool import AgentHttpPool
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes import services as appium_node_services
+from app.appium_nodes.services.heartbeat import HeartbeatLoop, shutdown_background_tasks
+from app.appium_nodes.services.node_health import NodeHealthLoop
+from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -31,12 +32,12 @@ from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
 from app.core.leader import register_settings_provider
 from app.core.leader.advisory import control_plane_leader
-from app.core.leader.keepalive import control_plane_leader_keepalive_loop
-from app.core.leader.watcher import control_plane_leader_watcher_loop
+from app.core.leader.keepalive import LeaderKeepaliveLoop
+from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
-    background_loop_flush_loop,
+    BackgroundLoopFlushLoop,
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
@@ -51,71 +52,45 @@ from app.events import router as events
 from app.events.event_bus import EventBus, set_bus_ref
 from app.grid import router as grid
 from app.grid import service as grid_service
-from app.grid.event_bus_loop import event_bus_subscriber_loop
+from app.grid.event_bus_loop import GridEventBusSubscriberLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
-from app.jobs import queue as job_queue
+from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
+from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
+from app.jobs.queue import DurableJobWorkerLoop
 from app.packs import routers as pack_routers
-from app.packs import services as pack_services
+from app.packs.services.drain import PackDrainLoop
 from app.plugins import router as plugins
 from app.runs import router as runs_router
-from app.runs import service_reaper as run_service_reaper
+from app.runs.service_reaper import RunReaperLoop
 from app.sessions import router as sessions_router
-from app.sessions import service_sync as session_service_sync
-from app.sessions import service_viability as session_service_viability
+from app.sessions.service_sync import SessionSyncLoop
+from app.sessions.service_viability import SessionViabilityLoop
+from app.sessions.service_viability import close as close_session_viability_client
 from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
+from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 configure_logging()
 
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
-heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
-node_health_loop = appium_node_services.node_health.node_health_loop
-shutdown_background_tasks = appium_node_services.heartbeat.shutdown_background_tasks
-data_cleanup_loop = device_services.data_cleanup.data_cleanup_loop
-device_connectivity_loop = device_services.connectivity.device_connectivity_loop
+DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
+DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
 device_health = device_services.health
-device_intent_reconciler_loop = device_services.intent_reconciler.device_intent_reconciler_loop
+DeviceIntentReconcilerLoop = device_services.intent_reconciler.DeviceIntentReconcilerLoop
 device_service = device_services.service
-fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
+FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
 assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
-property_refresh_loop = device_services.property_refresh.property_refresh_loop
-run_reaper_loop = run_service_reaper.run_reaper_loop
-session_sync_loop = session_service_sync.session_sync_loop
-session_viability_loop = session_service_viability.session_viability_loop
-close_session_viability_client = session_service_viability.close
-
-
-async def hardware_telemetry_loop(
-    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
-) -> None:
-    service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
-    await service_hardware_telemetry.hardware_telemetry_loop(
-        settings=settings, pool=pool, circuit_breaker=circuit_breaker
-    )
-
-
-async def host_resource_telemetry_loop(
-    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
-) -> None:
-    service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
-    await service_resource_telemetry.host_resource_telemetry_loop(
-        settings=settings, pool=pool, circuit_breaker=circuit_breaker
-    )
-
-
-async def pack_drain_loop() -> None:
-    await pack_services.drain.pack_drain_loop()
+PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
 
 
 def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
@@ -223,39 +198,55 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
+    leader_watcher = LeaderWatcherLoop()
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
+        connectivity_loop = DeviceConnectivityLoop(services=app_services.devices)
+        data_cleanup = DataCleanupLoop(services=app_services.devices)
+        fleet_capacity = FleetCapacityLoop(services=app_services.devices)
+        intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
+        property_refresh = PropertyRefreshLoop(services=app_services.devices)
+        heartbeat = HeartbeatLoop(services=app_services.appium_nodes)
+        node_health = NodeHealthLoop(services=app_services.appium_nodes)
+        appium_reconciler = AppiumReconcilerLoop(services=app_services.appium_nodes)
+        session_sync = SessionSyncLoop(services=app_services.sessions)
+        session_viability = SessionViabilityLoop(services=app_services.sessions)
+        hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
+        host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
+
+        run_reaper = RunReaperLoop(services=app_services.runs)
+        grid_event_bus = GridEventBusSubscriberLoop(services=app_services.grid)
+        pack_drain = PackDrainLoop(services=app_services.packs)
+        job_worker = DurableJobWorkerLoop(session_factory=session_factory, publisher=bus, settings=svc)
+        webhook_delivery = WebhookDeliveryLoop(session_factory=session_factory)
+        background_loop_flush = BackgroundLoopFlushLoop(session_factory=session_factory, settings=svc)
+        leader_keepalive = LeaderKeepaliveLoop()
+
         _leader_loops: list[tuple[Any, str]] = [
-            (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
-            (heartbeat_loop(settings=svc, pool=pool, circuit_breaker=breaker), "heartbeat_loop"),
-            (session_sync_loop(settings=svc), "session_sync_loop"),
-            (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
-            (node_health_loop(settings=svc, pool=pool, circuit_breaker=breaker), "node_health_loop"),
-            (device_connectivity_loop(settings=svc), "device_connectivity_loop"),
-            (property_refresh_loop(settings=svc), "property_refresh_loop"),
-            (hardware_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker), "hardware_telemetry_loop"),
-            (
-                host_resource_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker),
-                "host_resource_telemetry_loop",
-            ),
-            (
-                job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
-                "durable_job_worker_loop",
-            ),
-            (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
-            (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
-            (data_cleanup_loop(publisher=bus, settings=svc), "data_cleanup_loop"),
-            (session_viability_loop(settings=svc), "session_viability_loop"),
-            (fleet_capacity_collector_loop(settings=svc), "fleet_capacity_collector_loop"),
-            (pack_drain_loop(), "pack_drain_loop"),
-            (appium_reconciler_loop(settings=svc, pool=pool, circuit_breaker=breaker), "appium_reconciler_loop"),
-            (device_intent_reconciler_loop(settings=svc), "device_intent_reconciler_loop"),
-            (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
+            (leader_keepalive.run(), "control_plane_leader_keepalive"),
+            (heartbeat.run(), "heartbeat_loop"),
+            (session_sync.run(), "session_sync_loop"),
+            (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
+            (node_health.run(), "node_health_loop"),
+            (connectivity_loop.run(), "device_connectivity_loop"),
+            (property_refresh.run(), "property_refresh_loop"),
+            (hardware_telemetry.run(), "hardware_telemetry_loop"),
+            (host_resource_telemetry.run(), "host_resource_telemetry_loop"),
+            (job_worker.run(), "durable_job_worker_loop"),
+            (webhook_delivery.run(), "webhook_dispatcher.webhook_delivery_loop"),
+            (run_reaper.run(), "run_reaper_loop"),
+            (data_cleanup.run(), "data_cleanup_loop"),
+            (session_viability.run(), "session_viability_loop"),
+            (fleet_capacity.run(), "fleet_capacity_collector_loop"),
+            (pack_drain.run(), "pack_drain_loop"),
+            (appium_reconciler.run(), "appium_reconciler_loop"),
+            (intent_reconciler.run(), "device_intent_reconciler_loop"),
+            (background_loop_flush.run(), "background_loop_flush_loop"),
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
-        control_plane_leader_watcher_loop(),
+        leader_watcher.run(),
         name="control_plane_leader_watcher",
     )
     try:

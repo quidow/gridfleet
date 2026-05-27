@@ -9,7 +9,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.probe_result import ProbeResult
-from app.core.database import async_session
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
@@ -30,12 +29,14 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.sessions.services_container import SessionServices
 
 __all__ = [
     "PROBE_TEST_NAME",
     "SESSION_VIABILITY_KEY",
     "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
+    "SessionViabilityLoop",
     "_check_due_devices",
     "_extract_session_error",
     "_format_http_error",
@@ -50,7 +51,6 @@ __all__ = [
     "probe_session_via_grid",
     "record_session_viability_result",
     "run_session_viability_probe",
-    "session_viability_loop",
 ]
 
 SESSION_VIABILITY_KEY = "session_viability"
@@ -568,11 +568,15 @@ async def _check_due_devices(db: AsyncSession, *, settings: SettingsReader) -> N
             )
 
 
-async def session_viability_loop(*, settings: SettingsReader) -> None:
-    while True:
-        try:
-            async with observe_background_loop(LOOP_NAME, 60.0).cycle(), async_session() as db:
-                await _check_due_devices(db, settings=settings)
-        except Exception:
-            logger.exception("Session viability loop failed")
-        await asyncio.sleep(60)
+class SessionViabilityLoop:
+    def __init__(self, *, services: SessionServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        while True:
+            try:
+                async with observe_background_loop(LOOP_NAME, 60.0).cycle(), self._services.session_factory() as db:
+                    await _check_due_devices(db, settings=self._services.settings)
+            except Exception:
+                logger.exception("Session viability loop failed")
+            await asyncio.sleep(60)

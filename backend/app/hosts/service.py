@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
     from app.hosts.schemas import HostCreate, HostRegister
 
 _LEGACY_GLOBAL_TOOL_KEYS = {"appium"}
@@ -141,7 +141,7 @@ async def _apply_reregister(db: AsyncSession, host: Host, data: HostRegister) ->
 
 
 async def register_host(
-    db: AsyncSession, data: HostRegister, *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, data: HostRegister, *, publisher: EventPublisher, settings: SettingsReader
 ) -> tuple[Host, bool]:
     """Register or re-register a host. Returns (host, is_new)."""
     validate_orchestration_contract(data.capabilities, host_label=data.hostname)
@@ -198,7 +198,7 @@ async def register_host(
     return host, True
 
 
-async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: EventBus) -> Host | None:
+async def approve_host(db: AsyncSession, host_id: uuid.UUID, *, publisher: EventPublisher) -> Host | None:
     """Approve a pending host. Returns None if not found or not pending."""
     # Acquire SELECT ... FOR UPDATE so a concurrent reject_host (which
     # deletes the row) cannot land between the predicate check and the

@@ -193,21 +193,30 @@ async def run_pending_jobs_once(
     return True
 
 
-async def durable_job_worker_loop(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    publisher: EventPublisher,
-    settings: SettingsReader,
-) -> None:
-    async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
-        await reset_stale_running_jobs(session_factory)
-        await reset_stale_running_jobs(session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
-    while True:
-        try:
-            async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
-                worked = await run_pending_jobs_once(session_factory, publisher=publisher, settings=settings)
-            if not worked:
+class DurableJobWorkerLoop:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        publisher: EventPublisher,
+        settings: SettingsReader,
+    ) -> None:
+        self._session_factory = session_factory
+        self._publisher = publisher
+        self._settings = settings
+
+    async def run(self) -> None:
+        async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
+            await reset_stale_running_jobs(self._session_factory)
+            await reset_stale_running_jobs(self._session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
+        while True:
+            try:
+                async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
+                    worked = await run_pending_jobs_once(
+                        self._session_factory, publisher=self._publisher, settings=self._settings
+                    )
+                if not worked:
+                    await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
+            except Exception:
+                logger.exception("Durable job worker error")
                 await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
-        except Exception:
-            logger.exception("Durable job worker error")
-            await asyncio.sleep(JOB_POLL_INTERVAL_SEC)

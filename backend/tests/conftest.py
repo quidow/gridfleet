@@ -22,12 +22,24 @@ from app.core.database import Base, get_db
 from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
 from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
+from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
+from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
+from app.grid.dependencies import get_grid_services
+from app.grid.services_container import GridServices
+from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
+from app.hosts.services_container import HostServices
 from app.main import app
+from app.packs.dependencies import get_pack_services
+from app.packs.services_container import PackServices
+from app.runs.dependencies import get_run_services
+from app.runs.services_container import RunServices
+from app.sessions.dependencies import get_session_services
+from app.sessions.services_container import SessionServices
 from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.service import SettingsService
@@ -282,10 +294,68 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     def override_get_agent_comm_services() -> AgentCommServices:
         return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
 
+    def override_get_device_services() -> DeviceServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return DeviceServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            session_factory=sf,
+        )
+
+    def override_get_host_services() -> HostServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return HostServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            pool=test_http_pool,
+            circuit_breaker=test_circuit_breaker,
+            session_factory=sf,
+        )
+
+    def override_get_session_services() -> SessionServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return SessionServices(settings=settings_service, session_factory=sf)
+
+    def override_get_run_services() -> RunServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return RunServices(publisher=test_event_bus, settings=settings_service, session_factory=sf)
+
+    def override_get_grid_services() -> GridServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return GridServices(settings=settings_service, session_factory=sf)
+
+    def override_get_pack_services() -> PackServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return PackServices(session_factory=sf)
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
+    app.dependency_overrides[get_device_services] = override_get_device_services
+    app.dependency_overrides[get_host_services] = override_get_host_services
+    app.dependency_overrides[get_session_services] = override_get_session_services
+    app.dependency_overrides[get_run_services] = override_get_run_services
+    app.dependency_overrides[get_grid_services] = override_get_grid_services
+    app.dependency_overrides[get_pack_services] = override_get_pack_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

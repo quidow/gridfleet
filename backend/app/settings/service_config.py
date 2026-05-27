@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
 def _filter_keys(config: dict[str, Any], keys: list[str]) -> dict[str, Any]:
@@ -54,7 +54,7 @@ async def merge_device_config(
     partial_config: dict[str, Any],
     changed_by: str | None = None,
     *,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     previous = device.device_config or {}
     merged = _deep_merge(previous, partial_config)

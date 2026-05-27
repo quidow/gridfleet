@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -32,7 +32,7 @@ def _run_completed_severity(run: TestRun) -> EventSeverity:
     return "success"
 
 
-async def signal_ready(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus) -> TestRun:
+async def signal_ready(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -50,7 +50,7 @@ async def signal_ready(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventB
     return run
 
 
-async def signal_active(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus) -> TestRun:
+async def signal_active(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -87,7 +87,7 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def complete_run(
-    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
 ) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -122,7 +122,9 @@ async def complete_run(
     return run
 
 
-async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader) -> TestRun:
+async def cancel_run(
+    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
+) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -152,7 +154,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus
 
 
 async def force_release(
-    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
 ) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -182,7 +184,7 @@ async def force_release(
 
 
 async def expire_run(
-    db: AsyncSession, run: TestRun, reason: str, *, publisher: EventBus, settings: SettingsReader
+    db: AsyncSession, run: TestRun, reason: str, *, publisher: EventPublisher, settings: SettingsReader
 ) -> None:
     """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
 

@@ -44,9 +44,10 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -335,7 +336,7 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
 
 
 async def _ingest_appium_restart_events(
-    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventBus | None = None
+    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher | None = None
 ) -> None:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
@@ -533,7 +534,7 @@ async def _apply_host_ping_result(
     guard_active: bool,
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
@@ -732,35 +733,39 @@ async def _check_hosts(
     await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
 
-async def heartbeat_loop(
-    *,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
-) -> None:
-    """Background loop that pings all host agents."""
-    while True:
-        interval = float(settings.get("general.heartbeat_interval_sec"))
-        cycle_start = time.monotonic()
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_hosts(db, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
-        except LeadershipLost as exc:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-            logger.error(
-                "heartbeat_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Heartbeat check failed")
-        finally:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-        await asyncio.sleep(interval)
+class HeartbeatLoop:
+    def __init__(self, *, services: AppiumNodeServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Background loop that pings all host agents."""
+        while True:
+            interval = float(self._services.settings.get("general.heartbeat_interval_sec"))
+            cycle_start = time.monotonic()
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await _check_hosts(
+                        db,
+                        settings=self._services.settings,
+                        pool=self._services.pool,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except LeadershipLost as exc:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+                logger.error(
+                    "heartbeat_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("Heartbeat check failed")
+            finally:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+            await asyncio.sleep(interval)

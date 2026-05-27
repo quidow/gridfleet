@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.settings.service import SettingsService
 
 from app.agent_comm.services_container import AgentCommServices
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.services_container import GridServices
@@ -39,6 +40,7 @@ class AppServices:
     sessions: SessionServices
     runs: RunServices
     grid: GridServices
+    appium_nodes: AppiumNodeServices
 
 
 def compose_app(
@@ -72,10 +74,26 @@ def compose_app(
         events=event_services,
         settings=settings_services,
         agent_comm=agent_comm_services,
-        devices=DeviceServices(session_factory=session_factory),
-        hosts=HostServices(session_factory=session_factory),
+        devices=DeviceServices(
+            publisher=bus,
+            settings=settings_svc,
+            session_factory=session_factory,
+        ),
+        hosts=HostServices(
+            publisher=bus,
+            settings=settings_svc,
+            pool=http_pool,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        ),
+        sessions=SessionServices(settings=settings_svc, session_factory=session_factory),
+        runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
+        grid=GridServices(settings=settings_svc, session_factory=session_factory),
         packs=PackServices(session_factory=session_factory),
-        sessions=SessionServices(session_factory=session_factory),
-        runs=RunServices(session_factory=session_factory),
-        grid=GridServices(session_factory=session_factory),
+        appium_nodes=AppiumNodeServices(
+            settings=settings_svc,
+            pool=http_pool,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        ),
     )

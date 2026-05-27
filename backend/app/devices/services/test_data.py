@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +36,7 @@ async def replace_device_test_data(
     new_data: dict[str, Any],
     *,
     changed_by: str | None = None,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     previous = device.test_data or {}
     device.test_data = new_data
@@ -65,7 +65,7 @@ async def merge_device_test_data(
     partial: dict[str, Any],
     *,
     changed_by: str | None = None,
-    publisher: EventBus,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     previous = device.test_data or {}
     merged = _deep_merge(previous, partial)

@@ -25,7 +25,7 @@ from app.events import queue_event_for_session
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 __all__ = [
     "apply_node_state_transition",
@@ -56,7 +56,7 @@ def _maybe_emit_health_changed(
     device: Device,
     previous: dict[str, Any],
     *,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     if publisher is None:
         return
@@ -120,7 +120,7 @@ async def update_device_checks(
     *,
     healthy: bool,
     summary: str,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -140,7 +140,7 @@ async def update_session_viability(
     *,
     status: str | None,
     error: str | None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -166,7 +166,7 @@ async def apply_node_state_transition(
     health_state: str | None = None,
     mark_offline: bool = True,
     reason: str | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:

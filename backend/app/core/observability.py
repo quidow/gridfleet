@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
     from contextlib import AbstractAsyncContextManager
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
 
@@ -387,28 +387,28 @@ async def flush_background_loop_snapshots(
     return len(snapshot_copy)
 
 
-async def background_loop_flush_loop(
-    session_factory: SessionFactory | None = None,
-    *,
-    settings: SettingsReader,
-    interval_provider: Callable[[], float] | None = None,
-) -> None:
-    """Periodic flusher started by the leader. Cancels on task cancellation.
+class BackgroundLoopFlushLoop:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: SettingsReader,
+    ) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
 
-    ``interval_provider`` defaults to reading
-    ``general.background_loop_flush_interval_sec`` from the settings cache; tests
-    override it for deterministic intervals.
-    """
-    while True:
-        try:
-            await flush_background_loop_snapshots(session_factory)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger = get_logger(__name__)
-            logger.exception("background_loop_flush_failed")
-        interval = float(interval_provider() if interval_provider else _default_flush_interval(settings=settings))
-        await asyncio.sleep(interval)
+    async def run(self) -> None:
+        """Periodic flusher started by the leader. Cancels on task cancellation."""
+        while True:
+            try:
+                await flush_background_loop_snapshots(self._session_factory)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger = get_logger(__name__)
+                logger.exception("background_loop_flush_failed")
+            interval = float(_default_flush_interval(settings=self._settings))
+            await asyncio.sleep(interval)
 
 
 def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:

@@ -9,7 +9,6 @@ import httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
-from app.core.database import async_session
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger, observe_background_loop, parse_timestamp
 from app.hosts.models import Host, HostResourceSample, HostStatus
@@ -22,6 +21,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.hosts.services_container import HostServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "host_resource_telemetry"
@@ -178,12 +178,16 @@ async def fetch_host_resource_telemetry(
     )
 
 
-async def host_resource_telemetry_loop(*, settings: SettingsReader) -> None:
-    while True:
-        interval = float(settings.get("general.host_resource_telemetry_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await poll_host_resource_telemetry_once(db, settings=settings)
-        except Exception:
-            logger.exception("Host resource telemetry loop failed")
-        await asyncio.sleep(interval)
+class HostResourceTelemetryLoop:
+    def __init__(self, *, services: HostServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        while True:
+            interval = float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await poll_host_resource_telemetry_once(db, settings=self._services.settings)
+            except Exception:
+                logger.exception("Host resource telemetry loop failed")
+            await asyncio.sleep(interval)

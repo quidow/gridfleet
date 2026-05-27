@@ -183,19 +183,21 @@ async def run_pending_webhook_deliveries_once(
     return True
 
 
-async def webhook_delivery_loop(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                async with observe_background_loop(LOOP_NAME, float(POLL_INTERVAL_SEC)).cycle():
-                    worked = await run_pending_webhook_deliveries_once(session_factory, client=client)
-                if not worked:
+class WebhookDeliveryLoop:
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def run(self) -> None:
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
+                    async with observe_background_loop(LOOP_NAME, float(POLL_INTERVAL_SEC)).cycle():
+                        worked = await run_pending_webhook_deliveries_once(self._session_factory, client=client)
+                    if not worked:
+                        await asyncio.sleep(POLL_INTERVAL_SEC)
+                except Exception:
+                    logger.exception("Webhook dispatcher error")
                     await asyncio.sleep(POLL_INTERVAL_SEC)
-            except Exception:
-                logger.exception("Webhook dispatcher error")
-                await asyncio.sleep(POLL_INTERVAL_SEC)
 
 
 async def _process_delivery(

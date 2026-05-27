@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.agent_comm.snapshot import RunningAppiumNode
+    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
@@ -241,51 +242,54 @@ async def appium_reconciler_loop_tick(
 LOOP_NAME = "appium_reconciler_loop"
 
 
-async def appium_reconciler_loop(
-    *,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
-) -> None:
-    """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
-    while True:
-        interval = float(settings.get("appium_reconciler.interval_sec"))
-        cycle_start = time.monotonic()
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await assert_current_leader(db)
-                hosts = await _fetch_online_hosts(db)
-                rows = await _fetch_node_rows(db)
-                desired = await _fetch_desired_rows(db)
-                backoff = await _fetch_backoff_until(db)
-            # Agent IO and stops happen outside the DB session — no point holding it open.
-            health_by_host = await _reconcile_all(
-                hosts, rows, settings=settings, pool=pool, circuit_breaker=circuit_breaker
-            )
-            if reconciler_convergence_enabled():
-                await _drive_convergence(
+class AppiumReconcilerLoop:
+    def __init__(self, *, services: AppiumNodeServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
+        while True:
+            interval = float(self._services.settings.get("appium_reconciler.interval_sec"))
+            cycle_start = time.monotonic()
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await assert_current_leader(db)
+                    hosts = await _fetch_online_hosts(db)
+                    rows = await _fetch_node_rows(db)
+                    desired = await _fetch_desired_rows(db)
+                    backoff = await _fetch_backoff_until(db)
+                # Agent IO and stops happen outside the DB session — no point holding it open.
+                health_by_host = await _reconcile_all(
                     hosts,
-                    desired,
-                    backoff,
-                    health_by_host=health_by_host,
-                    settings=settings,
-                    pool=pool,
-                    circuit_breaker=circuit_breaker,
+                    rows,
+                    settings=self._services.settings,
+                    pool=self._services.pool,
+                    circuit_breaker=self._services.circuit_breaker,
                 )
-        except LeadershipLost as exc:
-            APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
-            logger.error(
-                "appium_reconciler_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            APPIUM_RECONCILER_CYCLE_FAILURES.inc()
-            logger.exception("appium_reconciler_cycle_failed")
-        finally:
-            APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
-        await asyncio.sleep(interval)
+                if reconciler_convergence_enabled():
+                    await _drive_convergence(
+                        hosts,
+                        desired,
+                        backoff,
+                        health_by_host=health_by_host,
+                        settings=self._services.settings,
+                        pool=self._services.pool,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except LeadershipLost as exc:
+                APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
+                logger.error(
+                    "appium_reconciler_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                APPIUM_RECONCILER_CYCLE_FAILURES.inc()
+                logger.exception("appium_reconciler_cycle_failed")
+            finally:
+                APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
+            await asyncio.sleep(interval)
 
 
 async def _reconcile_all(

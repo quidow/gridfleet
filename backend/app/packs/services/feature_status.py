@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.events.event_bus import EventBus
+    from app.events.protocols import EventPublisher
 
 
 EVENT_DEGRADED = "pack_feature.degraded"
@@ -40,7 +40,7 @@ async def record_feature_status(
     feature_id: str,
     ok: bool,
     detail: str,
-    publisher: EventBus | None = None,
+    publisher: EventPublisher | None = None,
 ) -> bool:
     """Upsert the (host, pack, feature) status row and emit a webhook on transition.
 

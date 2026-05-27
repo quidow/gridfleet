@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.devices.services.property_refresh import _refresh_all_properties, property_refresh_loop
+from app.devices.services.property_refresh import PropertyRefreshLoop, _refresh_all_properties
+from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -59,14 +60,11 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
     )
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    with (
-        patch("app.devices.services.property_refresh.async_session", session_factory),
-        patch(
-            "app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties",
-            new_callable=AsyncMock,
-        ) as fetch_props,
-    ):
-        await _refresh_all_properties(settings=FakeSettingsReader({}))
+    with patch(
+        "app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties",
+        new_callable=AsyncMock,
+    ) as fetch_props:
+        await _refresh_all_properties(session_factory=session_factory, settings=FakeSettingsReader({}))
 
     refreshed_identity_values = [await_call.args[1].identity_value for await_call in fetch_props.await_args_list]
     assert online_device.identity_value in refreshed_identity_values
@@ -107,11 +105,8 @@ async def test_property_refresh_continues_after_device_failure(
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     fetch_props = AsyncMock(side_effect=[RuntimeError("boom"), None])
-    with (
-        patch("app.devices.services.property_refresh.async_session", session_factory),
-        patch("app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties", fetch_props),
-    ):
-        await _refresh_all_properties(settings=FakeSettingsReader({}))
+    with patch("app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties", fetch_props):
+        await _refresh_all_properties(session_factory=session_factory, settings=FakeSettingsReader({}))
 
     refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
     assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
@@ -123,6 +118,14 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         async def cycle(self) -> AsyncGenerator[None, None]:
             yield None
 
+    loop = PropertyRefreshLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}),
+            session_factory=AsyncMock(),
+        )
+    )
+
     with (
         patch("app.devices.services.property_refresh.observe_background_loop", return_value=_Observation()),
         patch(
@@ -133,6 +136,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         patch("app.devices.services.property_refresh.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
-        await property_refresh_loop(settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}))
+        await loop.run()
 
     log_exception.assert_called_once_with("Property refresh cycle failed")

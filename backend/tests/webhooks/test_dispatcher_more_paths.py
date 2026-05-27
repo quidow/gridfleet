@@ -137,7 +137,8 @@ async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytes
     monkeypatch.setattr(webhook_dispatcher.logger, "exception", log_exception)
 
     with pytest.raises(asyncio.CancelledError):
-        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        await loop.run()
 
     log_exception.assert_called_once_with("Webhook dispatcher error")
 
@@ -161,7 +162,8 @@ async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.Mon
     monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
-        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        await loop.run()
 
 
 async def test_process_delivery_missing_records_marks_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:

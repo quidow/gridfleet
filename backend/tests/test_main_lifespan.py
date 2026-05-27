@@ -55,6 +55,14 @@ async def _forever(**_: object) -> None:
     await asyncio.Event().wait()
 
 
+def _mock_loop(**_: object) -> object:
+    class _MockLoop:
+        async def run(self) -> None:
+            await _forever()
+
+    return _MockLoop()
+
+
 def test_main_imports_in_fresh_interpreter() -> None:
     result = subprocess.run(
         [sys.executable, "-c", "import app.main"],
@@ -155,7 +163,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())
+    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -165,24 +173,25 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
-    monkeypatch.setattr(main, "session_sync_loop", _forever)
-    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
-    monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
-    monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
-    monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory, **_: _forever())
-    monkeypatch.setattr(main, "run_reaper_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "data_cleanup_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
-    monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
+    monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
+    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -254,7 +263,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", create_task)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
@@ -308,7 +317,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())
+    monkeypatch.setattr(main, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -318,24 +327,25 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
-    monkeypatch.setattr(main, "session_sync_loop", _forever)
-    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
-    monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
-    monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
-    monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory, **_: _forever())
-    monkeypatch.setattr(main, "run_reaper_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "data_cleanup_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
-    monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
+    monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
+    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
