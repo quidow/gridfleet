@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.core.protocols import EmitProtocol, SettingsReader, SettingsWriter
     from app.core.type_defs import SettingValue
 
@@ -20,7 +22,7 @@ class _FakeSettingsReader:
 
 
 class _FakeSettingsWriter:
-    async def set(self, db: object, key: str, value: str) -> None:
+    async def set(self, db: AsyncSession, key: str, value: str) -> None:
         pass
 
 

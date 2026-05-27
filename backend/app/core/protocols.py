@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from app.core.type_defs import SettingValue
 
 
@@ -24,4 +26,4 @@ class SettingsReader(Protocol):
 
 @runtime_checkable
 class SettingsWriter(Protocol):
-    async def set(self, db: object, key: str, value: str) -> None: ...
+    async def set(self, db: AsyncSession, key: str, value: str) -> None: ...
