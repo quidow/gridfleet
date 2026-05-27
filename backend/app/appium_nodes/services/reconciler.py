@@ -239,7 +239,7 @@ async def appium_reconciler_loop_tick(
     return total_stopped
 
 
-LOOP_NAME = "appium_reconciler_loop"
+LOOP_NAME = "appium_reconciler"
 
 
 class AppiumReconcilerLoop:
