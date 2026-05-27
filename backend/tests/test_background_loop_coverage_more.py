@@ -228,7 +228,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
 async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(control_plane_leader_keepalive, "_setting", lambda _key: 1)
+    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 1})
     monkeypatch.setattr(control_plane_leader_keepalive, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         control_plane_leader_keepalive,
@@ -237,7 +237,7 @@ async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
     )
     monkeypatch.setattr(control_plane_leader_keepalive.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    loop = control_plane_leader_keepalive.LeaderKeepaliveLoop()
+    loop = control_plane_leader_keepalive.LeaderKeepaliveLoop(settings=settings)
 
     with pytest.raises(SystemExit):
         await loop.run()

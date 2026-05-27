@@ -6,24 +6,28 @@ from typing import TYPE_CHECKING
 
 from app.core.database import engine as default_engine
 from app.core.leader.advisory import ControlPlaneLeader, control_plane_leader
-from app.core.leader.settings_provider import get as _setting
 from app.core.observability import get_logger, observe_background_loop
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 LEADER_WATCHER_LOOP_NAME = "control_plane_leader_watcher"
 
 
 class LeaderWatcherLoop:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
     async def run(self) -> None:
         """Always-on loop. Polls staleness and preempts when allowed."""
         while True:
-            interval = float(_setting("general.leader_keepalive_interval_sec"))
+            interval = float(self._settings.get("general.leader_keepalive_interval_sec"))
             try:
                 async with observe_background_loop(LEADER_WATCHER_LOOP_NAME, interval).cycle():
-                    await run_watcher_once()
+                    await run_watcher_once(settings=self._settings)
             except Exception:
                 logger.exception("control_plane_leader_watcher_loop_failed")
             await asyncio.sleep(interval)
@@ -42,15 +46,16 @@ async def run_watcher_once(
     leader: ControlPlaneLeader = control_plane_leader,
     *,
     engine: AsyncEngine | None = None,
+    settings: SettingsReader,
 ) -> None:
     """One iteration. Visible to tests for direct drive."""
     if leader._connection is not None:
         return
-    if not _setting("general.leader_keepalive_enabled"):
+    if not settings.get("general.leader_keepalive_enabled"):
         return
 
     target_engine = engine or default_engine
-    threshold = int(_setting("general.leader_stale_threshold_sec"))
+    threshold = int(settings.get("general.leader_stale_threshold_sec"))
     try:
         acquired = await leader.try_acquire(target_engine, stale_threshold_sec=threshold)
     except Exception:

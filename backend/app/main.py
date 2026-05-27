@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    leader_watcher = LeaderWatcherLoop()
+    leader_watcher = LeaderWatcherLoop(settings=svc)
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
@@ -220,7 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         job_worker = DurableJobWorkerLoop(session_factory=session_factory, publisher=bus, settings=svc)
         webhook_delivery = WebhookDeliveryLoop(session_factory=session_factory)
         background_loop_flush = BackgroundLoopFlushLoop(session_factory=session_factory, settings=svc)
-        leader_keepalive = LeaderKeepaliveLoop()
+        leader_keepalive = LeaderKeepaliveLoop(settings=svc)
 
         _leader_loops: list[tuple[Any, str]] = [
             (leader_keepalive.run(), "control_plane_leader_keepalive"),

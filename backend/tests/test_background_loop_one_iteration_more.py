@@ -195,23 +195,22 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
 
 async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(keepalive, "_setting", lambda key: 0.01)
+    settings = FakeSettingsReader({"general.leader_keepalive_interval_sec": 0.01})
     monkeypatch.setattr(keepalive, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(keepalive, "run_keepalive_once", AsyncMock())
     monkeypatch.setattr(keepalive.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
-        await keepalive.LeaderKeepaliveLoop().run()
+        await keepalive.LeaderKeepaliveLoop(settings=settings).run()
 
     keepalive.run_keepalive_once.assert_awaited_once()
 
-    monkeypatch.setattr(watcher, "_setting", lambda key: 0.01)
     monkeypatch.setattr(watcher, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(watcher, "run_watcher_once", AsyncMock(side_effect=[RuntimeError("boom"), None]))
     monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     with pytest.raises(asyncio.CancelledError):
-        await watcher.LeaderWatcherLoop().run()
+        await watcher.LeaderWatcherLoop(settings=settings).run()
 
     assert watcher.run_watcher_once.await_count == 2
 

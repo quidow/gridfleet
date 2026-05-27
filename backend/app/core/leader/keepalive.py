@@ -2,22 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import TYPE_CHECKING
 
 from app.core.leader.advisory import LeadershipLost, control_plane_leader
-from app.core.leader.settings_provider import get as _setting
 from app.core.observability import get_logger, observe_background_loop
+
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 LEADER_KEEPALIVE_LOOP_NAME = "control_plane_leader_keepalive"
 
 
 class LeaderKeepaliveLoop:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
     async def run(self) -> None:
         while True:
-            interval = float(_setting("general.leader_keepalive_interval_sec"))
+            interval = float(self._settings.get("general.leader_keepalive_interval_sec"))
             try:
                 async with observe_background_loop(LEADER_KEEPALIVE_LOOP_NAME, interval).cycle():
-                    await run_keepalive_once()
+                    await run_keepalive_once(settings=self._settings)
             except LeadershipLost:
                 logger.error("control_plane_leader_lost", action="exiting_process_to_prevent_split_brain")
                 # We are inside a background task after the advisory-lock connection
@@ -28,9 +34,9 @@ class LeaderKeepaliveLoop:
             await asyncio.sleep(interval)
 
 
-async def run_keepalive_once() -> None:
+async def run_keepalive_once(*, settings: SettingsReader) -> None:
     """One iteration. Extracted so tests can drive it without sleeping."""
-    if not _setting("general.leader_keepalive_enabled"):
+    if not settings.get("general.leader_keepalive_enabled"):
         return
     try:
         await control_plane_leader.write_heartbeat()
