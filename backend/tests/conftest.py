@@ -21,11 +21,15 @@ from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
 from app.devices.services import state_write_guard
 from app.events import event_bus
+from app.events.dependencies import get_event_services
 from app.events.models import SystemEvent
+from app.events.services_container import EventServices
 from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
 from app.settings import settings_service
+from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
+from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
 from tests.helpers import create_host
@@ -249,7 +253,23 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
+    def override_get_event_services() -> EventServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return EventServices(bus=event_bus, session_factory=sf, engine=db_session.bind)  # type: ignore[arg-type]
+
+    def override_get_settings_services() -> SettingsServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return SettingsServices(service=settings_service, session_factory=sf)
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_event_services] = override_get_event_services
+    app.dependency_overrides[get_settings_services] = override_get_settings_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

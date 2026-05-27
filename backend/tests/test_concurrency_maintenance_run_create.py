@@ -10,6 +10,9 @@ from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.hosts.models import Host
 from app.main import app
+from app.settings import settings_service
+from app.settings.dependencies import get_settings_services
+from app.settings.services_container import SettingsServices
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -52,7 +55,11 @@ async def test_run_create_and_maintenance_cannot_overlap(
             async with db_session_maker() as session:
                 yield session
 
+        def override_get_settings_services() -> SettingsServices:
+            return SettingsServices(service=settings_service, session_factory=db_session_maker)
+
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_settings_services] = override_get_settings_services
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
@@ -67,6 +74,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 return resp.status_code
         finally:
             app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(get_settings_services, None)
 
     statuses = await asyncio.gather(maintenance_request(), run_create_request())
     assert all(s < 500 for s in statuses), f"Server error in concurrent calls: {statuses}"

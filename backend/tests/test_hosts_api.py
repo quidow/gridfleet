@@ -471,10 +471,10 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert data["recommended_agent_version"] == "0.3.0"
     assert data["agent_update_available"] is True
     host_id = UUID(data["id"])
-    assert scheduled == [
-        (_auto_discover, (host_id,)),
-        (_auto_prepare_host_diagnostics, (host_id,)),
-    ]
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
 
 async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
@@ -587,10 +587,10 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
     assert approve_resp.status_code == 200
     assert approve_resp.json()["agent_version_status"] == "ok"
     host_id = UUID(approve_resp.json()["id"])
-    assert scheduled == [
-        (_auto_discover, (host_id,)),
-        (_auto_prepare_host_diagnostics, (host_id,)),
-    ]
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
     reset_resp = await client.post("/api/settings/reset/agent.auto_accept_hosts")
     assert reset_resp.status_code == 200

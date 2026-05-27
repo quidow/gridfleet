@@ -81,7 +81,9 @@ from app.runs.schemas import (
 )
 from app.sessions import router as sessions
 from app.settings import router as settings_router
+from app.settings import settings_service
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
+from app.settings.services_container import SettingsServices
 from app.webhooks import router as webhooks
 
 if TYPE_CHECKING:
@@ -119,35 +121,48 @@ class MutatingSession(DummySession):
         self.refreshed.append(obj)
 
 
+def _mock_settings_svc(service: object | None = None) -> SettingsServices:
+    """Build a SettingsServices with a mock or real service for unit-test route calls."""
+    svc = service if service is not None else settings_service
+    return SettingsServices(service=svc, session_factory=object())  # type: ignore[arg-type]
+
+
 async def test_settings_router_error_paths() -> None:
-    with patch.object(settings_router.settings_service, "bulk_update", new=AsyncMock(side_effect=KeyError("missing"))):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.bulk_update_settings(SettingsBulkUpdate(settings={"missing": 1}), db=object())
+    svc = Mock()
+    ss = _mock_settings_svc(svc)
+
+    svc.bulk_update = AsyncMock(side_effect=KeyError("missing"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.bulk_update_settings(
+            SettingsBulkUpdate(settings={"missing": 1}), db=object(), settings_services=ss
+        )
     assert caught.value.status_code == 404
 
-    with patch.object(settings_router.settings_service, "bulk_update", new=AsyncMock(side_effect=ValueError("bad"))):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.bulk_update_settings(SettingsBulkUpdate(settings={"bad": 1}), db=object())
+    svc.bulk_update = AsyncMock(side_effect=ValueError("bad"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.bulk_update_settings(
+            SettingsBulkUpdate(settings={"bad": 1}), db=object(), settings_services=ss
+        )
     assert caught.value.status_code == 400
 
-    with patch.object(settings_router.settings_service, "get_setting_response", side_effect=KeyError("missing")):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.get_setting("missing")
+    svc.get_setting_response = Mock(side_effect=KeyError("missing"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.get_setting("missing", settings_services=ss)
     assert caught.value.status_code == 404
 
-    with patch.object(settings_router.settings_service, "update", new=AsyncMock(side_effect=KeyError("missing"))):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.update_setting("missing", SettingUpdate(value=1), db=object())
+    svc.update = AsyncMock(side_effect=KeyError("missing"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.update_setting("missing", SettingUpdate(value=1), db=object(), settings_services=ss)
     assert caught.value.status_code == 404
 
-    with patch.object(settings_router.settings_service, "update", new=AsyncMock(side_effect=ValueError("bad"))):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.update_setting("bad", SettingUpdate(value=1), db=object())
+    svc.update = AsyncMock(side_effect=ValueError("bad"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.update_setting("bad", SettingUpdate(value=1), db=object(), settings_services=ss)
     assert caught.value.status_code == 400
 
-    with patch.object(settings_router.settings_service, "reset", new=AsyncMock(side_effect=KeyError("missing"))):
-        with pytest.raises(HTTPException) as caught:
-            await settings_router.reset_setting("missing", db=object())
+    svc.reset = AsyncMock(side_effect=KeyError("missing"))
+    with pytest.raises(HTTPException) as caught:
+        await settings_router.reset_setting("missing", db=object(), settings_services=ss)
     assert caught.value.status_code == 404
 
 
@@ -280,15 +295,17 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     db = DummySession(
         execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(id=device_id)]))
     )
+    mock_svc = Mock()
+    mock_svc.get = Mock(return_value="http://grid:4444")
     with (
         patch.object(runs.run_service, "create_run", new=AsyncMock(return_value=(run, [info]))),
         patch.object(runs.run_service, "hydrate_reserved_device_infos", new=AsyncMock()) as hydrate,
-        patch.object(runs.settings_service, "get", new=Mock(return_value="http://grid:4444")),
     ):
         created = await runs.create_run(
             RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android"}]),
             include="config",
             db=db,
+            settings_services=_mock_settings_svc(mock_svc),
         )
     assert created["id"] == run.id
     hydrate.assert_awaited_once()
@@ -334,9 +351,12 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     ):
         assert await plugins_router.sync_all_plugins(db=object()) == {"synced": 1}
 
-    with patch.object(settings_router.settings_service, "reset_all", new=AsyncMock()) as reset_all:
-        assert await settings_router.reset_all_settings(db=object()) == {"status": "all settings reset to defaults"}
-    reset_all.assert_awaited_once()
+    reset_svc = Mock()
+    reset_svc.reset_all = AsyncMock()
+    assert await settings_router.reset_all_settings(db=object(), settings_services=_mock_settings_svc(reset_svc)) == {
+        "status": "all settings reset to defaults"
+    }
+    reset_svc.reset_all.assert_awaited_once()
 
     webhook_id = uuid.uuid4()
     webhook = SimpleNamespace(id=webhook_id)
@@ -391,6 +411,8 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=[False, True]))
     initial_job = {"job_id": "job-stream", "status": "running", "current_stage": "probe"}
 
+    mock_event_services = SimpleNamespace(bus=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock()))
+
     monkeypatch.setattr(
         devices_verification_router.device_verification,
         "get_verification_job",
@@ -398,7 +420,7 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.stream_device_verification_job_events(
-            "missing", request, db=SimpleNamespace(bind=None)
+            "missing", request, db=SimpleNamespace(bind=None), event_services=mock_event_services
         )
     assert exc.value.status_code == 404
 
@@ -407,13 +429,12 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         "get_verification_job",
         AsyncMock(return_value=initial_job),
     )
-    monkeypatch.setattr(devices_verification_router.event_bus, "subscribe", Mock(return_value=queue))
-    monkeypatch.setattr(devices_verification_router.event_bus, "unsubscribe", Mock())
 
     response = await devices_verification_router.stream_device_verification_job_events(
         "job-stream",
         request,
         db=SimpleNamespace(bind=None),
+        event_services=mock_event_services,
     )
     assert (await response.body_iterator.__anext__())["event"] == "device.verification.updated"
     with pytest.raises(StopAsyncIteration):
@@ -556,16 +577,20 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
         heartbeat_timeout_sec=120,
         created_at=datetime.now(UTC),
     )
+    grid_svc = Mock()
+    grid_svc.get = Mock(return_value="http://grid")
     with (
         patch.object(runs.run_service, "create_run", new=AsyncMock(return_value=(run, [info]))),
         patch.object(runs.run_service, "mark_reserved_device_info_includes_unavailable") as mark,
         patch.object(runs.run_service, "hydrate_reserved_device_infos", new=AsyncMock()) as hydrate,
-        patch.object(runs.settings_service, "get", return_value="http://grid"),
         patch.object(runs, "select") as select_mock,
     ):
         select_mock.return_value.where.return_value = object()
         db = DummySession(execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
-        response = await runs.create_run(RunCreate(name="r", requirements=[]), include="config", db=db)
+        grid_ss = _mock_settings_svc(grid_svc)
+        response = await runs.create_run(
+            RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss
+        )
     assert response["id"] == run.id
     mark.assert_called_once()
     hydrate.assert_awaited_once()
@@ -950,24 +975,38 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
     response = SimpleNamespace(status_code=200)
 
+    mock_event_services = SimpleNamespace(bus=object())
+
+    host_settings_svc = Mock()
+    host_settings_svc.get = Mock(return_value=True)
+    mock_ss = _mock_settings_svc(host_settings_svc)
+
     with patch("app.hosts.router.host_service.register_host", new=AsyncMock(side_effect=IntegrityError("", {}, None))):
         with pytest.raises(HTTPException) as exc:
-            await hosts.register_host(object(), response, db=object())  # type: ignore[arg-type]
+            await hosts.register_host(  # type: ignore[arg-type]
+                object(),
+                response,
+                db=object(),
+                event_services=mock_event_services,
+                settings_services=mock_ss,
+            )
     assert exc.value.status_code == 409
 
     with (
         patch("app.hosts.router.host_service.register_host", new=AsyncMock(return_value=(host, True))),
-        patch("app.hosts.router.settings_service.get", new=Mock(return_value=True)),
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
-        assert await hosts.register_host(object(), response, db=object()) == {"id": str(host_id)}  # type: ignore[arg-type]
+        result = await hosts.register_host(  # type: ignore[arg-type]
+            object(), response, db=object(), event_services=mock_event_services, settings_services=mock_ss
+        )
+        assert result == {"id": str(host_id)}
     assert response.status_code == 201
     assert fire.call_count == 2
 
     with patch("app.hosts.router.host_service.approve_host", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
-            await hosts.approve_host(host_id, db=object())
+            await hosts.approve_host(host_id, db=object(), event_services=mock_event_services)
     assert exc.value.status_code == 404
 
     with (
@@ -975,7 +1014,8 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
-        assert await hosts.approve_host(host_id, db=object()) == {"id": str(host_id)}
+        result = await hosts.approve_host(host_id, db=object(), event_services=mock_event_services)
+        assert result == {"id": str(host_id)}
     assert fire.call_count == 2
 
     with patch("app.hosts.router.host_service.reject_host", new=AsyncMock(return_value=False)):
@@ -1049,33 +1089,30 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     with patch("app.hosts.router.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value={"ok": True})):
         assert await hosts.get_host_diagnostics(host_id, db=object()) == {"ok": True}
 
-    with (
-        patch(
-            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
-            new=AsyncMock(side_effect=ValueError("bad")),
-        ),
-        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
+    telemetry_svc = Mock()
+    telemetry_svc.get = Mock(return_value=60)
+    telemetry_ss = _mock_settings_svc(telemetry_svc)
+
+    with patch(
+        "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
+        new=AsyncMock(side_effect=ValueError("bad")),
     ):
         with pytest.raises(HTTPException) as exc:
-            await hosts.get_host_resource_telemetry(host_id, db=object())
+            await hosts.get_host_resource_telemetry(host_id, db=object(), settings_services=telemetry_ss)
     assert exc.value.status_code == 400
-    with (
-        patch(
-            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry", new=AsyncMock(return_value=None)
-        ),
-        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
+    with patch(
+        "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry", new=AsyncMock(return_value=None)
     ):
         with pytest.raises(HTTPException) as exc:
-            await hosts.get_host_resource_telemetry(host_id, db=object())
+            await hosts.get_host_resource_telemetry(host_id, db=object(), settings_services=telemetry_ss)
     assert exc.value.status_code == 404
-    with (
-        patch(
-            "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
-            new=AsyncMock(return_value={"samples": []}),
-        ),
-        patch("app.hosts.router.settings_service.get", new=Mock(return_value=60)),
+    with patch(
+        "app.hosts.router.host_resource_telemetry.fetch_host_resource_telemetry",
+        new=AsyncMock(return_value={"samples": []}),
     ):
-        assert await hosts.get_host_resource_telemetry(host_id, db=object()) == {"samples": []}
+        assert await hosts.get_host_resource_telemetry(host_id, db=object(), settings_services=telemetry_ss) == {
+            "samples": []
+        }
 
     offline = SimpleNamespace(status=SimpleNamespace(value="offline"))
     with patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=offline)):
@@ -1994,11 +2031,12 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     )
 
     with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
+        mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
         for call in (
             lambda: webhooks.get_webhook(webhook_id, db=object()),
             lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
             lambda: webhooks.delete_webhook(webhook_id, db=object()),
-            lambda: webhooks.test_webhook(webhook_id, db=object()),
+            lambda: webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh),
             lambda: webhooks.list_webhook_deliveries(webhook_id, db=object()),
             lambda: webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object()),
         ):
@@ -2006,14 +2044,15 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
                 await call()
             assert exc.value.status_code == 404
 
+    mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
     with (
         patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
-        patch("app.webhooks.router.event_bus.publish", new=AsyncMock()) as publish,
         patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
         patch("app.webhooks.router.webhook_dispatcher.retry_delivery", new=AsyncMock(side_effect=[None, delivery])),
     ):
-        assert (await webhooks.test_webhook(webhook_id, db=object()))["webhook_name"] == "alerts"
-        publish.assert_awaited_once()
+        result = await webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh)
+        assert result["webhook_name"] == "alerts"
+        mock_event_services_wh.bus.publish.assert_awaited_once()
         deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
         assert deliveries["total"] == 1
         with pytest.raises(HTTPException) as exc:
@@ -2029,8 +2068,9 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     assert runs._parse_run_filter_datetime("2026-05-01T12:00:00") == datetime(2026, 5, 1, 12, tzinfo=UTC)
 
     payload = RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android", "count": 1}])
+    dummy_ss = _mock_settings_svc(Mock())
     with pytest.raises(HTTPException) as exc:
-        await runs.create_run(payload, include="capabilities", db=object())
+        await runs.create_run(payload, include="capabilities", db=object(), settings_services=dummy_ss)
     assert exc.value.status_code == 422
 
     for error, status_code in (
@@ -2040,7 +2080,7 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     ):
         with patch("app.runs.router.run_service.create_run", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
-                await runs.create_run(payload, include=None, db=object())
+                await runs.create_run(payload, include=None, db=object(), settings_services=dummy_ss)
         assert exc.value.status_code == status_code
 
     run = _run_obj()
@@ -2051,11 +2091,11 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         platform_id="android",
         os_version="14",
     )
-    with (
-        patch("app.runs.router.run_service.create_run", new=AsyncMock(return_value=(run, [device_info]))),
-        patch("app.runs.router.settings_service.get", new=Mock(return_value="http://grid:4444")),
-    ):
-        created = await runs.create_run(payload, include=None, db=object())
+    run_grid_svc = Mock()
+    run_grid_svc.get = Mock(return_value="http://grid:4444")
+    run_grid_ss = _mock_settings_svc(run_grid_svc)
+    with patch("app.runs.router.run_service.create_run", new=AsyncMock(return_value=(run, [device_info]))):
+        created = await runs.create_run(payload, include=None, db=object(), settings_services=run_grid_ss)
     assert created["id"] == run.id
     assert created["grid_url"] == "http://grid:4444"
 
@@ -2306,19 +2346,20 @@ async def test_devices_verification_router_error_and_success_branches(db_session
 async def test_devices_verification_event_stream_terminal_initial_event(db_session: AsyncSession) -> None:
     job = {"job_id": "job-stream", "status": "completed", "current_stage": "save_device"}
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
-    with (
-        patch.object(
-            devices_verification_router.device_verification,
-            "get_verification_job",
-            new=AsyncMock(return_value=job),
-        ),
-        patch.object(devices_verification_router.event_bus, "subscribe", new=Mock(return_value=object())),
-        patch.object(devices_verification_router.event_bus, "unsubscribe", new=Mock()) as unsubscribe,
+    unsubscribe = Mock()
+    mock_event_services = SimpleNamespace(
+        bus=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
+    )
+    with patch.object(
+        devices_verification_router.device_verification,
+        "get_verification_job",
+        new=AsyncMock(return_value=job),
     ):
         response = await devices_verification_router.stream_device_verification_job_events(
             "job-stream",
             request,  # type: ignore[arg-type]
             db=db_session,
+            event_services=mock_event_services,
         )
         first = await response.body_iterator.__anext__()
         await response.body_iterator.aclose()

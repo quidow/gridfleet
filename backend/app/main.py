@@ -19,6 +19,7 @@ from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
 from app.auth.middleware import StaticPathsAuthMiddleware
+from app.composition import compose_app
 from app.core.config import DOCS_ENABLED_ENVIRONMENTS
 from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
@@ -171,6 +172,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     state_write_guard.register()
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
+
+    app_services = compose_app(engine=engine, session_factory=session_factory)
+    app.state.services = app_services
 
     event_bus.configure(session_factory=session_factory, engine=engine)
     settings_service.configure_store_refresh(session_factory)

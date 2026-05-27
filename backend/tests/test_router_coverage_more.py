@@ -19,6 +19,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
+from app.settings.services_container import SettingsServices
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:
@@ -59,17 +60,22 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
+    mock_svc = MagicMock()
+    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+
     monkeypatch.setattr(
         runs.run_service, "parse_includes", lambda include, allowed: {"capabilities"} if include else set()
     )
     with pytest.raises(HTTPException) as unsupported:
-        await runs.create_run(RunCreate(name="r", requirements=[]), include="capabilities", db=db)
+        await runs.create_run(
+            RunCreate(name="r", requirements=[]), include="capabilities", db=db, settings_services=mock_ss
+        )
     assert unsupported.value.status_code == 422
 
     monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: set())
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(side_effect=PackUnavailableError("pack")))
     with pytest.raises(HTTPException) as pack_error:
-        await runs.create_run(RunCreate(name="r", requirements=[]), db=db)
+        await runs.create_run(RunCreate(name="r", requirements=[]), db=db, settings_services=mock_ss)
     assert pack_error.value.status_code == 422
 
     monkeypatch.setattr(
@@ -232,10 +238,14 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     )
     monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: {"config"})
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
-    monkeypatch.setattr(runs.settings_service, "get", lambda key: "http://grid")
+    grid_svc = MagicMock()
+    grid_svc.get = MagicMock(return_value="http://grid")
+    grid_ss = SettingsServices(service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
-    created = await runs.create_run(RunCreate(name="r", requirements=[]), include="config", db=db)
+    created = await runs.create_run(
+        RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss
+    )
     assert created["devices"][0].unavailable_includes[0].reason == "device_not_found"
 
     active = _run(RunState.active)
@@ -475,18 +485,20 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
 async def test_device_verification_event_stream_initial_completed_job(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock(bind=object())
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
+    unsubscribe = MagicMock()
+    mock_event_services = SimpleNamespace(
+        bus=SimpleNamespace(subscribe=MagicMock(return_value=queue), unsubscribe=unsubscribe)
+    )
     monkeypatch.setattr(
         devices_verification.device_verification,
         "get_verification_job",
         AsyncMock(return_value={"job_id": "job", "status": "completed"}),
     )
-    monkeypatch.setattr(devices_verification.event_bus, "subscribe", MagicMock(return_value=queue))
-    unsubscribe = MagicMock()
-    monkeypatch.setattr(devices_verification.event_bus, "unsubscribe", unsubscribe)
     response = await devices_verification.stream_device_verification_job_events(
         "job",
         SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
         db=db,
+        event_services=mock_event_services,
     )
 
     first = await response.body_iterator.__anext__()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
@@ -12,6 +12,9 @@ from app.core.observability import get_logger
 from app.events import event_bus
 from app.hosts.models.host import Host
 from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 
@@ -45,9 +48,10 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self) -> None:
+    def __init__(self, *, publisher: EventPublisher | None = None) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
+        self._publisher = publisher
 
     def _failure_threshold(self) -> int:
         return int(settings_service.get("agent.circuit_breaker_failure_threshold"))
@@ -98,7 +102,8 @@ class AgentCircuitBreaker:
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
             payload: dict[str, Any] = {"host": host, **(await _resolve_host_identity(host))}
-            await event_bus.publish(
+            _bus = self._publisher or event_bus
+            await _bus.publish(
                 "host.circuit_breaker.closed",
                 payload,
             )
@@ -147,7 +152,8 @@ class AgentCircuitBreaker:
                 "last_error": error,
                 **(await _resolve_host_identity(host)),
             }
-            await event_bus.publish(
+            _bus = self._publisher or event_bus
+            await _bus.publish(
                 "host.circuit_breaker.opened",
                 payload,
             )

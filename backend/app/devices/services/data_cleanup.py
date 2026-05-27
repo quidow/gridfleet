@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import InstrumentedAttribute
     from sqlalchemy.sql.elements import ColumnElement
 
+    from app.events.protocols import EventPublisher
+
 logger = get_logger(__name__)
 LOOP_NAME = "data_cleanup"
 DELETE_BATCH_SIZE = 1000
@@ -71,7 +73,7 @@ async def _delete_in_batches(
     return deleted_total
 
 
-async def _cleanup_old_data(db: AsyncSession) -> None:
+async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher | None = None) -> None:
     now = datetime.now(UTC)
     sessions_deleted = 0
     audit_deleted = 0
@@ -216,7 +218,8 @@ async def _cleanup_old_data(db: AsyncSession) -> None:
         diagnostic_snapshots_deleted,
         agent_reconfigure_outbox_deleted,
     )
-    await event_bus.publish(
+    _bus = publisher or event_bus
+    await _bus.publish(
         "system.cleanup_completed",
         {
             "sessions_deleted": sessions_deleted,
