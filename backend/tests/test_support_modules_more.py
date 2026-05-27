@@ -23,6 +23,7 @@ from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
+from app.runs.services_container import RunServices
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -183,7 +184,6 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
 
     with (
         patch("app.runs.service_reaper.observe_background_loop", return_value=_Observation()),
-        patch("app.runs.service_reaper.async_session", fake_session),
         patch(
             "app.runs.service_reaper._reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
@@ -191,9 +191,14 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await run_reaper.run_reaper_loop(
-            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+        loop = run_reaper.RunReaperLoop(
+            services=RunServices(
+                publisher=event_bus,
+                settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+                session_factory=fake_session,
+            )
         )
+        await loop.run()
 
     sleep.assert_awaited()
 

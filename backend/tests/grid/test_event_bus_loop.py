@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from app.grid import event_bus_loop
+from app.grid.services_container import GridServices
 from app.sessions import service_sync
+from tests.fakes import FakeSettingsReader
 
 
 def _frames(event_type: str, payload: object) -> list[bytes]:
@@ -47,12 +49,26 @@ async def hub_pub(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[zmq.asyncio.
         pub.close(linger=0)
 
 
+def _fake_session_factory() -> object:
+    class _FakeSession:
+        async def __aenter__(self) -> object:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    return _FakeSession()
+
+
 async def test_subscriber_loop_wakes_session_sync(
     hub_pub: zmq.asyncio.Socket,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service_sync._doorbell = None  # force fresh Event on the current loop
-    task = asyncio.create_task(event_bus_loop.event_bus_subscriber_loop())
+    loop = event_bus_loop.GridEventBusSubscriberLoop(
+        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+    )
+    task = asyncio.create_task(loop.run())
     try:
         await asyncio.sleep(0.1)  # let SUB connect + subscribe
         await hub_pub.send_multipart(_frames("session-created", {"id": "s-1"}))
@@ -70,7 +86,10 @@ async def test_subscriber_loop_shuts_down_cleanly(
     hub_pub: zmq.asyncio.Socket,
 ) -> None:
     service_sync._doorbell = None
-    task = asyncio.create_task(event_bus_loop.event_bus_subscriber_loop())
+    loop = event_bus_loop.GridEventBusSubscriberLoop(
+        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+    )
+    task = asyncio.create_task(loop.run())
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

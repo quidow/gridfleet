@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.packs.models import DriverPack, PackState
 from app.packs.services import drain as pack_drain
 from app.packs.services.drain import complete_draining_packs_once
+from app.packs.services_container import PackServices
 
 pytestmark = pytest.mark.asyncio
 
@@ -51,12 +52,12 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
 
     with (
         patch("app.packs.services.drain.observe_background_loop", new=Mock(return_value=Observation())),
-        patch("app.packs.services.drain.async_session", new=Mock(return_value=SessionScope())),
         patch("app.packs.services.drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
         patch("app.packs.services.drain.logger.info") as info,
         patch("app.packs.services.drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         pytest.raises(asyncio.CancelledError),
     ):
-        await pack_drain.pack_drain_loop()
+        loop = pack_drain.PackDrainLoop(services=PackServices(session_factory=SessionScope))
+        await loop.run()
 
     info.assert_called_once_with("Completed draining driver packs: %s", "pack-a")

@@ -24,6 +24,7 @@ from app.devices.services import (
 )
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
+from app.runs.services_container import RunServices
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -161,21 +162,25 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 
 async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(run_reaper, "async_session", _fake_session)
     monkeypatch.setattr(run_reaper, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader")))
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop(
-            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+    loop = run_reaper.RunReaperLoop(
+        services=RunServices(
+            publisher=event_bus,
+            settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+            session_factory=_fake_session,
         )
+    )
+
+    with pytest.raises(SystemExit):
+        await loop.run()
 
     run_reaper.os._exit.assert_called_once_with(70)
 
 
 async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(run_reaper, "async_session", _fake_session)
     monkeypatch.setattr(
         run_reaper,
         "_reap_stale_runs",
@@ -184,10 +189,16 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
     monkeypatch.setattr(run_reaper.asyncio, "sleep", AsyncMock(return_value=None))
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    with pytest.raises(SystemExit):
-        await run_reaper.run_reaper_loop(
-            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+    loop = run_reaper.RunReaperLoop(
+        services=RunServices(
+            publisher=event_bus,
+            settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+            session_factory=_fake_session,
         )
+    )
+
+    with pytest.raises(SystemExit):
+        await loop.run()
 
     run_reaper.os._exit.assert_called_once_with(70)
 
@@ -226,7 +237,9 @@ async def test_control_plane_leader_keepalive_loop_exits_on_leadership_loss(
     )
     monkeypatch.setattr(control_plane_leader_keepalive.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    loop = control_plane_leader_keepalive.LeaderKeepaliveLoop()
+
     with pytest.raises(SystemExit):
-        await control_plane_leader_keepalive.control_plane_leader_keepalive_loop()
+        await loop.run()
 
     control_plane_leader_keepalive.os._exit.assert_called_once_with(70)

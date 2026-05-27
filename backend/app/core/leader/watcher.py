@@ -16,6 +16,19 @@ logger = get_logger(__name__)
 LEADER_WATCHER_LOOP_NAME = "control_plane_leader_watcher"
 
 
+class LeaderWatcherLoop:
+    async def run(self) -> None:
+        """Always-on loop. Polls staleness and preempts when allowed."""
+        while True:
+            interval = float(_setting("general.leader_keepalive_interval_sec"))
+            try:
+                async with observe_background_loop(LEADER_WATCHER_LOOP_NAME, interval).cycle():
+                    await run_watcher_once()
+            except Exception:
+                logger.exception("control_plane_leader_watcher_loop_failed")
+            await asyncio.sleep(interval)
+
+
 async def _exit_after_preempt() -> None:
     """Exit after a successful watcher preempt."""
     logger.warning(
@@ -48,15 +61,3 @@ async def run_watcher_once(
         # Do not manually release here. os._exit drops the process sockets, and
         # Postgres releases the session advisory lock as part of connection cleanup.
         await _exit_after_preempt()
-
-
-async def control_plane_leader_watcher_loop() -> None:
-    """Always-on loop. Polls staleness and preempts when allowed."""
-    while True:
-        interval = float(_setting("general.leader_keepalive_interval_sec"))
-        try:
-            async with observe_background_loop(LEADER_WATCHER_LOOP_NAME, interval).cycle():
-                await run_watcher_once()
-        except Exception:
-            logger.exception("control_plane_leader_watcher_loop_failed")
-        await asyncio.sleep(interval)

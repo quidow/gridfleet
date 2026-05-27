@@ -32,12 +32,12 @@ from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
 from app.core.leader import register_settings_provider
 from app.core.leader.advisory import control_plane_leader
-from app.core.leader.keepalive import control_plane_leader_keepalive_loop
-from app.core.leader.watcher import control_plane_leader_watcher_loop
+from app.core.leader.keepalive import LeaderKeepaliveLoop
+from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
-    background_loop_flush_loop,
+    BackgroundLoopFlushLoop,
     configure_logging,
     flush_background_loop_snapshots,
     get_logger,
@@ -52,19 +52,19 @@ from app.events import router as events
 from app.events.event_bus import EventBus, set_bus_ref
 from app.grid import router as grid
 from app.grid import service as grid_service
-from app.grid.event_bus_loop import event_bus_subscriber_loop
+from app.grid.event_bus_loop import GridEventBusSubscriberLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
 from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
-from app.jobs import queue as job_queue
+from app.jobs.queue import DurableJobWorkerLoop
 from app.packs import routers as pack_routers
-from app.packs import services as pack_services
+from app.packs.services.drain import PackDrainLoop
 from app.plugins import router as plugins
 from app.runs import router as runs_router
-from app.runs import service_reaper as run_service_reaper
+from app.runs.service_reaper import RunReaperLoop
 from app.sessions import router as sessions_router
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
@@ -75,6 +75,7 @@ from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
+from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 configure_logging()
 
@@ -90,11 +91,6 @@ FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
 assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
-run_reaper_loop = run_service_reaper.run_reaper_loop
-
-
-async def pack_drain_loop() -> None:
-    await pack_services.drain.pack_drain_loop()
 
 
 def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
@@ -202,6 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
+    leader_watcher = LeaderWatcherLoop()
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
@@ -218,33 +215,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
         host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
+        run_reaper = RunReaperLoop(services=app_services.runs)
+        grid_event_bus = GridEventBusSubscriberLoop(services=app_services.grid)
+        pack_drain = PackDrainLoop(services=app_services.packs)
+        job_worker = DurableJobWorkerLoop(session_factory=session_factory, publisher=bus, settings=svc)
+        webhook_delivery = WebhookDeliveryLoop(session_factory=session_factory)
+        background_loop_flush = BackgroundLoopFlushLoop(session_factory=session_factory, settings=svc)
+        leader_keepalive = LeaderKeepaliveLoop()
+
         _leader_loops: list[tuple[Any, str]] = [
-            (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
+            (leader_keepalive.run(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
             (session_sync.run(), "session_sync_loop"),
-            (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
+            (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
             (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
             (property_refresh.run(), "property_refresh_loop"),
             (hardware_telemetry.run(), "hardware_telemetry_loop"),
             (host_resource_telemetry.run(), "host_resource_telemetry_loop"),
-            (
-                job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
-                "durable_job_worker_loop",
-            ),
-            (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
-            (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
+            (job_worker.run(), "durable_job_worker_loop"),
+            (webhook_delivery.run(), "webhook_dispatcher.webhook_delivery_loop"),
+            (run_reaper.run(), "run_reaper_loop"),
             (data_cleanup.run(), "data_cleanup_loop"),
             (session_viability.run(), "session_viability_loop"),
             (fleet_capacity.run(), "fleet_capacity_collector_loop"),
-            (pack_drain_loop(), "pack_drain_loop"),
+            (pack_drain.run(), "pack_drain_loop"),
             (appium_reconciler.run(), "appium_reconciler_loop"),
             (intent_reconciler.run(), "device_intent_reconciler_loop"),
-            (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
+            (background_loop_flush.run(), "background_loop_flush_loop"),
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
-        control_plane_leader_watcher_loop(),
+        leader_watcher.run(),
         name="control_plane_leader_watcher",
     )
     try:

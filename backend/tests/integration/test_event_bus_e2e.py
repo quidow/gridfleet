@@ -17,7 +17,9 @@ import zmq
 import zmq.asyncio
 
 from app.grid import event_bus_loop, grid_settings
+from app.grid.services_container import GridServices
 from app.sessions import service_sync
+from tests.fakes import FakeSettingsReader
 
 pytestmark = [pytest.mark.grid, pytest.mark.asyncio]
 
@@ -52,13 +54,27 @@ def _frames(event_type: str, payload: object) -> list[bytes]:
     ]
 
 
+def _fake_session_factory() -> object:
+    class _FakeSession:
+        async def __aenter__(self) -> object:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    return _FakeSession()
+
+
 async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     service_sync._doorbell = None  # force fresh Event on the current loop
 
     # Point subscriber at the real hub XPUB (subscribers READ from here).
     monkeypatch.setattr(grid_settings, "event_bus_subscribe_url", f"tcp://{HUB_HOST}:{HUB_XPUB_PORT}")
 
-    task = asyncio.create_task(event_bus_loop.event_bus_subscriber_loop())
+    loop = event_bus_loop.GridEventBusSubscriberLoop(
+        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+    )
+    task = asyncio.create_task(loop.run())
     try:
         await asyncio.sleep(0.5)  # let SUB connect through the hub proxy
         # Publish a synthetic session-created via the hub's XSUB ingress

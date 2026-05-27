@@ -208,7 +208,10 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
         patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await job_queue.durable_job_worker_loop(session_factory, publisher=AsyncMock(), settings=FakeSettingsReader({}))
+        loop = job_queue.DurableJobWorkerLoop(
+            session_factory=session_factory, publisher=AsyncMock(), settings=FakeSettingsReader({})
+        )
+        await loop.run()
 
     assert reset_jobs.await_count == 2
     sleep.assert_awaited()

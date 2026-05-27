@@ -201,7 +201,7 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(keepalive.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
-        await keepalive.control_plane_leader_keepalive_loop()
+        await keepalive.LeaderKeepaliveLoop().run()
 
     keepalive.run_keepalive_once.assert_awaited_once()
 
@@ -211,7 +211,7 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(watcher.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     with pytest.raises(asyncio.CancelledError):
-        await watcher.control_plane_leader_watcher_loop()
+        await watcher.LeaderWatcherLoop().run()
 
     assert watcher.run_watcher_once.await_count == 2
 
