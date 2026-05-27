@@ -147,6 +147,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         [eligible.id, unsupported.id, failed.id],
         publisher=event_bus,
         settings=FakeSettingsReader(),
+        circuit_breaker=MagicMock(),
     )
     assert reconnect["total"] == 3
     assert reconnect["succeeded"] == 1

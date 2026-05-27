@@ -87,7 +87,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             async with db_session_maker() as db:
                 loop = HeartbeatLoop(services=Mock())
                 for _ in range(threshold):
-                    await loop._check_hosts(db, settings=FakeSettingsReader({}))
+                    await loop._check_hosts(db, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     async def race_writer() -> None:
         await asyncio.wait_for(inside_offline_branch.wait(), timeout=2.0)

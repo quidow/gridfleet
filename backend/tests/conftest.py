@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -322,6 +323,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
             publisher=test_event_bus,
             settings=settings_service,
             session_factory=sf,
+            circuit_breaker=Mock(),
         )
 
     def override_get_host_services() -> HostServices:

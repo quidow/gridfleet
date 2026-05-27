@@ -1,7 +1,7 @@
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -164,6 +164,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         health_by_host={host_id: observed_payload},
         require_leader=False,
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
     touch.assert_awaited_once()
@@ -173,7 +174,9 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
 
 async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _desired_row()
-    stop_agent = appium_reconciler._make_stop_agent("10.0.0.1", 5100, settings=FakeSettingsReader())
+    stop_agent = appium_reconciler._make_stop_agent(
+        "10.0.0.1", 5100, settings=FakeSettingsReader(), circuit_breaker=Mock()
+    )
     assert await stop_agent(row=row, port=None) is None
     assert await stop_agent(row=row, port=0) is None
 
@@ -220,7 +223,7 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
 
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
     start = appium_reconciler._make_start_agent(
-        require_leader=False, session_scope=scope, settings=FakeSettingsReader({})
+        require_leader=False, session_scope=scope, settings=FakeSettingsReader({}), circuit_breaker=Mock()
     )
     with pytest.raises(RuntimeError, match="no longer exists"):
         await start(row=row, port=4723)

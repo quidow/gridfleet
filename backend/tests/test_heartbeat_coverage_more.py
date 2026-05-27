@@ -32,18 +32,20 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
             return self.host
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(None))
-    await heartbeat._auto_sync_plugins_on_recovery(uuid.uuid4(), settings=FakeSettingsReader({}))
+    await heartbeat._auto_sync_plugins_on_recovery(
+        uuid.uuid4(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
 
     host = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host))
     monkeypatch.setattr(heartbeat.plugin_service, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
     monkeypatch.setattr(heartbeat.plugin_service, "auto_sync_host_plugins", sync)
-    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
-    sync.assert_awaited_once_with(host, ["plugin"], settings=ANY)
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    sync.assert_awaited_once_with(host, ["plugin"], settings=ANY, circuit_breaker=ANY)
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host, fail_get=True))
-    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
 
 async def test_background_task_scheduler_and_shutdown_paths() -> None:
@@ -71,12 +73,17 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
 
     with pytest.raises(AssertionError):
         await heartbeat._apply_host_ping_result(
-            MagicMock(), MagicMock(), _dead_result(), guard_active=True, settings=FakeSettingsReader({})
+            MagicMock(),
+            MagicMock(),
+            _dead_result(),
+            guard_active=True,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(heartbeat, "agent_health", AsyncMock(side_effect=AgentCallError("1.2.3.4", "boom")))
-        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}), circuit_breaker=Mock())
     assert result.outcome is HeartbeatOutcome.unexpected_error
     assert result.error_category == "AgentCallError"
 
@@ -86,7 +93,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             "agent_health",
             AsyncMock(side_effect=AgentUnreachableError("1.2.3.4", "dns", transport_outcome="dns_error")),
         )
-        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}), circuit_breaker=Mock())
     assert result.outcome is HeartbeatOutcome.dns_error
     assert result.error_category == "AgentUnreachableError"
 

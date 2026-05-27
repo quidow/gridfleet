@@ -140,6 +140,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
                 _session_factory(db_session),
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
+                circuit_breaker=AsyncMock(),
                 kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
             )
             is True
@@ -155,6 +156,7 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
                 _session_factory(db_session),
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
+                circuit_breaker=AsyncMock(),
                 kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
             )
             is True
@@ -175,7 +177,10 @@ async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: As
     await db_session.commit()
 
     result = await job_queue.run_pending_jobs_once(
-        _session_factory(db_session), publisher=AsyncMock(), settings=FakeSettingsReader({})
+        _session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
     )
     assert result is True
     await db_session.refresh(unsupported)
@@ -185,7 +190,10 @@ async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: As
 
 async def test_run_pending_jobs_once_returns_false_when_no_jobs(db_session: AsyncSession) -> None:
     result = await job_queue.run_pending_jobs_once(
-        _session_factory(db_session), publisher=AsyncMock(), settings=FakeSettingsReader({})
+        _session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
     )
     assert result is False
 
@@ -209,7 +217,10 @@ async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
         pytest.raises(asyncio.CancelledError),
     ):
         loop = job_queue.DurableJobWorkerLoop(
-            session_factory=session_factory, publisher=AsyncMock(), settings=FakeSettingsReader({})
+            session_factory=session_factory,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
         await loop.run()
 

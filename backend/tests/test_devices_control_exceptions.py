@@ -120,7 +120,10 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         patch.object(devices_control.node_manager, "restart_node", new=AsyncMock(return_value=node)),
     ):
         result = await devices_control.reconnect_device(
-            device.id, db=db_session, settings_services=_settings_services()
+            device.id,
+            db=db_session,
+            settings_services=_settings_services(),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )
 
     assert result["success"] is True
@@ -162,7 +165,9 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=db, settings_services=_settings_services())  # type: ignore[arg-type]
+        await devices_control.reconnect_device(
+            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+        )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
     assert "restart failed" in exc.value.detail
@@ -192,7 +197,9 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
         ),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=db, settings_services=_settings_services())  # type: ignore[arg-type]
+        await devices_control.reconnect_device(
+            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+        )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
     assert "port occupied" in exc.value.detail
@@ -225,7 +232,9 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
         patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(HTTPException) as exc,
     ):
-        await devices_control.reconnect_device(device_id, db=db, settings_services=_settings_services())  # type: ignore[arg-type]
+        await devices_control.reconnect_device(
+            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+        )  # type: ignore[arg-type]
 
     # Must be 400, NOT 502
     assert exc.value.status_code == 400
@@ -255,4 +264,6 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
         ),
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
-        await devices_control.reconnect_device(device_id, db=db, settings_services=_settings_services())  # type: ignore[arg-type]
+        await devices_control.reconnect_device(
+            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+        )  # type: ignore[arg-type]

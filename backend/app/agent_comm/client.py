@@ -105,9 +105,8 @@ async def request(
     json_body: JsonBody = None,
     timeout: float | int | None = None,
     auth: httpx.Auth | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
-    _breaker = circuit_breaker
     request_headers = build_agent_headers(headers)
     effective_auth = auth if auth is not None else _agent_basic_auth()
     request_kwargs = _request_kwargs(
@@ -120,17 +119,16 @@ async def request(
     )
     started = perf_counter()
     outcome = "success"
-    if _breaker is not None:
-        retry_after = await _breaker.before_request(host)
-        if retry_after is not None:
-            record_agent_call(
-                host=host,
-                endpoint=endpoint,
-                outcome="circuit_open",
-                client_mode="skipped_circuit_open",
-                duration_seconds=0.0,
-            )
-            raise CircuitOpenError(host, retry_after_seconds=retry_after)
+    retry_after = await circuit_breaker.before_request(host)
+    if retry_after is not None:
+        record_agent_call(
+            host=host,
+            endpoint=endpoint,
+            outcome="circuit_open",
+            client_mode="skipped_circuit_open",
+            duration_seconds=0.0,
+        )
+        raise CircuitOpenError(host, retry_after_seconds=retry_after)
     try:
         response: httpx.Response
         method_name = method.lower()
@@ -142,19 +140,17 @@ async def request(
             requester = getattr(client, method_name)
             response = cast("httpx.Response", await requester(url, **request_kwargs))
         status_code = getattr(response, "status_code", None)
-        if _breaker is not None:
-            if isinstance(status_code, int) and status_code >= 500:
-                outcome = "http_error"
-                await _breaker.record_failure(host, error=f"HTTP {status_code}")
-            else:
-                await _breaker.record_success(host)
+        if isinstance(status_code, int) and status_code >= 500:
+            outcome = "http_error"
+            await circuit_breaker.record_failure(host, error=f"HTTP {status_code}")
+        else:
+            await circuit_breaker.record_success(host)
         return response
     except httpx.HTTPError as exc:
         outcome_label, error_category = classify_httpx_transport(exc)
         exc_message = str(exc)
         breaker_error = f"{type(exc).__name__}: {exc_message}" if exc_message else type(exc).__name__
-        if _breaker is not None:
-            await _breaker.record_failure(host, error=breaker_error)
+        await circuit_breaker.record_failure(host, error=breaker_error)
         outcome = outcome_label
         raise AgentUnreachableError(
             host,

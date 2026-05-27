@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -83,4 +84,5 @@ async def test_port_conflict_detected_via_code(
             agent_base="http://host:5100",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )

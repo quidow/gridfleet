@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -64,7 +64,9 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
         "app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties",
         new_callable=AsyncMock,
     ) as fetch_props:
-        await _refresh_all_properties(session_factory=session_factory, settings=FakeSettingsReader({}))
+        await _refresh_all_properties(
+            session_factory=session_factory, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     refreshed_identity_values = [await_call.args[1].identity_value for await_call in fetch_props.await_args_list]
     assert online_device.identity_value in refreshed_identity_values
@@ -106,7 +108,9 @@ async def test_property_refresh_continues_after_device_failure(
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     fetch_props = AsyncMock(side_effect=[RuntimeError("boom"), None])
     with patch("app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties", fetch_props):
-        await _refresh_all_properties(session_factory=session_factory, settings=FakeSettingsReader({}))
+        await _refresh_all_properties(
+            session_factory=session_factory, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
     assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
@@ -123,6 +127,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}),
             session_factory=AsyncMock(),
+            circuit_breaker=Mock(),
         )
     )
 

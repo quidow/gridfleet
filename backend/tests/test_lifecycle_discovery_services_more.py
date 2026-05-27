@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,6 +149,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
         settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert [item.already_registered for item in intake] == [True, False]
     assert intake[0].platform_label == "Android"
@@ -158,6 +159,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
         settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]

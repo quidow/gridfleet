@@ -107,6 +107,12 @@ _VALID_HEALTH_PAYLOAD: dict[str, object] = {
 SETTINGS = FakeSettingsReader()
 
 
+def _noop_breaker() -> AsyncMock:
+    breaker = AsyncMock()
+    breaker.before_request = AsyncMock(return_value=None)
+    return breaker
+
+
 async def test_agent_health_get_request_omits_json_body() -> None:
     client = StrictAgentClient(
         get_response=_response("GET", "http://10.0.0.5:5100/agent/health", payload=_VALID_HEALTH_PAYLOAD)
@@ -118,6 +124,7 @@ async def test_agent_health_get_request_omits_json_body() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=5,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload is not None
@@ -144,6 +151,7 @@ async def test_agent_health_raises_response_error_on_http_500() -> None:
             http_client_factory=_strict_client_factory(client),
             timeout=5,
             settings=SETTINGS,
+            circuit_breaker=_noop_breaker(),
         )
 
     assert caught.value.http_status == 503
@@ -180,6 +188,7 @@ async def test_agent_appium_reconfigure_posts_payload() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=10,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["grid_run_id"] == str(grid_run_id)
@@ -218,6 +227,7 @@ async def test_pack_device_health_get_request() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=10,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["healthy"] is True
@@ -258,6 +268,7 @@ async def test_pack_device_health_forwards_ip_ping_params() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=10,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["healthy"] is True
@@ -300,6 +311,7 @@ async def test_pack_device_health_forwards_headless_when_explicitly_requested() 
         http_client_factory=_strict_client_factory(client),
         timeout=10,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["healthy"] is True
@@ -338,6 +350,7 @@ async def test_appium_logs_get_request_omits_json_body() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=10,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["lines"] == ["one", "two"]
@@ -364,6 +377,7 @@ async def test_appium_start_post_request_keeps_json_body() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=15,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert response.status_code == 200
@@ -396,6 +410,7 @@ async def test_get_tool_status_get_request_omits_json_body() -> None:
         http_client_factory=_strict_client_factory(client),
         timeout=15,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload["host"]["node_provider"]["version"] == "fnm"
@@ -428,6 +443,7 @@ async def test_pack_device_telemetry_returns_none_for_404() -> None:
         ip_address=None,
         http_client_factory=_strict_client_factory(client),
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert payload is None
@@ -494,6 +510,7 @@ async def test_get_pack_devices_raises_response_error_on_http_500() -> None:
             5100,
             http_client_factory=_strict_client_factory(client),
             settings=SETTINGS,
+            circuit_breaker=_noop_breaker(),
         )
 
     assert exc_info.value.http_status == 500
@@ -513,6 +530,7 @@ async def test_agent_request_passes_auth() -> None:
         host="host.test",
         client=client,
         auth=auth,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert client.get_calls, "expected one GET call"
@@ -534,6 +552,7 @@ async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: p
         endpoint="agent_health",
         host="host.test",
         client=client,
+        circuit_breaker=_noop_breaker(),
     )
 
     assert client.get_calls, "expected one GET call"
@@ -579,6 +598,7 @@ async def test_send_request_supplies_basic_auth_when_configured(
         agent_port=5100,
         http_client_factory=factory,
         settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
     )
     assert captured == [expected_auth]
 
@@ -587,5 +607,11 @@ async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     captured: list[httpx.Auth | None] = []
     factory = _make_capturing_factory(captured)
-    await agent_operations.agent_health("host.test", agent_port=5100, http_client_factory=factory, settings=SETTINGS)
+    await agent_operations.agent_health(
+        "host.test",
+        agent_port=5100,
+        http_client_factory=factory,
+        settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
+    )
     assert captured == [None]

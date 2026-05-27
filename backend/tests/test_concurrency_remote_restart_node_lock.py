@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -105,7 +105,12 @@ async def test_restart_node_via_agent_locks_device_and_node(
                 ),
             ):
                 await node_service.restart_node_via_agent(
-                    session, target, target_node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+                    session,
+                    target,
+                    target_node,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
                 )
             await session.commit()
 

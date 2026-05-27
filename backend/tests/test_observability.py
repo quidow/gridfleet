@@ -113,6 +113,7 @@ async def test_agent_request_forwards_request_id_and_records_metrics() -> None:
         host="10.0.0.1",
         client=client,
         timeout=5,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     clear_request_context()

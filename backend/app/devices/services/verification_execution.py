@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
@@ -84,6 +85,7 @@ async def run_device_health(
     *,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> str | None:
     if device.host is None:
         await set_stage(
@@ -114,6 +116,7 @@ async def run_device_health(
             http_client_factory=http_client_factory,
             timeout=_device_health_timeout(device, settings=settings),
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
     except AgentCallError as exc:
         detail = f"Agent health check failed: {exc}"
@@ -248,6 +251,7 @@ async def run_probe(
     *,
     probe_session_fn: ProbeSessionFn,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[AppiumNode | None, str | None]:
     await set_stage(job, "node_start", "running")
     await _register_verification_node_intent(db, device, settings=settings)
@@ -265,7 +269,7 @@ async def run_probe(
         # to appium_reconciler.interval_sec for the leader loop to start the node.
         # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
         try:
-            await converge_device_now(device.id, db=db, settings=settings)
+            await converge_device_now(device.id, db=db, settings=settings, circuit_breaker=circuit_breaker)
         except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
             logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
@@ -485,6 +489,7 @@ async def execute_verification_context(
     http_client_factory: AgentClientFactory,
     probe_session_fn: ProbeSessionFn,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     node: AppiumNode | None = None
@@ -508,7 +513,9 @@ async def execute_verification_context(
                 if key != "replace_device_config":
                     setattr(device, key, value)
 
-        health_error = await run_device_health(job, device, http_client_factory=http_client_factory, settings=settings)
+        health_error = await run_device_health(
+            job, device, http_client_factory=http_client_factory, settings=settings, circuit_breaker=circuit_breaker
+        )
         if health_error is not None:
             return await _finalize_failure(db, context, error=health_error, job=job, original_fields=original_fields)
 
@@ -518,6 +525,7 @@ async def execute_verification_context(
             device,
             probe_session_fn=probe_session_fn,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         if probe_error is not None:
             return await _finalize_failure(

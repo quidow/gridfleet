@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -54,6 +54,7 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
             timeout=5,
             http_client_factory=_Spy,
             settings=settings,
+            circuit_breaker=Mock(),
         )
         assert response.status_code == 200
         assert len(constructed) == 1
@@ -91,6 +92,7 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
             timeout=5,
             settings=settings,
             pool=fresh_pool,
+            circuit_breaker=Mock(),
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 1
@@ -137,6 +139,7 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
             agent_port=5100,
             timeout=5,
             settings=settings,
+            circuit_breaker=Mock(),
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 0
@@ -166,6 +169,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
             agent_port=5100,
             timeout=5,
             settings=settings,
+            circuit_breaker=Mock(),
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 0
@@ -210,7 +214,13 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
     monkeypatch.setattr(pool, "get_client", _fake_get_client)
 
     settings = FakeSettingsReader({"agent.http_pool_enabled": True})
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings, pool=pool)
+    payload = await agent_operations.agent_health(
+        "agent.local",
+        agent_port=5100,
+        settings=settings,
+        pool=pool,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
+    )
     assert payload is not None
     assert payload["status"] == "ok"
     assert captured["pool_key"] == ("agent.local", 5100)
@@ -245,7 +255,13 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
     monkeypatch.setattr(pool, "get_client", _fake_get_client)
 
     settings = FakeSettingsReader({"agent.http_pool_enabled": True})
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings, pool=pool)
+    payload = await agent_operations.agent_health(
+        "agent.local",
+        agent_port=5100,
+        settings=settings,
+        pool=pool,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
+    )
     assert payload is not None, "pool branch did not call .get"
     assert payload["status"] == "ok"
     assert "kwargs" in captured

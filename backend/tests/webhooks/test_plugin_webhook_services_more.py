@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
@@ -78,7 +78,9 @@ async def test_host_plugin_statuses_classify_installed_versions() -> None:
             ]
         ),
     ):
-        statuses = await plugin_service.get_host_plugin_statuses(host, plugins, settings=FakeSettingsReader())
+        statuses = await plugin_service.get_host_plugin_statuses(
+            host, plugins, settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
 
     assert [status["name"] for status in statuses] == ["ok-plugin", "old-plugin", "missing-plugin"]
     assert [status["status"] for status in statuses] == ["ok", "mismatch", "missing"]
@@ -96,7 +98,9 @@ async def test_sync_host_plugins_sends_enabled_payload_only() -> None:
         "app.plugins.service.sync_agent_plugins",
         new=AsyncMock(return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}),
     ) as sync_agent:
-        result = await plugin_service.sync_host_plugins(host, plugins, settings=FakeSettingsReader())
+        result = await plugin_service.sync_host_plugins(
+            host, plugins, settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
 
     assert result["installed"] == ["execute-driver"]
     sync_agent.assert_awaited_once()
@@ -112,15 +116,19 @@ async def test_sync_all_host_plugins_reports_synced_failed_and_skipped_hosts(db_
     db_session.add(AppiumPlugin(name="images", version="2.0.0", source="npm:images", enabled=True))
     await db_session.commit()
 
-    async def fake_sync(host: Host, plugins: list[AppiumPlugin], *, settings: object) -> dict[str, Any]:
-        del settings
+    async def fake_sync(
+        host: Host, plugins: list[AppiumPlugin], *, settings: object, circuit_breaker: object
+    ) -> dict[str, Any]:
+        del settings, circuit_breaker
         assert [plugin.name for plugin in plugins] == ["images"]
         if host.id == failing.id:
             raise AgentCallError(host.ip, "agent failed")
         return {"installed": [host.hostname]}
 
     with patch("app.plugins.service.sync_host_plugins", new=fake_sync):
-        result = await plugin_service.sync_all_host_plugins(db_session, settings=FakeSettingsReader())
+        result = await plugin_service.sync_all_host_plugins(
+            db_session, settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
 
     assert result == {
         "total_hosts": 3,
@@ -141,15 +149,19 @@ async def test_auto_sync_host_plugins_handles_non_actionable_and_agent_errors() 
     plugin = AppiumPlugin(name="images", version="2.0.0", source="npm:images", enabled=True)
 
     with patch("app.plugins.service.sync_host_plugins", new=AsyncMock()) as sync_host:
-        await plugin_service.auto_sync_host_plugins(offline, [plugin], settings=FakeSettingsReader())
-        await plugin_service.auto_sync_host_plugins(online, [], settings=FakeSettingsReader())
+        await plugin_service.auto_sync_host_plugins(
+            offline, [plugin], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
+        await plugin_service.auto_sync_host_plugins(online, [], settings=FakeSettingsReader(), circuit_breaker=Mock())
     sync_host.assert_not_awaited()
 
     with patch(
         "app.plugins.service.sync_host_plugins",
         new=AsyncMock(side_effect=httpx.ConnectError("offline")),
     ) as sync_host:
-        await plugin_service.auto_sync_host_plugins(online, [plugin], settings=FakeSettingsReader())
+        await plugin_service.auto_sync_host_plugins(
+            online, [plugin], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
     sync_host.assert_awaited_once()
 
 

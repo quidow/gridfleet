@@ -30,7 +30,14 @@ class PackDevicesFetcher(Protocol):
 
 class PackDevicePropertiesFetcher(Protocol):
     async def __call__(
-        self, host: str, agent_port: int, connection_target: str, pack_id: str, *, settings: SettingsReader
+        self,
+        host: str,
+        agent_port: int,
+        connection_target: str,
+        pack_id: str,
+        *,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
     ) -> dict[str, object] | None: ...
 
 
@@ -228,6 +235,7 @@ async def fetch_pack_device_properties(
     *,
     agent_get_pack_device_properties: PackDevicePropertiesFetcher,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, object] | None:
     """Fetch pack-device properties from the agent. No DB writes — safe to gather."""
     refresh_target = device.connection_target or device.identity_value
@@ -237,6 +245,7 @@ async def fetch_pack_device_properties(
         refresh_target,
         device.pack_id,
         settings=settings,
+        circuit_breaker=circuit_breaker,
     )
 
 

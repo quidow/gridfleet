@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -203,7 +204,7 @@ async def test_reconcile_expired_intents_deletes_expired_restart_intent(
     db_session.add(expired_intent)
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
     await db_session.commit()
 
     remaining = (

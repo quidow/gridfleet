@@ -164,6 +164,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             session_factory=_Session,
+            circuit_breaker=Mock(),
         )
     )
 

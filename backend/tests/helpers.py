@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import Mock
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
@@ -483,8 +484,10 @@ async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -
         desired = await appium_reconciler._fetch_desired_rows(db)
         backoff = await appium_reconciler._fetch_backoff_until(db)
     resolved_settings = settings or FakeSettingsReader({})
-    health_by_host = await appium_reconciler._reconcile_all(hosts, rows, settings=resolved_settings)
+    health_by_host = await appium_reconciler._reconcile_all(
+        hosts, rows, settings=resolved_settings, circuit_breaker=Mock()
+    )
     if appium_reconciler.reconciler_convergence_enabled():
         await appium_reconciler._drive_convergence(
-            hosts, desired, backoff, health_by_host=health_by_host, settings=resolved_settings
+            hosts, desired, backoff, health_by_host=health_by_host, settings=resolved_settings, circuit_breaker=Mock()
         )

@@ -34,6 +34,12 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 
+def _noop_breaker() -> AsyncMock:
+    breaker = AsyncMock()
+    breaker.before_request = AsyncMock(return_value=None)
+    return breaker
+
+
 PACK_ID = "local/feature-dispatch-test"
 FEATURE_ID = "android.diagnostics"
 ACTION_ID = "collect-bugreport"
@@ -159,6 +165,7 @@ async def test_dispatch_calls_agent_and_records_ok_status(
         action_id=ACTION_ID,
         args={"with_logs": True},
         http_client_factory=_factory(client),
+        circuit_breaker=_noop_breaker(),
     )
     await db_session.commit()
 
@@ -213,6 +220,7 @@ async def test_dispatch_uses_configured_agent_auth(
         action_id=ACTION_ID,
         args={},
         http_client_factory=_factory(client),
+        circuit_breaker=_noop_breaker(),
     )
 
     assert client.post_calls
@@ -245,6 +253,7 @@ async def test_dispatch_records_failure_when_agent_returns_not_ok(
         action_id=ACTION_ID,
         args={},
         http_client_factory=_factory(client),
+        circuit_breaker=_noop_breaker(),
     )
     await db_session.commit()
 
@@ -283,6 +292,7 @@ async def test_dispatch_404_when_host_missing(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
+            circuit_breaker=_noop_breaker(),
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []  # never reached the agent
@@ -304,6 +314,7 @@ async def test_dispatch_404_when_pack_missing(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
+            circuit_breaker=_noop_breaker(),
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -327,6 +338,7 @@ async def test_dispatch_404_when_feature_id_not_in_release(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
+            circuit_breaker=_noop_breaker(),
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -359,6 +371,7 @@ async def test_dispatch_502_on_agent_5xx(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
+            circuit_breaker=_noop_breaker(),
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()
@@ -396,6 +409,7 @@ async def test_dispatch_502_on_transport_error_records_degraded(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
+            circuit_breaker=_noop_breaker(),
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()
@@ -441,4 +455,5 @@ async def test_call_agent_rejects_bad_agent_responses(
             body={"pack_id": PACK_ID, "args": {}},
             http_client_factory=_factory(StrictAgentClient()),
             timeout=5,
+            circuit_breaker=_noop_breaker(),
         )

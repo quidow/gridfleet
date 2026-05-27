@@ -452,7 +452,12 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
         )
 
         restarted = await restart_node_via_agent(
-            db_session, loaded, loaded.appium_node, http_client_factory=AsyncMock, settings=FakeSettingsReader({})
+            db_session,
+            loaded,
+            loaded.appium_node,
+            http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     assert restarted is True
@@ -632,6 +637,7 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=AsyncMock(),
         )
 
     assert start_mock.await_args is not None
@@ -683,6 +689,7 @@ async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_s
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
             http_client_factory=lambda: mock_client_obj,
             settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     mock_client_obj.post.assert_not_called()
@@ -736,6 +743,8 @@ async def test_start_remote_node_renders_stereotype_once(
     def _client_factory(**_kwargs: object) -> AsyncMock:
         return mock_client_obj
 
+    cb = AsyncMock()
+    cb.before_request = AsyncMock(return_value=None)
     with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj):
         await start_remote_node(
             db_session,
@@ -745,6 +754,7 @@ async def test_start_remote_node_renders_stereotype_once(
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
             http_client_factory=_client_factory,
             settings=FakeSettingsReader({}),
+            circuit_breaker=cb,
         )
 
     assert calls == 1
@@ -789,7 +799,8 @@ async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
-            settings=FakeSettingsReader(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
     assert result is False
 
@@ -809,7 +820,8 @@ async def test_stop_remote_node_returns_true_on_agent_ack() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
-            settings=FakeSettingsReader(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
     assert result is True
 
@@ -858,7 +870,12 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
         ) as start_mock,
     ):
         result = await restart_node_via_agent(
-            db_session, loaded, loaded.appium_node, http_client_factory=AsyncMock, settings=FakeSettingsReader({})
+            db_session,
+            loaded,
+            loaded.appium_node,
+            http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     assert result is False

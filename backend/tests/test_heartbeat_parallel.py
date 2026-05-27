@@ -66,7 +66,9 @@ async def test_four_slow_hosts_run_in_parallel(
     with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
         started = time.monotonic()
         async with populated_hosts_4_slow as db:
-            await HeartbeatLoop(services=Mock())._check_hosts(db, settings=FakeSettingsReader({}))
+            await HeartbeatLoop(services=Mock())._check_hosts(
+                db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
         elapsed = time.monotonic() - started
     assert elapsed < 1.8, f"Expected parallelization to bring runtime under 1.8s, got {elapsed:.1f}s"
 
@@ -91,7 +93,9 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
         patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)),
     ):
         async with populated_hosts_one_slow_one_fast as db:
-            await HeartbeatLoop(services=Mock())._check_hosts(db, settings=FakeSettingsReader({}))
+            await HeartbeatLoop(services=Mock())._check_hosts(
+                db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
 
     # Look for heartbeat_ping events; assert fast host's event index < slow host's index.
     events = [e for e in cap if e.get("event") == "heartbeat_ping"]

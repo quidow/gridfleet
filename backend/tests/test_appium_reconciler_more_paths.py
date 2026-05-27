@@ -40,17 +40,32 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     device_id = uuid.uuid4()
     db = MagicMock()
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=None))
-    assert await appium_reconciler.converge_device_now(device_id, db=db, settings=FakeSettingsReader({})) is None
+    assert (
+        await appium_reconciler.converge_device_now(
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is None
+    )
 
     row = SimpleNamespace(device_id=device_id, host_id=uuid.uuid4(), node_id=uuid.uuid4())
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=row))
     db.get = AsyncMock(return_value=None)
-    assert await appium_reconciler.converge_device_now(device_id, db=db, settings=FakeSettingsReader({})) is None
+    assert (
+        await appium_reconciler.converge_device_now(
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is None
+    )
 
     host = SimpleNamespace(id=row.host_id, status=HostStatus.online, ip="10.0.0.1", agent_port=5100)
     db.get = AsyncMock(side_effect=[host])
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"status": "ok"}))
-    assert await appium_reconciler.converge_device_now(device_id, db=db, settings=FakeSettingsReader({})) is None
+    assert (
+        await appium_reconciler.converge_device_now(
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is None
+    )
 
     node = SimpleNamespace(id=row.node_id)
     db.get = AsyncMock(side_effect=[host, node])
@@ -67,7 +82,12 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     converge = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "converge_host_rows", converge)
 
-    assert await appium_reconciler.converge_device_now(device_id, db=db, settings=FakeSettingsReader({})) is node
+    assert (
+        await appium_reconciler.converge_device_now(
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is node
+    )
     converge.assert_awaited_once()
     db.refresh.assert_awaited_once_with(node)
 
@@ -211,7 +231,8 @@ async def test_reconcile_all_stop_callback_raises_for_agent_http_error(monkeypat
         await appium_reconciler._reconcile_all(
             [{"id": host_id, "ip": "10.0.0.1", "agent_port": 5100}],
             [{"host_id": host_id, "device_connection_target": "dev", "node_port": 4723}],
-            settings=FakeSettingsReader(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         == {}
     )
@@ -287,6 +308,7 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         [row],
         {},
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     converge.assert_not_awaited()
 

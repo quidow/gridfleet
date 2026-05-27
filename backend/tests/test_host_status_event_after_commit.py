@@ -66,6 +66,7 @@ async def test_host_offline_cascade_queues_all_events(
                 "general.heartbeat_interval_sec": 60,
             }
         ),
+        circuit_breaker=Mock(),
     )
     await settle_after_commit_tasks()
 

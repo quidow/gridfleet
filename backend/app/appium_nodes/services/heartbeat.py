@@ -123,7 +123,7 @@ async def _ping_agent(
     *,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> HeartbeatPingResult:
     started = time.monotonic()
     client_mode = _heartbeat_client_mode(settings=settings)
@@ -667,7 +667,7 @@ class HeartbeatLoop:
         *,
         settings: SettingsReader,
         pool: AgentHttpPool | None = None,
-        circuit_breaker: CircuitBreakerProtocol | None = None,
+        circuit_breaker: CircuitBreakerProtocol,
     ) -> None:
         """Ping all non-pending hosts in parallel.
 

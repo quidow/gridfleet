@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -61,14 +61,20 @@ def _device(
 async def test_get_device_health_returns_none_for_missing_host_or_agent_errors() -> None:
     device = _device()
     device.host = None
-    assert await device_connectivity._get_device_health(device, settings=FakeSettingsReader()) is None
+    assert (
+        await device_connectivity._get_device_health(device, settings=FakeSettingsReader(), circuit_breaker=Mock())
+        is None
+    )
 
     device = _device()
     with patch(
         "app.devices.services.connectivity.fetch_pack_device_health",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
     ):
-        assert await device_connectivity._get_device_health(device, settings=FakeSettingsReader()) is None
+        assert (
+            await device_connectivity._get_device_health(device, settings=FakeSettingsReader(), circuit_breaker=Mock())
+            is None
+        )
 
 
 async def test_get_agent_devices_returns_none_when_agent_call_fails() -> None:
@@ -79,7 +85,10 @@ async def test_get_agent_devices_returns_none_when_agent_call_fails() -> None:
         "app.devices.services.connectivity.get_pack_devices",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
     ):
-        assert await device_connectivity._get_agent_devices(host, settings=FakeSettingsReader()) is None
+        assert (
+            await device_connectivity._get_agent_devices(host, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+            is None
+        )
 
 
 async def test_get_lifecycle_state_handles_declared_actions_and_failures() -> None:
@@ -97,13 +106,23 @@ async def test_get_lifecycle_state_handles_declared_actions_and_failures() -> No
             new=AsyncMock(return_value={"state": "booted"}),
         ),
     ):
-        assert await device_connectivity._get_lifecycle_state(db, emulator, settings=FakeSettingsReader()) == "booted"
+        assert (
+            await device_connectivity._get_lifecycle_state(
+                db, emulator, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
+            == "booted"
+        )
 
     with patch(
         "app.devices.services.connectivity.resolve_pack_platform",
         new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[])),
     ):
-        assert await device_connectivity._get_lifecycle_state(db, real, settings=FakeSettingsReader()) is None
+        assert (
+            await device_connectivity._get_lifecycle_state(
+                db, real, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
+            is None
+        )
 
     with (
         patch(
@@ -115,14 +134,24 @@ async def test_get_lifecycle_state_handles_declared_actions_and_failures() -> No
             new=AsyncMock(side_effect=AgentCallError("10.0.0.10", "boom")),
         ),
     ):
-        assert await device_connectivity._get_lifecycle_state(db, emulator, settings=FakeSettingsReader()) is None
+        assert (
+            await device_connectivity._get_lifecycle_state(
+                db, emulator, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
+            is None
+        )
 
     emulator.connection_target = None
     with patch(
         "app.devices.services.connectivity.resolve_pack_platform",
         new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[{"id": "state"}])),
     ):
-        assert await device_connectivity._get_lifecycle_state(db, emulator, settings=FakeSettingsReader()) is None
+        assert (
+            await device_connectivity._get_lifecycle_state(
+                db, emulator, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
+            is None
+        )
 
 
 def test_summarize_unhealthy_result_covers_detail_and_failed_checks() -> None:
@@ -182,7 +211,9 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         ) as delete_value,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
+        await device_connectivity._check_connectivity(
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     assert delete_value.await_count == 1
 
@@ -217,7 +248,9 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         ) as update_emulator_state,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
+        await device_connectivity._check_connectivity(
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
 
@@ -237,6 +270,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.device_check_interval_sec": 1}),
             session_factory=fake_session,
+            circuit_breaker=Mock(),
         )
     )
 
@@ -309,6 +343,8 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         patch("app.devices.services.connectivity.assert_current_leader"),
         patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
-        await device_connectivity._check_connectivity(db_session, settings=FakeSettingsReader({}))
+        await device_connectivity._check_connectivity(
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

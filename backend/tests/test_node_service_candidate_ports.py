@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -364,7 +364,7 @@ async def test_start_node_reserves_main_appium_port_and_retries_collision(
     )
     with patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new=remote_start):
         handle = await appium_reconciler_agent._start_for_node(
-            db_session, device, node=node, preferred_port=start, settings=FakeSettingsReader({})
+            db_session, device, node=node, preferred_port=start, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
     assert handle.port == start + 1

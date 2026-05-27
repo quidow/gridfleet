@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import httpx
 import pytest
@@ -132,6 +132,7 @@ async def test_start_remote_node_error_and_override_paths(
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -151,6 +152,7 @@ async def test_start_remote_node_error_and_override_paths(
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -182,6 +184,7 @@ async def test_start_remote_node_error_and_override_paths(
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        circuit_breaker=Mock(),
     )
 
     assert result == RemoteStartResult(
@@ -235,6 +238,7 @@ async def test_start_remote_node_propagates_agent_call_errors(
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            circuit_breaker=Mock(),
         )
 
 
@@ -276,6 +280,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(
@@ -291,6 +296,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
             settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+            circuit_breaker=Mock(),
         )
 
 
@@ -351,6 +357,7 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -398,6 +405,7 @@ async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -443,6 +451,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -480,6 +489,7 @@ async def test_start_remote_node_host_tool_env_no_pack_overrides(
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
+        circuit_breaker=Mock(),
     )
 
     assert len(captured_payload) == 1
@@ -524,7 +534,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -548,7 +563,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         )
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, hostless, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            hostless,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -564,7 +584,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.stop_remote_node", AsyncMock(return_value=False))
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -585,7 +610,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
 
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is True
     )
@@ -599,7 +629,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -610,7 +645,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -619,7 +659,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.start_remote_node", AsyncMock())
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -633,7 +678,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
     assert (
         await node_agent.restart_node_via_agent(
-            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+            fake_db,
+            device,
+            node,
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is False
     )
@@ -926,7 +976,9 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
 
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(side_effect=NodeManagerError("missing host")))
     assert (
-        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        await node_agent.stop_node_via_agent(
+            device, node, http_client_factory=httpx.AsyncClient, settings=settings, circuit_breaker=Mock()
+        )
         is False
     )
 
@@ -935,7 +987,9 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(return_value=host))
     monkeypatch.setattr(node_agent, "appium_stop", AsyncMock(return_value=response))
     assert (
-        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        await node_agent.stop_node_via_agent(
+            device, node, http_client_factory=httpx.AsyncClient, settings=settings, circuit_breaker=Mock()
+        )
         is True
     )
 
@@ -945,7 +999,9 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
         response=httpx.Response(500, request=httpx.Request("POST", "http://agent")),
     )
     assert (
-        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        await node_agent.stop_node_via_agent(
+            device, node, http_client_factory=httpx.AsyncClient, settings=settings, circuit_breaker=Mock()
+        )
         is False
     )
 
@@ -1013,7 +1069,9 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
         ),
     )
 
-    handle = await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
+    handle = await node_agent._start_for_node(
+        AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
 
     assert handle.allocated_caps["appium:systemPort"] == 9000
     assert handle.allocated_caps["appium:derivedDataPath"].startswith("/tmp/gridfleet/derived-data/")
@@ -1031,7 +1089,9 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
     )
     node = SimpleNamespace(id=uuid.uuid4())
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await node_agent._start_for_node(AsyncMock(), hostless, node=node, settings=FakeSettingsReader({}))
+        await node_agent._start_for_node(
+            AsyncMock(), hostless, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     device = SimpleNamespace(
         id=uuid.uuid4(),
@@ -1068,7 +1128,9 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
     monkeypatch.setattr(node_agent.appium_node_resource_service, "release_managed", release_managed)
 
     with pytest.raises(RuntimeError, match="boom"):
-        await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
+        await node_agent._start_for_node(
+            AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     release_managed.assert_awaited_once()
     assert reserve_session.commit.await_count == 1
@@ -1109,7 +1171,9 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
     monkeypatch.setattr(node_agent, "start_remote_node", AsyncMock(side_effect=NodePortConflictError("busy")))
 
     with pytest.raises(NodePortConflictError):
-        await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
+        await node_agent._start_for_node(
+            AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     assert node_agent.appium_node_resource_service.release_capability.await_count == 2
     release_managed.assert_awaited_once()

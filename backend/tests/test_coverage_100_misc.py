@@ -353,7 +353,12 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         is None
     )
     await device_verification_runner.run_persisted_verification_job(
-        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})
+        str(uuid.uuid4()),
+        {"mode": "create"},
+        SessionCtx,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
 
@@ -472,7 +477,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         ]
     )
     await agent_reconfigure_delivery.deliver_agent_reconfigures(
-        reconfigure_db, row.device_id, settings=FakeSettingsReader()
+        reconfigure_db, row.device_id, settings=FakeSettingsReader(), circuit_breaker=Mock()
     )
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
@@ -561,8 +566,10 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
 
     class DummyClient:
-        async def get_pack_devices(self, _host: str, _port: int, *, settings: object) -> dict[str, object]:
-            del settings
+        async def get_pack_devices(
+            self, _host: str, _port: int, *, settings: object, circuit_breaker: object
+        ) -> dict[str, object]:
+            del settings, circuit_breaker
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -575,21 +582,29 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
         agent_get_pack_devices=DummyClient().get_pack_devices,
         settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert result.new_devices == []
 
     monkeypatch.setattr(plugin_service, "list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
     assert await plugin_service.fetch_host_plugins(
-        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader()
+        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader(), circuit_breaker=Mock()
     ) == [{"name": "images"}]
 
     offline_host = SimpleNamespace(status=SimpleNamespace(value="offline"), hostname="host")
     assert (
-        await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}], settings=FakeSettingsReader())
+        await plugin_service.auto_sync_host_plugins(
+            offline_host, [{"name": "images"}], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
         is None
     )
     online_host = SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(online_host, [], settings=FakeSettingsReader()) is None
+    assert (
+        await plugin_service.auto_sync_host_plugins(
+            online_host, [], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
+        is None
+    )
 
     class ClientManager:
         async def __aenter__(self) -> object:
@@ -610,6 +625,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
+            circuit_breaker=Mock(),
         )
     monkeypatch.setattr(
         pack_feature_dispatch_service,
@@ -623,6 +639,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
+            circuit_breaker=Mock(),
         )
 
     feature_db = AsyncMock()
@@ -790,7 +807,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
     assert (
-        await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})) is True
+        await job_queue.run_pending_jobs_once(
+            QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is True
     )
 
     storage = pack_storage_service.PackStorageService(tmp_path)
@@ -847,6 +867,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host"),
         [{"name": "images"}],
         settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     plugin_service.sync_host_plugins.assert_awaited_once()
 

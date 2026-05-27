@@ -1,6 +1,6 @@
 """Verify restart_node_via_agent ORM mutations are flushed by the caller's commit."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -91,7 +91,12 @@ async def test_restart_mutations_visible_after_caller_commit(
             ),
         ):
             result = await node_service.restart_node_via_agent(
-                session, target, target_node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+                session,
+                target,
+                target_node,
+                http_client_factory=httpx.AsyncClient,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
             )
         assert result is True
 

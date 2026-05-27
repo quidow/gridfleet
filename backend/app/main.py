@@ -215,7 +215,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         run_reaper = RunReaperLoop(services=app_services.runs)
         grid_event_bus = GridEventBusSubscriberLoop(services=app_services.grid)
         pack_drain = PackDrainLoop(services=app_services.packs)
-        job_worker = DurableJobWorkerLoop(session_factory=session_factory, publisher=bus, settings=svc)
+        job_worker = DurableJobWorkerLoop(
+            session_factory=session_factory, publisher=bus, settings=svc, circuit_breaker=breaker
+        )
         webhook_delivery = WebhookDeliveryLoop(session_factory=session_factory)
         background_loop_flush = BackgroundLoopFlushLoop(session_factory=session_factory, settings=svc)
         leader_keepalive = LeaderKeepaliveLoop(settings=svc)

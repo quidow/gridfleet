@@ -62,7 +62,7 @@ async def _bounded_check_node_health(
     *,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> ProbeResult:
     async with semaphore:
         return await _check_node_health(node, device, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
@@ -83,7 +83,7 @@ async def _check_node_health(
     *,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> ProbeResult:
     try:
         host = require_management_host(device, action="monitor Appium node health")
@@ -311,7 +311,7 @@ async def _check_nodes(
     *,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher | None = None,
 ) -> None:
     stmt = (

@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -74,7 +75,10 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     async def reconnect() -> None:
         async with db_session_maker() as session:
             await devices_control.reconnect_device(
-                device_id, db=session, settings_services=SimpleNamespace(reader=FakeSettingsReader({}))
+                device_id,
+                db=session,
+                settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
 
     async def enter_maintenance_before_restart() -> None:

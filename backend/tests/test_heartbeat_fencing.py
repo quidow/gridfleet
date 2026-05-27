@@ -60,7 +60,9 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
         ),
         pytest.raises(LeadershipLost),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(db_session, settings=FakeSettingsReader({}))
+        await HeartbeatLoop(services=Mock())._check_hosts(
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -107,7 +109,9 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await HeartbeatLoop(services=Mock())._check_hosts(db_session, settings=FakeSettingsReader({}))
+        await HeartbeatLoop(services=Mock())._check_hosts(
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
 
     await db_session.refresh(host)
     assert host.last_heartbeat == initial_heartbeat

@@ -298,7 +298,7 @@ async def _reconcile_all(
     *,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[uuid.UUID, dict[str, object]]:
     health_by_host: dict[uuid.UUID, dict[str, object]] = {}
 
@@ -491,7 +491,7 @@ async def _drive_convergence(
     require_leader: bool = True,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
     semaphore = asyncio.Semaphore(int(settings.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
@@ -549,8 +549,12 @@ async def _drive_convergence(
                     rows=active_rows,
                     agent_running=observed,
                     now=datetime.now(UTC),
-                    start_agent=_make_start_agent(require_leader=require_leader, settings=settings),
-                    stop_agent=_make_stop_agent(host_ip, agent_port, settings=settings),
+                    start_agent=_make_start_agent(
+                        require_leader=require_leader, settings=settings, circuit_breaker=circuit_breaker
+                    ),
+                    stop_agent=_make_stop_agent(
+                        host_ip, agent_port, settings=settings, circuit_breaker=circuit_breaker
+                    ),
                     write_observed=_write_observed_factory(require_leader=require_leader, settings=settings),
                     clear_token=_clear_token_factory(require_leader=require_leader, settings=settings),
                     reset_start_failure=_make_reset_start_failure(require_leader=require_leader, settings=settings),
@@ -580,7 +584,7 @@ async def converge_device_now(
     db: AsyncSession | None = None,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> AppiumNode | None:
     """Run one desired-state convergence pass for a single operator-requested device.
 
@@ -620,8 +624,10 @@ async def converge_device_now(
         rows=[row],
         agent_running=observed,
         now=datetime.now(UTC),
-        start_agent=_make_start_agent(require_leader=False, session_scope=session_scope, settings=settings),
-        stop_agent=_make_stop_agent(host.ip, host.agent_port, settings=settings),
+        start_agent=_make_start_agent(
+            require_leader=False, session_scope=session_scope, settings=settings, circuit_breaker=circuit_breaker
+        ),
+        stop_agent=_make_stop_agent(host.ip, host.agent_port, settings=settings, circuit_breaker=circuit_breaker),
         write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope, settings=settings),
         clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope, settings=settings),
         reset_start_failure=_make_reset_start_failure(
@@ -641,6 +647,7 @@ def _make_start_agent(
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     resolved_session_scope = session_scope or async_session
 
@@ -655,7 +662,9 @@ def _make_start_agent(
                 node = device.appium_node
                 if node is None:
                     raise RuntimeError(f"Device {row.device_id} has no AppiumNode row to converge")
-                handle = await _start_for_node(db, device, node=node, preferred_port=port, settings=settings)
+                handle = await _start_for_node(
+                    db, device, node=node, preferred_port=port, settings=settings, circuit_breaker=circuit_breaker
+                )
                 if handle.port <= 0:
                     raise RuntimeError(f"Agent returned invalid Appium port {handle.port} for device {row.device_id}")
             except Exception as exc:
@@ -685,7 +694,9 @@ def _make_start_agent(
     return _start
 
 
-def _make_stop_agent(host_ip: str, agent_port: int, *, settings: SettingsReader) -> Callable[..., Awaitable[None]]:
+def _make_stop_agent(
+    host_ip: str, agent_port: int, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> Callable[..., Awaitable[None]]:
     async def _stop(*, row: DesiredRow, port: int | None) -> None:
         if port is None or port <= 0:
             return
@@ -697,6 +708,7 @@ def _make_stop_agent(host_ip: str, agent_port: int, *, settings: SettingsReader)
                 agent_port=agent_port,
                 http_client_factory=httpx.AsyncClient,
                 settings=settings,
+                circuit_breaker=circuit_breaker,
             )
         except Exception:
             APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()

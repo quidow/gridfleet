@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -38,7 +38,9 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         http_status=200,
         error_category=None,
     )
-    await _apply_host_ping_result(db_session, db_host, success, guard_active=False, settings=FakeSettingsReader({}))
+    await _apply_host_ping_result(
+        db_session, db_host, success, guard_active=False, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
     await db_session.commit()
     refreshed = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalars().one()
     assert refreshed.last_heartbeat is not None
@@ -67,6 +69,7 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         guard_gap_sec=150.0,
         guard_threshold_sec=45.0,
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     await db_session.commit()
     await db_session.refresh(db_host)

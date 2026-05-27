@@ -107,11 +107,11 @@ async def test_long_gap_then_recovery_does_not_emit_offline(
     with patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker):
         # Cycle 1: agent times out but guard is active — should NOT mark host offline.
         with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
-            await loop._check_hosts(db_session, settings=FakeSettingsReader({}))
+            await loop._check_hosts(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
         # Cycle 2: agent comes back online.
         with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
-            await loop._check_hosts(db_session, settings=FakeSettingsReader({}))
+            await loop._check_hosts(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     # Yield to the event loop so any after-commit publish tasks can run.
     import asyncio

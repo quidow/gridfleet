@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.services_container import DeviceServices
 
@@ -29,7 +31,10 @@ MAX_PARALLEL_HOST_FETCHES = 8
 
 
 async def _refresh_all_properties(
-    *, session_factory: async_sessionmaker[AsyncSession], settings: SettingsReader
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
     async with session_factory() as db:
         host_result = await db.execute(select(Host).where(Host.status == HostStatus.online))
@@ -70,7 +75,13 @@ async def _refresh_all_properties(
                         continue
                     try:
                         data = await pack_discovery.fetch_pack_device_properties(
-                            host, device, agent_get_pack_device_properties=get_pack_device_properties, settings=settings
+                            host,
+                            device,
+                            agent_get_pack_device_properties=functools.partial(
+                                get_pack_device_properties, circuit_breaker=circuit_breaker
+                            ),
+                            settings=settings,
+                            circuit_breaker=circuit_breaker,
                         )
                     except Exception:
                         logger.exception("Failed to fetch properties for device %s", device.identity_value)
@@ -101,7 +112,9 @@ class PropertyRefreshLoop:
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle():
                     await _refresh_all_properties(
-                        session_factory=self._services.session_factory, settings=self._services.settings
+                        session_factory=self._services.session_factory,
+                        settings=self._services.settings,
+                        circuit_breaker=self._services.circuit_breaker,
                     )
             except Exception:
                 logger.exception("Property refresh cycle failed")

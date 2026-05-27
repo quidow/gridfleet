@@ -3,7 +3,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -85,6 +85,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -137,6 +138,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -198,6 +200,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -260,6 +263,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -334,6 +338,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -391,6 +396,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     await db_session.refresh(node)
@@ -453,6 +459,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     await db_session.refresh(node)
@@ -515,6 +522,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     await db_session.refresh(node)
@@ -576,6 +584,7 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     status_mock.assert_awaited_once()
@@ -631,6 +640,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     status_mock.assert_awaited_once()
@@ -686,6 +696,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     status_mock.assert_awaited_once()
@@ -741,6 +752,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     status_mock.assert_awaited_once()
@@ -832,6 +844,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                         "appium.startup_timeout_sec": 30,
                     }
                 ),
+                circuit_breaker=Mock(),
             )
         )
         await asyncio.wait_for(both_started.wait(), timeout=1)
@@ -880,7 +893,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "boom")),
     ):
-        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert result.status == "indeterminate"
 
@@ -904,7 +917,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=AgentResponseError(db_host.ip, "boom", http_status=503)),
     ):
-        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert result.status == "indeterminate"
 
@@ -928,7 +941,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(side_effect=CircuitOpenError(db_host.ip, retry_after_seconds=10.0)),
     ):
-        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert result.status == "indeterminate"
 
@@ -950,7 +963,7 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
             active_connection_target="target",
         )
 
-    result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+    result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
     assert result.status == "refused"
 
 
@@ -973,7 +986,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value={"running": True}),
     ):
-        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert result.status == "ack"
 
@@ -1001,7 +1014,7 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
         "app.appium_nodes.services.node_health.fetch_appium_status",
         AsyncMock(return_value=None),
     ):
-        result = await _check_node_health(node, device, settings=FakeSettingsReader({}))
+        result = await _check_node_health(node, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert result.status == "indeterminate"
 
@@ -1063,6 +1076,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     # Counter unchanged (still absent)
@@ -1142,6 +1156,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
@@ -1215,6 +1230,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
@@ -1291,6 +1307,7 @@ async def test_node_health_recovery_clears_pending_stop(
                     "appium.startup_timeout_sec": 30,
                 }
             ),
+            circuit_breaker=Mock(),
         )
 
     reloaded = await db_session.get(Device, device.id)

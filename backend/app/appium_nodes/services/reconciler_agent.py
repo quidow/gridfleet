@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
@@ -407,6 +408,7 @@ async def start_remote_node(
     agent_base: str,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> RemoteStartResult:
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
@@ -475,6 +477,7 @@ async def start_remote_node(
             http_client_factory=http_client_factory,
             timeout=_agent_start_timeout(device, settings=settings),
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -538,6 +541,7 @@ async def stop_remote_node(
     agent_port: int,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     """Ask the agent to stop the Appium node on ``port``.
 
@@ -555,6 +559,7 @@ async def stop_remote_node(
             port=port,
             http_client_factory=http_client_factory,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
         return True
@@ -568,6 +573,7 @@ async def stop_node_via_agent(
     *,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     try:
         host = require_management_host(device, action="stop Appium nodes")
@@ -581,6 +587,7 @@ async def stop_node_via_agent(
             port=node.port,
             http_client_factory=http_client_factory,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
         return True
@@ -595,6 +602,7 @@ async def restart_node_via_agent(
     *,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     try:
         host = require_management_host(device, action="restart Appium nodes")
@@ -618,6 +626,7 @@ async def restart_node_via_agent(
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         if not stopped:
             # Agent did not acknowledge the stop. Starting on a different
@@ -643,6 +652,7 @@ async def restart_node_via_agent(
                     agent_base=agent_base,
                     http_client_factory=http_client_factory,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 break
             except NodePortConflictError as exc:
@@ -671,6 +681,7 @@ async def restart_node_via_agent(
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return False
 
@@ -682,6 +693,7 @@ async def _start_for_node(
     node: AppiumNode,
     preferred_port: int | None = None,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> RemoteStartResult:
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
@@ -748,6 +760,7 @@ async def _start_for_node(
                     agent_base=agent_base,
                     http_client_factory=httpx.AsyncClient,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 break
             except NodePortConflictError as exc:

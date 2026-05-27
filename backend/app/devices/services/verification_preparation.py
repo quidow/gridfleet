@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.schemas.device import DeviceVerificationUpdate
 
@@ -147,6 +148,7 @@ async def resolve_host_derived_payload(
     http_client_factory: AgentClientFactory,
     db: AsyncSession | None = None,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> str | None:
     if host is None:
         return "Assigned host is required"
@@ -172,6 +174,7 @@ async def resolve_host_derived_payload(
                 },
                 http_client_factory=http_client_factory,
                 settings=settings,
+                circuit_breaker=circuit_breaker,
             )
         except AgentCallError:
             normalized = None
@@ -229,6 +232,7 @@ async def resolve_host_derived_payload(
                 action=action,
                 http_client_factory=http_client_factory,
                 settings=settings,
+                circuit_breaker=circuit_breaker,
             )
         except AgentCallError as exc:
             error_msg = str(exc)
@@ -276,6 +280,7 @@ async def validate_create_request(
     *,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[PreparedVerificationContext | None, str | None]:
     await set_stage(job, "validation", "running")
     try:
@@ -298,7 +303,12 @@ async def validate_create_request(
             return await _validation_failed(job, str(exc))
 
     resolution_error = await resolve_host_derived_payload(
-        payload, host, http_client_factory=http_client_factory, db=db, settings=settings
+        payload,
+        host,
+        http_client_factory=http_client_factory,
+        db=db,
+        settings=settings,
+        circuit_breaker=circuit_breaker,
     )
     if resolution_error:
         return await _validation_failed(job, resolution_error)
@@ -349,6 +359,7 @@ async def validate_update_request(
     *,
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[PreparedVerificationContext | None, str | None]:
     await set_stage(job, "validation", "running")
     existing = await device_service.get_device(db, device_id)
@@ -398,6 +409,7 @@ async def validate_update_request(
         http_client_factory=http_client_factory,
         db=db,
         settings=settings,
+        circuit_breaker=circuit_breaker,
     )
     if resolution_error:
         return await _validation_failed(job, resolution_error)

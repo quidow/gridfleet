@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -145,7 +146,7 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
     await db_session.commit()
 
     remaining = (

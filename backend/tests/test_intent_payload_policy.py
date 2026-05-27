@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -170,6 +170,7 @@ async def test_cooldown_intent_payload_shape(
         reason=cooldown_reason,
         ttl_seconds=120,
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     assert not escalated  # non-escalation path registers the intents we want
 

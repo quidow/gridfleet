@@ -168,6 +168,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         [eligible_ok.id, eligible_fail.id, ineligible.id],
         publisher=event_bus,
         settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
 
     assert result["succeeded"] == 1

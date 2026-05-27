@@ -20,6 +20,12 @@ def _factory_raising(exc: BaseException) -> MagicMock:
     return factory
 
 
+def _noop_breaker() -> AsyncMock:
+    breaker = AsyncMock()
+    breaker.before_request = AsyncMock(return_value=None)
+    return breaker
+
+
 @pytest.mark.asyncio
 async def test_timeout_sets_transport_outcome_timeout() -> None:
     factory = _factory_raising(httpx.ReadTimeout("boom"))
@@ -31,6 +37,7 @@ async def test_timeout_sets_transport_outcome_timeout() -> None:
             host="1.2.3.4",
             client_factory=factory,
             client_mode="fresh",
+            circuit_breaker=_noop_breaker(),
         )
     assert caught.value.transport_outcome == "timeout"
     assert caught.value.error_category == "ReadTimeout"
@@ -47,6 +54,7 @@ async def test_connect_error_sets_transport_outcome_connect_error() -> None:
             host="1.2.3.4",
             client_factory=factory,
             client_mode="pooled",
+            circuit_breaker=_noop_breaker(),
         )
     assert caught.value.transport_outcome == "connect_error"
     assert caught.value.error_category == "ConnectError"
@@ -65,6 +73,7 @@ async def test_dns_error_classified_as_dns() -> None:
             host="no-such.invalid",
             client_factory=factory,
             client_mode="fresh",
+            circuit_breaker=_noop_breaker(),
         )
     assert caught.value.transport_outcome == "dns_error"
 
@@ -82,6 +91,7 @@ async def test_dns_error_musl_pattern_classified_as_dns() -> None:
             host="no-such.invalid",
             client_factory=factory,
             client_mode="fresh",
+            circuit_breaker=_noop_breaker(),
         )
     assert caught.value.transport_outcome == "dns_error"
 

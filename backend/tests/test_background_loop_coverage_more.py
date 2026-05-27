@@ -57,6 +57,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
             session_factory=_fake_session,
+            circuit_breaker=Mock(),
         )
     )
 
@@ -81,6 +82,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
             session_factory=_fake_session,
+            circuit_breaker=Mock(),
         )
     )
 
@@ -132,7 +134,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
     from tests.fakes import FakeSettingsReader
 
-    await node_health._check_nodes(db, settings=FakeSettingsReader({}))
+    await node_health._check_nodes(db, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     db.commit.assert_awaited_once()
 
@@ -152,6 +154,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session,
+            circuit_breaker=Mock(),
         )
     )
 
@@ -216,6 +219,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session,
+            circuit_breaker=Mock(),
         )
     )
 

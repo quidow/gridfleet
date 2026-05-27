@@ -1,6 +1,6 @@
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,6 +169,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
     payload = _patched_remote_start["payload"]
@@ -241,6 +242,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
     assert _patched_remote_start["payload"]["workaround_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
@@ -296,6 +298,7 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
     payload = captured["payload"]
@@ -421,7 +424,12 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         node.port = 4723
 
     await restart_node_via_agent(
-        db_session, device, node, http_client_factory=AsyncMock(), settings=FakeSettingsReader({})
+        db_session,
+        device,
+        node,
+        http_client_factory=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
 
     payload = captured["payload"]

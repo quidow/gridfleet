@@ -57,7 +57,7 @@ async def dispatch_feature_action(
     args: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _DEFAULT_TIMEOUT_SEC,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> FeatureActionResult:
     """Forward a feature-action call to the host agent and persist the result.
 
@@ -149,7 +149,7 @@ async def _call_agent(
     body: dict[str, Any],
     http_client_factory: AgentClientFactory,
     timeout: float | int,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> FeatureActionResult:
     """POST the action body to the agent and parse the response.
 

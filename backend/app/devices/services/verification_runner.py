@@ -15,6 +15,7 @@ from app.jobs.models import Job
 from app.sessions import service_viability as session_viability
 
 if TYPE_CHECKING:
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
@@ -44,6 +45,7 @@ async def run_persisted_verification_job(
     *,
     publisher: EventPublisher,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
     job = await _load_persisted_job(job_id, session_factory, publisher=publisher)
     if job is None:
@@ -58,6 +60,7 @@ async def run_persisted_verification_job(
                     DeviceVerificationCreate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
             else:
                 context, validation_error = await validate_update_request(
@@ -67,6 +70,7 @@ async def run_persisted_verification_job(
                     DeviceVerificationUpdate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
 
             if validation_error is not None or context is None:
@@ -82,6 +86,7 @@ async def run_persisted_verification_job(
                     caps, timeout, settings=settings, grid_url=grid_url
                 ),
                 settings=settings,
+                circuit_breaker=circuit_breaker,
             )
             await finish_job(
                 job,

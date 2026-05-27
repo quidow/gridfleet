@@ -1,7 +1,7 @@
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
@@ -399,7 +399,7 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
     assert payload["host"]["node_provider"]["version"] == "fnm"
     assert payload["host"]["node"]["version"] == "24.14.1"
     assert payload["packs"] == {}
-    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY)
+    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY, circuit_breaker=ANY)
 
 
 async def test_get_host_tool_status_requires_online_host(client: AsyncClient) -> None:
@@ -618,9 +618,9 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
         patch("app.hosts.router.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
         patch("app.hosts.router.plugin_service.auto_sync_host_plugins", sync),
     ):
-        await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}))
+        await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
-    sync.assert_awaited_once_with(host, [], settings=ANY)
+    sync.assert_awaited_once_with(host, [], settings=ANY, circuit_breaker=ANY)
 
 
 @pytest.mark.asyncio

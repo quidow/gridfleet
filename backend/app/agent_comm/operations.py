@@ -77,7 +77,7 @@ async def _send_request(
     params: QueryParams = None,
     json_body: JsonBody = None,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     auth = _agent_basic_auth()
     use_pool = (
@@ -164,7 +164,7 @@ async def agent_health(
     timeout: float | int = 5,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -198,7 +198,7 @@ async def agent_host_telemetry(
     timeout: float | int = 5,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -235,7 +235,7 @@ async def appium_logs(
     timeout: float | int = 10,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -273,7 +273,7 @@ async def appium_status(
     timeout: float | int = 5,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -310,7 +310,7 @@ async def appium_start(
     timeout: float | int,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     return await _send_request(
         "POST",
@@ -337,7 +337,7 @@ async def appium_stop(
     timeout: float | int = 10,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     return await _send_request(
         "POST",
@@ -366,7 +366,7 @@ async def agent_appium_reconfigure(
     timeout: float | int = 10,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -423,7 +423,7 @@ async def list_plugins(
     timeout: float | int = 15,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> list[dict[str, Any]]:
     response = await _send_request(
         "GET",
@@ -462,7 +462,7 @@ async def sync_plugins(
     timeout: float | int = 180,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -497,7 +497,7 @@ async def get_tool_status(
     timeout: float | int = 15,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -533,7 +533,7 @@ async def get_pack_devices(
     timeout: float | int = 45,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "GET",
@@ -571,7 +571,7 @@ async def get_pack_device_properties(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "GET",
@@ -612,7 +612,7 @@ async def normalize_pack_device(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     response = await _send_request(
         "POST",
@@ -668,7 +668,7 @@ async def pack_device_health(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -729,7 +729,7 @@ async def pack_device_telemetry(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     params: dict[str, Any] = {
         "pack_id": pack_id,
@@ -780,7 +780,7 @@ async def pack_device_lifecycle_action(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     response = await _send_request(
         "POST",
@@ -821,7 +821,7 @@ async def pack_doctor(
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> list[dict[str, Any]]:
     response = await _send_request(
         "POST",

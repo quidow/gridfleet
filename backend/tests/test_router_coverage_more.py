@@ -201,6 +201,8 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         await runs.heartbeat(run.id, db=db)
     assert heartbeat_error.value.status_code == 404
 
+    _agent_comm = SimpleNamespace(circuit_breaker=MagicMock())
+
     monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(side_effect=ValueError("run not found")))
     with pytest.raises(HTTPException) as not_found:
         await runs.cooldown_device_endpoint(
@@ -209,6 +211,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            agent_comm=_agent_comm,
         )
     assert not_found.value.status_code == 404
 
@@ -222,6 +225,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            agent_comm=_agent_comm,
         )
     assert invalid_ttl.value.status_code == 422
 
@@ -232,6 +236,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         RunCooldownRequest(reason="bad", ttl_seconds=1),
         db=db,
         settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+        agent_comm=_agent_comm,
     )
     assert escalated.status == "maintenance_escalated"
 
@@ -243,6 +248,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            agent_comm=_agent_comm,
         )
     assert no_expiry.value.status_code == 500
 

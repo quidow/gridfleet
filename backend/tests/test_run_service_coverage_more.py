@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.exc import NoResultFound
@@ -381,20 +381,28 @@ async def test_cooldown_device_guard_paths(
 
     with pytest.raises(ValueError, match="ttl_seconds"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=31, settings=settings
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=31, settings=settings, circuit_breaker=Mock()
         )
     with pytest.raises(ValueError, match="Cooldown reason"):
-        await run_service.cooldown_device(db_session, run.id, device.id, reason=" ", ttl_seconds=5, settings=settings)
+        await run_service.cooldown_device(
+            db_session, run.id, device.id, reason=" ", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+        )
     with pytest.raises(ValueError, match="Run not found"):
         await run_service.cooldown_device(
-            db_session, uuid.uuid4(), device.id, reason="flaky", ttl_seconds=5, settings=settings
+            db_session,
+            uuid.uuid4(),
+            device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
         )
 
     run.state = RunState.completed
     await db_session.commit()
     with pytest.raises(ValueError, match="terminal run"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
         )
 
     run.state = RunState.active
@@ -402,7 +410,7 @@ async def test_cooldown_device_guard_paths(
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     with pytest.raises(ValueError, match="Device not found"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
         )
 
     other_device = await create_device(
@@ -416,7 +424,13 @@ async def test_cooldown_device_guard_paths(
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=other_device))
     with pytest.raises(ValueError, match="not actively reserved"):
         await run_service.cooldown_device(
-            db_session, run.id, other_device.id, reason="flaky", ttl_seconds=5, settings=settings
+            db_session,
+            run.id,
+            other_device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
         )
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
@@ -427,6 +441,7 @@ async def test_cooldown_device_guard_paths(
         reason="flaky",
         ttl_seconds=5,
         settings=settings,
+        circuit_breaker=Mock(),
     )
 
     assert excluded_until is not None
@@ -579,6 +594,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
                 "general.device_cooldown_escalation_threshold": 1,
             }
         ),
+        circuit_breaker=Mock(),
     )
     assert escalated_until is None
     assert (count, escalated, threshold) == (1, True, 1)

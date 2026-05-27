@@ -21,6 +21,7 @@ from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -153,6 +154,7 @@ async def run_pending_jobs_once(
     *,
     publisher: EventPublisher,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
     kind: str | None = None,
 ) -> bool:
     row = await claim_next_job(session_factory, kind=kind)
@@ -166,6 +168,7 @@ async def run_pending_jobs_once(
             session_factory=session_factory,
             publisher=publisher,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return True
 
@@ -200,10 +203,12 @@ class DurableJobWorkerLoop:
         session_factory: async_sessionmaker[AsyncSession],
         publisher: EventPublisher,
         settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
         self._settings = settings
+        self._circuit_breaker = circuit_breaker
 
     async def run(self) -> None:
         async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
@@ -213,7 +218,10 @@ class DurableJobWorkerLoop:
             try:
                 async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
                     worked = await run_pending_jobs_once(
-                        self._session_factory, publisher=self._publisher, settings=self._settings
+                        self._session_factory,
+                        publisher=self._publisher,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
                     )
                 if not worked:
                     await asyncio.sleep(JOB_POLL_INTERVAL_SEC)

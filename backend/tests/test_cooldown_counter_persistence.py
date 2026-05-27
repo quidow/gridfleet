@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -77,6 +77,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
         reason="probe timeout",
         ttl_seconds=60,
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     assert count_1 == 1
     assert not escalated_1
@@ -113,7 +114,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
             intent.expires_at = past
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
     await db_session.commit()
 
     await db_session.refresh(reservation)
@@ -128,6 +129,7 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
         reason="probe timeout again",
         ttl_seconds=60,
         settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     assert count_2 == 2, "second cooldown after TTL expiry must yield count=2"
     assert not escalated_2 or threshold == 2
@@ -176,7 +178,13 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     run = await create_reserved_run(db_session, name="no-rewind-run", devices=[device])
 
     await run_service.cooldown_device(
-        db_session, run.id, device.id, reason="flake", ttl_seconds=60, settings=FakeSettingsReader({})
+        db_session,
+        run.id,
+        device.id,
+        reason="flake",
+        ttl_seconds=60,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     reservation = await _reservation_for(db_session, device.id)
     assert reservation.cooldown_count == 1
@@ -243,7 +251,7 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
     reservation.cooldown_count = 2
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader())
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False

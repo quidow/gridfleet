@@ -29,6 +29,7 @@ from app.hosts.models import Host, HostStatus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
@@ -276,7 +277,9 @@ async def apply_telemetry_sample(
     return next_status
 
 
-async def _get_device_telemetry(device: Device, *, settings: SettingsReader) -> dict[str, Any] | None:
+async def _get_device_telemetry(
+    device: Device, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
         return None
@@ -293,12 +296,15 @@ async def _get_device_telemetry(device: Device, *, settings: SettingsReader) -> 
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
     except AgentCallError:
         return None
 
 
-async def poll_hardware_telemetry_once(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def poll_hardware_telemetry_once(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     stmt = (
         select(Device)
         .join(Host)
@@ -314,7 +320,7 @@ async def poll_hardware_telemetry_once(db: AsyncSession, *, settings: SettingsRe
 
     for device in devices:
         try:
-            telemetry = await _get_device_telemetry(device, settings=settings)
+            telemetry = await _get_device_telemetry(device, settings=settings, circuit_breaker=circuit_breaker)
             if telemetry is None:
                 continue
             await apply_telemetry_sample(db, device, telemetry, settings=settings)
@@ -333,7 +339,9 @@ class HardwareTelemetryLoop:
             interval = float(self._services.settings.get("general.hardware_telemetry_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await poll_hardware_telemetry_once(db, settings=self._services.settings)
+                    await poll_hardware_telemetry_once(
+                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
+                    )
             except Exception:
                 logger.exception("Hardware telemetry loop failed")
             await asyncio.sleep(interval)

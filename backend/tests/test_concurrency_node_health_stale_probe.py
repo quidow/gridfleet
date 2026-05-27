@@ -1,7 +1,7 @@
 """Verify node_health skips stale probe results after node changes."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -72,7 +72,7 @@ async def _run_node_health_with_gate(
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
-            await node_health._check_nodes(session, settings=FakeSettingsReader({}))
+            await node_health._check_nodes(session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
 
 async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(

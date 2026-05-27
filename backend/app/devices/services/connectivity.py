@@ -79,7 +79,9 @@ def _device_expected_aliases(device: Device) -> set[str]:
     return aliases
 
 
-async def _get_agent_devices(host: Host, *, settings: SettingsReader) -> set[str] | None:
+async def _get_agent_devices(
+    host: Host, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> set[str] | None:
     """Fetch connected device targets from the host agent. Returns None if unreachable."""
     try:
         pack_result = await get_pack_devices(
@@ -87,6 +89,7 @@ async def _get_agent_devices(host: Host, *, settings: SettingsReader) -> set[str
             host.agent_port,
             http_client_factory=httpx.AsyncClient,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         candidates = pack_result.get("candidates", [])
         if not isinstance(candidates, list):
@@ -116,6 +119,7 @@ async def _get_device_health(
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
@@ -135,6 +139,7 @@ async def _get_device_health(
             ip_ping_count=ip_ping_count,
             http_client_factory=httpx.AsyncClient,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
     except AgentCallError:
         return None
@@ -157,7 +162,9 @@ async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
     )
 
 
-async def _get_lifecycle_state(db: AsyncSession, device: Device, *, settings: SettingsReader) -> str | None:
+async def _get_lifecycle_state(
+    db: AsyncSession, device: Device, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> str | None:
     """Poll the agent for the pack-owned lifecycle state."""
     try:
         resolved = await resolve_pack_platform(
@@ -184,6 +191,7 @@ async def _get_lifecycle_state(db: AsyncSession, device: Device, *, settings: Se
             action="state",
             http_client_factory=httpx.AsyncClient,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
     except AgentCallError:
         return None
@@ -265,7 +273,9 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device) -> None:
     return None
 
 
-async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def _check_connectivity(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     ip_ping_threshold = int(settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
     ip_ping_timeout = float(settings.get("device_checks.ip_ping.timeout_sec"))
     ip_ping_count = int(settings.get("device_checks.ip_ping.count_per_cycle"))
@@ -280,14 +290,14 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
         device_result = await db.execute(device_stmt)
         devices = device_result.scalars().all()
 
-        connected_targets = await _get_agent_devices(host, settings=settings)
+        connected_targets = await _get_agent_devices(host, settings=settings, circuit_breaker=circuit_breaker)
         if connected_targets is None:
             continue  # Agent unreachable — skip (heartbeat handles host status)
 
         await assert_current_leader(db, settings=settings)
 
         for device in devices:
-            lifecycle_state = await _get_lifecycle_state(db, device, settings=settings)
+            lifecycle_state = await _get_lifecycle_state(db, device, settings=settings, circuit_breaker=circuit_breaker)
             await assert_current_leader(db, settings=settings)
             if lifecycle_state is not None:
                 await device_health.update_emulator_state(db, device, lifecycle_state)
@@ -299,6 +309,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                     ip_ping_timeout_sec=ip_ping_timeout,
                     ip_ping_count=ip_ping_count,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 await assert_current_leader(db, settings=settings)
                 if health_result is not None:
@@ -404,6 +415,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                         ip_ping_timeout_sec=ip_ping_timeout,
                         ip_ping_count=ip_ping_count,
                         settings=settings,
+                        circuit_breaker=circuit_breaker,
                     )
                     await assert_current_leader(db, settings=settings)
                     if health_result is not None:
@@ -606,7 +618,11 @@ class DeviceConnectivityLoop:
                     await _check_expired_cooldowns(
                         db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
                     )
-                    await _check_connectivity(db, settings=self._services.settings)
+                    await _check_connectivity(
+                        db,
+                        settings=self._services.settings,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
             except LeadershipLost as exc:
                 logger.error(
                     "device_connectivity_loop_leadership_lost",

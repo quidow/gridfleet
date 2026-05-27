@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Row
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.services_container import HostServices
 
@@ -71,7 +72,9 @@ async def apply_host_resource_sample(
     return row
 
 
-async def poll_host_resource_telemetry_once(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def poll_host_resource_telemetry_once(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
     hosts = result.scalars().all()
 
@@ -82,6 +85,7 @@ async def poll_host_resource_telemetry_once(db: AsyncSession, *, settings: Setti
                 host.agent_port,
                 http_client_factory=httpx.AsyncClient,
                 settings=settings,
+                circuit_breaker=circuit_breaker,
             )
             if payload is None:
                 continue
@@ -187,7 +191,9 @@ class HostResourceTelemetryLoop:
             interval = float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await poll_host_resource_telemetry_once(db, settings=self._services.settings)
+                    await poll_host_resource_telemetry_once(
+                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
+                    )
             except Exception:
                 logger.exception("Host resource telemetry loop failed")
             await asyncio.sleep(interval)
