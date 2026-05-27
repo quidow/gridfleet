@@ -1,13 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from prometheus_client import Counter
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.database import async_session
@@ -32,7 +33,11 @@ from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service as _default_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
@@ -275,9 +280,9 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
 
-async def _sync_sessions(db: AsyncSession) -> None:
+async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
     """Sync Grid sessions with the Session table."""
-    grid_data = await grid_service.get_grid_status()
+    grid_data = await grid_service.get_grid_status(settings=settings)
 
     # Fence: Grid /status is a slow external call. If another backend took
     # leadership while we awaited it, drop all writes from this cycle.
@@ -523,7 +528,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
     await db.commit()
 
 
-async def session_sync_loop() -> None:
+async def session_sync_loop(*, settings: SettingsReader) -> None:
     """Background loop that syncs Grid sessions.
 
     Wakes on either the doorbell (set by the hub event-bus subscriber
@@ -534,10 +539,10 @@ async def session_sync_loop() -> None:
     """
     doorbell = _get_doorbell()
     while True:
-        interval = float(_default_settings.get("grid.session_poll_interval_sec"))
+        interval = float(settings.get("grid.session_poll_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _sync_sessions(db)
+                await _sync_sessions(db, settings=settings)
         except LeadershipLost as exc:
             logger.error(
                 "session_sync_loop_leadership_lost",

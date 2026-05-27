@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import DeviceHold, DeviceReservation
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -44,7 +45,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
         await asyncio.sleep(0.15)
         assert not active_task.done()
 
-        await run_service.cancel_run(cancel_db, run_id, publisher=event_bus)
+        await run_service.cancel_run(cancel_db, run_id, publisher=event_bus, settings=FakeSettingsReader())
         active_result = await asyncio.wait_for(active_task, timeout=5.0)
 
     assert "Cannot signal active from state 'cancelled'" in active_result

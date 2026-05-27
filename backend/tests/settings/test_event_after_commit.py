@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.helpers import settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 

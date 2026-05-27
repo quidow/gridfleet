@@ -15,6 +15,7 @@ from app.agent_comm.reconfigure_delivery import (
 )
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
+
+SETTINGS = FakeSettingsReader()
 
 
 async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
@@ -51,7 +54,7 @@ async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
     reconfigure = AsyncMock()
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is not None
@@ -85,7 +88,7 @@ async def test_outbox_row_sends_when_generation_matches(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is not None
@@ -96,6 +99,7 @@ async def test_outbox_row_sends_when_generation_matches(
         accepting_new_sessions=False,
         stop_pending=True,
         grid_run_id=None,
+        settings=SETTINGS,
     )
 
 
@@ -131,7 +135,7 @@ async def test_outbox_delivery_failure_increments_attempts(
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline")),
     )
 
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is None
@@ -178,7 +182,7 @@ async def test_outbox_delivery_failure_raises_when_raise_on_failure_true(
     )
 
     with _pytest.raises(InlineReconfigureDeliveryFailedError):
-        await deliver_agent_reconfigures(db_session, device.id, raise_on_failure=True)
+        await deliver_agent_reconfigures(db_session, device.id, raise_on_failure=True, settings=SETTINGS)
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     # Failure is still recorded on the row so the background retry loop
@@ -225,7 +229,7 @@ async def test_outbox_delivery_failure_swallowed_by_default(
     )
 
     # Must not raise — default behavior swallows for the loop callers.
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
 
 async def test_delivery_marks_older_duplicate_generation_rows_delivered(
@@ -264,7 +268,7 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     await db_session.refresh(older)
     await db_session.refresh(newest)
@@ -277,6 +281,7 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
         accepting_new_sessions=True,
         stop_pending=False,
         grid_run_id=None,
+        settings=SETTINGS,
     )
 
 
@@ -312,7 +317,7 @@ async def test_delivery_processes_at_most_one_batch_per_device(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     delivered = (
         (
@@ -363,8 +368,8 @@ async def test_delivery_abandons_row_after_max_attempts(
     reconfigure = AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline"))
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id)
-    await deliver_agent_reconfigures(db_session, device.id)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS)
 
     await db_session.refresh(row)
     assert row.delivered_at is None

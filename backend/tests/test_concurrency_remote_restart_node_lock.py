@@ -11,6 +11,7 @@ from app.appium_nodes.services import reconciler_agent as node_service
 from app.devices.models import Device
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -104,10 +105,7 @@ async def test_restart_node_via_agent_locks_device_and_node(
                 ),
             ):
                 await node_service.restart_node_via_agent(
-                    session,
-                    target,
-                    target_node,
-                    http_client_factory=httpx.AsyncClient,
+                    session, target, target_node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
                 )
             await session.commit()
 

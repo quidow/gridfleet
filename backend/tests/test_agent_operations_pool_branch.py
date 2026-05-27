@@ -9,6 +9,7 @@ import pytest
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.http_pool import AgentHttpPool
+from tests.fakes.settings import FakeSettingsReader
 
 _VALID_HEALTH_PAYLOAD: dict[str, object] = {
     "status": "ok",
@@ -40,12 +41,9 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
             constructed.append(self)
 
     fresh_pool = AgentHttpPool()
+    settings = FakeSettingsReader({"agent.http_pool_enabled": True})
     with (
         patch("app.agent_comm.operations._default_pool", fresh_pool),
-        patch(
-            "app.agent_comm.operations._default_settings.get",
-            side_effect=lambda key: True if key == "agent.http_pool_enabled" else None,
-        ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -56,6 +54,7 @@ async def test_explicit_factory_bypasses_pool_even_when_enabled() -> None:
             agent_port=5100,
             timeout=5,
             http_client_factory=_Spy,
+            settings=settings,
         )
         assert response.status_code == 200
         assert len(constructed) == 1
@@ -74,12 +73,15 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
         return httpx.Response(200, json={"ok": True})
 
     fresh_pool = AgentHttpPool()
+    settings = FakeSettingsReader(
+        {
+            "agent.http_pool_enabled": True,
+            "agent.http_pool_max_keepalive_connections": 10,
+            "agent.http_pool_timeout_sec": 60,
+        }
+    )
     with (
         patch("app.agent_comm.operations._default_pool", fresh_pool),
-        patch(
-            "app.agent_comm.operations._default_settings.get",
-            side_effect=lambda key: True if key == "agent.http_pool_enabled" else 10 if "max_keepalive" in key else 60,
-        ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -89,6 +91,7 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
             host="10.0.0.1",
             agent_port=5100,
             timeout=5,
+            settings=settings,
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 1
@@ -100,11 +103,17 @@ async def test_pool_used_when_enabled_and_no_explicit_factory() -> None:
 def test_pool_enabled_returns_false_when_settings_cache_uninitialized() -> None:
     from app.agent_comm.operations import _pool_enabled
 
-    with patch("app.agent_comm.operations._default_settings.get", side_effect=KeyError("not initialised")):
-        assert _pool_enabled() is False
+    class _RaisingSettings:
+        def get(self, key: str) -> object:
+            raise KeyError("not initialised")
 
-    with patch("app.agent_comm.operations._default_settings.get", side_effect=RuntimeError("not initialised")):
-        assert _pool_enabled() is False
+    assert _pool_enabled(settings=_RaisingSettings()) is False
+
+    class _RuntimeSettings:
+        def get(self, key: str) -> object:
+            raise RuntimeError("not initialised")
+
+    assert _pool_enabled(settings=_RuntimeSettings()) is False
 
 
 @pytest.mark.asyncio
@@ -117,9 +126,9 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
         return httpx.Response(200, json={"ok": True})
 
     fresh_pool = AgentHttpPool()
+    settings = FakeSettingsReader({"agent.http_pool_enabled": False})
     with (
         patch("app.agent_comm.operations._default_pool", fresh_pool),
-        patch("app.agent_comm.operations._default_settings.get", side_effect=KeyError("not initialised")),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -129,6 +138,7 @@ async def test_default_factory_with_uninitialized_cache_uses_legacy_path() -> No
             host="10.0.0.1",
             agent_port=5100,
             timeout=5,
+            settings=settings,
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 0
@@ -146,12 +156,9 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
         return httpx.Response(200, json={"ok": True})
 
     fresh_pool = AgentHttpPool()
+    settings = FakeSettingsReader({"agent.http_pool_enabled": False, "agent.http_pool_max_keepalive_connections": 10})
     with (
         patch("app.agent_comm.operations._default_pool", fresh_pool),
-        patch(
-            "app.agent_comm.operations._default_settings.get",
-            side_effect=lambda key: False if key == "agent.http_pool_enabled" else 10,
-        ),
         patch("app.agent_comm.operations.agent_request", _stub_agent_request),
     ):
         response = await agent_operations._send_request(
@@ -161,6 +168,7 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
             host="10.0.0.1",
             agent_port=5100,
             timeout=5,
+            settings=settings,
         )
         assert response.status_code == 200
         assert fresh_pool.size() == 0
@@ -180,7 +188,7 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
 
     sentinel = httpx.BasicAuth("ops", "secret")
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: sentinel)
-    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda: True)
+    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda *, settings: True)
 
     captured: dict[str, object] = {}
 
@@ -204,7 +212,8 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
 
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100)
+    settings = FakeSettingsReader({"agent.http_pool_enabled": True})
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings)
     assert payload is not None
     assert payload["status"] == "ok"
     assert captured["pool_key"] == ("agent.local", 5100)
@@ -217,7 +226,7 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
     from app.agent_comm.http_pool import agent_http_pool
 
     monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
-    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda: True)
+    monkeypatch.setattr(agent_operations, "_pool_enabled", lambda *, settings: True)
 
     captured: dict[str, object] = {}
 
@@ -238,7 +247,8 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
 
     monkeypatch.setattr(agent_http_pool, "get_client", _fake_get_client)
 
-    payload = await agent_operations.agent_health("agent.local", agent_port=5100)
+    settings = FakeSettingsReader({"agent.http_pool_enabled": True})
+    payload = await agent_operations.agent_health("agent.local", agent_port=5100, settings=settings)
     assert payload is not None, "pool branch did not call .get"
     assert payload["status"] == "ok"
     assert "kwargs" in captured

@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.probe_result import ProbeResult
@@ -24,7 +25,11 @@ from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service as _default_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
 
 __all__ = [
     "PROBE_TEST_NAME",
@@ -333,9 +338,10 @@ async def probe_session_via_grid(
     capabilities: dict[str, Any],
     timeout_sec: int,
     *,
+    settings: SettingsReader,
     grid_url: str | None = None,
 ) -> tuple[bool, str | None]:
-    base = (grid_url or _default_settings.get("grid.hub_url")).rstrip("/")
+    base = (grid_url or settings.get("grid.hub_url")).rstrip("/")
     client = _get_grid_probe_client()
     try:
         create_resp = await client.post(
@@ -376,6 +382,7 @@ async def run_session_viability_probe(
     device: Device,
     *,
     checked_by: SessionViabilityCheckedBy,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     device_key = str(device.id)
     previous_state: DeviceOperationalState | None = None
@@ -405,7 +412,7 @@ async def run_session_viability_probe(
     attempted_at = _now_iso()
     try:
         config_changed = _clear_session_viability_from_config(device)
-        timeout_sec = int(_default_settings.get("general.session_viability_timeout_sec"))
+        timeout_sec = int(settings.get("general.session_viability_timeout_sec"))
         node = device.appium_node
         if not node or not node.observed_running:
             state = await _write_session_viability(
@@ -454,7 +461,9 @@ async def run_session_viability_probe(
         # markers from matched caps, so slot_parser cannot recognise it.
         probe_inflight.mark_probe_started(device_key)
         try:
-            ok, error = await probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+            ok, error = await probe_session_via_grid(
+                capabilities, timeout_sec, settings=settings, grid_url=node.grid_url
+            )
         finally:
             probe_inflight.mark_probe_finished(device_key)
         await record_probe_session(
@@ -514,7 +523,7 @@ async def run_session_viability_probe(
             if config_changed:
                 await db.commit()
         if not ok and checked_by != SessionViabilityCheckedBy.recovery and _health_failure_handler is not None:
-            threshold = max(1, int(_default_settings.get("general.session_viability_failure_threshold")))
+            threshold = max(1, int(settings.get("general.session_viability_failure_threshold")))
             if int(state.get("consecutive_failures") or 0) >= threshold:
                 await _health_failure_handler(
                     db,
@@ -542,8 +551,8 @@ async def run_session_viability_probe(
         await db.commit()
 
 
-async def _check_due_devices(db: AsyncSession) -> None:
-    interval_sec = _default_settings.get("general.session_viability_interval_sec")
+async def _check_due_devices(db: AsyncSession, *, settings: SettingsReader) -> None:
+    interval_sec = settings.get("general.session_viability_interval_sec")
     stmt = (
         select(Device)
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
@@ -554,14 +563,16 @@ async def _check_due_devices(db: AsyncSession) -> None:
 
     for device in devices:
         if await _should_run_scheduled_probe(db, device, interval_sec):
-            await run_session_viability_probe(db, device, checked_by=SessionViabilityCheckedBy.scheduled)
+            await run_session_viability_probe(
+                db, device, checked_by=SessionViabilityCheckedBy.scheduled, settings=settings
+            )
 
 
-async def session_viability_loop() -> None:
+async def session_viability_loop(*, settings: SettingsReader) -> None:
     while True:
         try:
             async with observe_background_loop(LOOP_NAME, 60.0).cycle(), async_session() as db:
-                await _check_due_devices(db)
+                await _check_due_devices(db, settings=settings)
         except Exception:
             logger.exception("Session viability loop failed")
         await asyncio.sleep(60)

@@ -9,6 +9,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -55,7 +56,7 @@ async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: py
     # _bulk_start_one delegates to request_start; commit is the orchestrator's
     # responsibility (_run_per_device_node_action._one commits per-device session).
     device = _device()
-    node = await bulk_service._bulk_start_one(db, device, "operator")
+    node = await bulk_service._bulk_start_one(db, device, "operator", settings=FakeSettingsReader({}))
     assert node is returned_node
     request_start_mock.assert_awaited_once()
     assert request_start_mock.call_args.kwargs["reason"] == "operator start requested"
@@ -76,7 +77,9 @@ async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: py
     assert request_stop_mock.call_args.kwargs["reason"] == "operator stop requested"
 
     # _bulk_restart_one delegates to request_restart and commits
-    restarted = await bulk_service._bulk_restart_one(db, _device(appium_node=running_node), "operator")
+    restarted = await bulk_service._bulk_restart_one(
+        db, _device(appium_node=running_node), "operator", settings=FakeSettingsReader({})
+    )
     assert restarted is returned_node
     request_restart_mock.assert_awaited_once()
     assert request_restart_mock.call_args.kwargs["reason"] == "operator restart requested"
@@ -139,7 +142,12 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         return {"success": True}
 
     monkeypatch.setattr(bulk_service, "pack_device_lifecycle_action", fake_lifecycle_action)
-    reconnect = await bulk_service.bulk_reconnect(db, [eligible.id, unsupported.id, failed.id], publisher=event_bus)
+    reconnect = await bulk_service.bulk_reconnect(
+        db,
+        [eligible.id, unsupported.id, failed.id],
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
+    )
     assert reconnect["total"] == 3
     assert reconnect["succeeded"] == 1
     assert reconnect["errors"][str(unsupported.id)] == "Not a network-connected Android device"

@@ -20,6 +20,7 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
 from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -80,7 +81,9 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         ),
     ]
 
-    async def fake_start_node(_db: AsyncSession, device: Device, caller: str) -> object:
+    async def fake_start_node(
+        _db: AsyncSession, device: Device, caller: str, *, settings: FakeSettingsReader
+    ) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot start")
         return object()
@@ -90,7 +93,9 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             raise RuntimeError("cannot stop")
         return object()
 
-    async def fake_restart_node(_db: AsyncSession, device: Device, caller: str) -> object:
+    async def fake_restart_node(
+        _db: AsyncSession, device: Device, caller: str, *, settings: FakeSettingsReader
+    ) -> object:
         if device.id == devices[1].id:
             raise NodeManagerError("cannot restart")
         return object()
@@ -98,10 +103,12 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
-    started = await bulk_service.bulk_start_nodes(db_session, [device.id for device in devices], publisher=event_bus)
+    started = await bulk_service.bulk_start_nodes(
+        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
+    )
     stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices], publisher=event_bus)
     restarted = await bulk_service.bulk_restart_nodes(
-        db_session, [device.id for device in devices], publisher=event_bus
+        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
     )
 
     assert started["succeeded"] == 1
@@ -157,7 +164,10 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
     )
 
     result = await bulk_service.bulk_reconnect(
-        db, [eligible_ok.id, eligible_fail.id, ineligible.id], publisher=event_bus
+        db,
+        [eligible_ok.id, eligible_fail.id, ineligible.id],
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
     )
 
     assert result["succeeded"] == 1

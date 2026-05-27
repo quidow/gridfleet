@@ -1,7 +1,7 @@
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -16,6 +16,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {
@@ -398,7 +399,7 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
     assert payload["host"]["node_provider"]["version"] == "fnm"
     assert payload["host"]["node"]["version"] == "24.14.1"
     assert payload["packs"] == {}
-    status_mock.assert_awaited_once_with("10.0.0.40", 5100)
+    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY)
 
 
 async def test_get_host_tool_status_requires_online_host(client: AsyncClient) -> None:
@@ -448,7 +449,9 @@ async def test_delete_host_with_attached_devices_returns_conflict(
 async def test_register_host_returns_version_status_and_schedules_discovery(client: AsyncClient) -> None:
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
         scheduled.append((task_fn, args))
 
     with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
@@ -558,7 +561,9 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
 async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncClient) -> None:
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
         scheduled.append((task_fn, args))
 
     with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
@@ -613,9 +618,9 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
         patch("app.hosts.router.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
         patch("app.hosts.router.plugin_service.auto_sync_host_plugins", sync),
     ):
-        await _auto_prepare_host_diagnostics(host.id)
+        await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}))
 
-    sync.assert_awaited_once_with(host, [])
+    sync.assert_awaited_once_with(host, [], settings=ANY)
 
 
 @pytest.mark.asyncio

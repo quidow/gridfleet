@@ -24,6 +24,7 @@ from app.devices.services.intent_reconciler import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION, IntentRegistration
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
 
     intents = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
@@ -192,7 +193,8 @@ async def test_expired_running_metadata_change_is_delivered(
     reconfigure = AsyncMock()
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
 
-    await _reconcile_expired_intents(db_session)
+    settings = FakeSettingsReader()
+    await _reconcile_expired_intents(db_session, settings=settings)
 
     reconfigure.assert_awaited_once_with(
         db_host.ip,
@@ -201,6 +203,7 @@ async def test_expired_running_metadata_change_is_delivered(
         accepting_new_sessions=True,
         stop_pending=False,
         grid_run_id=None,
+        settings=settings,
     )
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert outbox.delivered_at is not None
@@ -239,14 +242,14 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
         ],
     )
     await db_session.commit()
-    await _reconcile_dirty_devices(db_session, limit=10)
+    await _reconcile_dirty_devices(db_session, limit=10, settings=FakeSettingsReader())
     intent.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
     reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
     monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
 
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     dirty_rows = (await db_session.execute(select(DeviceIntentDirty))).scalars().all()
@@ -258,7 +261,7 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     assert dirty_rows == []
     assert intents == []
 
-    await run_device_intent_reconciler_once(db_session, cycle=1)
+    await run_device_intent_reconciler_once(db_session, cycle=1, settings=FakeSettingsReader({}))
 
     await db_session.refresh(outbox)
     assert outbox.delivered_at is not None
@@ -485,7 +488,7 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
 
-    await _reconcile_dirty_devices(db_session, limit=10)
+    await _reconcile_dirty_devices(db_session, limit=10, settings=FakeSettingsReader())
     await db_session.commit()
 
     assert await db_session.get(DeviceIntentDirty, device.id) is not None
@@ -514,7 +517,7 @@ async def test_full_scan_reconciles_each_intent_device(
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
     monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", deliver)
 
-    await _reconcile_all_devices_once(db_session)
+    await _reconcile_all_devices_once(db_session, settings=FakeSettingsReader())
 
     assert set(reconciled) == {first.id, second.id}
     assert deliver.await_count == 2
@@ -532,6 +535,6 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
     )
 
     with pytest.raises(LeadershipLost):
-        await run_device_intent_reconciler_once(db_session, cycle=1)
+        await run_device_intent_reconciler_once(db_session, cycle=1, settings=FakeSettingsReader({}))
 
     reconcile_expired.assert_not_awaited()

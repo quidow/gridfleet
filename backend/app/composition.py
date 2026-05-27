@@ -59,9 +59,7 @@ def compose_app(
     """
     import app.agent_comm.circuit_breaker as _cb_mod  # noqa: PLC0415
     import app.agent_comm.http_pool as _pool_mod  # noqa: PLC0415
-    import app.settings.service as _ss_mod  # noqa: PLC0415
 
-    _ss_mod.settings_service = settings_svc
     _pool_mod.agent_http_pool = http_pool
     _cb_mod.agent_circuit_breaker = circuit_breaker
 
@@ -73,6 +71,7 @@ def compose_app(
         engine=engine,
     )
     settings_services = SettingsServices(
+        reader=settings_svc,
         service=settings_svc,
         session_factory=session_factory,
     )

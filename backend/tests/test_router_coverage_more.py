@@ -20,6 +20,7 @@ from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 from app.settings.services_container import SettingsServices
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -62,7 +63,7 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     _events = SimpleNamespace(publisher=event_bus)
 
     monkeypatch.setattr(
@@ -174,6 +175,8 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         monkeypatch.setattr(runs.run_service, endpoint_name, AsyncMock(side_effect=ValueError("bad state")))
 
     _events = SimpleNamespace(publisher=event_bus)
+    mock_svc = MagicMock()
+    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     with pytest.raises(HTTPException) as ready_error:
         await runs.signal_ready(run.id, db=db, events=_events)
     assert ready_error.value.status_code == 409
@@ -184,13 +187,13 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db
         )
     with pytest.raises(HTTPException):
-        await runs.complete_run(run.id, db=db, events=_events)
+        await runs.complete_run(run.id, db=db, events=_events, settings_services=mock_ss)
     with pytest.raises(HTTPException):
-        await runs.cancel_run(run.id, db=db, events=_events)
+        await runs.cancel_run(run.id, db=db, events=_events, settings_services=mock_ss)
 
     monkeypatch.setattr(runs.run_service, "force_release", AsyncMock(side_effect=ValueError("missing")))
     with pytest.raises(HTTPException) as force_error:
-        await runs.force_release(run.id, db=db, events=_events)
+        await runs.force_release(run.id, db=db, events=_events, settings_services=mock_ss)
     assert force_error.value.status_code == 404
 
     monkeypatch.setattr(runs.run_service, "heartbeat", AsyncMock(side_effect=ValueError("missing")))
@@ -201,7 +204,11 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
     monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(side_effect=ValueError("run not found")))
     with pytest.raises(HTTPException) as not_found:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert not_found.value.status_code == 404
 
@@ -210,7 +217,11 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
     )
     with pytest.raises(HTTPException) as invalid_ttl:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert invalid_ttl.value.status_code == 422
 
@@ -220,13 +231,18 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         uuid.uuid4(),
         RunCooldownRequest(reason="bad", ttl_seconds=1),
         db=db,
+        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
     )
     assert escalated.status == "maintenance_escalated"
 
     monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(return_value=(None, 1, False, 2)))
     with pytest.raises(HTTPException) as no_expiry:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db
+            run.id,
+            uuid.uuid4(),
+            RunCooldownRequest(reason="bad", ttl_seconds=1),
+            db=db,
+            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         )
     assert no_expiry.value.status_code == 500
 
@@ -247,7 +263,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
     grid_svc = MagicMock()
     grid_svc.get = MagicMock(return_value="http://grid")
-    grid_ss = SettingsServices(service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    grid_ss = SettingsServices(reader=grid_svc, service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     _events = SimpleNamespace(publisher=event_bus)
@@ -282,18 +298,23 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
             db=db,
         )
     ).state == RunState.active
-    assert (await runs.complete_run(active.id, db=db, events=_events)).state == RunState.active
-    assert (await runs.cancel_run(active.id, db=db, events=_events)).state == RunState.active
-    assert (await runs.force_release(active.id, db=db, events=_events)).state == RunState.active
+    assert (
+        await runs.complete_run(active.id, db=db, events=_events, settings_services=grid_ss)
+    ).state == RunState.active
+    assert (await runs.cancel_run(active.id, db=db, events=_events, settings_services=grid_ss)).state == RunState.active
+    assert (
+        await runs.force_release(active.id, db=db, events=_events, settings_services=grid_ss)
+    ).state == RunState.active
 
 
 async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     group_id = uuid.uuid4()
     device_id = uuid.uuid4()
+    _settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
     monkeypatch.setattr(device_groups.device_group_service, "get_group_device_ids", AsyncMock(return_value=[]))
     with pytest.raises(HTTPException):
-        await device_groups._group_device_ids_or_404(db, group_id)
+        await device_groups._group_device_ids_or_404(db, group_id, settings=FakeSettingsReader({}))
 
     monkeypatch.setattr(
         device_groups.device_group_service, "create_group", AsyncMock(return_value=SimpleNamespace(id=group_id))
@@ -302,19 +323,26 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         device_groups.device_group_service, "get_group", AsyncMock(return_value={"id": str(group_id), "devices": []})
     )
     _grp_events = SimpleNamespace(publisher=event_bus)
-    assert await device_groups.create_group(DeviceGroupCreate(name="g"), db=db, events=_grp_events) == {
+    assert await device_groups.create_group(
+        DeviceGroupCreate(name="g"), db=db, events=_grp_events, settings_services=_settings_services
+    ) == {
         "id": str(group_id),
         "devices": [],
     }
-    assert await device_groups.get_group(group_id, db=db) == {"id": str(group_id), "devices": []}
+    assert await device_groups.get_group(group_id, db=db, settings_services=_settings_services) == {
+        "id": str(group_id),
+        "devices": [],
+    }
 
     monkeypatch.setattr(device_groups.device_group_service, "get_group", AsyncMock(return_value=None))
     with pytest.raises(HTTPException):
-        await device_groups.get_group(group_id, db=db)
+        await device_groups.get_group(group_id, db=db, settings_services=_settings_services)
 
     monkeypatch.setattr(device_groups.device_group_service, "update_group", AsyncMock(return_value=None))
     with pytest.raises(HTTPException):
-        await device_groups.update_group(group_id, DeviceGroupUpdate(name="new"), db=db, events=_grp_events)
+        await device_groups.update_group(
+            group_id, DeviceGroupUpdate(name="new"), db=db, events=_grp_events, settings_services=_settings_services
+        )
 
     monkeypatch.setattr(device_groups.device_group_service, "delete_group", AsyncMock(return_value=False))
     with pytest.raises(HTTPException):
@@ -325,11 +353,19 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     )
     with pytest.raises(HTTPException):
         await device_groups.add_members(
-            group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, events=_grp_events
+            group_id,
+            GroupMembershipUpdate(device_ids=[device_id]),
+            db=db,
+            events=_grp_events,
+            settings_services=_settings_services,
         )
     with pytest.raises(HTTPException):
         await device_groups.remove_members(
-            group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, events=_grp_events
+            group_id,
+            GroupMembershipUpdate(device_ids=[device_id]),
+            db=db,
+            events=_grp_events,
+            settings_services=_settings_services,
         )
 
     monkeypatch.setattr(
@@ -338,10 +374,18 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(device_groups.device_group_service, "add_members", AsyncMock(return_value=1))
     monkeypatch.setattr(device_groups.device_group_service, "remove_members", AsyncMock(return_value=1))
     assert await device_groups.add_members(
-        group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, events=_grp_events
+        group_id,
+        GroupMembershipUpdate(device_ids=[device_id]),
+        db=db,
+        events=_grp_events,
+        settings_services=_settings_services,
     ) == {"added": 1}
     assert await device_groups.remove_members(
-        group_id, GroupMembershipUpdate(device_ids=[device_id]), db=db, events=_grp_events
+        group_id,
+        GroupMembershipUpdate(device_ids=[device_id]),
+        db=db,
+        events=_grp_events,
+        settings_services=_settings_services,
     ) == {"removed": 1}
 
     monkeypatch.setattr(device_groups.device_group_service, "get_group_device_ids", AsyncMock(return_value=[device_id]))
@@ -350,14 +394,21 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(device_groups.bulk_service, "bulk_restart_nodes", AsyncMock(return_value={"ok": "restart"}))
     monkeypatch.setattr(device_groups.bulk_service, "bulk_enter_maintenance", AsyncMock(return_value={"ok": "enter"}))
     _bulk_events = SimpleNamespace(publisher=event_bus)
-    assert await device_groups.group_bulk_start(group_id, db=db, events=_bulk_events) == {"ok": "start"}
-    assert await device_groups.group_bulk_stop(group_id, db=db, events=_bulk_events) == {"ok": "stop"}
-    assert await device_groups.group_bulk_restart(group_id, db=db, events=_bulk_events) == {"ok": "restart"}
+    assert await device_groups.group_bulk_start(
+        group_id, db=db, events=_bulk_events, settings_services=_settings_services
+    ) == {"ok": "start"}
+    assert await device_groups.group_bulk_stop(
+        group_id, db=db, events=_bulk_events, settings_services=_settings_services
+    ) == {"ok": "stop"}
+    assert await device_groups.group_bulk_restart(
+        group_id, db=db, events=_bulk_events, settings_services=_settings_services
+    ) == {"ok": "restart"}
     assert await device_groups.group_bulk_enter_maintenance(
         group_id,
         BulkMaintenanceEnter(device_ids=[device_id]),
         db=db,
         events=_bulk_events,
+        settings_services=_settings_services,
     ) == {"ok": "enter"}
 
 
@@ -387,6 +438,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert filters.tags == {"pool": "smoke"}
 
+    _dev_ss = SimpleNamespace(reader=FakeSettingsReader({}))
     monkeypatch.setattr(devices_core.device_service, "list_devices_paginated", AsyncMock(return_value=([device], 1)))
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
     monkeypatch.setattr(devices_core.device_health, "build_public_summary", lambda device: {"healthy": True})
@@ -398,30 +450,30 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         devices_core.device_presenter, "serialize_device", AsyncMock(return_value={"id": str(device_id)})
     )
-    listed = await devices_core.list_devices(filters, limit=10, db=db)
+    listed = await devices_core.list_devices(filters, limit=10, db=db, settings_services=_dev_ss)
     assert listed["total"] == 1
 
     monkeypatch.setattr(devices_core.device_service, "list_devices_by_filters", AsyncMock(return_value=[device]))
-    listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db)
+    listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db, settings_services=_dev_ss)
     assert listed_plain == [{"id": str(device_id)}]
 
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(HTTPException):
-        await devices_core.get_device_by_connection_target("missing", db=db)
+        await devices_core.get_device_by_connection_target("missing", db=db, settings_services=_dev_ss)
 
     monkeypatch.setattr(
         devices_core.device_service, "update_device", AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
     )
     with pytest.raises(HTTPException) as conflict:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
     assert conflict.value.status_code == 409
     monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(side_effect=ValueError("bad")))
     with pytest.raises(HTTPException) as invalid:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
     assert invalid.value.status_code == 422
     monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as missing:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
     assert missing.value.status_code == 404
 
     monkeypatch.setattr(devices_core.device_service, "delete_device", AsyncMock(return_value=False))
@@ -440,13 +492,15 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         devices_core.device_presenter, "serialize_device", AsyncMock(return_value={"id": str(device_id)})
     )
-    assert await devices_core.get_device_by_connection_target("target", db=db) == {"id": str(device_id)}
+    assert await devices_core.get_device_by_connection_target("target", db=db, settings_services=_dev_ss) == {
+        "id": str(device_id)
+    }
 
     monkeypatch.setattr(devices_core, "get_device_or_404", AsyncMock(return_value=device))
     monkeypatch.setattr(
         devices_core.device_presenter, "serialize_device_detail", AsyncMock(return_value={"detail": str(device_id)})
     )
-    assert await devices_core.get_device(device_id, db=db) == {"detail": str(device_id)}
+    assert await devices_core.get_device(device_id, db=db, settings_services=_dev_ss) == {"detail": str(device_id)}
     monkeypatch.setattr(
         devices_core.capability_service, "get_device_capabilities", AsyncMock(return_value={"caps": True})
     )

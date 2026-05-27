@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.events.event_bus import EventBus
 
@@ -40,7 +41,7 @@ async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: 
     return group
 
 
-async def list_groups(db: AsyncSession) -> list[dict[str, Any]]:
+async def list_groups(db: AsyncSession, *, settings: SettingsReader) -> list[dict[str, Any]]:
     stmt = select(DeviceGroup).order_by(DeviceGroup.name)
     result = await db.execute(stmt)
     groups = list(result.scalars().all())
@@ -59,7 +60,7 @@ async def list_groups(db: AsyncSession) -> list[dict[str, Any]]:
     output = []
     for group in groups:
         if group.group_type == GroupType.dynamic:
-            count = await _count_dynamic_members(db, group.filters or {})
+            count = await _count_dynamic_members(db, group.filters or {}, settings=settings)
         else:
             count = static_counts.get(group.id, 0)
 
@@ -67,7 +68,7 @@ async def list_groups(db: AsyncSession) -> list[dict[str, Any]]:
     return output
 
 
-async def get_group(db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | None:
+async def get_group(db: AsyncSession, group_id: uuid.UUID, *, settings: SettingsReader) -> dict[str, Any] | None:
     stmt = (
         select(DeviceGroup)
         .where(DeviceGroup.id == group_id)
@@ -79,7 +80,7 @@ async def get_group(db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | N
         return None
 
     if group.group_type == GroupType.dynamic:
-        devices = await _resolve_dynamic_members(db, group.filters or {})
+        devices = await _resolve_dynamic_members(db, group.filters or {}, settings=settings)
     else:
         devices = [m.device for m in group.memberships if m.device is not None]
 
@@ -179,7 +180,7 @@ async def remove_members(
     return removed
 
 
-async def get_group_device_ids(db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
+async def get_group_device_ids(db: AsyncSession, group_id: uuid.UUID, *, settings: SettingsReader) -> list[uuid.UUID]:
     stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
     result = await db.execute(stmt)
     group = result.scalar_one_or_none()
@@ -187,7 +188,7 @@ async def get_group_device_ids(db: AsyncSession, group_id: uuid.UUID) -> list[uu
         return []
 
     if group.group_type == GroupType.dynamic:
-        devices = await _resolve_dynamic_members(db, group.filters or {})
+        devices = await _resolve_dynamic_members(db, group.filters or {}, settings=settings)
         return [d.id for d in devices]
     else:
         mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group_id)
@@ -199,16 +200,18 @@ def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilt
     return DeviceGroupFilters.model_validate(filters_payload or {})
 
 
-async def _resolve_dynamic_members(db: AsyncSession, filters_payload: dict[str, Any]) -> list[Device]:
+async def _resolve_dynamic_members(
+    db: AsyncSession, filters_payload: dict[str, Any], *, settings: SettingsReader
+) -> list[Device]:
     filters = _validate_filters(filters_payload)
     query_filters = DeviceQueryFilters(**filters.model_dump(exclude_none=True))
-    return await device_service.list_devices_by_filters(db, query_filters)
+    return await device_service.list_devices_by_filters(db, query_filters, settings=settings)
 
 
-async def _count_dynamic_members(db: AsyncSession, filters_payload: dict[str, Any]) -> int:
+async def _count_dynamic_members(db: AsyncSession, filters_payload: dict[str, Any], *, settings: SettingsReader) -> int:
     filters = _validate_filters(filters_payload)
     query_filters = DeviceQueryFilters(**filters.model_dump(exclude_none=True))
-    return await device_service.count_devices_by_filters(db, query_filters)
+    return await device_service.count_devices_by_filters(db, query_filters, settings=settings)
 
 
 def _dump_filters(filters: DeviceGroupFilters | None) -> dict[str, Any] | None:

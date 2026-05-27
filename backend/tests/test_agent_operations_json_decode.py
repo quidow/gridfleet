@@ -9,9 +9,12 @@ import pytest
 
 from app.agent_comm import operations as agent_operations
 from app.core.errors import AgentUnreachableError
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory, QueryParams, RequestHeaders
+
+SETTINGS = FakeSettingsReader()
 
 
 def _text_response(method: str, url: str, *, status_code: int = 200, text: str) -> httpx.Response:
@@ -87,7 +90,7 @@ async def test_agent_health_returns_none_on_invalid_json() -> None:
         get_response=_text_response("GET", "http://10.0.0.5:5100/agent/health", text=_INVALID_JSON_TEXT),
     )
     result = await agent_operations.agent_health(
-        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=5
+        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=5, settings=SETTINGS
     )
     assert result is None
 
@@ -100,7 +103,7 @@ async def test_agent_host_telemetry_returns_none_on_invalid_json() -> None:
         ),
     )
     result = await agent_operations.agent_host_telemetry(
-        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=5
+        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=5, settings=SETTINGS
     )
     assert result is None
 
@@ -113,7 +116,7 @@ async def test_appium_status_returns_none_on_invalid_json() -> None:
         ),
     )
     result = await agent_operations.appium_status(
-        "10.0.0.5", 5100, 4723, http_client_factory=_strict_client_factory(client), timeout=5
+        "10.0.0.5", 5100, 4723, http_client_factory=_strict_client_factory(client), timeout=5, settings=SETTINGS
     )
     assert result is None
 
@@ -129,7 +132,12 @@ async def test_get_pack_device_properties_returns_none_on_invalid_json() -> None
         ),
     )
     result = await agent_operations.get_pack_device_properties(
-        "10.0.0.5", 5100, "dev-1", "appium-uiautomator2", http_client_factory=_strict_client_factory(client)
+        "10.0.0.5",
+        5100,
+        "dev-1",
+        "appium-uiautomator2",
+        http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
     )
     assert result is None
 
@@ -154,6 +162,7 @@ async def test_pack_device_telemetry_returns_none_on_invalid_json() -> None:
         connection_type=None,
         ip_address=None,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
     )
     assert result is None
 
@@ -181,6 +190,7 @@ async def test_pack_device_health_raises_on_invalid_json() -> None:
             pack_id="appium-uiautomator2",
             platform_id="android",
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
         )
 
 
@@ -193,7 +203,13 @@ async def test_appium_logs_raises_on_invalid_json() -> None:
     )
     with pytest.raises(AgentUnreachableError):
         await agent_operations.appium_logs(
-            "10.0.0.5", 5100, 4723, lines=50, http_client_factory=_strict_client_factory(client), timeout=10
+            "10.0.0.5",
+            5100,
+            4723,
+            lines=50,
+            http_client_factory=_strict_client_factory(client),
+            timeout=10,
+            settings=SETTINGS,
         )
 
 
@@ -206,7 +222,12 @@ async def test_sync_plugins_raises_on_invalid_json() -> None:
     )
     with pytest.raises(AgentUnreachableError):
         await agent_operations.sync_plugins(
-            "10.0.0.5", 5100, plugins=[], http_client_factory=_strict_client_factory(client), timeout=30
+            "10.0.0.5",
+            5100,
+            plugins=[],
+            http_client_factory=_strict_client_factory(client),
+            timeout=30,
+            settings=SETTINGS,
         )
 
 
@@ -219,7 +240,7 @@ async def test_get_tool_status_raises_on_invalid_json() -> None:
     )
     with pytest.raises(AgentUnreachableError):
         await agent_operations.get_tool_status(
-            "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=15
+            "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), timeout=15, settings=SETTINGS
         )
 
 
@@ -231,7 +252,9 @@ async def test_get_pack_devices_raises_on_invalid_json() -> None:
         ),
     )
     with pytest.raises(AgentUnreachableError):
-        await agent_operations.get_pack_devices("10.0.0.5", 5100, http_client_factory=_strict_client_factory(client))
+        await agent_operations.get_pack_devices(
+            "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), settings=SETTINGS
+        )
 
 
 async def test_list_plugins_raises_on_invalid_json() -> None:
@@ -242,7 +265,9 @@ async def test_list_plugins_raises_on_invalid_json() -> None:
         ),
     )
     with pytest.raises(AgentUnreachableError):
-        await agent_operations.list_plugins("10.0.0.5", 5100, http_client_factory=_strict_client_factory(client))
+        await agent_operations.list_plugins(
+            "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), settings=SETTINGS
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +281,7 @@ async def test_get_pack_devices_preserves_empty_agent_payload() -> None:
         get_response=_json_response("GET", "http://10.0.0.5:5100/agent/pack/devices", payload={}),
     )
     result = await agent_operations.get_pack_devices(
-        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client)
+        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), settings=SETTINGS
     )
     # {} from the agent must stay {} — NOT {"candidates": None}
     assert result == {}
@@ -278,7 +303,9 @@ async def test_agent_health_preserves_wire_shape() -> None:
     client = StrictAgentClient(
         get_response=_json_response("GET", "http://10.0.0.5:5100/agent/health", payload=payload),
     )
-    result = await agent_operations.agent_health("10.0.0.5", 5100, http_client_factory=_strict_client_factory(client))
+    result = await agent_operations.agent_health(
+        "10.0.0.5", 5100, http_client_factory=_strict_client_factory(client), settings=SETTINGS
+    )
     assert result is not None
     assert result["status"] == "ok"
     # Must not have extra synthesised keys injected by model_dump

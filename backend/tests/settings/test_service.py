@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app import main
-from app.settings import settings_service
+from tests.conftest import settings_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -46,10 +46,10 @@ def test_startup_rejects_leader_keepalive_without_stale_threshold_margin(
     monkeypatch.setattr(settings_service, "get", lambda key: values[key])
 
     with pytest.raises(RuntimeError, match="leader_stale_threshold_sec"):
-        main._validate_leader_keepalive_settings()
+        main._validate_leader_keepalive_settings(settings=settings_service)
 
     values["general.leader_stale_threshold_sec"] = 120
-    main._validate_leader_keepalive_settings()
+    main._validate_leader_keepalive_settings(settings=settings_service)
 
 
 # ── float validation tests (device_checks.ip_ping.timeout_sec: min=0.5, max=30.0) ──

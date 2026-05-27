@@ -1,9 +1,9 @@
-import uuid
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.operations import list_plugins as list_agent_plugins
 from app.agent_comm.operations import sync_plugins as sync_agent_plugins
@@ -11,7 +11,14 @@ from app.core.errors import AgentCallError
 from app.core.observability import get_logger
 from app.hosts.models import Host, HostStatus
 from app.plugins.models import AppiumPlugin
-from app.plugins.schemas import PluginCreate, PluginUpdate
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
+    from app.plugins.schemas import PluginCreate, PluginUpdate
 
 logger = get_logger(__name__)
 
@@ -60,17 +67,20 @@ async def delete_plugin(db: AsyncSession, plugin_id: uuid.UUID) -> bool:
     return True
 
 
-async def fetch_host_plugins(host: Host) -> list[dict[str, str]]:
+async def fetch_host_plugins(host: Host, *, settings: SettingsReader) -> list[dict[str, str]]:
     return await list_agent_plugins(
         host.ip,
         host.agent_port,
         http_client_factory=httpx.AsyncClient,
+        settings=settings,
     )
 
 
-async def get_host_plugin_statuses(host: Host, plugins: list[AppiumPlugin]) -> list[dict[str, Any]]:
+async def get_host_plugin_statuses(
+    host: Host, plugins: list[AppiumPlugin], *, settings: SettingsReader
+) -> list[dict[str, Any]]:
     plugins = _filter_enabled(plugins)
-    installed = await fetch_host_plugins(host)
+    installed = await fetch_host_plugins(host, settings=settings)
     installed_map = {plugin["name"]: plugin["version"] for plugin in installed}
 
     results: list[dict[str, Any]] = []
@@ -103,17 +113,18 @@ def _plugin_payload(plugin: AppiumPlugin) -> dict[str, Any]:
     }
 
 
-async def sync_host_plugins(host: Host, plugins: list[AppiumPlugin]) -> dict[str, Any]:
+async def sync_host_plugins(host: Host, plugins: list[AppiumPlugin], *, settings: SettingsReader) -> dict[str, Any]:
     plugins = _filter_enabled(plugins)
     return await sync_agent_plugins(
         host.ip,
         host.agent_port,
         plugins=[_plugin_payload(plugin) for plugin in plugins],
         http_client_factory=httpx.AsyncClient,
+        settings=settings,
     )
 
 
-async def sync_all_host_plugins(db: AsyncSession) -> dict[str, Any]:
+async def sync_all_host_plugins(db: AsyncSession, *, settings: SettingsReader) -> dict[str, Any]:
     stmt = select(Host).order_by(Host.hostname)
     result = await db.execute(stmt)
     hosts = list(result.scalars().all())
@@ -131,7 +142,7 @@ async def sync_all_host_plugins(db: AsyncSession) -> dict[str, Any]:
 
         online_hosts.append(host.id)
         try:
-            await sync_host_plugins(host, plugins)
+            await sync_host_plugins(host, plugins, settings=settings)
         except (AgentCallError, httpx.HTTPError):
             failed_hosts.append(host.id)
         else:
@@ -146,13 +157,13 @@ async def sync_all_host_plugins(db: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def auto_sync_host_plugins(host: Host, plugins: list[AppiumPlugin]) -> None:
+async def auto_sync_host_plugins(host: Host, plugins: list[AppiumPlugin], *, settings: SettingsReader) -> None:
     if host.status.value != "online":
         return
     if not plugins:
         return
     try:
-        await sync_host_plugins(host, plugins)
+        await sync_host_plugins(host, plugins, settings=settings)
         logger.info("Auto-synced Appium plugins for host %s", host.hostname)
     except (AgentCallError, httpx.HTTPError) as exc:
         logger.warning("Automatic plugin sync failed for host %s: %s", host.hostname, exc)

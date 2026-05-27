@@ -22,6 +22,7 @@ from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.runs.models import RunState, TestRun
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -168,6 +169,7 @@ async def test_cooldown_intent_payload_shape(
         device.id,
         reason=cooldown_reason,
         ttl_seconds=120,
+        settings=FakeSettingsReader({}),
     )
     assert not escalated  # non-escalation path registers the intents we want
 
@@ -227,7 +229,7 @@ async def test_operator_start_intent_payload_shape(
     # synchronously via device.appium_node.  Without eager loading the attribute
     # access triggers a lazy load in an async context and raises MissingGreenlet.
     device = await device_locking.lock_device(db_session, device.id)
-    await _bulk_start_one(db_session, device, caller="operator")
+    await _bulk_start_one(db_session, device, caller="operator", settings=FakeSettingsReader({}))
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
     payload = intent.payload
@@ -292,6 +294,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
             device,
             source="device_connectivity",
             reason="Node went offline",
+            settings=FakeSettingsReader({}),
         )
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 

@@ -11,6 +11,7 @@ import pytest
 from app.core.leader.advisory import LeadershipLost
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ async def test_reaper_aborts_before_expiring_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus)
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader())
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])
@@ -81,7 +82,7 @@ async def test_reaper_aborts_before_ttl_expiry_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus)
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader())
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])

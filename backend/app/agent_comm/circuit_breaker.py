@@ -10,11 +10,11 @@ from sqlalchemy import or_, select
 from app.core.database import async_session
 from app.core.observability import get_logger
 from app.hosts.models.host import Host
-from app.settings import settings_service as _default_settings
+from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 
 if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.settings.service import SettingsService
 
 
 class _NullPublisher:
@@ -22,6 +22,15 @@ class _NullPublisher:
 
     async def publish(self, event_type: str, data: dict[str, Any], **_kwargs: Any) -> None:  # noqa: ANN401
         pass
+
+
+class _NullSettingsReader:
+    """No-op settings reader used to bootstrap the module-level singleton before DI wires the real one."""
+
+    def get(self, key: str) -> Any:  # noqa: ANN401
+        if key in SETTINGS_REGISTRY:
+            return resolve_default(SETTINGS_REGISTRY[key])
+        return ""
 
 
 logger = get_logger(__name__)
@@ -56,11 +65,11 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsService | None = None) -> None:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
-        self._settings = settings or _default_settings
+        self._settings = settings
 
     def _failure_threshold(self) -> int:
         return int(self._settings.get("agent.circuit_breaker_failure_threshold"))
@@ -193,4 +202,6 @@ class AgentCircuitBreaker:
 # DEPRECATED: bootstrapped with a no-op publisher; replaced at startup by compose_app.
 # New code should access via DI (AppServices.agent_comm.circuit_breaker).
 # Will be removed when all consumers are migrated (Task 3.1 / Task 6.2).
-agent_circuit_breaker: AgentCircuitBreaker = AgentCircuitBreaker(publisher=_NullPublisher())
+agent_circuit_breaker: AgentCircuitBreaker = AgentCircuitBreaker(
+    publisher=_NullPublisher(), settings=_NullSettingsReader()
+)

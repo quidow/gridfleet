@@ -10,7 +10,8 @@ from sqlalchemy import insert, select
 
 from app.devices.services.data_cleanup import _cleanup_old_data
 from app.hosts.models import HostAgentLogEntry
-from app.settings import settings_service
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +54,7 @@ async def test_prune_deletes_only_old_rows(db_session: AsyncSession, db_host: Ho
     )
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=AsyncMock())
+    await _cleanup_old_data(db_session, publisher=AsyncMock(), settings=FakeSettingsReader({}))
 
     rows = (
         (await db_session.execute(select(HostAgentLogEntry).where(HostAgentLogEntry.host_id == db_host.id)))

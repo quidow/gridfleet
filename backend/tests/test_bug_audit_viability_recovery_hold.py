@@ -20,6 +20,7 @@ import pytest
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.sessions.service_viability import run_session_viability_probe
 from app.sessions.viability_types import SessionViabilityCheckedBy
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
@@ -49,4 +50,5 @@ async def test_recovery_probe_rejects_offline_held_device(
             db_session,
             device,
             checked_by=SessionViabilityCheckedBy.recovery,
+            settings=FakeSettingsReader({}),
         )

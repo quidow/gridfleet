@@ -109,6 +109,7 @@ from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 event_bus_mod = import_module("app.events.event_bus")
@@ -252,8 +253,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     ]
     assert host_versioning.normalize_agent_version_setting(123) is None
 
-    monkeypatch.setattr(node_service_common._default_settings, "get", lambda _key: [])
-    assert node_service_common.get_default_plugins() == []
+    assert node_service_common.get_default_plugins(settings=FakeSettingsReader({"appium.default_plugins": []})) == []
     device_for_caps = SimpleNamespace(
         id=uuid.uuid4(),
         name="device",
@@ -353,7 +353,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         is None
     )
     await device_verification_runner.run_persisted_verification_job(
-        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock()
+        str(uuid.uuid4()), {"mode": "create"}, SessionCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})
     )
 
 
@@ -469,15 +469,32 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             ExecuteResult(no_host_device),
         ]
     )
-    await agent_reconfigure_delivery.deliver_agent_reconfigures(reconfigure_db, row.device_id)
+    await agent_reconfigure_delivery.deliver_agent_reconfigures(
+        reconfigure_db, row.device_id, settings=FakeSettingsReader()
+    )
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
-    monkeypatch.setattr(
-        data_cleanup._default_settings, "get", lambda key: 0 if key == "retention.audit_log_days" else 1
-    )
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
-    await data_cleanup._cleanup_old_data(cleanup_db, publisher=AsyncMock())
+    await data_cleanup._cleanup_old_data(
+        cleanup_db,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader(
+            {
+                "retention.audit_log_days": 0,
+                "retention.event_log_days": 1,
+                "retention.webhook_delivery_days": 1,
+                "retention.system_event_days": 1,
+                "retention.background_loop_heartbeat_days": 1,
+                "retention.automation_artifact_days": 1,
+                "retention.host_resource_telemetry_hours": 1,
+                "retention.hardware_telemetry_days": 1,
+                "retention.diagnostic_snapshots_days": 1,
+                "retention.agent_log_days": 1,
+                "retention.test_data_audit_days": 1,
+            }
+        ),
+    )
 
     assert session_viability._format_http_error(
         session_viability.httpx.RequestError(
@@ -542,7 +559,8 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
 
     class DummyClient:
-        async def get_pack_devices(self, _host: str, _port: int) -> dict[str, object]:
+        async def get_pack_devices(self, _host: str, _port: int, *, settings: object) -> dict[str, object]:
+            del settings
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -554,18 +572,22 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         discovery_db,
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
         agent_get_pack_devices=DummyClient().get_pack_devices,
+        settings=FakeSettingsReader(),
     )
     assert result.new_devices == []
 
     monkeypatch.setattr(plugin_service, "list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
-    assert await plugin_service.fetch_host_plugins(SimpleNamespace(ip="127.0.0.1", agent_port=5100)) == [
-        {"name": "images"}
-    ]
+    assert await plugin_service.fetch_host_plugins(
+        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader()
+    ) == [{"name": "images"}]
 
     offline_host = SimpleNamespace(status=SimpleNamespace(value="offline"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}]) is None
+    assert (
+        await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}], settings=FakeSettingsReader())
+        is None
+    )
     online_host = SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(online_host, []) is None
+    assert await plugin_service.auto_sync_host_plugins(online_host, [], settings=FakeSettingsReader()) is None
 
     class ClientManager:
         async def __aenter__(self) -> object:
@@ -642,7 +664,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         is appium_reconciler_agent.async_session
     )
     monkeypatch.setattr(appium_reconciler_agent, "candidate_ports", AsyncMock(return_value=[4799]))
-    assert await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4()) == 4799
+    assert (
+        await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4(), settings=FakeSettingsReader({}))
+        == 4799
+    )
 
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
@@ -671,7 +696,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     group_db.execute = AsyncMock(
         side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
     )
-    listed = await device_group_service.list_groups(group_db)
+    listed = await device_group_service.list_groups(group_db, settings=FakeSettingsReader({}))
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
@@ -748,6 +773,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
         session_factory=RecoveryCtx,
+        settings=FakeSettingsReader({}),
     )
 
     class QueueCtx:
@@ -761,7 +787,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
-    assert await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock()) is True
+    assert (
+        await job_queue.run_pending_jobs_once(QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({})) is True
+    )
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"
@@ -816,6 +844,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     await plugin_service.auto_sync_host_plugins(
         SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host"),
         [{"name": "images"}],
+        settings=FakeSettingsReader(),
     )
     plugin_service.sync_host_plugins.assert_awaited_once()
 

@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -9,6 +9,7 @@ from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 
 
 async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,18 +30,18 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
             return self.host
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(None))
-    await heartbeat._auto_sync_plugins_on_recovery(uuid.uuid4())
+    await heartbeat._auto_sync_plugins_on_recovery(uuid.uuid4(), settings=FakeSettingsReader({}))
 
     host = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host))
     monkeypatch.setattr(heartbeat.plugin_service, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
     monkeypatch.setattr(heartbeat.plugin_service, "auto_sync_host_plugins", sync)
-    await heartbeat._auto_sync_plugins_on_recovery(host.id)
-    sync.assert_awaited_once_with(host, ["plugin"])
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
+    sync.assert_awaited_once_with(host, ["plugin"], settings=ANY)
 
     monkeypatch.setattr(heartbeat, "async_session", lambda: FakeSession(host, fail_get=True))
-    await heartbeat._auto_sync_plugins_on_recovery(host.id)
+    await heartbeat._auto_sync_plugins_on_recovery(host.id, settings=FakeSettingsReader({}))
 
 
 async def test_background_task_scheduler_and_shutdown_paths() -> None:
@@ -62,15 +63,18 @@ async def test_background_task_scheduler_and_shutdown_paths() -> None:
 
 
 async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(heartbeat._default_settings, "get", MagicMock(side_effect=RuntimeError("settings unavailable")))
-    assert heartbeat._heartbeat_client_mode() is ClientMode.fresh
+    settings_unavailable = MagicMock()
+    settings_unavailable.get = MagicMock(side_effect=RuntimeError("settings unavailable"))
+    assert heartbeat._heartbeat_client_mode(settings=settings_unavailable) is ClientMode.fresh
 
     with pytest.raises(AssertionError):
-        await heartbeat._apply_host_ping_result(MagicMock(), MagicMock(), _dead_result(), guard_active=True)
+        await heartbeat._apply_host_ping_result(
+            MagicMock(), MagicMock(), _dead_result(), guard_active=True, settings=FakeSettingsReader({})
+        )
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(heartbeat, "agent_health", AsyncMock(side_effect=AgentCallError("1.2.3.4", "boom")))
-        result = await heartbeat._ping_agent("1.2.3.4", 5100)
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
     assert result.outcome is HeartbeatOutcome.unexpected_error
     assert result.error_category == "AgentCallError"
 
@@ -80,7 +84,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             "agent_health",
             AsyncMock(side_effect=AgentUnreachableError("1.2.3.4", "dns", transport_outcome="dns_error")),
         )
-        result = await heartbeat._ping_agent("1.2.3.4", 5100)
+        result = await heartbeat._ping_agent("1.2.3.4", 5100, settings=FakeSettingsReader({}))
     assert result.outcome is HeartbeatOutcome.dns_error
     assert result.error_category == "AgentUnreachableError"
 
@@ -166,14 +170,13 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(heartbeat._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(heartbeat, "async_session", lambda: Session())
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
-        await heartbeat.heartbeat_loop()
+        await heartbeat.heartbeat_loop(settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}))
 
 
 def _dead_result() -> HeartbeatPingResult:

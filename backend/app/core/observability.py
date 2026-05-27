@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
+
     SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
@@ -388,6 +390,7 @@ async def flush_background_loop_snapshots(
 async def background_loop_flush_loop(
     session_factory: SessionFactory | None = None,
     *,
+    settings: SettingsReader,
     interval_provider: Callable[[], float] | None = None,
 ) -> None:
     """Periodic flusher started by the leader. Cancels on task cancellation.
@@ -404,19 +407,13 @@ async def background_loop_flush_loop(
         except Exception:
             logger = get_logger(__name__)
             logger.exception("background_loop_flush_failed")
-        interval = float(interval_provider() if interval_provider else _default_flush_interval())
+        interval = float(interval_provider() if interval_provider else _default_flush_interval(settings=settings))
         await asyncio.sleep(interval)
 
 
-def current_background_loop_flush_interval_seconds() -> float:
-    """Read the active flush window from the settings registry.
-
-    Lazily imports ``app.settings`` via ``importlib`` so ``app/core/*`` modules
-    can call it without violating the core-purity import-graph guard
-    (``tests/test_import_graph.py``).
-    """
-    settings_service = importlib.import_module("app.settings").settings_service
-    return float(settings_service.get("general.background_loop_flush_interval_sec"))
+def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:
+    """Read the active flush window from the settings registry."""
+    return float(settings.get("general.background_loop_flush_interval_sec"))
 
 
 # Internal alias retained for the flush task default; tests stub it directly.

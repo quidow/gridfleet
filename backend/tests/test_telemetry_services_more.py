@@ -26,6 +26,7 @@ from app.hosts import (
 from app.hosts import (
     service_resource_telemetry as host_resource_telemetry,
 )
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -99,12 +100,21 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
     assert hardware_telemetry.current_hardware_support_status(device) == HardwareTelemetrySupportStatus.unknown
 
     device.device_type = DeviceType.emulator
-    assert hardware_telemetry.hardware_telemetry_state_for_device(device) == HardwareTelemetryState.unsupported
+    assert (
+        hardware_telemetry.hardware_telemetry_state_for_device(device, settings=FakeSettingsReader({}))
+        == HardwareTelemetryState.unsupported
+    )
     device.device_type = DeviceType.real_device
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.unknown
-    assert hardware_telemetry.hardware_telemetry_state_for_device(device) == HardwareTelemetryState.unknown
+    assert (
+        hardware_telemetry.hardware_telemetry_state_for_device(device, settings=FakeSettingsReader({}))
+        == HardwareTelemetryState.unknown
+    )
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.unsupported
-    assert hardware_telemetry.hardware_telemetry_state_for_device(device) == HardwareTelemetryState.unsupported
+    assert (
+        hardware_telemetry.hardware_telemetry_state_for_device(device, settings=FakeSettingsReader({}))
+        == HardwareTelemetryState.unsupported
+    )
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
     device.hardware_telemetry_reported_at = datetime(2026, 5, 1, tzinfo=UTC)
     assert (
@@ -112,6 +122,7 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
             device,
             now=datetime(2026, 5, 1, 0, 1, tzinfo=UTC),
             stale_timeout_sec=120,
+            settings=FakeSettingsReader({}),
         )
         == HardwareTelemetryState.fresh
     )
@@ -120,43 +131,50 @@ def test_hardware_telemetry_coercion_and_state_derivation() -> None:
             device,
             now=datetime(2026, 5, 1, 1, 0, tzinfo=UTC),
             stale_timeout_sec=120,
+            settings=FakeSettingsReader({}),
         )
         == HardwareTelemetryState.stale
     )
 
+    _temp_settings = FakeSettingsReader(
+        {"general.hardware_temperature_critical_c": 50, "general.hardware_temperature_warning_c": 40}
+    )
+
     device.battery_temperature_c = 55
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.unknown
-    assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.unknown
+    assert (
+        hardware_telemetry.derive_candidate_hardware_health_status(device, settings=_temp_settings)
+        == HardwareHealthStatus.unknown
+    )
     device.hardware_telemetry_support_status = HardwareTelemetrySupportStatus.supported
-    with patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(side_effect=[50, 40])):
-        assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.critical
+    assert (
+        hardware_telemetry.derive_candidate_hardware_health_status(device, settings=_temp_settings)
+        == HardwareHealthStatus.critical
+    )
     device.battery_temperature_c = 45
-    with patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(side_effect=[50, 40])):
-        assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.warning
+    assert (
+        hardware_telemetry.derive_candidate_hardware_health_status(device, settings=_temp_settings)
+        == HardwareHealthStatus.warning
+    )
     device.battery_temperature_c = None
     device.battery_level_percent = 80
-    with patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(side_effect=[50, 40])):
-        assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.healthy
+    assert (
+        hardware_telemetry.derive_candidate_hardware_health_status(device, settings=_temp_settings)
+        == HardwareHealthStatus.healthy
+    )
     device.battery_level_percent = None
     device.charging_state = HardwareChargingState.unknown
-    with patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(side_effect=[50, 40])):
-        assert hardware_telemetry.derive_candidate_hardware_health_status(device) == HardwareHealthStatus.unknown
+    assert (
+        hardware_telemetry.derive_candidate_hardware_health_status(device, settings=_temp_settings)
+        == HardwareHealthStatus.unknown
+    )
 
 
 async def test_apply_hardware_telemetry_sample_records_warning_transition() -> None:
     db = FlushSession()
     device = _telemetry_device()
 
-    def setting_value(key: str) -> int:
-        values = {
-            "general.hardware_temperature_critical_c": 50,
-            "general.hardware_temperature_warning_c": 40,
-            "general.hardware_telemetry_consecutive_samples": 1,
-        }
-        return values[key]
-
     with (
-        patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(side_effect=setting_value)),
         patch(
             "app.hosts.service_hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)
         ),
@@ -175,6 +193,13 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
                 "reported_at": "2026-05-01T12:00:00Z",
             },
             publisher=Mock(),
+            settings=FakeSettingsReader(
+                {
+                    "general.hardware_temperature_critical_c": 50,
+                    "general.hardware_temperature_warning_c": 40,
+                    "general.hardware_telemetry_consecutive_samples": 1,
+                }
+            ),
         )
 
     assert status == HardwareHealthStatus.warning
@@ -191,7 +216,6 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
     device = _telemetry_device(hardware_health_status=HardwareHealthStatus.healthy)
 
     with (
-        patch("app.hosts.service_hardware_telemetry._default_settings.get", new=Mock(return_value=2)),
         patch(
             "app.hosts.service_hardware_telemetry.control_plane_state_store.get_value", new=AsyncMock(return_value=None)
         ),
@@ -204,6 +228,7 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
             db,
             device,
             HardwareHealthStatus.critical,
+            settings=FakeSettingsReader({"general.hardware_telemetry_consecutive_samples": 2}),
         )
 
     assert status == HardwareHealthStatus.healthy
@@ -218,6 +243,7 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
             db,
             device,
             HardwareHealthStatus.healthy,
+            settings=FakeSettingsReader({"general.hardware_telemetry_consecutive_samples": 2}),
         )
     assert status == HardwareHealthStatus.healthy
     delete_value.assert_awaited_once()
@@ -231,25 +257,31 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
             db,
             device,
             HardwareHealthStatus.warning,
+            settings=FakeSettingsReader({"general.hardware_telemetry_consecutive_samples": 2}),
         )
     assert status == HardwareHealthStatus.warning
     delete_value.assert_awaited_once()
 
 
 async def test_get_device_telemetry_handles_missing_host_and_agent_errors() -> None:
-    assert await hardware_telemetry._get_device_telemetry(_telemetry_device(host=None)) is None
+    assert (
+        await hardware_telemetry._get_device_telemetry(_telemetry_device(host=None), settings=FakeSettingsReader({}))
+        is None
+    )
     host = SimpleNamespace(ip="10.0.0.1", agent_port=5100)
     device = _telemetry_device(host=host)
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.1", "failed")),
     ):
-        assert await hardware_telemetry._get_device_telemetry(device) is None
+        assert await hardware_telemetry._get_device_telemetry(device, settings=FakeSettingsReader({})) is None
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(return_value={"battery_level_percent": 80}),
     ) as fetch:
-        assert await hardware_telemetry._get_device_telemetry(device) == {"battery_level_percent": 80}
+        assert await hardware_telemetry._get_device_telemetry(device, settings=FakeSettingsReader({})) == {
+            "battery_level_percent": 80
+        }
     fetch.assert_awaited_once()
 
 
@@ -278,7 +310,7 @@ async def test_poll_hardware_telemetry_commits_samples_and_rolls_back_failures()
             new=AsyncMock(side_effect=[HardwareHealthStatus.healthy, RuntimeError("boom")]),
         ),
     ):
-        await hardware_telemetry.poll_hardware_telemetry_once(db)
+        await hardware_telemetry.poll_hardware_telemetry_once(db, settings=FakeSettingsReader({}))
 
     assert db.committed is True
     assert db.rolled_back is True
@@ -341,7 +373,7 @@ async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors(
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(side_effect=[None, AgentCallError("10.0.0.1", "failed"), RuntimeError("boom")]),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(db)
+        await host_resource_telemetry.poll_host_resource_telemetry_once(db, settings=FakeSettingsReader({}))
 
     assert db.rolled_back is True
 
@@ -365,7 +397,7 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(return_value={"cpu_percent": 50}),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(db)
+        await host_resource_telemetry.poll_host_resource_telemetry_once(db, settings=FakeSettingsReader({}))
 
     assert db.committed is True
     assert db.added
@@ -388,12 +420,13 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
             "app.hosts.service_resource_telemetry.poll_host_resource_telemetry_once",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
-        patch("app.hosts.service_resource_telemetry._default_settings.get", return_value=1),
         patch("app.hosts.service_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         patch("app.hosts.service_resource_telemetry.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
-        await host_resource_telemetry.host_resource_telemetry_loop()
+        await host_resource_telemetry.host_resource_telemetry_loop(
+            settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1})
+        )
 
     log_exception.assert_called_once_with("Host resource telemetry loop failed")
 
@@ -405,36 +438,37 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
         async def scalar(self, *_args: object, **_kwargs: object) -> object | None:
             return host_id
 
-    with patch("app.hosts.service_resource_telemetry._default_settings.get", new=Mock(return_value=24)):
-        for since, until, bucket_minutes, message in (
-            (
-                datetime(2026, 5, 1, tzinfo=UTC),
-                datetime(2026, 5, 1, tzinfo=UTC),
-                5,
-                "since must be earlier",
-            ),
-            (
-                datetime(2026, 5, 1, tzinfo=UTC),
-                datetime(2026, 5, 2, tzinfo=UTC),
-                0,
-                "bucket_minutes",
-            ),
-            (
-                datetime(2026, 5, 1, tzinfo=UTC),
-                datetime(2026, 5, 3, tzinfo=UTC),
-                5,
-                "retention",
-            ),
-        ):
-            with pytest.raises(ValueError) as exc:
-                await host_resource_telemetry.fetch_host_resource_telemetry(
-                    FetchSession(),  # type: ignore[arg-type]
-                    host_id,
-                    since=since,
-                    until=until,
-                    bucket_minutes=bucket_minutes,
-                )
-            assert message in str(exc.value)
+    settings = FakeSettingsReader({"retention.host_resource_telemetry_hours": 24})
+    for since, until, bucket_minutes, message in (
+        (
+            datetime(2026, 5, 1, tzinfo=UTC),
+            datetime(2026, 5, 1, tzinfo=UTC),
+            5,
+            "since must be earlier",
+        ),
+        (
+            datetime(2026, 5, 1, tzinfo=UTC),
+            datetime(2026, 5, 2, tzinfo=UTC),
+            0,
+            "bucket_minutes",
+        ),
+        (
+            datetime(2026, 5, 1, tzinfo=UTC),
+            datetime(2026, 5, 3, tzinfo=UTC),
+            5,
+            "retention",
+        ),
+    ):
+        with pytest.raises(ValueError) as exc:
+            await host_resource_telemetry.fetch_host_resource_telemetry(
+                FetchSession(),  # type: ignore[arg-type]
+                host_id,
+                since=since,
+                until=until,
+                bucket_minutes=bucket_minutes,
+                settings=settings,
+            )
+        assert message in str(exc.value)
 
 
 async def test_fetch_host_resource_telemetry_returns_none_for_missing_host() -> None:
@@ -449,6 +483,7 @@ async def test_fetch_host_resource_telemetry_returns_none_for_missing_host() -> 
             since=datetime(2026, 5, 1, tzinfo=UTC),
             until=datetime(2026, 5, 2, tzinfo=UTC),
             bucket_minutes=5,
+            settings=FakeSettingsReader({}),
         )
         is None
     )

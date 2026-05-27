@@ -26,6 +26,7 @@ from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from tests.fakes import FakeSettingsReader
 
 
 def _ok_result(payload: dict[str, Any]) -> HeartbeatPingResult:
@@ -89,7 +90,7 @@ async def test_heartbeat_marks_online(db_session: AsyncSession) -> None:
             "app.appium_nodes.services.heartbeat._schedule_background_task",
         ),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -120,7 +121,7 @@ async def test_heartbeat_updates_missing_prerequisites(db_session: AsyncSession)
             }
         ),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.missing_prerequisites == []
@@ -150,9 +151,9 @@ async def test_heartbeat_marks_offline_after_failures(db_session: AsyncSession) 
     await db_session.commit()
 
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await _check_hosts(db_session)  # failure 1
-        await _check_hosts(db_session)  # failure 2
-        await _check_hosts(db_session)  # failure 3
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))  # failure 1
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))  # failure 2
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))  # failure 3
 
     await db_session.refresh(host)
     await db_session.refresh(device)
@@ -219,9 +220,9 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     await db_session.commit()
 
     with patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_dead_result()):
-        await _check_hosts(db_session)
-        await _check_hosts(db_session)
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     availability_events = [payload for name, payload in captured if name == "device.operational_state_changed"]
     cascade_events = [
@@ -256,7 +257,7 @@ async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
             "app.appium_nodes.services.heartbeat._schedule_background_task",
         ),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -270,7 +271,7 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
 
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_task(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_task(task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object) -> None:
         scheduled.append((task_fn, args))
 
     with (
@@ -280,7 +281,7 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
         ),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task", side_effect=capture_task),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     assert scheduled == [(_auto_sync_plugins_on_recovery, (host.id,))]
 
@@ -312,7 +313,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def blocking_sync(_: uuid.UUID) -> None:
+    async def blocking_sync(_: uuid.UUID, *, settings: object) -> None:
         started.set()
         await release.wait()
 
@@ -323,7 +324,7 @@ async def test_heartbeat_recovery_shutdown_drains_spawned_background_task(db_ses
         ),
         patch("app.appium_nodes.services.heartbeat._auto_sync_plugins_on_recovery", new=blocking_sync),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
         await asyncio.wait_for(started.wait(), 1)
 
         shutdown_task = asyncio.create_task(shutdown_background_tasks(timeout=0.01))
@@ -417,8 +418,8 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await _check_hosts(db_session)
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(node)
     assert node.pid == 2222
@@ -539,7 +540,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(exhausted_payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(node)
     await db_session.refresh(device)
@@ -565,7 +566,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
     with patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="refused")):
-        await _check_nodes(db_session)
+        await _check_nodes(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(node)
     assert node.observed_running is True
@@ -659,7 +660,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(node)
     assert node.pid == 4444
@@ -769,7 +770,7 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
         patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
         patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(node)
     assert node.health_running is False

@@ -10,6 +10,7 @@ from app.devices.services import lifecycle_incidents as incidents
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.packs.services import discovery as discovery
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -147,6 +148,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_session,
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
+        settings=FakeSettingsReader(),
     )
     assert [item.already_registered for item in intake] == [True, False]
     assert intake[0].platform_label == "Android"
@@ -155,6 +157,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         db_session,
         db_host,
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
+        settings=FakeSettingsReader(),
     )
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]
@@ -179,6 +182,7 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
             ],
             removed_identity_values=result.removed_identity_values,
         ),
+        settings=FakeSettingsReader({}),
     )
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]

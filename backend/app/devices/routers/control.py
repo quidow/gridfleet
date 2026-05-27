@@ -35,6 +35,7 @@ from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions import service_viability as session_viability
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import service_config as config_service
+from app.settings.dependencies import SettingsServicesDep
 
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
@@ -52,23 +53,26 @@ async def enter_device_maintenance(
     device_id: uuid.UUID,
     body: DeviceMaintenanceUpdate,
     db: DbDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.enter_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
-async def exit_device_maintenance(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def exit_device_maintenance(
+    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await maintenance_service.exit_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
 
 
 @router.get("/{device_id}/config", response_model=DeviceConfigRead)
@@ -114,7 +118,7 @@ async def get_config_history(
 
 
 @router.get("/{device_id}/health", response_model=DeviceHealthRead)
-async def device_health(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def device_health(device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     host = require_management_host(device, action="inspect device health")
 
@@ -137,6 +141,7 @@ async def device_health(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
                 host.agent_port,
                 node.port,
                 http_client_factory=httpx.AsyncClient,
+                settings=settings_services.reader,
             )
             node_running = node_payload is not None and node_payload.get("running", False) is True
             if not node_running and node_state == "running":
@@ -164,6 +169,7 @@ async def device_health(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
             connection_type=device.connection_type.value if device.connection_type else None,
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
+            settings=settings_services.reader,
         )
     except AgentCallError as e:
         result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e}"}
@@ -183,18 +189,24 @@ async def device_health(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
 
 
 @router.post("/{device_id}/session-test", response_model=SessionViabilityRead)
-async def device_session_test(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def device_session_test(
+    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         return await session_viability.run_session_viability_probe(
-            db, device, checked_by=SessionViabilityCheckedBy.manual
+            db, device, checked_by=SessionViabilityCheckedBy.manual, settings=settings_services.reader
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{device_id}/reconnect")
-async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def reconnect_device(
+    device_id: uuid.UUID,
+    db: DbDep,
+    settings_services: SettingsServicesDep,
+) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
     try:
@@ -227,6 +239,7 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         action="reconnect",
         args={"ip_address": device.ip_address, "port": 5555},
         http_client_factory=httpx.AsyncClient,
+        settings=settings_services.reader,
     )
 
     success = data.get("success", False)
@@ -262,9 +275,11 @@ async def reconnect_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
             if node is None or not node.observed_running:
                 if device.host_id is None:
                     raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-                await node_manager.start_node(db, device, caller="operator_route")
+                await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.reader)
             else:
-                await node_manager.restart_node(db, device, caller="operator_restart")
+                await node_manager.restart_node(
+                    db, device, caller="operator_restart", settings=settings_services.reader
+                )
         except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 
@@ -280,6 +295,7 @@ async def device_lifecycle_action(
     device_id: uuid.UUID,
     action: str,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
@@ -311,6 +327,7 @@ async def device_lifecycle_action(
         action=action,
         args=body or {},
         http_client_factory=httpx.AsyncClient,
+        settings=settings_services.reader,
     )
     if action == "state" and isinstance(result.get("state"), str):
         await device_health_service.update_emulator_state(db, device, result["state"])
@@ -322,6 +339,7 @@ async def device_lifecycle_action(
 async def device_logs(
     device_id: uuid.UUID,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     lines: int = Query(100, le=5000),
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
@@ -338,6 +356,7 @@ async def device_logs(
             node.port,
             lines=lines,
             http_client_factory=httpx.AsyncClient,
+            settings=settings_services.reader,
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Cannot fetch logs from agent: {e}") from e

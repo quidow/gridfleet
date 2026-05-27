@@ -12,9 +12,9 @@ from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.hosts.models import Host
 from app.main import app
-from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.services_container import SettingsServices
+from tests.conftest import settings_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -70,7 +70,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 yield session
 
         def override_get_settings_services() -> SettingsServices:
-            return SettingsServices(service=settings_service, session_factory=db_session_maker)
+            return SettingsServices(reader=settings_service, service=settings_service, session_factory=db_session_maker)
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_settings_services] = override_get_settings_services

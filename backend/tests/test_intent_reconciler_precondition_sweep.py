@@ -14,6 +14,7 @@ from app.devices.services.intent_preconditions import reconcile_unsatisfied_prec
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 from app.runs.models import RunState
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
@@ -144,7 +145,7 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session)
+    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader())
     await db_session.commit()
 
     remaining = (
@@ -382,7 +383,7 @@ async def test_node_health_registers_node_running_precondition(
 
     device = await create_device(db_session, host_id=db_host.id, name="autorec-prec")
     await _seed_node(db_session, device.id)
-    await node_health._attempt_node_restart(db_session, device=device)
+    await node_health._attempt_node_restart(db_session, device=device, settings=FakeSettingsReader({}))
 
     node_intent = next(intent for intent in captured if intent.source == f"auto_recovery:node:{device.id}")
     recovery_intent = next(intent for intent in captured if intent.source == f"auto_recovery:recovery:{device.id}")

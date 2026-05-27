@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.core.protocols import SettingsReader
     from app.settings.service import SettingsService
 
 
 @dataclass(frozen=True, slots=True)
 class SettingsServices:
+    reader: SettingsReader
     service: SettingsService
     session_factory: async_sessionmaker[AsyncSession]

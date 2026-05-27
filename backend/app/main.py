@@ -41,6 +41,7 @@ from app.core.observability import (
     flush_background_loop_snapshots,
     get_logger,
 )
+from app.core.protocols import SettingsReader
 from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
@@ -65,7 +66,8 @@ from app.sessions import router as sessions_router
 from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
-from app.settings import settings_service, validate_leader_keepalive_settings
+from app.settings import validate_leader_keepalive_settings
+from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
@@ -94,23 +96,23 @@ session_viability_loop = session_service_viability.session_viability_loop
 close_session_viability_client = session_service_viability.close
 
 
-async def hardware_telemetry_loop() -> None:
+async def hardware_telemetry_loop(*, settings: SettingsReader) -> None:
     service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
-    await service_hardware_telemetry.hardware_telemetry_loop()
+    await service_hardware_telemetry.hardware_telemetry_loop(settings=settings)
 
 
-async def host_resource_telemetry_loop() -> None:
+async def host_resource_telemetry_loop(*, settings: SettingsReader) -> None:
     service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
-    await service_resource_telemetry.host_resource_telemetry_loop()
+    await service_resource_telemetry.host_resource_telemetry_loop(settings=settings)
 
 
 async def pack_drain_loop() -> None:
     await pack_services.drain.pack_drain_loop()
 
 
-def _validate_leader_keepalive_settings() -> None:
-    keepalive_interval_sec = int(settings_service.get("general.leader_keepalive_interval_sec"))
-    stale_threshold_sec = int(settings_service.get("general.leader_stale_threshold_sec"))
+def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
+    keepalive_interval_sec = int(settings.get("general.leader_keepalive_interval_sec"))
+    stale_threshold_sec = int(settings.get("general.leader_stale_threshold_sec"))
     error = validate_leader_keepalive_settings(
         keepalive_interval_sec=keepalive_interval_sec,
         stale_threshold_sec=stale_threshold_sec,
@@ -170,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     set_bus_ref(bus)
     svc = SettingsService()
     pool = AgentHttpPool()
-    breaker = AgentCircuitBreaker(publisher=bus)
+    breaker = AgentCircuitBreaker(publisher=bus, settings=svc)
 
     app_services = compose_app(
         engine=engine,
@@ -191,7 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await svc.initialize(db)
         await _validate_online_agent_contracts(db)
     register_settings_provider(svc.get)
-    _validate_leader_keepalive_settings()
+    _validate_leader_keepalive_settings(settings=svc)
 
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
@@ -218,24 +220,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if await control_plane_leader.try_acquire(engine):
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
-            (heartbeat_loop(), "heartbeat_loop"),
-            (session_sync_loop(), "session_sync_loop"),
+            (heartbeat_loop(settings=svc), "heartbeat_loop"),
+            (session_sync_loop(settings=svc), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
-            (node_health_loop(), "node_health_loop"),
-            (device_connectivity_loop(), "device_connectivity_loop"),
-            (property_refresh_loop(), "property_refresh_loop"),
-            (hardware_telemetry_loop(), "hardware_telemetry_loop"),
-            (host_resource_telemetry_loop(), "host_resource_telemetry_loop"),
-            (job_queue.durable_job_worker_loop(session_factory, publisher=bus), "durable_job_worker_loop"),
+            (node_health_loop(settings=svc), "node_health_loop"),
+            (device_connectivity_loop(settings=svc), "device_connectivity_loop"),
+            (property_refresh_loop(settings=svc), "property_refresh_loop"),
+            (hardware_telemetry_loop(settings=svc), "hardware_telemetry_loop"),
+            (host_resource_telemetry_loop(settings=svc), "host_resource_telemetry_loop"),
+            (
+                job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
+                "durable_job_worker_loop",
+            ),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
-            (run_reaper_loop(publisher=bus), "run_reaper_loop"),
-            (data_cleanup_loop(publisher=bus), "data_cleanup_loop"),
-            (session_viability_loop(), "session_viability_loop"),
-            (fleet_capacity_collector_loop(), "fleet_capacity_collector_loop"),
+            (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
+            (data_cleanup_loop(publisher=bus, settings=svc), "data_cleanup_loop"),
+            (session_viability_loop(settings=svc), "session_viability_loop"),
+            (fleet_capacity_collector_loop(settings=svc), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
-            (appium_reconciler_loop(), "appium_reconciler_loop"),
-            (device_intent_reconciler_loop(), "device_intent_reconciler_loop"),
-            (background_loop_flush_loop(session_factory), "background_loop_flush_loop"),
+            (appium_reconciler_loop(settings=svc), "appium_reconciler_loop"),
+            (device_intent_reconciler_loop(settings=svc), "device_intent_reconciler_loop"),
+            (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
@@ -337,14 +342,14 @@ async def live_health() -> dict[str, str]:
 
 
 @app.get("/health/ready", response_model=HealthStatusRead)
-async def ready_health(db: DbDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db)
+async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, settings=settings_services.reader)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
-async def health(db: DbDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db)
+async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
+    payload, status_code = await check_readiness(db, settings=settings_services.reader)
     return JSONResponse(content=payload, status_code=status_code)
 
 
@@ -357,10 +362,13 @@ async def metrics(db: DbDep) -> Response:
 @app.get("/api/availability", dependencies=[Depends(auth_dependencies.require_any_auth)])
 async def check_availability(
     db: DbDep,
+    settings_services: SettingsServicesDep,
     platform_id: str = Query(...),
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    available_devices = await device_service.list_devices(db, platform_id=platform_id, status="available")
+    available_devices = await device_service.list_devices(
+        db, settings=settings_services.reader, platform_id=platform_id, status="available"
+    )
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(
         1

@@ -18,6 +18,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
+from tests.fakes import FakeSettingsReader
 from tests.pack.factories import seed_test_packs
 
 
@@ -167,6 +168,7 @@ async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
         allocated_caps=None,
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
+        settings=FakeSettingsReader({}),
     )
 
     payload = _patched_remote_start["payload"]
@@ -238,6 +240,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         allocated_caps=None,
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
+        settings=FakeSettingsReader({}),
     )
 
     assert _patched_remote_start["payload"]["workaround_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
@@ -292,6 +295,7 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
         allocated_caps=None,
         agent_base="http://starts.local:5100",
         http_client_factory=AsyncMock(),
+        settings=FakeSettingsReader({}),
     )
 
     payload = captured["payload"]
@@ -417,10 +421,7 @@ async def test_restart_merges_pack_stereotype_over_legacy_caps(
         node.port = 4723
 
     await restart_node_via_agent(
-        db_session,
-        device,
-        node,
-        http_client_factory=AsyncMock(),
+        db_session, device, node, http_client_factory=AsyncMock(), settings=FakeSettingsReader({})
     )
 
     payload = captured["payload"]
@@ -452,7 +453,7 @@ async def test_start_payload_sends_manifest_appium_platform_name(db_session: Asy
         connection_type=ConnectionType.usb,
     )
 
-    payload = build_agent_start_payload(device, 4723)
+    payload = build_agent_start_payload(device, 4723, settings=FakeSettingsReader({}))
     stereotype = await render_stereotype(
         db_session,
         pack_id=device.pack_id,

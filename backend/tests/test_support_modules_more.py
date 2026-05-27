@@ -23,6 +23,7 @@ from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -106,7 +107,8 @@ async def test_check_readiness_short_circuits_when_shutting_down(monkeypatch: Mo
     monkeypatch.setattr(health.shutdown_coordinator, "is_shutting_down", lambda: True)
     monkeypatch.setattr(health.shutdown_coordinator, "active_requests", lambda: 2)
 
-    payload, status = await health.check_readiness(AsyncMock())
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(AsyncMock(), settings=settings)
 
     assert status == 503
     assert payload["checks"]["shutdown"]["shutting_down"] is True
@@ -125,7 +127,8 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
         lambda snapshot, now, extra_grace_seconds=0.0: False,
     )
 
-    payload, status = await health.check_readiness(db)
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(db, settings=settings)
 
     assert status == 503
     assert payload["checks"]["control_plane_leader"] is False
@@ -174,11 +177,12 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
             "app.runs.service_reaper._reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
         ),
-        patch("app.runs.service_reaper._default_settings.get", return_value=1),
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await run_reaper.run_reaper_loop(publisher=event_bus)
+        await run_reaper.run_reaper_loop(
+            publisher=event_bus, settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1})
+        )
 
     sleep.assert_awaited()
 

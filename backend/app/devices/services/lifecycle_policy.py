@@ -66,10 +66,11 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions import service_viability as session_viability
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +107,9 @@ class DeferredStopOutcome(StrEnum):
     AUTO_STOPPED = "auto_stopped"
 
 
-def _set_backoff(state: dict[str, Any]) -> str:
-    base_seconds = int(_default_settings.get("general.lifecycle_recovery_backoff_base_sec"))
-    max_seconds = max(base_seconds, int(_default_settings.get("general.lifecycle_recovery_backoff_max_sec")))
+def _set_backoff(state: dict[str, Any], *, settings: SettingsReader) -> str:
+    base_seconds = int(settings.get("general.lifecycle_recovery_backoff_base_sec"))
+    max_seconds = max(base_seconds, int(settings.get("general.lifecycle_recovery_backoff_max_sec")))
     return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 
@@ -191,7 +192,7 @@ async def _reload_device(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
 
 
-async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any]:
+async def _run_recovery_probe(db: AsyncSession, device: Device, *, settings: SettingsReader) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     try:
         async for attempt in AsyncRetrying(
@@ -202,7 +203,7 @@ async def _run_recovery_probe(db: AsyncSession, device: Device) -> dict[str, Any
             with attempt:
                 reloaded = await _reload_device(db, device)
                 last_result = await session_viability.run_session_viability_probe(
-                    db, reloaded, checked_by=SessionViabilityCheckedBy.recovery
+                    db, reloaded, checked_by=SessionViabilityCheckedBy.recovery, settings=settings
                 )
             if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
                 attempt.retry_state.set_result(last_result)
@@ -388,6 +389,7 @@ async def attempt_auto_recovery(
     *,
     source: str,
     reason: str,
+    settings: SettingsReader,
 ) -> bool:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
@@ -532,12 +534,12 @@ async def attempt_auto_recovery(
         try:
             if device.host_id is None:
                 raise NodeManagerError(f"Device {device.id} has no host assigned")
-            desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+            desired_port = (await candidate_ports(db, host_id=device.host_id, settings=settings))[0]
             if device.appium_node is None:
                 new_node = AppiumNode(
                     device_id=device.id,
                     port=desired_port,
-                    grid_url=_default_settings.get("grid.hub_url"),
+                    grid_url=settings.get("grid.hub_url"),
                 )
                 db.add(new_node)
                 await db.flush()
@@ -603,7 +605,7 @@ async def attempt_auto_recovery(
             await db.commit()
             await db.refresh(device.appium_node)
         except NodeManagerError as exc:
-            backoff_until_iso = _set_backoff(current_state)
+            backoff_until_iso = _set_backoff(current_state, settings=settings)
             record_recovery_failed(
                 current_state,
                 source=source,
@@ -656,11 +658,11 @@ async def attempt_auto_recovery(
                 device.id,
             )
 
-    result = await _run_recovery_probe(db, device)
+    result = await _run_recovery_probe(db, device, settings=settings)
 
     if result.get("status") != "passed":
         failure_reason = result.get("error") or "Recovery viability probe failed"
-        backoff_until_iso = _set_backoff(current_state)
+        backoff_until_iso = _set_backoff(current_state, settings=settings)
         record_recovery_failed(
             current_state,
             source="session_viability",
@@ -722,7 +724,7 @@ async def attempt_auto_recovery(
         # out of automated recovery scope and only a sanctioned operator
         # action (exit maintenance, restore from run, re-verify, restart
         # node) clears the flag.
-        review_threshold = int(_default_settings.get("general.lifecycle_recovery_review_threshold"))
+        review_threshold = int(settings.get("general.lifecycle_recovery_review_threshold"))
         attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
         if attempts >= review_threshold:
             from app.devices.services.review import mark_review_required  # noqa: PLC0415

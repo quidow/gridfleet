@@ -17,7 +17,9 @@ from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
-    _check_due_devices,
+    _check_due_devices as _check_due_devices_impl,
+)
+from app.sessions.service_viability import (
     _extract_session_error,
     _format_http_error,
     _get_grid_probe_client,
@@ -25,14 +27,47 @@ from app.sessions.service_viability import (
     _should_run_scheduled_probe,
     get_session_viability,
     grid_probe_response_to_result,
-    probe_session_via_grid,
     record_session_viability_result,
-    run_session_viability_probe,
 )
-from app.settings import settings_service
+from app.sessions.service_viability import (
+    probe_session_via_grid as _probe_session_via_grid_impl,
+)
+from app.sessions.service_viability import (
+    run_session_viability_probe as _run_session_viability_probe_impl,
+)
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import get_session_viability_control_plane_state, set_session_viability_control_plane_entry
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+async def run_session_viability_probe(
+    db: AsyncSession,
+    device: Device,
+    *,
+    checked_by: object,
+    settings: FakeSettingsReader | None = None,
+) -> dict[str, Any]:
+    return await _run_session_viability_probe_impl(
+        db, device, checked_by=checked_by, settings=settings or FakeSettingsReader({})
+    )
+
+
+async def probe_session_via_grid(
+    capabilities: dict[str, Any],
+    timeout_sec: int,
+    *,
+    grid_url: str | None = None,
+    settings: FakeSettingsReader | None = None,
+) -> tuple[bool, str | None]:
+    return await _probe_session_via_grid_impl(
+        capabilities, timeout_sec, grid_url=grid_url, settings=settings or FakeSettingsReader({})
+    )
+
+
+async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader | None = None) -> None:
+    await _check_due_devices_impl(db, settings=settings or FakeSettingsReader({}))
 
 
 async def test_session_viability_state_is_not_persisted_in_device_config(
@@ -502,11 +537,12 @@ async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
     mock_client.post = AsyncMock(return_value=create_response)
     mock_client.delete = AsyncMock(return_value=delete_response)
 
-    with (
-        patch("app.sessions.service_viability._default_settings.get", return_value="http://hub:4444/wd/hub"),
-        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
-    ):
-        ok, error = await probe_session_via_grid({"platformName": "iOS"}, timeout_sec=5)
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "iOS"},
+            timeout_sec=5,
+            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444/wd/hub"}),
+        )
 
     assert ok is True
     assert error is None
@@ -526,13 +562,11 @@ async def test_probe_session_via_grid_uses_explicit_node_grid_url() -> None:
     mock_client.post = AsyncMock(return_value=create_response)
     mock_client.delete = AsyncMock(return_value=delete_response)
 
-    with (
-        patch("app.sessions.service_viability._default_settings.get", return_value="http://global-hub:4444"),
-        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
-    ):
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
         ok, error = await probe_session_via_grid(
             {"platformName": "iOS"},
             timeout_sec=5,
+            settings=FakeSettingsReader({"grid.hub_url": "http://global-hub:4444"}),
             grid_url="http://node-hub:4444/wd/hub",
         )
 
@@ -700,11 +734,12 @@ async def test_probe_session_via_grid_create_failure_paths(create_response: Magi
     mock_client = MagicMock()
     mock_client.post = AsyncMock(return_value=create_response)
 
-    with (
-        patch("app.sessions.service_viability._default_settings.get", return_value="http://hub:4444"),
-        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
-    ):
-        ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "Android"},
+            timeout_sec=3,
+            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
+        )
 
     assert ok is False
     assert error == expected_error
@@ -718,21 +753,23 @@ async def test_probe_session_via_grid_cleanup_failure_paths() -> None:
     mock_client.post = AsyncMock(return_value=create_response)
     mock_client.delete = AsyncMock(return_value=delete_response)
 
-    with (
-        patch("app.sessions.service_viability._default_settings.get", return_value="http://hub:4444"),
-        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
-    ):
-        ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "Android"},
+            timeout_sec=3,
+            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
+        )
 
     assert ok is False
     assert error == "Session created but cleanup failed (500)"
 
     mock_client.delete = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with (
-        patch("app.sessions.service_viability._default_settings.get", return_value="http://hub:4444"),
-        patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client),
-    ):
-        ok, error = await probe_session_via_grid({"platformName": "Android"}, timeout_sec=3)
+    with patch("app.sessions.service_viability._get_grid_probe_client", return_value=mock_client):
+        ok, error = await probe_session_via_grid(
+            {"platformName": "Android"},
+            timeout_sec=3,
+            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
+        )
 
     assert ok is False
     assert error == "Session created but cleanup failed: down"
@@ -860,11 +897,6 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(
-        session_viability._default_settings,
-        "get",
-        lambda key: 1 if "failure_threshold" in key else 5,
-    )
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
     # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
@@ -883,6 +915,12 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
             db_session,
             device,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
+            settings=FakeSettingsReader(
+                {
+                    "general.session_viability_failure_threshold": 1,
+                    "general.session_viability_timeout_sec": 5,
+                }
+            ),
         )
     finally:
         session_viability.configure_health_failure_handler(None)
@@ -933,7 +971,6 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability._default_settings, "get", lambda key: 5)
     monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
     # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
@@ -951,6 +988,7 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
             db_session,
             device,
             checked_by=session_viability.SessionViabilityCheckedBy.recovery,
+            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
     assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.offline
@@ -972,13 +1010,13 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability._default_settings, "get", lambda key: 5)
     monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
 
     state = await run_session_viability_probe(
         fake_db,
         no_node,
         checked_by=session_viability.SessionViabilityCheckedBy.manual,
+        settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
     )
 
     assert state["status"] == "failed"
@@ -1007,6 +1045,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
             db_session,
             available,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
+            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
     assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.available
@@ -1035,13 +1074,20 @@ async def _run_failing_probe(
             return threshold
         return 5
 
-    monkeypatch.setattr(session_viability._default_settings, "get", _settings)
     monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, error)))
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
     if handler is not None:
         session_viability.configure_health_failure_handler(handler)
     return await run_session_viability_probe(
-        db, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+        db,
+        device,
+        checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        settings=FakeSettingsReader(
+            {
+                "general.session_viability_failure_threshold": _settings("general.session_viability_failure_threshold"),
+                "general.session_viability_timeout_sec": _settings("general.session_viability_timeout_sec"),
+            }
+        ),
     )
 
 
@@ -1140,7 +1186,6 @@ async def test_passing_probe_resets_viability_failure_counter(
             return 3
         return 5
 
-    monkeypatch.setattr(session_viability._default_settings, "get", _settings)
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
     session_viability.configure_health_failure_handler(handler)
     try:
@@ -1150,7 +1195,17 @@ async def test_passing_probe_resets_viability_failure_counter(
             with state_write_guard.bypass():
                 device.operational_state = DeviceOperationalState.available
             await run_session_viability_probe(
-                db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+                db_session,
+                device,
+                checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+                settings=FakeSettingsReader(
+                    {
+                        "general.session_viability_failure_threshold": _settings(
+                            "general.session_viability_failure_threshold"
+                        ),
+                        "general.session_viability_timeout_sec": _settings("general.session_viability_timeout_sec"),
+                    }
+                ),
             )
 
         # A passing probe must reset the counter back to 0.
@@ -1202,12 +1257,19 @@ async def test_write_session_viability_persists_error_category(
             return 5  # below threshold so no escalation interferes
         return 5
 
-    monkeypatch.setattr(session_viability._default_settings, "get", _settings)
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(session_viability, "probe_session_via_grid", AsyncMock(return_value=(False, grid_error)))
 
     await run_session_viability_probe(
-        db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+        db_session,
+        device,
+        checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        settings=FakeSettingsReader(
+            {
+                "general.session_viability_failure_threshold": _settings("general.session_viability_failure_threshold"),
+                "general.session_viability_timeout_sec": _settings("general.session_viability_timeout_sec"),
+            }
+        ),
     )
 
     persisted = await get_session_viability(db_session, device)

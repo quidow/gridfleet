@@ -13,6 +13,7 @@ from app.appium_nodes.services.heartbeat import _check_hosts
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.core.leader.advisory import LeadershipLost
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -59,7 +60,7 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -106,7 +107,7 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_hosts(db_session)
+        await _check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.last_heartbeat == initial_heartbeat

@@ -13,11 +13,11 @@ from app.core.observability import get_logger, observe_background_loop
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run_for_update
-from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ def _ttl_stale(run: TestRun, now: datetime) -> bool:
     return now > run.created_at + timedelta(minutes=run.ttl_minutes)
 
 
-async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus) -> None:
+async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus, settings: SettingsReader) -> None:
     now = datetime.now(UTC)
 
     # Postgres make_interval(years, months, weeks, days, hours, mins, secs).
@@ -95,7 +95,7 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus) -> None:
                 locked.last_heartbeat,
                 locked.heartbeat_timeout_sec,
             )
-            await run_service.expire_run(db, locked, "Heartbeat timeout", publisher=publisher)
+            await run_service.expire_run(db, locked, "Heartbeat timeout", publisher=publisher, settings=settings)
         else:
             logger.warning(
                 "Expiring run %s (%s): TTL exceeded (%d minutes)",
@@ -104,17 +104,17 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventBus) -> None:
                 locked.ttl_minutes,
             )
             await run_service.expire_run(
-                db, locked, f"TTL exceeded ({locked.ttl_minutes} minutes)", publisher=publisher
+                db, locked, f"TTL exceeded ({locked.ttl_minutes} minutes)", publisher=publisher, settings=settings
             )
 
 
-async def run_reaper_loop(*, publisher: EventBus) -> None:
+async def run_reaper_loop(*, publisher: EventBus, settings: SettingsReader) -> None:
     """Background loop that expires stale test runs."""
-    interval = float(_default_settings.get("reservations.reaper_interval_sec"))
+    interval = float(settings.get("reservations.reaper_interval_sec"))
     # On startup, immediately check for stale runs (e.g. manager was restarted)
     try:
         async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-            await _reap_stale_runs(db, publisher=publisher)
+            await _reap_stale_runs(db, publisher=publisher, settings=settings)
     except LeadershipLost as exc:
         logger.error(
             "run_reaper_loop_leadership_lost",
@@ -129,7 +129,7 @@ async def run_reaper_loop(*, publisher: EventBus) -> None:
         await asyncio.sleep(interval)
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _reap_stale_runs(db, publisher=publisher)
+                await _reap_stale_runs(db, publisher=publisher, settings=settings)
         except LeadershipLost as exc:
             logger.error(
                 "run_reaper_loop_leadership_lost",

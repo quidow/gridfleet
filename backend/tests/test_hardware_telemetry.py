@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.settings import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host, drain_handlers
 from tests.helpers import test_event_bus as event_bus
 
@@ -30,6 +30,7 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
+        settings=FakeSettingsReader({}),
     )
     await db_session.commit()
 
@@ -52,9 +53,13 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
         connection_target="pixel-warn",
         name="Pixel Warn",
     )
-    settings_service._cache["general.hardware_telemetry_consecutive_samples"] = 2
-    settings_service._cache["general.hardware_temperature_warning_c"] = 38
-    settings_service._cache["general.hardware_temperature_critical_c"] = 42
+    _hw_settings = FakeSettingsReader(
+        {
+            "general.hardware_telemetry_consecutive_samples": 2,
+            "general.hardware_temperature_warning_c": 38,
+            "general.hardware_temperature_critical_c": 42,
+        }
+    )
 
     await hardware_telemetry.apply_telemetry_sample(
         db_session,
@@ -66,6 +71,7 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
+        settings=_hw_settings,
     )
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
@@ -77,11 +83,15 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
         "support_status": "supported",
         "reported_at": "2026-04-16T10:05:00Z",
     }
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
+    await hardware_telemetry.apply_telemetry_sample(
+        db_session, device, warning_sample, publisher=event_bus, settings=_hw_settings
+    )
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
+    await hardware_telemetry.apply_telemetry_sample(
+        db_session, device, warning_sample, publisher=event_bus, settings=_hw_settings
+    )
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
@@ -125,14 +135,17 @@ async def test_hardware_telemetry_state_distinguishes_unknown_fresh_stale_and_un
     unsupported.hardware_telemetry_reported_at = datetime.now(UTC)
     await db_session.commit()
 
-    settings_service._cache["general.hardware_telemetry_stale_timeout_sec"] = 60
+    _stale_settings = FakeSettingsReader({"general.hardware_telemetry_stale_timeout_sec": 60})
 
-    assert hardware_telemetry.hardware_telemetry_state_for_device(unknown).value == "unknown"
-    assert hardware_telemetry.hardware_telemetry_state_for_device(supported).value == "stale"
-    assert hardware_telemetry.hardware_telemetry_state_for_device(unsupported).value == "unsupported"
+    assert hardware_telemetry.hardware_telemetry_state_for_device(unknown, settings=_stale_settings).value == "unknown"
+    assert hardware_telemetry.hardware_telemetry_state_for_device(supported, settings=_stale_settings).value == "stale"
+    assert (
+        hardware_telemetry.hardware_telemetry_state_for_device(unsupported, settings=_stale_settings).value
+        == "unsupported"
+    )
 
     supported.hardware_telemetry_reported_at = datetime.now(UTC)
-    assert hardware_telemetry.hardware_telemetry_state_for_device(supported).value == "fresh"
+    assert hardware_telemetry.hardware_telemetry_state_for_device(supported, settings=_stale_settings).value == "fresh"
 
 
 async def test_hardware_telemetry_state_returns_unsupported_for_emulator(
@@ -149,4 +162,7 @@ async def test_hardware_telemetry_state_returns_unsupported_for_emulator(
         device_type="emulator",
     )
 
-    assert hardware_telemetry.hardware_telemetry_state_for_device(emulator).value == "unsupported"
+    assert (
+        hardware_telemetry.hardware_telemetry_state_for_device(emulator, settings=FakeSettingsReader({})).value
+        == "unsupported"
+    )

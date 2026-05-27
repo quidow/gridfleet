@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.event_bus import EventBus
 
@@ -85,7 +86,9 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def complete_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus) -> TestRun:
+async def complete_run(
+    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader
+) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -96,7 +99,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventB
     await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_complete")
     run.state = RunState.completed
     run.completed_at = now
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=False, settings=settings)
 
     duration = None
     if run.started_at:
@@ -119,7 +122,7 @@ async def complete_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventB
     return run
 
 
-async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus) -> TestRun:
+async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -129,7 +132,7 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus
     await _clear_desired_grid_run_id_for_run(db, run=run, caller="run_cancel")
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True, settings=settings)
     queue_event_for_session(
         db,
         "run.cancelled",
@@ -148,7 +151,9 @@ async def cancel_run(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus
     return run
 
 
-async def force_release(db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus) -> TestRun:
+async def force_release(
+    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventBus, settings: SettingsReader
+) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
         raise ValueError("Run not found")
@@ -157,7 +162,7 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID, *, publisher: Event
     run.state = RunState.cancelled
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, run, commit=False, terminate_grid_sessions=True, settings=settings)
     queue_event_for_session(
         db,
         "run.cancelled",
@@ -176,7 +181,9 @@ async def force_release(db: AsyncSession, run_id: uuid.UUID, *, publisher: Event
     return run
 
 
-async def expire_run(db: AsyncSession, run: TestRun, reason: str, *, publisher: EventBus) -> None:
+async def expire_run(
+    db: AsyncSession, run: TestRun, reason: str, *, publisher: EventBus, settings: SettingsReader
+) -> None:
     """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
 
     locked_run = await _get_run_for_update(db, run.id)
@@ -197,7 +204,7 @@ async def expire_run(db: AsyncSession, run: TestRun, reason: str, *, publisher: 
     locked_run.state = RunState.expired
     locked_run.error = effective_reason
     locked_run.completed_at = datetime.now(UTC)
-    cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
+    cleanup_ids = await _release_devices(db, locked_run, commit=False, terminate_grid_sessions=True, settings=settings)
 
     if expired_from_preparing:
         queue_event_for_session(

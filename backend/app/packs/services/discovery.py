@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -18,9 +17,18 @@ from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, Discover
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.hosts.models import Host
 
-PackDevicesFetcher = Callable[[str, int], Awaitable[dict[str, object]]]
+
+class PackDevicesFetcher(Protocol):
+    async def __call__(self, host: str, agent_port: int, *, settings: SettingsReader) -> dict[str, object]: ...
+
+
+class PackDevicePropertiesFetcher(Protocol):
+    async def __call__(
+        self, host: str, agent_port: int, connection_target: str, pack_id: str, *, settings: SettingsReader
+    ) -> dict[str, object] | None: ...
 
 
 @dataclass
@@ -107,8 +115,9 @@ async def list_intake_candidates(
     host: Host,
     *,
     agent_get_pack_devices: PackDevicesFetcher,
+    settings: SettingsReader,
 ) -> list[IntakeCandidateRead]:
-    raw = await agent_get_pack_devices(host.ip, host.agent_port)
+    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings)
     candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
     label_map = await platform_label_service.load_platform_label_map(
         session,
@@ -168,8 +177,9 @@ async def discover_devices(
     host: Host,
     *,
     agent_get_pack_devices: PackDevicesFetcher,
+    settings: SettingsReader,
 ) -> DiscoveryResult:
-    raw = await agent_get_pack_devices(host.ip, host.agent_port)
+    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings)
     candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
     label_map = await platform_label_service.load_platform_label_map(
         session,
@@ -211,7 +221,8 @@ async def fetch_pack_device_properties(
     host: Host,
     device: Device,
     *,
-    agent_get_pack_device_properties: Callable[[str, int, str, str], Awaitable[dict[str, object] | None]],
+    agent_get_pack_device_properties: PackDevicePropertiesFetcher,
+    settings: SettingsReader,
 ) -> dict[str, object] | None:
     """Fetch pack-device properties from the agent. No DB writes — safe to gather."""
     refresh_target = device.connection_target or device.identity_value
@@ -220,6 +231,7 @@ async def fetch_pack_device_properties(
         host.agent_port,
         refresh_target,
         device.pack_id,
+        settings=settings,
     )
 
 
@@ -291,6 +303,8 @@ async def confirm_discovery(
     add_identity_values: list[str],
     remove_identity_values: list[str],
     discovery_result: DiscoveryResult,
+    *,
+    settings: SettingsReader,
 ) -> DiscoveryConfirmResult:
     """Apply the confirmed discovery changes."""
     added = []
@@ -350,7 +364,7 @@ async def confirm_discovery(
     serialized_added_devices = []
     for device in added_devices:
         await db.refresh(device)
-        serialized_added_devices.append(await device_presenter.serialize_device(db, device))
+        serialized_added_devices.append(await device_presenter.serialize_device(db, device, settings=settings))
 
     return DiscoveryConfirmResult(
         added=added,

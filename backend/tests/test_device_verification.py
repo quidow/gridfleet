@@ -24,6 +24,7 @@ from app.jobs.models import Job
 from app.jobs.queue import reset_stale_running_jobs, run_pending_jobs_once
 from app.packs.models import DriverPack
 from app.sessions.service_viability import get_session_viability
+from tests.conftest import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -110,7 +111,7 @@ async def _wait_for_job(
         job = resp.json()
         if job["status"] in {"completed", "failed"}:
             return dict(job)
-        await run_pending_jobs_once(session_factory, publisher=AsyncMock())
+        await run_pending_jobs_once(session_factory, publisher=AsyncMock(), settings=settings_service)
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
 

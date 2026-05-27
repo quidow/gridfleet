@@ -30,7 +30,6 @@ from app.sessions import service_viability as session_viability
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service as _default_settings
 
 device_is_virtual = pack_platform_catalog.device_is_virtual
 
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
     from app.devices.services.verification_preparation import PreparedVerificationContext
@@ -72,9 +72,9 @@ def _health_failure_detail(result: dict[str, Any]) -> str:
     return "Device health checks failed"
 
 
-def _device_health_timeout(device: Device) -> float | int:
+def _device_health_timeout(device: Device, *, settings: SettingsReader) -> float | int:
     if device_is_virtual(device):
-        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(_default_settings.get("appium.startup_timeout_sec")) + 5)
+        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(settings.get("appium.startup_timeout_sec")) + 5)
     return 10
 
 
@@ -83,6 +83,7 @@ async def run_device_health(
     device: Device,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
 ) -> str | None:
     if device.host is None:
         await set_stage(
@@ -111,7 +112,8 @@ async def run_device_health(
             allow_boot=True,
             headless=headless,
             http_client_factory=http_client_factory,
-            timeout=_device_health_timeout(device),
+            timeout=_device_health_timeout(device, settings=settings),
+            settings=settings,
         )
     except AgentCallError as exc:
         detail = f"Agent health check failed: {exc}"
@@ -187,7 +189,7 @@ def _verification_intent_source(device_id: uuid.UUID) -> str:
     return f"verification:{device_id}"
 
 
-async def _register_verification_node_intent(db: AsyncSession, device: Device) -> None:
+async def _register_verification_node_intent(db: AsyncSession, device: Device, *, settings: SettingsReader) -> None:
     """Register a standing ``node_process`` start intent that survives the
     operator:start auto-retire precondition.
 
@@ -208,8 +210,8 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device) -
     Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
     does not commit; the caller owns transaction boundaries.
     """
-    startup_timeout = int(_default_settings.get("appium.startup_timeout_sec"))
-    viability_timeout = int(_default_settings.get("general.session_viability_timeout_sec"))
+    startup_timeout = int(settings.get("appium.startup_timeout_sec"))
+    viability_timeout = int(settings.get("general.session_viability_timeout_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
     await register_intents_and_reconcile(
         db,
@@ -245,13 +247,14 @@ async def run_probe(
     device: Device,
     *,
     probe_session_fn: ProbeSessionFn,
+    settings: SettingsReader,
 ) -> tuple[AppiumNode | None, str | None]:
     await set_stage(job, "node_start", "running")
-    await _register_verification_node_intent(db, device)
+    await _register_verification_node_intent(db, device, settings=settings)
     await db.commit()
     try:
         try:
-            node = await start_node(db, device, caller="verification")
+            node = await start_node(db, device, caller="verification", settings=settings)
         except NodeManagerError as exc:
             detail = str(exc)
             await set_stage(job, "node_start", "failed", detail=detail)
@@ -262,11 +265,11 @@ async def run_probe(
         # to appium_reconciler.interval_sec for the leader loop to start the node.
         # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
         try:
-            await converge_device_now(device.id, db=db)
+            await converge_device_now(device.id, db=db, settings=settings)
         except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
             logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
-        timeout = int(_default_settings.get("appium.startup_timeout_sec"))
+        timeout = int(settings.get("appium.startup_timeout_sec"))
         started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
         if started_node is None:
             detail = "Verification node did not reach running state within timeout"
@@ -283,7 +286,7 @@ async def run_probe(
         )
 
         await set_stage(job, "session_probe", "running")
-        timeout_sec = int(_default_settings.get("general.session_viability_timeout_sec"))
+        timeout_sec = int(settings.get("general.session_viability_timeout_sec"))
         capabilities = await capability_service.get_device_capabilities(
             db,
             device,
@@ -481,6 +484,7 @@ async def execute_verification_context(
     *,
     http_client_factory: AgentClientFactory,
     probe_session_fn: ProbeSessionFn,
+    settings: SettingsReader,
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     node: AppiumNode | None = None
@@ -504,7 +508,7 @@ async def execute_verification_context(
                 if key != "replace_device_config":
                     setattr(device, key, value)
 
-        health_error = await run_device_health(job, device, http_client_factory=http_client_factory)
+        health_error = await run_device_health(job, device, http_client_factory=http_client_factory, settings=settings)
         if health_error is not None:
             return await _finalize_failure(db, context, error=health_error, job=job, original_fields=original_fields)
 
@@ -513,6 +517,7 @@ async def execute_verification_context(
             db,
             device,
             probe_session_fn=probe_session_fn,
+            settings=settings,
         )
         if probe_error is not None:
             return await _finalize_failure(

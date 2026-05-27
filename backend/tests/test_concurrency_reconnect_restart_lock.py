@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.routers import control as devices_control
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services import state_write_guard
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -71,7 +73,9 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
 
     async def reconnect() -> None:
         async with db_session_maker() as session:
-            await devices_control.reconnect_device(device_id, db=session)
+            await devices_control.reconnect_device(
+                device_id, db=session, settings_services=SimpleNamespace(reader=FakeSettingsReader({}))
+            )
 
     async def enter_maintenance_before_restart() -> None:
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)

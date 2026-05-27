@@ -13,6 +13,7 @@ from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -70,12 +71,12 @@ async def test_force_release_clears_stop_pending(
     result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
     assert result == "deferred"
 
-    async def _fake_terminate(_session_id: str) -> bool:
+    async def _fake_terminate(_session_id: str, *, settings: object = None) -> bool:
         return True
 
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id, publisher=event_bus)
+    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}))
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -162,7 +163,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         call_log.append("helper")
         return await real_helper(*args, **kwargs)
 
-    async def _fake_terminate(_session_id: str) -> bool:
+    async def _fake_terminate(_session_id: str, *, settings: object = None) -> bool:
         return True
 
     monkeypatch.setattr("app.runs.service_lifecycle._release_devices", _spy_release)
@@ -173,7 +174,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     )
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id, publisher=event_bus)
+    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}))
 
     # _release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could

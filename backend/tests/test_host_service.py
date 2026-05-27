@@ -14,6 +14,7 @@ from app.devices.models import ConnectionType, DeviceType
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostCreate, HostRegister
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 CAPS_V2 = {"orchestration_contract_version": 2}
@@ -44,12 +45,11 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
     assert host.capabilities == {"missing_prerequisites": ["adb", "java"]}
 
 
-async def test_create_and_delete_host(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.hosts.service._default_settings.get", lambda key: 6200)
-
+async def test_create_and_delete_host(db_session: AsyncSession) -> None:
     host = await host_service.create_host(
         db_session,
         HostCreate(hostname="create-host", ip="10.0.0.10", os_type=OSType.linux, agent_port=None),
+        settings=FakeSettingsReader({"agent.default_port": 6200}),
     )
     assert host.agent_port == 6200
 
@@ -61,6 +61,7 @@ async def test_delete_host_rejects_attached_devices(db_session: AsyncSession) ->
     host = await host_service.create_host(
         db_session,
         HostCreate(hostname="busy-host", ip="10.0.0.11", os_type=OSType.linux, agent_port=5100),
+        settings=FakeSettingsReader({}),
     )
     await create_device_record(
         db_session,
@@ -97,6 +98,7 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
             capabilities={**CAPS_V2, "missing_prerequisites": ["adb", 5]},
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
 
     assert is_new is False
@@ -108,12 +110,7 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
 
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "app.hosts.service._default_settings.get",
-        lambda key: {"agent.auto_accept_hosts": False, "agent.default_port": 5151}[key],
-    )
     host, is_new = await host_service.register_host(
         db_session,
         HostRegister(
@@ -124,16 +121,13 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             capabilities=CAPS_V2,
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": False, "agent.default_port": 5151}),
     )
 
     assert is_new is True
     assert host.status == HostStatus.pending
     assert host.agent_port == 5151
 
-    monkeypatch.setattr(
-        "app.hosts.service._default_settings.get",
-        lambda key: {"agent.auto_accept_hosts": True, "agent.default_port": 5200}[key],
-    )
     online_host, _ = await host_service.register_host(
         db_session,
         HostRegister(
@@ -144,6 +138,7 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             capabilities=CAPS_V2,
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": True, "agent.default_port": 5200}),
     )
     assert online_host.status == HostStatus.online
 
@@ -214,6 +209,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             capabilities=CAPS_V2,
         ),
         publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
 
     assert is_new is False
@@ -239,4 +235,5 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
                     capabilities=capabilities,
                 ),
                 publisher=event_bus,
+                settings=FakeSettingsReader({}),
             )

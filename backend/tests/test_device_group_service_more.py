@@ -7,6 +7,7 @@ from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -37,13 +38,16 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
     )
     assert await device_group_service.add_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
 
-    groups = await device_group_service.list_groups(db_session)
+    groups = await device_group_service.list_groups(db_session, settings=FakeSettingsReader({}))
     assert groups[0]["device_count"] == 2
 
-    detail = await device_group_service.get_group(db_session, group.id)
+    detail = await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({}))
     assert detail is not None
     assert [device.id for device in detail["devices"]] == [first_device.id, second_device.id]
-    assert await device_group_service.get_group_device_ids(db_session, group.id) == [first_device.id, second_device.id]
+    assert await device_group_service.get_group_device_ids(db_session, group.id, settings=FakeSettingsReader({})) == [
+        first_device.id,
+        second_device.id,
+    ]
 
     assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 1
     assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
@@ -60,7 +64,7 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
 
     assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is True
     assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is False
-    assert await device_group_service.get_group(db_session, group.id) is None
+    assert await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({})) is None
     assert (
         await device_group_service.update_group(
             db_session, group.id, DeviceGroupUpdate(name="missing"), publisher=event_bus
@@ -89,9 +93,11 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
             new=AsyncMock(return_value=[device]),
         ) as list_devices,
     ):
-        groups = await device_group_service.list_groups(db_session)
-        detail = await device_group_service.get_group(db_session, group.id)
-        device_ids = await device_group_service.get_group_device_ids(db_session, group.id)
+        groups = await device_group_service.list_groups(db_session, settings=FakeSettingsReader({}))
+        detail = await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({}))
+        device_ids = await device_group_service.get_group_device_ids(
+            db_session, group.id, settings=FakeSettingsReader({})
+        )
 
     assert groups[0]["group_type"] == "dynamic"
     assert groups[0]["filters"] == {"platform_id": "android_mobile", "tags": {"tier": "smoke"}}
@@ -115,7 +121,9 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         "app.devices.services.groups.device_service.list_devices_by_filters",
         new=AsyncMock(return_value=[device]),
     ):
-        assert await device_group_service.get_group_device_ids(db_session, group.id) == [device.id]
+        assert await device_group_service.get_group_device_ids(
+            db_session, group.id, settings=FakeSettingsReader({})
+        ) == [device.id]
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
@@ -135,4 +143,4 @@ async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: 
     await db_session.delete(group)
     await db_session.commit()
 
-    assert await device_group_service.get_group_device_ids(db_session, group.id) == []
+    assert await device_group_service.get_group_device_ids(db_session, group.id, settings=FakeSettingsReader({})) == []

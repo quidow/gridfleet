@@ -12,6 +12,7 @@ from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
 from app.devices.services import state_write_guard
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         device,
         result=ProbeResult(status="refused", detail="test"),
         grid_device_ids={str(device.id)},
+        settings=FakeSettingsReader({}),
     )
     await db_session.commit()
 

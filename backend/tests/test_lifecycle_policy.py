@@ -35,6 +35,7 @@ from app.devices.services.lifecycle_policy import (
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -272,7 +273,9 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
         }
     await db_session.commit()
 
-    recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+    recovered = await attempt_auto_recovery(
+        db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+    )
 
     assert recovered is False
     policy = await build_lifecycle_policy(db_session, device)
@@ -337,7 +340,9 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
@@ -408,7 +413,9 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
             "checked_by": "recovery",
         },
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     assert recovered is True
     sources = set(
@@ -465,7 +472,9 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
             "checked_by": "recovery",
         },
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     assert recovered is True
     rows = (
@@ -573,7 +582,9 @@ async def test_recovery_rejoin_publishes_availability_event(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     assert recovered is True
     hold_events = [payload for name, payload in captured if name == "device.hold_changed"]
@@ -628,7 +639,9 @@ async def test_recovery_reloads_device_before_starting_node(
 
     register_recovery = AsyncMock()
     with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     assert recovered is False
     register_recovery.assert_not_awaited()
@@ -695,7 +708,9 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
@@ -759,7 +774,9 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
             ],
         ) as mock_probe,
     ):
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        )
 
     await db_session.refresh(device)
     assert recovered is True
@@ -838,19 +855,18 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    settings = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 5,
+            "general.lifecycle_recovery_backoff_max_sec": 20,
+            "general.lifecycle_recovery_review_threshold": 5,
+            "appium.port_range_start": 4720,
+            "appium.port_range_end": 4800,
+            "grid.hub_url": "http://hub:4444",
+        }
+    )
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.devices.services.lifecycle_policy._default_settings.get",
-            side_effect=lambda key: {
-                "general.lifecycle_recovery_backoff_base_sec": 5,
-                "general.lifecycle_recovery_backoff_max_sec": 20,
-                "general.lifecycle_recovery_review_threshold": 5,
-                "appium.port_range_start": 4720,
-                "appium.port_range_end": 4800,
-                "grid.hub_url": "http://hub:4444",
-            }.get(key),
-        ),
         patch(
             "app.sessions.service_viability.run_session_viability_probe",
             new_callable=AsyncMock,
@@ -864,7 +880,9 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
         ),
     ):
         recovery_started_at = datetime.now(UTC)
-        recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+        recovered = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again", settings=settings
+        )
 
     assert recovered is False
     await db_session.refresh(device)
@@ -1592,22 +1610,34 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     with state_write_guard.bypass():
         device.hold = None
     device.recovery_allowed = False
-    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+    assert (
+        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        == "suppressed"
+    )
 
     device.recovery_allowed = True
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
-    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+    assert (
+        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        == "suppressed"
+    )
 
     with state_write_guard.bypass():
         device.hold = None
     lifecycle_policy_module.has_running_client_session.return_value = True
-    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
+    assert (
+        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        == "suppressed"
+    )
 
     lifecycle_policy_module.has_running_client_session.return_value = False
     with state_write_guard.bypass():
         device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
-    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
+    assert (
+        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        is False
+    )
     db.commit.assert_awaited()
 
 
@@ -1663,7 +1693,10 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         AsyncMock(),
     )
 
-    assert await attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
+    assert (
+        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        is True
+    )
     lifecycle_policy_module.restore_run_if_needed.assert_awaited_once()
     lifecycle_policy_module.set_hold.assert_awaited_with(
         device,
@@ -1700,7 +1733,10 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     machine = SimpleNamespace(transition=AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "_MACHINE", machine)
 
-    assert await attempt_auto_recovery(db, busy, source="checks", reason="reconnected") is True
+    assert (
+        await attempt_auto_recovery(db, busy, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        is True
+    )
     machine.transition.assert_awaited()
     assert machine.transition.await_args.args[1] is lifecycle_policy_module.TransitionEvent.AUTO_STOP_EXECUTED
 
@@ -1748,6 +1784,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
             device,  # type: ignore[arg-type]
             source="device_checks",
             reason="reconnected",
+            settings=FakeSettingsReader({}),
         )
         is False
     )
@@ -1809,15 +1846,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(
-        lifecycle_policy_module._default_settings,
-        "get",
-        lambda key: {
-            "general.lifecycle_recovery_backoff_base_sec": 5,
-            "general.lifecycle_recovery_backoff_max_sec": 20,
-            "general.lifecycle_recovery_review_threshold": 5,
-        }.get(key, "http://grid:4444"),
-    )
     monkeypatch.setattr(lifecycle_policy_module, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
@@ -1850,7 +1878,23 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         AsyncMock(side_effect=observe_node_running),
     )
 
-    assert await attempt_auto_recovery(db, device, source="device_checks", reason="reconnected") is True  # type: ignore[arg-type]
+    assert (
+        await attempt_auto_recovery(
+            db,
+            device,
+            source="device_checks",
+            reason="reconnected",
+            settings=FakeSettingsReader(
+                {
+                    "general.lifecycle_recovery_backoff_base_sec": 5,
+                    "general.lifecycle_recovery_backoff_max_sec": 20,
+                    "general.lifecycle_recovery_review_threshold": 5,
+                    "grid.hub_url": "http://grid:4444",
+                }
+            ),
+        )
+        is True
+    )  # type: ignore[arg-type]
     assert db.added
     lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
     lifecycle_policy_module._MACHINE.transition.assert_awaited()
@@ -1872,8 +1916,17 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         AsyncMock(return_value={"status": "failed", "error": "probe failed"}),
     )
     monkeypatch.setattr(lifecycle_policy_module, "complete_auto_stop", AsyncMock())
-    monkeypatch.setattr(lifecycle_policy_module, "_set_backoff", lambda state: "2026-05-13T12:00:00+00:00")
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "_set_backoff",
+        lambda state, *, settings: "2026-05-13T12:00:00+00:00",
+    )
 
-    assert await attempt_auto_recovery(db2, failing, source="device_checks", reason="still bad") is False  # type: ignore[arg-type]
+    assert (
+        await attempt_auto_recovery(
+            db2, failing, source="device_checks", reason="still bad", settings=FakeSettingsReader({})
+        )
+        is False
+    )  # type: ignore[arg-type]
     assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
     lifecycle_policy_module.complete_auto_stop.assert_awaited_once()

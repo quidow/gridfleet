@@ -12,6 +12,7 @@ from app.devices.services.state import set_operational_state
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -71,7 +72,7 @@ async def test_release_devices_does_not_stomp_offline_writer(
             run_obj.completed_at = datetime.now(UTC)
             started.set()
             await proceed.wait()
-            await run_service._release_devices(session, run_obj)
+            await run_service._release_devices(session, run_obj, settings=FakeSettingsReader())
 
     async def stomper() -> None:
         await started.wait()
@@ -172,7 +173,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
             with patch("app.devices.services.state.is_ready_for_use_async", racing_is_ready):
-                await run_service._release_devices(session, run_obj)
+                await run_service._release_devices(session, run_obj, settings=FakeSettingsReader())
 
     async def stomper() -> None:
         await stomper_can_go.wait()

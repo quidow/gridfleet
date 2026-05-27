@@ -16,7 +16,6 @@ from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceTest
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
-from app.settings import settings_service as _default_settings
 from app.settings.models import ConfigAuditLog
 
 if TYPE_CHECKING:
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import InstrumentedAttribute
     from sqlalchemy.sql.elements import ColumnElement
 
+    from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -72,7 +72,7 @@ async def _delete_in_batches(
     return deleted_total
 
 
-async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> None:
+async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader) -> None:
     now = datetime.now(UTC)
     sessions_deleted = 0
     audit_deleted = 0
@@ -86,7 +86,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
 
     # Sessions (only completed ones) — exclude probe rows; they have their own
     # retention.probe_sessions_days window below.
-    sessions_days: int = _default_settings.get("retention.sessions_days")
+    sessions_days: int = settings.get("retention.sessions_days")
     if sessions_days > 0:
         cutoff = now - timedelta(days=sessions_days)
         sessions_deleted = await _delete_in_batches(
@@ -101,7 +101,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
             ),
         )
 
-    probe_sessions_days: int = _default_settings.get("retention.probe_sessions_days")
+    probe_sessions_days: int = settings.get("retention.probe_sessions_days")
     probe_sessions_deleted = 0
     if probe_sessions_days > 0:
         cutoff = now - timedelta(days=probe_sessions_days)
@@ -114,7 +114,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
         )
 
     # ConfigAuditLog
-    audit_days: int = _default_settings.get("retention.audit_log_days")
+    audit_days: int = settings.get("retention.audit_log_days")
     if audit_days > 0:
         cutoff = now - timedelta(days=audit_days)
         audit_deleted = await _delete_in_batches(
@@ -124,7 +124,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
             cutoff=cutoff,
         )
 
-    outbox_days: int = _default_settings.get("retention.agent_reconfigure_outbox_days")
+    outbox_days: int = settings.get("retention.agent_reconfigure_outbox_days")
     if outbox_days > 0:
         cutoff = now - timedelta(days=outbox_days)
         agent_reconfigure_outbox_deleted = await _delete_in_batches(
@@ -150,7 +150,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
         test_data_audit_deleted = 0
 
     # DeviceEvent
-    events_days: int = _default_settings.get("retention.device_events_days")
+    events_days: int = settings.get("retention.device_events_days")
     if events_days > 0:
         cutoff = now - timedelta(days=events_days)
         events_deleted = await _delete_in_batches(
@@ -161,7 +161,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
         )
 
     # HostResourceSample
-    host_resource_telemetry_hours: int = _default_settings.get("retention.host_resource_telemetry_hours")
+    host_resource_telemetry_hours: int = settings.get("retention.host_resource_telemetry_hours")
     if host_resource_telemetry_hours > 0:
         cutoff = now - timedelta(hours=host_resource_telemetry_hours)
         host_resource_samples_deleted = await _delete_in_batches(
@@ -171,7 +171,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
             cutoff=cutoff,
         )
 
-    agent_log_days: int = _default_settings.get("retention.agent_log_days")
+    agent_log_days: int = settings.get("retention.agent_log_days")
     if agent_log_days > 0:
         cutoff = now - timedelta(days=agent_log_days)
         # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
@@ -182,7 +182,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
             cutoff=cutoff,
         )
 
-    capacity_snapshots_days: int = _default_settings.get("retention.capacity_snapshots_days")
+    capacity_snapshots_days: int = settings.get("retention.capacity_snapshots_days")
     if capacity_snapshots_days > 0:
         cutoff = now - timedelta(days=capacity_snapshots_days)
         capacity_snapshots_deleted = await _delete_in_batches(
@@ -192,7 +192,7 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
             cutoff=cutoff,
         )
 
-    diagnostic_snapshots_days: int = _default_settings.get("retention.diagnostic_snapshots_days")
+    diagnostic_snapshots_days: int = settings.get("retention.diagnostic_snapshots_days")
     if diagnostic_snapshots_days > 0:
         cutoff = now - timedelta(days=diagnostic_snapshots_days)
         diagnostic_snapshots_deleted = await _delete_in_batches(
@@ -234,15 +234,15 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher) -> N
     )
 
 
-async def data_cleanup_loop(*, publisher: EventPublisher) -> None:
+async def data_cleanup_loop(*, publisher: EventPublisher, settings: SettingsReader) -> None:
     """Background loop that periodically cleans up old data."""
-    interval_hours: int = _default_settings.get("retention.cleanup_interval_hours")
+    interval_hours: int = settings.get("retention.cleanup_interval_hours")
     interval_seconds = float(interval_hours * 3600)
     await schedule_background_loop(LOOP_NAME, interval_seconds)
     while True:
         await asyncio.sleep(interval_seconds)
         try:
             async with observe_background_loop(LOOP_NAME, interval_seconds).cycle(), async_session() as db:
-                await _cleanup_old_data(db, publisher=publisher)
+                await _cleanup_old_data(db, publisher=publisher, settings=settings)
         except Exception:
             logger.exception("Data cleanup failed")

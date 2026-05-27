@@ -16,6 +16,7 @@ from app.runs import service as run_service
 from app.runs.models import TestRun
 from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
 from app.runs.service import _build_device_info
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -334,7 +335,7 @@ async def test_reserve_include_config_marks_missing_device_unavailable_after_com
     async def create_run_then_delete_device(
         db: AsyncSession, data: RunCreate, **kwargs: object
     ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
-        run, infos = await original_create_run(db, data, publisher=event_bus)
+        run, infos = await original_create_run(db, data, publisher=event_bus, settings=FakeSettingsReader({}))
         await db.execute(sa_delete(Device).where(Device.id == uuid.UUID(infos[0].device_id)))
         await db.commit()
         return run, infos

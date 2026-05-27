@@ -16,6 +16,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -100,6 +101,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
             port=4723,
             pid=123,
             allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
+            settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
         )
 
 
@@ -129,6 +131,7 @@ async def test_start_remote_node_error_and_override_paths(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
         )
 
     monkeypatch.setattr(
@@ -147,6 +150,7 @@ async def test_start_remote_node_error_and_override_paths(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
         )
 
     monkeypatch.setattr(
@@ -177,6 +181,7 @@ async def test_start_remote_node_error_and_override_paths(
         allocated_caps={"appium:systemPort": 8201},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
 
     assert result == RemoteStartResult(
@@ -229,6 +234,7 @@ async def test_start_remote_node_propagates_agent_call_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
         )
 
 
@@ -269,6 +275,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
         )
 
     monkeypatch.setattr(
@@ -283,6 +290,7 @@ async def test_start_remote_node_maps_agent_http_status_errors(
             allocated_caps={},
             agent_base="http://agent",
             http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
         )
 
 
@@ -342,6 +350,7 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
 
     assert len(captured_payload) == 1
@@ -388,6 +397,7 @@ async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
 
     assert len(captured_payload) == 1
@@ -432,6 +442,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
 
     assert len(captured_payload) == 1
@@ -468,6 +479,7 @@ async def test_start_remote_node_host_tool_env_no_pack_overrides(
         allocated_caps={},
         agent_base="http://agent",
         http_client_factory=httpx.AsyncClient,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
 
     assert len(captured_payload) == 1
@@ -511,7 +523,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         AsyncMock(return_value=None),
     )
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     with state_write_guard.bypass():
@@ -532,7 +547,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
             connection_type=ConnectionType.usb,
         )
     assert (
-        await node_agent.restart_node_via_agent(fake_db, hostless, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, hostless, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     monkeypatch.setattr(
@@ -545,7 +563,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
     )
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.stop_remote_node", AsyncMock(return_value=False))
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.stop_remote_node", AsyncMock(return_value=True))
@@ -562,7 +583,12 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         ),
     )
 
-    assert await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is True
+    assert (
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is True
+    )
     assert node.port == 4724
     assert node.pid == 2
     assert node.active_connection_target == "new"
@@ -572,7 +598,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         AsyncMock(side_effect=NodeManagerError("no ports")),
     )
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     monkeypatch.setattr(
@@ -580,13 +609,19 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         AsyncMock(side_effect=NodePortConflictError("busy")),
     )
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.candidate_ports", AsyncMock(return_value=[]))
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.start_remote_node", AsyncMock())
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
     monkeypatch.setattr(
@@ -597,7 +632,10 @@ async def test_restart_node_via_agent_covers_retry_and_failure_paths(monkeypatch
         AsyncMock(side_effect=httpx.ConnectError("agent gone")),
     )
     assert (
-        await node_agent.restart_node_via_agent(fake_db, device, node, http_client_factory=httpx.AsyncClient) is False
+        await node_agent.restart_node_via_agent(
+            fake_db, device, node, http_client_factory=httpx.AsyncClient, settings=FakeSettingsReader({})
+        )
+        is False
     )
 
 
@@ -618,7 +656,7 @@ async def test_start_stop_restart_node_guard_paths(
         AsyncMock(return_value="not ready"),
     )
     with pytest.raises(NodeManagerError, match="not ready"):
-        await node_agent.start_node(db_session, device)
+        await node_agent.start_node(db_session, device, settings=FakeSettingsReader({}))
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
@@ -631,9 +669,9 @@ async def test_start_stop_restart_node_guard_paths(
     await db_session.commit()
     device.appium_node = node
     with pytest.raises(NodeManagerError, match="already running"):
-        await node_agent.start_node(db_session, device)
+        await node_agent.start_node(db_session, device, settings=FakeSettingsReader({}))
 
-    restarted = await node_agent.restart_node(db_session, device)
+    restarted = await node_agent.restart_node(db_session, device, settings=FakeSettingsReader({}))
     assert restarted.transition_token is not None
     assert restarted.transition_deadline is not None
 
@@ -685,7 +723,6 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -702,6 +739,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
         port=4723,
         pid=123,
         allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
     )
 
     assert node is device.appium_node
@@ -747,7 +785,6 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         device.appium_node = existing
     await db_session.commit()
 
-    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -762,6 +799,7 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         device,
         port=4723,  # new port after restart
         pid=999,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
     )
 
     staged = (
@@ -791,7 +829,6 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
 
     device = await _loaded_device(db_session, db_host, "mark-start-no-stage")
 
-    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -806,6 +843,7 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
         device,
         port=4723,
         pid=111,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
     )
 
     staged = (
@@ -829,7 +867,6 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         }
     await db_session.commit()
 
-    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -844,6 +881,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         device,
         port=4723,
         pid=123,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
     )
 
     reloaded = await db_session.get(Device, device.id)
@@ -884,22 +922,32 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
     host = SimpleNamespace(ip="10.0.0.5", agent_port=5100)
     device = SimpleNamespace(host=host)
     node = SimpleNamespace(port=4723)
+    settings = FakeSettingsReader()
 
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(side_effect=NodeManagerError("missing host")))
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is False
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is False
+    )
 
     response = MagicMock()
     response.raise_for_status.return_value = None
     monkeypatch.setattr(node_agent, "require_management_host", MagicMock(return_value=host))
     monkeypatch.setattr(node_agent, "appium_stop", AsyncMock(return_value=response))
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is True
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is True
+    )
 
     response.raise_for_status.side_effect = httpx.HTTPStatusError(
         "bad",
         request=httpx.Request("POST", "http://agent"),
         response=httpx.Response(500, request=httpx.Request("POST", "http://agent")),
     )
-    assert await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient) is False
+    assert (
+        await node_agent.stop_node_via_agent(device, node, http_client_factory=httpx.AsyncClient, settings=settings)
+        is False
+    )
 
 
 async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -908,11 +956,11 @@ async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch)
     hostless = SimpleNamespace(id=uuid.uuid4(), host_id=None, appium_node=None)
     monkeypatch.setattr(node_agent, "is_ready_for_use_async", AsyncMock(return_value=True))
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await node_agent.start_node(db, hostless)
+        await node_agent.start_node(db, hostless, settings=FakeSettingsReader({}))
 
     start = AsyncMock(return_value="started")
     monkeypatch.setattr(node_agent, "start_node", start)
-    result = await node_agent.restart_node(db, SimpleNamespace(appium_node=None))
+    result = await node_agent.restart_node(db, SimpleNamespace(appium_node=None), settings=FakeSettingsReader({}))
     assert result == "started"
     start.assert_awaited_once()
 
@@ -965,7 +1013,7 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
         ),
     )
 
-    handle = await node_agent._start_for_node(AsyncMock(), device, node=node)
+    handle = await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
 
     assert handle.allocated_caps["appium:systemPort"] == 9000
     assert handle.allocated_caps["appium:derivedDataPath"].startswith("/tmp/gridfleet/derived-data/")
@@ -979,10 +1027,11 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
     node = SimpleNamespace(id=uuid.uuid4())
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await node_agent._start_for_node(AsyncMock(), hostless, node=node)
+        await node_agent._start_for_node(AsyncMock(), hostless, node=node, settings=FakeSettingsReader({}))
 
     device = SimpleNamespace(
         id=uuid.uuid4(),
@@ -990,6 +1039,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
     reserve_session = AsyncMock()
     reserve_session.commit = AsyncMock()
@@ -1018,7 +1068,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
     monkeypatch.setattr(node_agent.appium_node_resource_service, "release_managed", release_managed)
 
     with pytest.raises(RuntimeError, match="boom"):
-        await node_agent._start_for_node(AsyncMock(), device, node=node)
+        await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
 
     release_managed.assert_awaited_once()
     assert reserve_session.commit.await_count == 1
@@ -1031,6 +1081,7 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
         pack_id="missing-pack",
         platform_id="missing",
         device_type=None,
+        settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
     node = SimpleNamespace(id=uuid.uuid4())
     cleanup_session = AsyncMock()
@@ -1058,7 +1109,8 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
     monkeypatch.setattr(node_agent, "start_remote_node", AsyncMock(side_effect=NodePortConflictError("busy")))
 
     with pytest.raises(NodePortConflictError):
-        await node_agent._start_for_node(AsyncMock(), device, node=node)
+        await node_agent._start_for_node(AsyncMock(), device, node=node, settings=FakeSettingsReader({}))
 
     assert node_agent.appium_node_resource_service.release_capability.await_count == 2
     release_managed.assert_awaited_once()
+    _ = (FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),)

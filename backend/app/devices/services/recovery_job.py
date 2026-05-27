@@ -18,6 +18,8 @@ from app.jobs.models import Job
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.core.protocols import SettingsReader
+
 logger = get_logger(__name__)
 
 
@@ -30,6 +32,7 @@ async def run_device_recovery_job(
     payload: dict[str, Any],
     *,
     session_factory: async_sessionmaker[AsyncSession],
+    settings: SettingsReader,
 ) -> None:
     """Run ``attempt_auto_recovery`` for the device named in ``payload``."""
     parsed_job_id = uuid.UUID(job_id)
@@ -70,7 +73,7 @@ async def run_device_recovery_job(
                     await db.commit()
                 return
 
-            await lifecycle_policy.attempt_auto_recovery(db, device, source=source, reason=reason)
+            await lifecycle_policy.attempt_auto_recovery(db, device, source=source, reason=reason, settings=settings)
 
             # Re-load the job row in this session since attempt_auto_recovery
             # commits multiple times internally, expiring the row.
