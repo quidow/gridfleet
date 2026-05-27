@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.core.type_defs import AsyncTaskFactory
     from app.events.protocols import EventPublisher
@@ -732,35 +733,39 @@ async def _check_hosts(
     await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
 
-async def heartbeat_loop(
-    *,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
-) -> None:
-    """Background loop that pings all host agents."""
-    while True:
-        interval = float(settings.get("general.heartbeat_interval_sec"))
-        cycle_start = time.monotonic()
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_hosts(db, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
-        except LeadershipLost as exc:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-            logger.error(
-                "heartbeat_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Heartbeat check failed")
-        finally:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-        await asyncio.sleep(interval)
+class HeartbeatLoop:
+    def __init__(self, *, services: AppiumNodeServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Background loop that pings all host agents."""
+        while True:
+            interval = float(self._services.settings.get("general.heartbeat_interval_sec"))
+            cycle_start = time.monotonic()
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await _check_hosts(
+                        db,
+                        settings=self._services.settings,
+                        pool=self._services.pool,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except LeadershipLost as exc:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+                logger.error(
+                    "heartbeat_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("Heartbeat check failed")
+            finally:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+            await asyncio.sleep(interval)

@@ -9,6 +9,8 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import node_health as node_health
+from app.appium_nodes.services.node_health import NodeHealthLoop
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive as control_plane_leader_keepalive
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import (
@@ -89,12 +91,19 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
 async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_health, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(node_health, "async_session", _fake_session)
     monkeypatch.setattr(node_health, "_check_nodes", AsyncMock(side_effect=LeadershipLost("stale leader")))
     monkeypatch.setattr(node_health.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    loop = NodeHealthLoop(
+        services=AppiumNodeServices(
+            settings=FakeSettingsReader({"general.node_check_interval_sec": 1}),
+            pool=Mock(),
+            circuit_breaker=Mock(),
+            session_factory=_fake_session,
+        )
+    )
     with pytest.raises(SystemExit):
-        await node_health.node_health_loop(settings=FakeSettingsReader({"general.node_check_interval_sec": 1}))
+        await loop.run()
 
     node_health.os._exit.assert_called_once_with(70)
 

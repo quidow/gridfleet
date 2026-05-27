@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.settings.service import SettingsService
 
 from app.agent_comm.services_container import AgentCommServices
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.services_container import GridServices
@@ -39,6 +40,7 @@ class AppServices:
     sessions: SessionServices
     runs: RunServices
     grid: GridServices
+    appium_nodes: AppiumNodeServices
 
 
 def compose_app(
@@ -88,4 +90,10 @@ def compose_app(
         runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
         grid=GridServices(settings=settings_svc, session_factory=session_factory),
         packs=PackServices(session_factory=session_factory),
+        appium_nodes=AppiumNodeServices(
+            settings=settings_svc,
+            pool=http_pool,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        ),
     )

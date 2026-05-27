@@ -1,10 +1,13 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
+from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
@@ -66,8 +69,15 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
     monkeypatch.setattr(appium_reconciler, "_drive_convergence", AsyncMock())
     monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    services = AppiumNodeServices(
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_Session,
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await appium_reconciler.appium_reconciler_loop(settings=FakeSettingsReader({}))
+        await AppiumReconcilerLoop(services=services).run()
 
     appium_reconciler._drive_convergence.assert_awaited_once()
 
@@ -79,8 +89,15 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    services = AppiumNodeServices(
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_Session,
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await heartbeat.heartbeat_loop(settings=FakeSettingsReader({}))
+        await HeartbeatLoop(services=services).run()
 
     heartbeat._check_hosts.assert_awaited_once()
     heartbeat.record_heartbeat_cycle.assert_called_once()
@@ -190,7 +207,14 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(appium_reconciler.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
-        await appium_reconciler.appium_reconciler_loop(settings=FakeSettingsReader({}))
+        await AppiumReconcilerLoop(
+            services=AppiumNodeServices(
+                settings=FakeSettingsReader({}),
+                pool=Mock(),
+                circuit_breaker=Mock(),
+                session_factory=_Session,
+            )
+        ).run()
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "async_session", _Session)
@@ -198,7 +222,14 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
-        await heartbeat.heartbeat_loop(settings=FakeSettingsReader({}))
+        await HeartbeatLoop(
+            services=AppiumNodeServices(
+                settings=FakeSettingsReader({}),
+                pool=Mock(),
+                circuit_breaker=Mock(),
+                session_factory=_Session,
+            )
+        ).run()
 
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(session_sync, "async_session", _Session)

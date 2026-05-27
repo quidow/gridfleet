@@ -16,7 +16,9 @@ from app.agent_comm.http_pool import AgentHttpPool
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
-from app.appium_nodes import services as appium_node_services
+from app.appium_nodes.services.heartbeat import HeartbeatLoop, shutdown_background_tasks
+from app.appium_nodes.services.node_health import NodeHealthLoop
+from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.auth import dependencies as auth_dependencies
 from app.auth import router as auth_router_module
 from app.auth import service as auth_service
@@ -77,10 +79,6 @@ configure_logging()
 logger = get_logger(__name__)
 
 SHUTDOWN_DRAIN_TIMEOUT_SEC = 30.0
-appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
-heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
-node_health_loop = appium_node_services.node_health.node_health_loop
-shutdown_background_tasks = appium_node_services.heartbeat.shutdown_background_tasks
 DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
 DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
 device_health = device_services.health
@@ -231,13 +229,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         fleet_capacity = FleetCapacityLoop(services=app_services.devices)
         intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
         property_refresh = PropertyRefreshLoop(services=app_services.devices)
+        heartbeat = HeartbeatLoop(services=app_services.appium_nodes)
+        node_health = NodeHealthLoop(services=app_services.appium_nodes)
+        appium_reconciler = AppiumReconcilerLoop(services=app_services.appium_nodes)
 
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
-            (heartbeat_loop(settings=svc, pool=pool, circuit_breaker=breaker), "heartbeat_loop"),
+            (heartbeat.run(), "heartbeat_loop"),
             (session_sync_loop(settings=svc), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
-            (node_health_loop(settings=svc, pool=pool, circuit_breaker=breaker), "node_health_loop"),
+            (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
             (property_refresh.run(), "property_refresh_loop"),
             (hardware_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker), "hardware_telemetry_loop"),
@@ -255,7 +256,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (session_viability_loop(settings=svc), "session_viability_loop"),
             (fleet_capacity.run(), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
-            (appium_reconciler_loop(settings=svc, pool=pool, circuit_breaker=breaker), "appium_reconciler_loop"),
+            (appium_reconciler.run(), "appium_reconciler_loop"),
             (intent_reconciler.run(), "device_intent_reconciler_loop"),
             (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
         ]

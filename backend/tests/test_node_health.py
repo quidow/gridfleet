@@ -13,7 +13,8 @@ from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health as node_health
-from app.appium_nodes.services.node_health import _check_node_health, _check_nodes
+from app.appium_nodes.services.node_health import NodeHealthLoop, _check_node_health, _check_nodes
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
@@ -1403,13 +1404,20 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
     from tests.fakes import FakeSettingsReader
 
     monkeypatch.setattr(node_health, "observe_background_loop", MagicMock(return_value=Observation()))
-    monkeypatch.setattr(node_health, "async_session", fake_session)
     monkeypatch.setattr(node_health, "_check_nodes", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(node_health.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
     log_exception = MagicMock()
     monkeypatch.setattr(node_health.logger, "exception", log_exception)
 
+    loop = NodeHealthLoop(
+        services=AppiumNodeServices(
+            settings=FakeSettingsReader({"general.node_check_interval_sec": 1}),
+            pool=MagicMock(),
+            circuit_breaker=MagicMock(),
+            session_factory=fake_session,
+        )
+    )
     with pytest.raises(asyncio.CancelledError):
-        await node_health.node_health_loop(settings=FakeSettingsReader({"general.node_check_interval_sec": 1}))
+        await loop.run()
 
     log_exception.assert_called_once_with("Node health check failed")

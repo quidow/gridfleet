@@ -1,12 +1,14 @@
 import asyncio
 import uuid
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 
 import pytest
 
 from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -175,8 +177,15 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    services = AppiumNodeServices(
+        settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=lambda: Session(),
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await heartbeat.heartbeat_loop(settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}))
+        await HeartbeatLoop(services=services).run()
 
 
 def _dead_result() -> HeartbeatPingResult:

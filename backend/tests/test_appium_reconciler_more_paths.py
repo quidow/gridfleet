@@ -2,12 +2,14 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.reconciler import AppiumReconcilerLoop
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.hosts.models import HostStatus
 from tests.fakes import FakeSettingsReader
 
@@ -237,8 +239,15 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    services = AppiumNodeServices(
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=lambda: Session(),
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await appium_reconciler.appium_reconciler_loop(settings=FakeSettingsReader({}))
+        await AppiumReconcilerLoop(services=services).run()
 
 
 async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pytest.MonkeyPatch) -> None:

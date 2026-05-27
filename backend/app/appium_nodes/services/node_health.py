@@ -20,7 +20,6 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
-from app.core.database import async_session
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -383,25 +383,29 @@ async def _check_nodes(
         await db.commit()
 
 
-async def node_health_loop(
-    *,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol | None = None,
-) -> None:
-    """Background loop that checks Appium node health."""
-    while True:
-        interval = float(settings.get("general.node_check_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_nodes(db, settings=settings, pool=pool, circuit_breaker=circuit_breaker)
-        except LeadershipLost as exc:
-            logger.error(
-                "node_health_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Node health check failed")
-        await asyncio.sleep(interval)
+class NodeHealthLoop:
+    def __init__(self, *, services: AppiumNodeServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Background loop that checks Appium node health."""
+        while True:
+            interval = float(self._services.settings.get("general.node_check_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await _check_nodes(
+                        db,
+                        settings=self._services.settings,
+                        pool=self._services.pool,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except LeadershipLost as exc:
+                logger.error(
+                    "node_health_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("Node health check failed")
+            await asyncio.sleep(interval)

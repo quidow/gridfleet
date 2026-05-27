@@ -175,10 +175,10 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
     monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
     monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
     monkeypatch.setattr(main, "session_sync_loop", _forever)
     monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
     monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
@@ -189,7 +189,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
 
     async with main.lifespan(main.app):
@@ -328,10 +328,10 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
     monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
     monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
     monkeypatch.setattr(main, "session_sync_loop", _forever)
     monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
     monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
@@ -342,7 +342,7 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "session_viability_loop", _forever)
     monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
     monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
 
     async with main.lifespan(main.app):
