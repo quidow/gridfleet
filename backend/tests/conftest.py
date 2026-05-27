@@ -26,6 +26,7 @@ from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
+from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.grid.dependencies import get_grid_services
@@ -119,8 +120,6 @@ async def _ensure_test_database_exists() -> None:
 
 async def _shutdown_control_plane_services() -> None:
     await shutdown_heartbeat_background_tasks()
-    await settings_service.shutdown()
-    await test_event_bus.shutdown()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -164,21 +163,48 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
             )
         )
     yield engine
-    # Drain event-bus handler tasks (and other control-plane background tasks)
-    # before DROP SCHEMA. After-commit handlers spawned during the test query
-    # tables in the per-test schema; if they outlive the test body they hold
+    # Drain heartbeat background tasks and event-bus handler tasks before
+    # DROP SCHEMA. After-commit handlers spawned during the test query tables
+    # in the per-test schema; if they outlive the test body they hold
     # AccessShareLock that deadlocks the AccessExclusiveLock taken by
-    # DROP SCHEMA CASCADE. autouse reset_control_plane_state runs its
-    # post-yield shutdown LATER than this fixture's teardown, so we must
-    # shut services down here too.
+    # DROP SCHEMA CASCADE. autouse reset_test_event_bus runs its post-yield
+    # shutdown LATER than this fixture's teardown, so we must shut the event
+    # bus down here too.
     await _shutdown_control_plane_services()
+    await test_event_bus.shutdown()
     async with engine.begin() as conn:
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
     await engine.dispose()
 
 
+@pytest.fixture
+def _test_event_bus() -> EventBus:
+    return test_event_bus
+
+
 @pytest_asyncio.fixture(autouse=True)
-async def reset_control_plane_state() -> AsyncGenerator[None]:
+async def reset_test_event_bus(_test_event_bus: EventBus) -> AsyncGenerator[None]:
+    await _test_event_bus.shutdown()
+    reset_event_bus(_test_event_bus)
+    yield
+    await _test_event_bus.shutdown()
+    reset_event_bus(_test_event_bus)
+
+
+@pytest.fixture
+def _test_circuit_breaker() -> AgentCircuitBreaker:
+    return test_circuit_breaker
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_test_circuit_breaker(_test_circuit_breaker: AgentCircuitBreaker) -> AsyncGenerator[None]:
+    _test_circuit_breaker._states.clear()
+    yield
+    _test_circuit_breaker._states.clear()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_process_config() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
     from app.grid import grid_settings
@@ -192,21 +218,9 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     leader_settings_provider._provider = None
     leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
-    reset_event_bus(test_event_bus)
-    test_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
-    # Ensure circuit-breaker settings are always present even without a DB session.
-    for key in (
-        "agent.circuit_breaker_failure_threshold",
-        "agent.circuit_breaker_cooldown_seconds",
-    ):
-        if key not in settings_service._cache:
-            defn = SETTINGS_REGISTRY[key]
-            settings_service._cache[key] = resolve_default(defn)
     yield
     await _shutdown_control_plane_services()
-    reset_event_bus(test_event_bus)
-    test_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
     # snapshots taken before yield so auth, agent, pack, and grid state
@@ -223,13 +237,14 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
 
 
 @pytest_asyncio.fixture
-async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     """Yield a configured async_sessionmaker bound to the test engine.
 
     Wires the same control-plane services (event_bus, settings_service,
     webhook_dispatcher) as db_session so ORM insertions that trigger
     event-bus side effects work correctly.
     """
+    await settings_service.shutdown()
     session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         setup_database, class_=AsyncSession, expire_on_commit=False
     )
@@ -246,7 +261,16 @@ async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[As
         settings_service._defaults[key] = default_value
         settings_service._cache[key] = default_value
     settings_service._cache["agent.recommended_version"] = "0.3.0"
-    return session_factory
+    # Ensure circuit-breaker settings are always present even without a DB session.
+    for key in (
+        "agent.circuit_breaker_failure_threshold",
+        "agent.circuit_breaker_cooldown_seconds",
+    ):
+        if key not in settings_service._cache:
+            defn = SETTINGS_REGISTRY[key]
+            settings_service._cache[key] = resolve_default(defn)
+    yield session_factory
+    await settings_service.shutdown()
 
 
 @pytest_asyncio.fixture
