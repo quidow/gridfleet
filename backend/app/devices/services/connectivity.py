@@ -283,11 +283,11 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
         if connected_targets is None:
             continue  # Agent unreachable — skip (heartbeat handles host status)
 
-        await assert_current_leader(db)
+        await assert_current_leader(db, settings=settings)
 
         for device in devices:
             lifecycle_state = await _get_lifecycle_state(db, device, settings=settings)
-            await assert_current_leader(db)
+            await assert_current_leader(db, settings=settings)
             if lifecycle_state is not None:
                 await device_health.update_emulator_state(db, device, lifecycle_state)
 
@@ -299,7 +299,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                     ip_ping_count=ip_ping_count,
                     settings=settings,
                 )
-                await assert_current_leader(db)
+                await assert_current_leader(db, settings=settings)
                 if health_result is not None:
                     raw_checks = health_result.get("checks") or []
                     raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
@@ -404,7 +404,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                         ip_ping_count=ip_ping_count,
                         settings=settings,
                     )
-                    await assert_current_leader(db)
+                    await assert_current_leader(db, settings=settings)
                     if health_result is not None:
                         raw_checks = health_result.get("checks") or []
                         raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
@@ -494,7 +494,7 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
                 # behavior (no connectivity_lost event, no lifecycle write).
                 if device.hold == DeviceHold.maintenance:
                     continue
-                await assert_current_leader(db)
+                await assert_current_leader(db, settings=settings)
                 await _stop_disconnected_node(db, device)
                 if device.operational_state == DeviceOperationalState.offline:
                     continue

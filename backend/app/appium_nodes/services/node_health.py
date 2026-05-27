@@ -356,7 +356,7 @@ async def _check_nodes(
     # Fence: probes (asyncio.gather above) and Grid /status are slow external
     # calls. If another backend took leadership while we awaited them, drop
     # all writes from this cycle.
-    await assert_current_leader(db)
+    await assert_current_leader(db, settings=settings)
 
     for request, result in zip(requests, results, strict=True):
         try:

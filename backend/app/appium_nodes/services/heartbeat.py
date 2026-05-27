@@ -714,7 +714,7 @@ class HeartbeatLoop:
                         # Fence: drop any writes from a stale leader that lost the advisory lock
                         # while we were awaiting _ping_agent. assert_current_leader raises
                         # LeadershipLost when another backend now owns the heartbeat row.
-                        await assert_current_leader(host_db)
+                        await assert_current_leader(host_db, settings=settings)
                         await _apply_host_ping_result(
                             host_db,
                             host,

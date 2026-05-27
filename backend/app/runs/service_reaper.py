@@ -97,7 +97,7 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventPublisher, setti
         if not (_heartbeat_stale(run, now) or _ttl_stale(run, now)):
             continue
 
-        await assert_current_leader(db)
+        await assert_current_leader(db, settings=settings)
         # Re-check staleness under the row lock. The outer SELECT above
         # has no FOR UPDATE, so a concurrent ``heartbeat()`` could
         # refresh ``last_heartbeat`` between that snapshot and the lock

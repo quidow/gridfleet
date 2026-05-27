@@ -78,7 +78,7 @@ class DeviceIntentReconcilerLoop:
 
 
 async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int, settings: SettingsReader) -> None:
-    await assert_current_leader(db)
+    await assert_current_leader(db, settings=settings)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db, settings=settings)
     await _reconcile_expired_intents(db, settings=settings)

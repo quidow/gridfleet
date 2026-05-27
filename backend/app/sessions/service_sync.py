@@ -286,7 +286,7 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
 
     # Fence: Grid /status is a slow external call. If another backend took
     # leadership while we awaited it, drop all writes from this cycle.
-    await assert_current_leader(db)
+    await assert_current_leader(db, settings=settings)
 
     # Skip the Grid-driven sync when the hub is unreachable, but still run
     # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
