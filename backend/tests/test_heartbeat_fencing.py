@@ -5,11 +5,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from app.appium_nodes.services.heartbeat import _check_hosts
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.core.leader.advisory import LeadershipLost
 from app.hosts.models import Host, HostStatus, OSType
@@ -60,7 +60,7 @@ async def test_check_hosts_aborts_when_leadership_lost(db_session: AsyncSession)
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_hosts(db_session, settings=FakeSettingsReader({}))
+        await HeartbeatLoop(services=Mock())._check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.status == HostStatus.online
@@ -107,7 +107,7 @@ async def test_check_hosts_aborts_on_alive_path_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_hosts(db_session, settings=FakeSettingsReader({}))
+        await HeartbeatLoop(services=Mock())._check_hosts(db_session, settings=FakeSettingsReader({}))
 
     await db_session.refresh(host)
     assert host.last_heartbeat == initial_heartbeat

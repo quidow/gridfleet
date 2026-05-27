@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: TC002
 
-from app.appium_nodes.services.heartbeat import _check_hosts
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_with_devices, settle_after_commit_tasks
@@ -57,14 +57,15 @@ async def test_host_offline_cascade_queues_all_events(
     # Redirect per-host sessions to the test schema engine so events are queued
     # on sessions that share the same after-commit event hook configuration.
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.async_session", db_session_maker)
-    # The resume guard uses a module-level _LAST_CYCLE_MONOTONIC to detect a paused
+    # The resume guard uses _last_cycle_monotonic to detect a paused
     # backend (>= max_missed * interval gap between cycles). On slow CI runners the
     # gap between the last unrelated test that called _check_hosts and this one can
     # exceed the threshold, causing the guard to swallow the offline cascade we are
     # asserting. Reset to None so the guard treats this call as the first cycle.
-    monkeypatch.setattr("app.appium_nodes.services.heartbeat._LAST_CYCLE_MONOTONIC", None)
+    loop = HeartbeatLoop(services=Mock())
+    loop._last_cycle_monotonic = None
 
-    await _check_hosts(
+    await loop._check_hosts(
         db_session,
         settings=FakeSettingsReader(
             {

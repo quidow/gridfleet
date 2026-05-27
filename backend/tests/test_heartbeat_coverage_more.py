@@ -174,7 +174,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(heartbeat, "async_session", lambda: Session())
-    monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = AppiumNodeServices(

@@ -90,7 +90,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "async_session", _Session)
-    monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock())
+    monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
@@ -104,7 +104,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
     with pytest.raises(asyncio.CancelledError):
         await HeartbeatLoop(services=services).run()
 
-    heartbeat._check_hosts.assert_awaited_once()
+    heartbeat.HeartbeatLoop._check_hosts.assert_awaited_once()
     heartbeat.record_heartbeat_cycle.assert_called_once()
 
 
@@ -236,7 +236,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "async_session", _Session)
-    monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=LeadershipLost("lost")))
+    monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
     monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
