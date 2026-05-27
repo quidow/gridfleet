@@ -43,6 +43,7 @@ LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
 LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
     "control_plane_leader_keepalive",
+    "control_plane_leader_watcher",
     "heartbeat",
     "session_sync",
     "node_health",
@@ -56,6 +57,10 @@ BACKGROUND_LOOP_NAMES = (
     "data_cleanup",
     "session_viability",
     "fleet_capacity_collector",
+    "grid_event_bus_subscriber",
+    "pack_drain",
+    "appium_reconciler",
+    "device_intent_reconciler",
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
