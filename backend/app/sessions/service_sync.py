@@ -11,7 +11,6 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.core.database import async_session
 from app.core.errors import InvalidTransitionError
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
@@ -528,33 +528,37 @@ async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader) -> None:
     await db.commit()
 
 
-async def session_sync_loop(*, settings: SettingsReader) -> None:
-    """Background loop that syncs Grid sessions.
+class SessionSyncLoop:
+    def __init__(self, *, services: SessionServices) -> None:
+        self._services = services
 
-    Wakes on either the doorbell (set by the hub event-bus subscriber
-    on ``session-created`` / ``session-closed``) or the registry-
-    configured timeout, whichever comes first. The poll continues to
-    run as a drift reconciler against any bus event that was missed
-    (hub restart, network partition, slow joiner).
-    """
-    doorbell = _get_doorbell()
-    while True:
-        interval = float(settings.get("grid.session_poll_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _sync_sessions(db, settings=settings)
-        except LeadershipLost as exc:
-            logger.error(
-                "session_sync_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Session sync failed")
-        try:
-            await asyncio.wait_for(doorbell.wait(), timeout=interval)
-            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
-        except TimeoutError:
-            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
-        doorbell.clear()
+    async def run(self) -> None:
+        """Background loop that syncs Grid sessions.
+
+        Wakes on either the doorbell (set by the hub event-bus subscriber
+        on ``session-created`` / ``session-closed``) or the registry-
+        configured timeout, whichever comes first. The poll continues to
+        run as a drift reconciler against any bus event that was missed
+        (hub restart, network partition, slow joiner).
+        """
+        doorbell = _get_doorbell()
+        while True:
+            interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await _sync_sessions(db, settings=self._services.settings)
+            except LeadershipLost as exc:
+                logger.error(
+                    "session_sync_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("Session sync failed")
+            try:
+                await asyncio.wait_for(doorbell.wait(), timeout=interval)
+                SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
+            except TimeoutError:
+                SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
+            doorbell.clear()

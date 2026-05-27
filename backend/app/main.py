@@ -65,8 +65,9 @@ from app.plugins import router as plugins
 from app.runs import router as runs_router
 from app.runs import service_reaper as run_service_reaper
 from app.sessions import router as sessions_router
-from app.sessions import service_sync as session_service_sync
-from app.sessions import service_viability as session_service_viability
+from app.sessions.service_sync import SessionSyncLoop
+from app.sessions.service_viability import SessionViabilityLoop
+from app.sessions.service_viability import close as close_session_viability_client
 from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
@@ -89,9 +90,6 @@ assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
 run_reaper_loop = run_service_reaper.run_reaper_loop
-session_sync_loop = session_service_sync.session_sync_loop
-session_viability_loop = session_service_viability.session_viability_loop
-close_session_viability_client = session_service_viability.close
 
 
 async def hardware_telemetry_loop(
@@ -232,11 +230,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         heartbeat = HeartbeatLoop(services=app_services.appium_nodes)
         node_health = NodeHealthLoop(services=app_services.appium_nodes)
         appium_reconciler = AppiumReconcilerLoop(services=app_services.appium_nodes)
+        session_sync = SessionSyncLoop(services=app_services.sessions)
+        session_viability = SessionViabilityLoop(services=app_services.sessions)
 
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
-            (session_sync_loop(settings=svc), "session_sync_loop"),
+            (session_sync.run(), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
             (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
@@ -253,7 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
             (data_cleanup.run(), "data_cleanup_loop"),
-            (session_viability_loop(settings=svc), "session_viability_loop"),
+            (session_viability.run(), "session_viability_loop"),
             (fleet_capacity.run(), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
             (appium_reconciler.run(), "appium_reconciler_loop"),

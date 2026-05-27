@@ -16,6 +16,8 @@ import contextlib
 import pytest
 
 from app.sessions import service_sync
+from app.sessions.service_sync import SessionSyncLoop
+from app.sessions.services_container import SessionServices
 from tests.fakes import FakeSettingsReader
 
 
@@ -46,11 +48,11 @@ async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) ->
         async def __aexit__(self, *_a: object) -> None:
             return None
 
-    monkeypatch.setattr(service_sync, "async_session", lambda: _NullCtx())
-
-    task = asyncio.create_task(
-        service_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}))
+    services = SessionServices(
+        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        session_factory=lambda: _NullCtx(),
     )
+    task = asyncio.create_task(SessionSyncLoop(services=services).run())
     try:
         service_sync.wake_session_sync()
         # Loop should observe the doorbell within ~50ms even though interval=30s.
@@ -83,11 +85,11 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
         async def __aexit__(self, *_a: object) -> None:
             return None
 
-    monkeypatch.setattr(service_sync, "async_session", lambda: _NullCtx())
-
-    task = asyncio.create_task(
-        service_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}))
+    services = SessionServices(
+        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        session_factory=lambda: _NullCtx(),
     )
+    task = asyncio.create_task(SessionSyncLoop(services=services).run())
     try:
         service_sync.wake_session_sync()
         await sync_started.wait()

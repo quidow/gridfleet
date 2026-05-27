@@ -15,6 +15,9 @@ from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
+from app.sessions.service_sync import SessionSyncLoop
+from app.sessions.service_viability import SessionViabilityLoop
+from app.sessions.services_container import SessionServices
 from tests.fakes import FakeSettingsReader
 
 
@@ -105,36 +108,42 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_viability, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_viability, "async_session", _Session)
     monkeypatch.setattr(session_viability, "_check_due_devices", AsyncMock())
     monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    services = SessionServices(settings=FakeSettingsReader({}), session_factory=_Session)
     with pytest.raises(asyncio.CancelledError):
-        await session_viability.session_viability_loop(settings=FakeSettingsReader({}))
+        await SessionViabilityLoop(services=services).run()
 
     session_viability._check_due_devices.assert_awaited_once()
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
     monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
 
+    services = SessionServices(
+        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
+        session_factory=_Session,
+    )
     with pytest.raises(asyncio.CancelledError):
-        await session_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}))
+        await SessionSyncLoop(services=services).run()
 
     session_sync._sync_sessions.assert_awaited_once()
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
 
+    services = SessionServices(
+        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
+        session_factory=_Session,
+    )
     with pytest.raises(asyncio.CancelledError):
-        await session_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}))
+        await SessionSyncLoop(services=services).run()
 
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,8 +241,11 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
         ).run()
 
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "async_session", _Session)
     monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(session_sync.os, "_exit", fake_exit)
+    services = SessionServices(
+        settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
+        session_factory=_Session,
+    )
     with pytest.raises(RuntimeError, match="exit 70"):
-        await session_sync.session_sync_loop(settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}))
+        await SessionSyncLoop(services=services).run()
