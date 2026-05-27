@@ -35,7 +35,7 @@ Security = "https://github.com/quidow/gridfleet/security/advisories/new"
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=0.23",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
