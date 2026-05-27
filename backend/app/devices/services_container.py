@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -17,3 +18,4 @@ class DeviceServices:
     publisher: EventPublisher
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
+    circuit_breaker: CircuitBreakerProtocol

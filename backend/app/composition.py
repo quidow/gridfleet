@@ -78,6 +78,7 @@ def compose_app(
             publisher=bus,
             settings=settings_svc,
             session_factory=session_factory,
+            circuit_breaker=circuit_breaker,
         ),
         hosts=HostServices(
             publisher=bus,
