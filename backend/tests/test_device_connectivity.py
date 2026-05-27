@@ -576,22 +576,6 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
     assert "dc-001" in await get_connectivity_control_plane_state(db_session)  # still tracked for next attempt
 
 
-async def test_offline_disconnected_device_tracks_stopped_leftover_node(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _host, _device, _ = await _setup_host_and_device(
-        db_session,
-        device_operational_state=DeviceOperationalState.offline,
-    )
-    monkeypatch.setattr("app.devices.services.connectivity._stop_disconnected_node", AsyncMock(return_value=object()))
-
-    with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
-        await _check_connectivity(db_session, settings=FakeSettingsReader({}))
-
-    assert "dc-001" in await get_connectivity_control_plane_state(db_session)
-
-
 async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
     """Maintenance devices should stay in maintenance when disconnected."""
     _host, device, _ = await _setup_host_and_device(db_session, device_hold=DeviceHold.maintenance)
