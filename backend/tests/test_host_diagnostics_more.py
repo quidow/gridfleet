@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.hosts import service_diagnostics as host_diagnostics
+from tests.conftest import test_circuit_breaker
 from tests.helpers import seed_host_and_device
 
 if TYPE_CHECKING:
@@ -46,7 +46,10 @@ def test_host_diagnostics_normalizers_reject_invalid_shapes() -> None:
 async def test_get_host_diagnostics_returns_none_for_missing_host(db_session: AsyncSession) -> None:
     import uuid
 
-    assert await host_diagnostics.get_host_diagnostics(db_session, uuid.uuid4()) is None
+    assert (
+        await host_diagnostics.get_host_diagnostics(db_session, uuid.uuid4(), circuit_breaker=test_circuit_breaker)
+        is None
+    )
 
 
 async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
@@ -79,12 +82,14 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
             {"port": None, "pid": 111},
         ],
     }
-    await agent_circuit_breaker.record_failure(host.ip, error="first failure")
+    await test_circuit_breaker.record_failure(host.ip, error="first failure")
 
     with patch(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=snapshot)
     ):
-        diagnostics = await host_diagnostics.get_host_diagnostics(db_session, host)
+        diagnostics = await host_diagnostics.get_host_diagnostics(
+            db_session, host, circuit_breaker=test_circuit_breaker
+        )
 
     assert diagnostics is not None
     assert diagnostics.host_id == host.id
@@ -116,8 +121,8 @@ async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value",
         new=AsyncMock(side_effect=snapshots),
     ):
-        first = await host_diagnostics.get_host_diagnostics(db_session, host)
-        second = await host_diagnostics.get_host_diagnostics(db_session, host)
+        first = await host_diagnostics.get_host_diagnostics(db_session, host, circuit_breaker=test_circuit_breaker)
+        second = await host_diagnostics.get_host_diagnostics(db_session, host, circuit_breaker=test_circuit_breaker)
 
     assert first is not None
     assert first.appium_processes.reported_at == snapshots[0]["reported_at"]
@@ -166,7 +171,9 @@ async def test_get_host_diagnostics_filters_and_normalizes_recent_recovery_event
     await db_session.commit()
 
     with patch("app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=None)):
-        diagnostics = await host_diagnostics.get_host_diagnostics(db_session, host.id)
+        diagnostics = await host_diagnostics.get_host_diagnostics(
+            db_session, host.id, circuit_breaker=test_circuit_breaker
+        )
 
     assert diagnostics is not None
     assert [event.event_type for event in diagnostics.recent_recovery_events] == ["node_crash", "node_restart"]

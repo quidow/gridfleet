@@ -65,14 +65,22 @@ def test_request_kwargs_and_build_agent_headers() -> None:
 async def test_agent_client_request_handles_circuit_open_and_transport_errors(monkeypatch: MonkeyPatch) -> None:
     request = httpx.Request("GET", "http://10.0.0.5:5100/agent/health")
     monkeypatch.setattr("app.agent_comm.client.record_agent_call", Mock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=1.5))
+    mock_breaker = AsyncMock()
+    mock_breaker.before_request = AsyncMock(return_value=1.5)
 
     with pytest.raises(CircuitOpenError):
-        await agent_client.request("GET", "http://10.0.0.5:5100/agent/health", endpoint="health", host="10.0.0.5")
+        await agent_client.request(
+            "GET",
+            "http://10.0.0.5:5100/agent/health",
+            endpoint="health",
+            host="10.0.0.5",
+            circuit_breaker=mock_breaker,
+        )
 
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_failure", AsyncMock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_success", AsyncMock())
+    mock_breaker2 = AsyncMock()
+    mock_breaker2.before_request = AsyncMock(return_value=None)
+    mock_breaker2.record_failure = AsyncMock()
+    mock_breaker2.record_success = AsyncMock()
     client = DummyAgentClient(error=httpx.ConnectError("boom", request=request))
 
     with pytest.raises(AgentUnreachableError, match="Cannot reach agent host"):
@@ -82,21 +90,24 @@ async def test_agent_client_request_handles_circuit_open_and_transport_errors(mo
             endpoint="health",
             host="10.0.0.5",
             client=client,
+            circuit_breaker=mock_breaker2,
         )
 
 
 async def test_agent_client_request_uses_owned_client_factory(monkeypatch: MonkeyPatch) -> None:
     response = httpx.Response(200, request=httpx.Request("GET", "http://10.0.0.5:5100/agent/health"), json={"ok": True})
     monkeypatch.setattr("app.agent_comm.client.record_agent_call", Mock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_failure", AsyncMock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_success", AsyncMock())
+    mock_breaker = AsyncMock()
+    mock_breaker.before_request = AsyncMock(return_value=None)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     result = await agent_client.request(
         "GET",
         "http://10.0.0.5:5100/agent/health",
         endpoint="health",
         host="10.0.0.5",
+        circuit_breaker=mock_breaker,
         client_factory=lambda: DummyAgentClient(response=response),
     )
 

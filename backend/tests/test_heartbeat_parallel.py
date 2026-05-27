@@ -59,7 +59,7 @@ async def test_four_slow_hosts_run_in_parallel(
     Bound: < 1.8s leaves CI slack while still proving parallelism."""
     from app.appium_nodes.services.heartbeat import _check_hosts
 
-    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
         await asyncio.sleep(0.5)
         return _slow_timeout()
 
@@ -80,7 +80,7 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
 
     from app.appium_nodes.services.heartbeat import _check_hosts
 
-    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
         if ip == "1.1.1.1":
             await asyncio.sleep(0.5)
             return _slow_timeout()

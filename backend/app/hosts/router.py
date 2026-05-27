@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
+from app.agent_comm.dependencies import AgentCommServicesDep
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
@@ -320,8 +321,8 @@ async def trigger_driver_doctor(
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
-async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep) -> HostDiagnosticsRead:
-    payload = await host_diagnostics.get_host_diagnostics(db, host_id)
+async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, agent_comm: AgentCommServicesDep) -> HostDiagnosticsRead:
+    payload = await host_diagnostics.get_host_diagnostics(db, host_id, circuit_breaker=agent_comm.circuit_breaker)
     if payload is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return payload

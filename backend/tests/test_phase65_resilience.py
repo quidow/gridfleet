@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.client import request as agent_request
 from app.core.config import Settings, settings
 from app.core.database import build_engine
@@ -24,7 +24,18 @@ HOST_PAYLOAD = {
 }
 
 
-async def test_agent_circuit_breaker_opens_then_recovers() -> None:
+class _FakeSettings:
+    def __init__(self, threshold: int, cooldown: int) -> None:
+        self._data = {
+            "agent.circuit_breaker_failure_threshold": str(threshold),
+            "agent.circuit_breaker_cooldown_seconds": str(cooldown),
+        }
+
+    def get(self, key: str) -> str:
+        return self._data[key]
+
+
+async def test_breaker_opens_then_recovers() -> None:
     current_time = 100.0
 
     def fake_monotonic() -> float:
@@ -34,28 +45,29 @@ async def test_agent_circuit_breaker_opens_then_recovers() -> None:
 
     _threshold = 5  # default agent.circuit_breaker_failure_threshold
     _cooldown = 30  # default agent.circuit_breaker_cooldown_seconds
+    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown))
     with (
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
-        patch.object(agent_circuit_breaker._publisher, "publish", new=publish_mock),
+        patch.object(breaker._publisher, "publish", new=publish_mock),
         patch("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={})),
-        patch.object(agent_circuit_breaker, "_failure_threshold", return_value=_threshold),
-        patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=float(_cooldown)),
+        patch.object(breaker, "_failure_threshold", return_value=_threshold),
+        patch.object(breaker, "_cooldown_seconds", return_value=float(_cooldown)),
     ):
         for _ in range(_threshold):
-            await agent_circuit_breaker.record_failure("10.0.0.31", error="boom")
+            await breaker.record_failure("10.0.0.31", error="boom")
 
-        snapshot = agent_circuit_breaker.snapshot("10.0.0.31")
+        snapshot = breaker.snapshot("10.0.0.31")
         assert snapshot["status"] == "open"
 
-        retry_after = await agent_circuit_breaker.before_request("10.0.0.31")
+        retry_after = await breaker.before_request("10.0.0.31")
         assert retry_after is not None
 
         current_time += _cooldown
-        assert await agent_circuit_breaker.before_request("10.0.0.31") is None
-        assert await agent_circuit_breaker.before_request("10.0.0.31") == 0.0
+        assert await breaker.before_request("10.0.0.31") is None
+        assert await breaker.before_request("10.0.0.31") == 0.0
 
-        await agent_circuit_breaker.record_success("10.0.0.31")
-        assert agent_circuit_breaker.snapshot("10.0.0.31")["status"] == "closed"
+        await breaker.record_success("10.0.0.31")
+        assert breaker.snapshot("10.0.0.31")["status"] == "closed"
 
     opened_event = publish_mock.await_args_list[0].args[0]
     closed_event = publish_mock.await_args_list[-1].args[0]
@@ -69,15 +81,18 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
     def fake_monotonic() -> float:
         return current_time
 
+    _threshold = 5
+    _cooldown = 30
+    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown))
     with (
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
-        patch.object(agent_circuit_breaker._publisher, "publish", new=AsyncMock()),
+        patch.object(breaker._publisher, "publish", new=AsyncMock()),
         patch("app.agent_comm.circuit_breaker._resolve_host_identity", AsyncMock(return_value={})),
-        patch.object(agent_circuit_breaker, "_failure_threshold", return_value=5),
-        patch.object(agent_circuit_breaker, "_cooldown_seconds", return_value=30.0),
+        patch.object(breaker, "_failure_threshold", return_value=5),
+        patch.object(breaker, "_cooldown_seconds", return_value=30.0),
     ):
         for _ in range(5):
-            await agent_circuit_breaker.record_failure("10.0.0.32", error="boom")
+            await breaker.record_failure("10.0.0.32", error="boom")
 
         client = AsyncMock()
         with pytest.raises(CircuitOpenError):
@@ -88,6 +103,7 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
                 host="10.0.0.32",
                 client=client,
                 timeout=5,
+                circuit_breaker=breaker,
             )
 
     client.get.assert_not_awaited()

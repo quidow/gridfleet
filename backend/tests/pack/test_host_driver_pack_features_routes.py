@@ -65,6 +65,7 @@ async def test_action_route_dispatches_to_service(
         feature_id: str,
         action_id: str,
         args: dict[str, Any],
+        **_extra: object,
     ) -> FeatureActionResult:
         del session  # unused — exercise routes only
         captured["host_id"] = host_id

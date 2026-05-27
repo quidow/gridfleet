@@ -12,7 +12,10 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.agent_comm.dependencies import get_agent_comm_services
+from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.core.config import settings
 from app.core.database import Base, get_db
@@ -34,6 +37,8 @@ from app.webhooks.models import Webhook, WebhookDelivery
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 settings_service = SettingsService()
+test_http_pool = AgentHttpPool()
+test_circuit_breaker = AgentCircuitBreaker(publisher=test_event_bus, settings=settings_service)
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:
@@ -176,7 +181,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
     reset_event_bus(test_event_bus)
-    agent_circuit_breaker._states.clear()
+    test_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Ensure circuit-breaker settings are always present even without a DB session.
     for key in (
@@ -189,7 +194,7 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     yield
     await _shutdown_control_plane_services()
     reset_event_bus(test_event_bus)
-    agent_circuit_breaker._states.clear()
+    test_circuit_breaker._states.clear()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
     # snapshots taken before yield so auth, agent, pack, and grid state
@@ -274,9 +279,13 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         )
         return SettingsServices(reader=settings_service, service=settings_service, session_factory=sf)
 
+    def override_get_agent_comm_services() -> AgentCommServices:
+        return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
+    app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

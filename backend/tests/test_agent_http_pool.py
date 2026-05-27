@@ -67,8 +67,9 @@ async def test_close_drops_all_clients() -> None:
     assert pool.size() == 0
 
 
-def test_module_level_pool_singleton() -> None:
-    assert isinstance(pool_module.agent_http_pool, AgentHttpPool)
+def test_pool_class_importable() -> None:
+    assert hasattr(pool_module, "AgentHttpPool")
+    assert isinstance(AgentHttpPool(), AgentHttpPool)
 
 
 @pytest.mark.asyncio

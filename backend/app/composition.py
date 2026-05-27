@@ -50,19 +50,7 @@ def compose_app(
     http_pool: AgentHttpPool,
     circuit_breaker: AgentCircuitBreaker,
 ) -> AppServices:
-    """Wire the full dependency graph. Called once at startup.
-
-    Receives singleton instances from the caller (main.py lifespan) and
-    publishes them on the source modules, replacing the import-time bootstrap
-    defaults.  All runtime code that accesses singletons via module attribute
-    transparently picks up the composition-root-owned instance.
-    """
-    import app.agent_comm.circuit_breaker as _cb_mod  # noqa: PLC0415
-    import app.agent_comm.http_pool as _pool_mod  # noqa: PLC0415
-
-    _pool_mod.agent_http_pool = http_pool
-    _cb_mod.agent_circuit_breaker = circuit_breaker
-
+    """Wire the full dependency graph. Called once at startup."""
     event_services = EventServices(
         publisher=bus,
         subscriber=bus,
