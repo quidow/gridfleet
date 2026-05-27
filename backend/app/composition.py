@@ -94,6 +94,7 @@ def compose_app(
             settings=settings_svc,
             pool=http_pool,
             circuit_breaker=circuit_breaker,
+            publisher=bus,
             session_factory=session_factory,
         ),
     )

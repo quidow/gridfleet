@@ -245,6 +245,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
+        publisher=Mock(),
         session_factory=lambda: Session(),
     )
 

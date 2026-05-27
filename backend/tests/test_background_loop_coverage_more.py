@@ -100,6 +100,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
             settings=FakeSettingsReader({"general.node_check_interval_sec": 1}),
             pool=Mock(),
             circuit_breaker=Mock(),
+            publisher=Mock(),
             session_factory=_fake_session,
         )
     )

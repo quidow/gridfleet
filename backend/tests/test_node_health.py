@@ -1414,6 +1414,7 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
             settings=FakeSettingsReader({"general.node_check_interval_sec": 1}),
             pool=MagicMock(),
             circuit_breaker=MagicMock(),
+            publisher=MagicMock(),
             session_factory=fake_session,
         )
     )

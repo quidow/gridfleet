@@ -312,6 +312,7 @@ async def _check_nodes(
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
     stmt = (
         select(AppiumNode)
@@ -378,6 +379,7 @@ async def _check_nodes(
             observed_port=request.observed_port,
             observed_pid=request.observed_pid,
             observed_active_connection_target=request.observed_active_connection_target,
+            publisher=publisher,
             settings=settings,
         )
         await db.commit()
@@ -398,6 +400,7 @@ class NodeHealthLoop:
                         settings=self._services.settings,
                         pool=self._services.pool,
                         circuit_breaker=self._services.circuit_breaker,
+                        publisher=self._services.publisher,
                     )
             except LeadershipLost as exc:
                 logger.error(

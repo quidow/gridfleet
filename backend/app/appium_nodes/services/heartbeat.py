@@ -722,6 +722,7 @@ class HeartbeatLoop:
                             guard_active=guard_active,
                             guard_gap_sec=guard_gap_sec,
                             guard_threshold_sec=guard_threshold_sec,
+                            publisher=self._services.publisher,
                             settings=settings,
                         )
                         await host_db.commit()

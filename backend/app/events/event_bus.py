@@ -398,7 +398,6 @@ def queue_event_for_session(
     """
     sync_session = db.sync_session if isinstance(db, AsyncSession) else db
     loop = asyncio.get_running_loop()
-    _bus = publisher
 
     pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
         _PENDING_EVENTS_KEY, []
@@ -414,8 +413,8 @@ def queue_event_for_session(
         sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
         if not events:
             return
-        task = loop.create_task(_publish_pending_events(events, _bus))
-        _bus.track_task(task)
+        task = loop.create_task(_publish_pending_events(events, publisher))
+        publisher.track_task(task)
 
     def _drop_on_rollback(_session: object) -> None:
         sync_session.info.pop(_PENDING_EVENTS_KEY, None)

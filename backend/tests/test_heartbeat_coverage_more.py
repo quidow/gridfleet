@@ -181,6 +181,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
         pool=Mock(),
         circuit_breaker=Mock(),
+        publisher=Mock(),
         session_factory=lambda: Session(),
     )
 

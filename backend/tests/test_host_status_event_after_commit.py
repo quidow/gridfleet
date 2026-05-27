@@ -36,23 +36,14 @@ async def test_host_offline_cascade_queues_all_events(
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat._ping_agent", AsyncMock(return_value=_DEAD_RESULT))
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.assert_current_leader", AsyncMock())
-    # Inject publisher=event_bus into _apply_host_ping_result and set_operational_state.
-    from app.appium_nodes.services import heartbeat as heartbeat_mod
     from app.devices.services.state import set_operational_state as _orig_set_op
     from tests.helpers import test_event_bus as event_bus
-
-    _orig_apply = heartbeat_mod._apply_host_ping_result
-
-    async def _wrapped_apply(*args: object, **kwargs: object) -> None:
-        kwargs.setdefault("publisher", event_bus)
-        await _orig_apply(*args, **kwargs)  # type: ignore[arg-type]
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
         kwargs.setdefault("publisher", event_bus)
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(heartbeat_mod, "_apply_host_ping_result", _wrapped_apply)
-    monkeypatch.setattr(heartbeat_mod, "set_operational_state", _wrapped_set_op)
+    monkeypatch.setattr("app.appium_nodes.services.heartbeat.set_operational_state", _wrapped_set_op)
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
     # Redirect per-host sessions to the test schema engine so events are queued
     # on sessions that share the same after-commit event hook configuration.
@@ -62,7 +53,9 @@ async def test_host_offline_cascade_queues_all_events(
     # gap between the last unrelated test that called _check_hosts and this one can
     # exceed the threshold, causing the guard to swallow the offline cascade we are
     # asserting. Reset to None so the guard treats this call as the first cycle.
-    loop = HeartbeatLoop(services=Mock())
+    services = Mock()
+    services.publisher = event_bus
+    loop = HeartbeatLoop(services=services)
     loop._last_cycle_monotonic = None
 
     await loop._check_hosts(

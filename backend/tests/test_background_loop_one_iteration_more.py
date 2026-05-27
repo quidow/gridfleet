@@ -78,6 +78,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
+        publisher=Mock(),
         session_factory=_Session,
     )
 
@@ -98,6 +99,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
+        publisher=Mock(),
         session_factory=_Session,
     )
 
@@ -229,6 +231,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
                 settings=FakeSettingsReader({}),
                 pool=Mock(),
                 circuit_breaker=Mock(),
+                publisher=Mock(),
                 session_factory=_Session,
             )
         ).run()
@@ -244,6 +247,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
                 settings=FakeSettingsReader({}),
                 pool=Mock(),
                 circuit_breaker=Mock(),
+                publisher=Mock(),
                 session_factory=_Session,
             )
         ).run()
