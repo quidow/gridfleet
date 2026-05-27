@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.agent_comm.dependencies import AgentCommServicesDep
 from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedError
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
@@ -234,6 +235,7 @@ async def cooldown_device_endpoint(
     payload: RunCooldownRequest,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
         excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
@@ -243,6 +245,7 @@ async def cooldown_device_endpoint(
             reason=payload.reason,
             ttl_seconds=payload.ttl_seconds,
             settings=settings_services.reader,
+            circuit_breaker=agent_comm.circuit_breaker,
         )
     except ValueError as e:
         msg = str(e)

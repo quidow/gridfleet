@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.dependencies import AgentCommServicesDep
+from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
@@ -112,7 +113,12 @@ def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[
     return payload
 
 
-async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher, settings: SettingsReader) -> None:
+async def _auto_discover(
+    host_id: uuid.UUID,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
     try:
         async with async_session() as db:
@@ -120,7 +126,11 @@ async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher, settings
             if host is None:
                 return
             result = await pack_discovery_service.discover_devices(
-                db, host, agent_get_pack_devices=get_pack_devices, settings=settings
+                db,
+                host,
+                agent_get_pack_devices=get_pack_devices,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
             )
             if result.new_devices:
                 await publisher.publish(
@@ -135,14 +145,18 @@ async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher, settings
         logger.exception("Auto-discovery failed for host %s", host_id)
 
 
-async def _auto_prepare_host_diagnostics(host_id: uuid.UUID, *, settings: SettingsReader) -> None:
+async def _auto_prepare_host_diagnostics(
+    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     try:
         async with async_session() as db:
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
             plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(host, plugins, settings=settings)
+            await plugin_service.auto_sync_host_plugins(
+                host, plugins, settings=settings, circuit_breaker=circuit_breaker
+            )
     except Exception:
         logger.exception("Automatic diagnostics preparation failed for host %s", host_id)
 
@@ -154,6 +168,7 @@ async def register_host(
     db: DbDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     try:
         host, is_new = await host_service.register_host(
@@ -165,21 +180,39 @@ async def register_host(
     if is_new:
         response.status_code = 201
         if settings_services.reader.get("agent.auto_accept_hosts"):
-            _fire_and_forget(_auto_discover, host.id, event_services.publisher, settings_services.reader)
-            _fire_and_forget(_auto_prepare_host_diagnostics, host.id, settings=settings_services.reader)
+            _fire_and_forget(
+                _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+            )
+            _fire_and_forget(
+                _auto_prepare_host_diagnostics,
+                host.id,
+                settings=settings_services.reader,
+                circuit_breaker=agent_comm.circuit_breaker,
+            )
 
     return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/approve", response_model=HostRead)
 async def approve_host(
-    host_id: uuid.UUID, db: DbDep, event_services: EventServicesDep, settings_services: SettingsServicesDep
+    host_id: uuid.UUID,
+    db: DbDep,
+    event_services: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
-    _fire_and_forget(_auto_discover, host.id, event_services.publisher, settings_services.reader)
-    _fire_and_forget(_auto_prepare_host_diagnostics, host.id, settings=settings_services.reader)
+    _fire_and_forget(
+        _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+    )
+    _fire_and_forget(
+        _auto_prepare_host_diagnostics,
+        host.id,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
+    )
     return _serialize_host(host, settings_services)
 
 
@@ -297,6 +330,7 @@ async def trigger_driver_doctor(
     pack_id: str,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
     host = await db.get(Host, host_id)
     if host is None:
@@ -304,7 +338,9 @@ async def trigger_driver_doctor(
     if host.status.value != "online":
         raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
 
-    checks = await agent_operations.pack_doctor(host.ip, host.agent_port, pack_id, settings=settings_services.reader)
+    checks = await agent_operations.pack_doctor(
+        host.ip, host.agent_port, pack_id, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+    )
 
     await persist_doctor_results(db, host_id, pack_id, checks)
     await db.commit()
@@ -357,7 +393,9 @@ async def get_host_resource_telemetry(
 
 
 @router.get("/{host_id}/tools/status", response_model=HostToolStatusRead)
-async def get_host_tool_status(host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+async def get_host_tool_status(
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -367,6 +405,7 @@ async def get_host_tool_status(host_id: uuid.UUID, db: DbDep, settings_services:
         host.ip,
         host.agent_port,
         settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
 
@@ -381,37 +420,55 @@ async def delete_host(host_id: uuid.UUID, db: DbDep) -> None:
 
 
 @router.post("/{host_id}/discover", response_model=DiscoveryResult)
-async def discover_devices(host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> DiscoveryResult:
+async def discover_devices(
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> DiscoveryResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return await pack_discovery_service.discover_devices(
-        db, host, agent_get_pack_devices=get_pack_devices, settings=settings_services.reader
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
 async def intake_candidates(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
 ) -> list[IntakeCandidateRead]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return await pack_discovery_service.list_intake_candidates(
-        db, host, agent_get_pack_devices=get_pack_devices, settings=settings_services.reader
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
 async def confirm_discovery(
-    host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDep, settings_services: SettingsServicesDep
+    host_id: uuid.UUID,
+    data: DiscoveryConfirm,
+    db: DbDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> DiscoveryConfirmResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     # Re-run discovery to get fresh data for validation
     result = await pack_discovery_service.discover_devices(
-        db, host, agent_get_pack_devices=get_pack_devices, settings=settings_services.reader
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
     try:
         return await pack_discovery_service.confirm_discovery(

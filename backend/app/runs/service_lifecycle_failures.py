@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
 
 
@@ -174,6 +175,7 @@ async def cooldown_device(
     reason: str,
     ttl_seconds: int,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[datetime | None, int, bool, int]:
     """Apply a run-scoped cooldown to a reserved device.
 
@@ -280,6 +282,7 @@ async def cooldown_device(
             agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
             raise_on_failure=True,
             settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return excluded_until, cooldown_count_after, False, threshold
 
@@ -323,5 +326,6 @@ async def cooldown_device(
         agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
         raise_on_failure=True,
         settings=settings,
+        circuit_breaker=circuit_breaker,
     )
     return None, cooldown_count_after, True, threshold

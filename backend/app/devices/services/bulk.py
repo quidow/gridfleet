@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Awaitable, Callable
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
@@ -279,7 +280,12 @@ async def bulk_enter_maintenance(
 
 
 async def bulk_reconnect(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher, settings: SettingsReader
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any]:
     """Reconnect network-connected ADB devices."""
     devices = await _load_devices(db, device_ids)
@@ -335,6 +341,7 @@ async def bulk_reconnect(
                     args={"ip_address": device.ip_address, "port": 5555},
                     http_client_factory=httpx.AsyncClient,
                     settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 if not data.get("success"):
                     errors[str(device.id)] = "Reconnect failed"

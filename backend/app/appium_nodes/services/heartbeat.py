@@ -61,14 +61,20 @@ APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
 
 
-async def _auto_sync_plugins_on_recovery(host_id: uuid.UUID, *, settings: SettingsReader) -> None:
+async def _auto_sync_plugins_on_recovery(
+    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol | None
+) -> None:
+    if circuit_breaker is None:
+        return
     try:
         async with async_session() as db:
             host = await db.get(Host, host_id)
             if host is None:
                 return
             plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(host, plugins, settings=settings)
+            await plugin_service.auto_sync_host_plugins(
+                host, plugins, settings=settings, circuit_breaker=circuit_breaker
+            )
     except Exception:
         logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
 
@@ -525,6 +531,7 @@ async def _apply_host_ping_result(
     guard_threshold_sec: float | None = None,
     publisher: EventPublisher | None = None,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol | None,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -562,7 +569,9 @@ async def _apply_host_ping_result(
                     publisher=publisher,
                 )
             host.status = HostStatus.online
-            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id, settings=settings)
+            _schedule_background_task(
+                _auto_sync_plugins_on_recovery, host.id, settings=settings, circuit_breaker=circuit_breaker
+            )
         host.last_heartbeat = datetime.now(UTC)
         if health_data is not None:
             if "missing_prerequisites" in health_data:
@@ -724,6 +733,7 @@ class HeartbeatLoop:
                             guard_threshold_sec=guard_threshold_sec,
                             publisher=self._services.publisher,
                             settings=settings,
+                            circuit_breaker=circuit_breaker,
                         )
                         await host_db.commit()
                 except LeadershipLost:

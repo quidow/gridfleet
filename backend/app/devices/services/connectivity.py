@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
@@ -554,9 +555,11 @@ async def _check_connectivity(db: AsyncSession, *, settings: SettingsReader) -> 
     await db.commit()
 
 
-async def _check_expired_cooldowns(db: AsyncSession, *, settings: SettingsReader) -> None:
+async def _check_expired_cooldowns(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     """Delegate expired cooldown cleanup to the intent reconciler."""
-    await _reconcile_expired_intents(db, settings=settings)
+    await _reconcile_expired_intents(db, settings=settings, circuit_breaker=circuit_breaker)
     now = datetime.now(UTC)
     # Transitional cleanup for pre-intent cooldown reservations. Remove once
     # all cooldown writes are guaranteed to flow through DeviceIntent rows.
@@ -600,7 +603,9 @@ class DeviceConnectivityLoop:
             interval = float(self._services.settings.get("general.device_check_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _check_expired_cooldowns(db, settings=self._services.settings)
+                    await _check_expired_cooldowns(
+                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
+                    )
                     await _check_connectivity(db, settings=self._services.settings)
             except LeadershipLost as exc:
                 logger.error(

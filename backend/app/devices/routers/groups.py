@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm.dependencies import AgentCommServicesDep
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.protocols import SettingsReader
@@ -171,11 +172,19 @@ async def group_bulk_exit_maintenance(
 
 @router.post("/{group_id}/bulk/reconnect", response_model=BulkOperationResult)
 async def group_bulk_reconnect(
-    group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    group_id: uuid.UUID,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
     return await bulk_service.bulk_reconnect(
-        db, device_ids, publisher=events.publisher, settings=settings_services.reader
+        db,
+        device_ids,
+        publisher=events.publisher,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
 

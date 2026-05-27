@@ -2,6 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from app.agent_comm.dependencies import AgentCommServicesDep
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.schemas.device import (
@@ -64,8 +65,16 @@ async def bulk_exit_maintenance(body: BulkDeviceIds, db: DbDep, events: EventSer
 
 @router.post("/reconnect", response_model=BulkOperationResult)
 async def bulk_reconnect(
-    body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    body: BulkDeviceIds,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     return await bulk_service.bulk_reconnect(
-        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+        db,
+        body.device_ids,
+        publisher=events.publisher,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )

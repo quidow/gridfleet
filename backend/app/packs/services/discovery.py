@@ -17,12 +17,15 @@ from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, Discover
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.models import Host
 
 
 class PackDevicesFetcher(Protocol):
-    async def __call__(self, host: str, agent_port: int, *, settings: SettingsReader) -> dict[str, object]: ...
+    async def __call__(
+        self, host: str, agent_port: int, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    ) -> dict[str, object]: ...
 
 
 class PackDevicePropertiesFetcher(Protocol):
@@ -116,8 +119,9 @@ async def list_intake_candidates(
     *,
     agent_get_pack_devices: PackDevicesFetcher,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> list[IntakeCandidateRead]:
-    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings)
+    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings, circuit_breaker=circuit_breaker)
     candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
     label_map = await platform_label_service.load_platform_label_map(
         session,
@@ -178,8 +182,9 @@ async def discover_devices(
     *,
     agent_get_pack_devices: PackDevicesFetcher,
     settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> DiscoveryResult:
-    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings)
+    raw = await agent_get_pack_devices(host.ip, host.agent_port, settings=settings, circuit_breaker=circuit_breaker)
     candidates_raw = cast("list[dict[str, Any]]", raw.get("candidates", []))
     label_map = await platform_label_service.load_platform_label_map(
         session,

@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
+from app.agent_comm.dependencies import AgentCommServicesDep
 from app.agent_comm.operations import appium_logs, pack_device_lifecycle_action
 from app.agent_comm.operations import appium_status as fetch_appium_status
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
@@ -118,7 +119,9 @@ async def get_config_history(
 
 
 @router.get("/{device_id}/health", response_model=DeviceHealthRead)
-async def device_health(device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+async def device_health(
+    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     host = require_management_host(device, action="inspect device health")
 
@@ -142,6 +145,7 @@ async def device_health(device_id: uuid.UUID, db: DbDep, settings_services: Sett
                 node.port,
                 http_client_factory=httpx.AsyncClient,
                 settings=settings_services.reader,
+                circuit_breaker=agent_comm.circuit_breaker,
             )
             node_running = node_payload is not None and node_payload.get("running", False) is True
             if not node_running and node_state == "running":
@@ -170,6 +174,7 @@ async def device_health(device_id: uuid.UUID, db: DbDep, settings_services: Sett
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
             settings=settings_services.reader,
+            circuit_breaker=agent_comm.circuit_breaker,
         )
     except AgentCallError as e:
         result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e}"}
@@ -206,6 +211,7 @@ async def reconnect_device(
     device_id: uuid.UUID,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
 
@@ -240,6 +246,7 @@ async def reconnect_device(
         args={"ip_address": device.ip_address, "port": 5555},
         http_client_factory=httpx.AsyncClient,
         settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
     success = data.get("success", False)
@@ -296,6 +303,7 @@ async def device_lifecycle_action(
     action: str,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
@@ -328,6 +336,7 @@ async def device_lifecycle_action(
         args=body or {},
         http_client_factory=httpx.AsyncClient,
         settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
     if action == "state" and isinstance(result.get("state"), str):
         await device_health_service.update_emulator_state(db, device, result["state"])
@@ -340,6 +349,7 @@ async def device_logs(
     device_id: uuid.UUID,
     db: DbDep,
     settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
     lines: int = Query(100, le=5000),
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
@@ -357,6 +367,7 @@ async def device_logs(
             lines=lines,
             http_client_factory=httpx.AsyncClient,
             settings=settings_services.reader,
+            circuit_breaker=agent_comm.circuit_breaker,
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Cannot fetch logs from agent: {e}") from e
