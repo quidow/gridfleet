@@ -30,7 +30,6 @@ from app.core.database import engine
 from app.core.dependencies import DbDep
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
-from app.core.leader import register_settings_provider
 from app.core.leader.advisory import control_plane_leader
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
@@ -174,7 +173,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with session_factory() as db:
         await svc.initialize(db)
         await _validate_online_agent_contracts(db)
-    register_settings_provider(svc.get)
     _validate_leader_keepalive_settings(settings=svc)
 
     await pool.reopen()

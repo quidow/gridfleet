@@ -20,7 +20,6 @@ from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shu
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
-from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
@@ -215,8 +214,6 @@ async def reset_process_config() -> AsyncGenerator[None]:
     grid_snapshot = grid_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
-    leader_settings_provider._provider = None
-    leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
     shutdown_coordinator.reset()
     yield
@@ -233,7 +230,6 @@ async def reset_process_config() -> AsyncGenerator[None]:
         setattr(grid_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
-    leader_settings_provider._provider = None
 
 
 @pytest_asyncio.fixture
