@@ -7,11 +7,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - runtime use in helper signature
 
-from app.core.leader.settings_provider import get as _setting
 from app.core.observability import get_logger
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+    from app.core.protocols import SettingsReader
 
 logger = get_logger(__name__)
 
@@ -219,7 +220,7 @@ class ControlPlaneLeader:
 control_plane_leader = ControlPlaneLeader()
 
 
-async def assert_current_leader(db: AsyncSession) -> None:
+async def assert_current_leader(db: AsyncSession, *, settings: SettingsReader) -> None:
     """Verify this process still holds the control-plane advisory lock.
 
     Reads ``control_plane_leader_heartbeats.id = 1`` and raises
@@ -235,7 +236,7 @@ async def assert_current_leader(db: AsyncSession) -> None:
     is false, so disabling keepalive falls back to the previous
     "eventually exits stale leaders" behavior.
     """
-    if not _setting("general.leader_keepalive_enabled"):
+    if not settings.get("general.leader_keepalive_enabled"):
         logger.debug("control_plane_leader_fencing_disabled")
         return
 
