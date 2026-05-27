@@ -247,7 +247,7 @@ class EventBus:
 
     async def _shutdown_handler_tasks(self, timeout: float = HANDLER_DRAIN_TIMEOUT_SEC) -> None:
         # Handler tasks can spawn additional handler tasks (e.g. an
-        # ``after_commit`` callback awaits ``event_bus.publish`` which schedules
+        # ``after_commit`` callback awaits ``publisher.publish`` which schedules
         # ``_dispatch_handlers`` as a new tracked task). A one-shot
         # ``asyncio.wait`` snapshot would let those children outlive shutdown
         # and contend with ``DROP SCHEMA CASCADE`` in tests. Drain in a loop
@@ -385,7 +385,7 @@ def queue_event_for_session(
     sync object directly and can pass it without reconstructing the
     ``AsyncSession``.
 
-    On commit, ``loop.create_task(event_bus.publish(event_type, data))`` runs
+    On commit, ``loop.create_task(publisher.publish(event_type, data))`` runs
     for each queued event. On rollback, the queue is dropped — webhook/SSE
     subscribers never see a transition that did not become durable. ``data``
     is captured by reference — do not mutate it after queuing.
