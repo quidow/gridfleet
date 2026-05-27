@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import importlib
 import signal
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -58,6 +57,8 @@ from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
+from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
+from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
 from app.jobs import queue as job_queue
 from app.packs import routers as pack_routers
 from app.packs import services as pack_services
@@ -90,24 +91,6 @@ assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
 PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
 run_reaper_loop = run_service_reaper.run_reaper_loop
-
-
-async def hardware_telemetry_loop(
-    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
-) -> None:
-    service_hardware_telemetry = importlib.import_module("app.hosts.service_hardware_telemetry")
-    await service_hardware_telemetry.hardware_telemetry_loop(
-        settings=settings, pool=pool, circuit_breaker=circuit_breaker
-    )
-
-
-async def host_resource_telemetry_loop(
-    *, settings: SettingsReader, pool: AgentHttpPool | None = None, circuit_breaker: AgentCircuitBreaker | None = None
-) -> None:
-    service_resource_telemetry = importlib.import_module("app.hosts.service_resource_telemetry")
-    await service_resource_telemetry.host_resource_telemetry_loop(
-        settings=settings, pool=pool, circuit_breaker=circuit_breaker
-    )
 
 
 async def pack_drain_loop() -> None:
@@ -232,6 +215,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         appium_reconciler = AppiumReconcilerLoop(services=app_services.appium_nodes)
         session_sync = SessionSyncLoop(services=app_services.sessions)
         session_viability = SessionViabilityLoop(services=app_services.sessions)
+        hardware_telemetry = HardwareTelemetryLoop(services=app_services.hosts)
+        host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
@@ -241,11 +226,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
             (property_refresh.run(), "property_refresh_loop"),
-            (hardware_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker), "hardware_telemetry_loop"),
-            (
-                host_resource_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker),
-                "host_resource_telemetry_loop",
-            ),
+            (hardware_telemetry.run(), "hardware_telemetry_loop"),
+            (host_resource_telemetry.run(), "host_resource_telemetry_loop"),
             (
                 job_queue.durable_job_worker_loop(session_factory, publisher=bus, settings=svc),
                 "durable_job_worker_loop",

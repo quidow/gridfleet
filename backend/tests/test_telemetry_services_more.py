@@ -26,6 +26,8 @@ from app.hosts import (
 from app.hosts import (
     service_resource_telemetry as host_resource_telemetry,
 )
+from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
+from app.hosts.services_container import HostServices
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
@@ -413,9 +415,18 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
     async def fake_session() -> AsyncGenerator[FlushSession, None]:
         yield FlushSession()
 
+    loop = HostResourceTelemetryLoop(
+        services=HostServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
+            pool=Mock(),
+            circuit_breaker=Mock(),
+            session_factory=fake_session,
+        )
+    )
+
     with (
         patch("app.hosts.service_resource_telemetry.observe_background_loop", return_value=_Observation()),
-        patch("app.hosts.service_resource_telemetry.async_session", fake_session),
         patch(
             "app.hosts.service_resource_telemetry.poll_host_resource_telemetry_once",
             new=AsyncMock(side_effect=RuntimeError("boom")),
@@ -424,9 +435,7 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
         patch("app.hosts.service_resource_telemetry.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
-        await host_resource_telemetry.host_resource_telemetry_loop(
-            settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1})
-        )
+        await loop.run()
 
     log_exception.assert_called_once_with("Host resource telemetry loop failed")
 
