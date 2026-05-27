@@ -37,7 +37,7 @@ async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) ->
         invocations += 1
 
     monkeypatch.setattr(service_sync, "_sync_sessions", fake_sync_sessions)
-    monkeypatch.setattr(service_sync.settings_service, "get", lambda key: 30)
+    monkeypatch.setattr(service_sync._default_settings, "get", lambda key: 30)
 
     class _NullCtx:
         async def __aenter__(self) -> None:
@@ -73,7 +73,7 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
         await release_sync.wait()
 
     monkeypatch.setattr(service_sync, "_sync_sessions", fake_sync_sessions)
-    monkeypatch.setattr(service_sync.settings_service, "get", lambda key: 30)
+    monkeypatch.setattr(service_sync._default_settings, "get", lambda key: 30)
 
     class _NullCtx:
         async def __aenter__(self) -> None:

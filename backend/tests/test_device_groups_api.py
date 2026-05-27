@@ -192,12 +192,7 @@ async def test_remove_members(client: AsyncClient, db_session: AsyncSession, def
 async def test_add_members_to_dynamic_group_fails(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
-    group = await _create_group(
-        client,
-        name="Dynamic",
-        group_type="dynamic",
-        filters={"platform_id": "android_mobile"},
-    )
+    group = await _create_group(client, name="Dynamic", group_type="dynamic", filters={"platform_id": "android_mobile"})
     d1 = await _create_device(db_session, "grp-dyn-001", "D-dyn", default_host_id)
 
     resp = await client.post(
@@ -223,10 +218,7 @@ async def test_dynamic_group_resolves_members(
     )
 
     group = await _create_group(
-        client,
-        name="All Android",
-        group_type="dynamic",
-        filters={"platform_id": "android_mobile"},
+        client, name="All Android", group_type="dynamic", filters={"platform_id": "android_mobile"}
     )
 
     detail = await client.get(f"/api/device-groups/{group['id']}")

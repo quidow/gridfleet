@@ -12,6 +12,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import set_hold, set_operational_state
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,14 +27,36 @@ pytestmark = pytest.mark.db
 # ---------------------------------------------------------------------------
 
 
-def _make_severity_capture(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Return a list that accumulates {type, severity} dicts for each publish call."""
+def _make_severity_capture(monkeypatch: pytest.MonkeyPatch, *, inject_publisher: bool = False) -> list[dict[str, Any]]:
+    """Return a list that accumulates {type, severity} dicts for each publish call.
+
+    When *inject_publisher* is True, the state-machine module's references to
+    ``set_operational_state`` and ``set_hold`` are wrapped so that
+    ``publisher=event_bus`` is injected automatically (the state machine does
+    not pass publisher itself).
+    """
     captured: list[dict[str, Any]] = []
 
     async def _fake_publish(name: str, payload: dict[str, Any], *, severity: str | None = None) -> None:
         captured.append({"type": name, "severity": severity})
 
-    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
+    monkeypatch.setattr(event_bus, "publish", _fake_publish)
+
+    if inject_publisher:
+        _orig_set_op = set_operational_state
+        _orig_set_hold = set_hold
+
+        async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+            kwargs.setdefault("publisher", event_bus)
+            return await _orig_set_op(device, new_state, **kwargs)
+
+        async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+            kwargs.setdefault("publisher", event_bus)
+            return await _orig_set_hold(device, new_hold, **kwargs)
+
+        monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
+        monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
+
     return captured
 
 
@@ -77,6 +100,7 @@ async def test_set_operational_state_forwards_explicit_severity(
         DeviceOperationalState.available,
         reason="Health checks recovered",
         severity="success",
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -97,6 +121,7 @@ async def test_set_operational_state_none_severity_passes_none(
         device,
         DeviceOperationalState.available,
         reason="no severity kwarg",
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -118,6 +143,7 @@ async def test_set_hold_forwards_explicit_severity(
         DeviceHold.maintenance,
         reason="Operator entered maintenance",
         severity="info",
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -133,7 +159,7 @@ async def test_set_hold_none_severity_passes_none(
 ) -> None:
     captured = _make_severity_capture(monkeypatch)
 
-    await set_hold(device, DeviceHold.maintenance, reason="no severity kwarg")
+    await set_hold(device, DeviceHold.maintenance, reason="no severity kwarg", publisher=event_bus)
     await db_session.commit()
 
     events = _events_of_type(captured, "device.hold_changed")
@@ -152,7 +178,7 @@ async def test_state_machine_connectivity_lost_emits_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CONNECTIVITY_LOST → severity='warning' (available→offline)."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     # Put device in available state first
     with state_write_guard.bypass():
@@ -174,7 +200,7 @@ async def test_state_machine_connectivity_restored_emits_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CONNECTIVITY_RESTORED → severity='success' (offline→available)."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     changed = await DeviceStateMachine().transition(
         device, TransitionEvent.CONNECTIVITY_RESTORED, reason="ADB restored"
@@ -193,7 +219,7 @@ async def test_state_machine_session_started_emits_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """SESSION_STARTED → severity='info' (available→busy)."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available
@@ -214,7 +240,7 @@ async def test_state_machine_verification_failed_emits_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """VERIFICATION_FAILED → severity='warning' (verifying→offline)."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.verifying
@@ -237,7 +263,7 @@ async def test_state_machine_verification_passed_emits_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """VERIFICATION_PASSED → severity='success' (verifying→available)."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.verifying
@@ -260,7 +286,7 @@ async def test_state_machine_maintenance_entered_emits_info_on_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """MAINTENANCE_ENTERED changes hold → severity='info' on hold_changed event."""
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available

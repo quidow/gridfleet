@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.event_bus import EventBus
+
 
 EVENT_DEGRADED = "pack_feature.degraded"
 EVENT_RECOVERED = "pack_feature.recovered"
@@ -38,6 +40,7 @@ async def record_feature_status(
     feature_id: str,
     ok: bool,
     detail: str,
+    publisher: EventBus | None = None,
 ) -> bool:
     """Upsert the (host, pack, feature) status row and emit a webhook on transition.
 
@@ -82,7 +85,7 @@ async def record_feature_status(
     if existing is not None:
         await session.refresh(existing)
 
-    if event_type is not None:
+    if event_type is not None and publisher is not None:
         queue_event_for_session(
             session,
             event_type,
@@ -93,6 +96,7 @@ async def record_feature_status(
                 "ok": ok,
                 "detail": detail,
             },
+            publisher=publisher,
         )
 
     return transitioned

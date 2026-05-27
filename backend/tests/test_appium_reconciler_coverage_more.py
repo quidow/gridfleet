@@ -152,7 +152,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     converge = AsyncMock()
     monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
     monkeypatch.setattr("app.appium_nodes.services.reconciler.converge_host_rows", converge)
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.settings_service.get", lambda _key: 2)
+    monkeypatch.setattr("app.appium_nodes.services.reconciler._default_settings.get", lambda _key: 2)
 
     await appium_reconciler._drive_convergence(
         [
@@ -255,7 +255,7 @@ async def test_record_and_reset_start_failure_state(
         yield db_session
 
     monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler.settings_service.get",
+        "app.appium_nodes.services.reconciler._default_settings.get",
         lambda key: {"appium_reconciler.start_failure_threshold": 1, "appium.startup_timeout_sec": 5}[key],
     )
 

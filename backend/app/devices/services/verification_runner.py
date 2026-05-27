@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.core.type_defs import SessionFactory
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.verification_execution import execute_verification_context
 from app.devices.services.verification_job_state import finish_job, hydrate_job
@@ -12,6 +13,10 @@ from app.devices.services.verification_preparation import validate_create_reques
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions import service_viability as session_viability
+
+if TYPE_CHECKING:
+    from app.core.type_defs import SessionFactory
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +38,10 @@ async def run_persisted_verification_job(
     job_id: str,
     request: dict[str, Any],
     session_factory: SessionFactory,
+    *,
+    publisher: EventPublisher,
 ) -> None:
-    job = await _load_persisted_job(job_id, session_factory)
+    job = await _load_persisted_job(job_id, session_factory, publisher=publisher)
     if job is None:
         return
 
@@ -78,9 +85,14 @@ async def run_persisted_verification_job(
         await finish_job(job, status="failed", error="Verification job crashed unexpectedly")
 
 
-async def _load_persisted_job(job_id: str, session_factory: SessionFactory) -> dict[str, Any] | None:
+async def _load_persisted_job(
+    job_id: str,
+    session_factory: SessionFactory,
+    *,
+    publisher: EventPublisher,
+) -> dict[str, Any] | None:
     async with session_factory() as db:
         row = await db.get(Job, uuid.UUID(job_id))
     if row is None or row.kind != JOB_KIND_DEVICE_VERIFICATION:
         return None
-    return hydrate_job(row.snapshot, db_job_id=job_id, session_factory=session_factory)
+    return hydrate_job(row.snapshot, db_job_id=job_id, session_factory=session_factory, publisher=publisher)

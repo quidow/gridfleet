@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.events import queue_device_crashed_event
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -28,6 +29,7 @@ async def test_device_crashed_dispatches_after_commit(
         reason="exit code 137",
         will_restart=True,
         process="appium",
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == [], "must not dispatch before commit"
@@ -61,6 +63,7 @@ async def test_device_crashed_dropped_on_rollback(
         source="connectivity_lost",
         reason="adb disconnect",
         will_restart=False,
+        publisher=event_bus,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()
@@ -84,6 +87,7 @@ async def test_handle_node_crash_queues_device_crashed(
         locked,
         source="connectivity_lost",
         reason="ADB disconnect",
+        publisher=event_bus,
     )
     await db_session.commit()
     await settle_after_commit_tasks()

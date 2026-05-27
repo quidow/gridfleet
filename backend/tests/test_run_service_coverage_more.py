@@ -16,6 +16,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
 RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
@@ -223,18 +224,18 @@ async def test_run_listing_cursor_and_state_transition_branches(db_session: Asyn
     assert empty_page.items == []
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.signal_ready(db_session, uuid.uuid4())
+        await run_service.signal_ready(db_session, uuid.uuid4(), publisher=event_bus)
     with pytest.raises(ValueError, match="Cannot signal ready"):
-        await run_service.signal_ready(db_session, active.id)
+        await run_service.signal_ready(db_session, active.id, publisher=event_bus)
 
-    ready = await run_service.signal_ready(db_session, older.id)
+    ready = await run_service.signal_ready(db_session, older.id, publisher=event_bus)
     assert ready.state == RunState.active
     assert ready.started_at is not None
 
-    already_active = await run_service.signal_active(db_session, active.id)
+    already_active = await run_service.signal_active(db_session, active.id, publisher=event_bus)
     assert already_active.state == RunState.active
     with pytest.raises(ValueError, match="Cannot signal active"):
-        await run_service.signal_active(db_session, terminal.id)
+        await run_service.signal_active(db_session, terminal.id, publisher=event_bus)
 
     before = terminal.last_heartbeat
     heartbeat_terminal = await run_service.heartbeat(db_session, terminal.id)
@@ -272,31 +273,31 @@ async def test_run_terminal_transition_paths(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.complete_run(db_session, uuid.uuid4())
+        await run_service.complete_run(db_session, uuid.uuid4(), publisher=event_bus)
     with pytest.raises(ValueError, match="terminal state"):
-        await run_service.complete_run(db_session, terminal.id)
-    completed = await run_service.complete_run(db_session, active.id)
+        await run_service.complete_run(db_session, terminal.id, publisher=event_bus)
+    completed = await run_service.complete_run(db_session, active.id, publisher=event_bus)
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cancel_run(db_session, uuid.uuid4())
-    cancelled = await run_service.cancel_run(db_session, cancel.id)
+        await run_service.cancel_run(db_session, uuid.uuid4(), publisher=event_bus)
+    cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus)
     assert cancelled.state == RunState.cancelled
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db_session, uuid.uuid4())
-    forced = await run_service.force_release(db_session, force.id)
+        await run_service.force_release(db_session, uuid.uuid4(), publisher=event_bus)
+    forced = await run_service.force_release(db_session, force.id, publisher=event_bus)
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
-    await run_service.expire_run(db_session, expired, "timeout")
+    await run_service.expire_run(db_session, expired, "timeout", publisher=event_bus)
     await db_session.refresh(expired)
     assert expired.state == RunState.expired
     assert expired.error == "timeout"
 
     before = terminal.completed_at
-    await run_service.expire_run(db_session, terminal, "ignored")
+    await run_service.expire_run(db_session, terminal, "ignored", publisher=event_bus)
     await db_session.refresh(terminal)
     assert terminal.completed_at == before
 
@@ -370,7 +371,7 @@ async def test_cooldown_device_guard_paths(
         "general.device_cooldown_max_sec": 30,
         "general.device_cooldown_escalation_threshold": 3,
     }
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.settings_service.get", lambda key: settings[key])
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}._default_settings.get", lambda key: settings[key])
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
@@ -542,7 +543,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
     monkeypatch.setattr(
-        f"{RUN_FAILURES_MODULE}.settings_service.get",
+        f"{RUN_FAILURES_MODULE}._default_settings.get",
         lambda key: {
             "general.device_cooldown_max_sec": 60,
             "general.device_cooldown_escalation_threshold": 1,
@@ -689,7 +690,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
     assert run_service._reserved_entry_is_excluded(
         SimpleNamespace(excluded=True, excluded_until=datetime.now(UTC) + timedelta(minutes=1))
     )
-    monkeypatch.setattr("app.runs.service_allocator.settings_service.get", lambda key: 10)
+    monkeypatch.setattr("app.runs.service_allocator._default_settings.get", lambda key: 10)
     with pytest.raises(ValueError, match="exceeds maximum"):
         run_service._resolve_run_options(
             SimpleNamespace(ttl_minutes=20, heartbeat_timeout_sec=None),

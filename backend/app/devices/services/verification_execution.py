@@ -30,7 +30,7 @@ from app.sessions import service_viability as session_viability
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 device_is_virtual = pack_platform_catalog.device_is_virtual
 
@@ -74,7 +74,7 @@ def _health_failure_detail(result: dict[str, Any]) -> str:
 
 def _device_health_timeout(device: Device) -> float | int:
     if device_is_virtual(device):
-        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(settings_service.get("appium.startup_timeout_sec")) + 5)
+        return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, int(_default_settings.get("appium.startup_timeout_sec")) + 5)
     return 10
 
 
@@ -208,8 +208,8 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device) -
     Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper
     does not commit; the caller owns transaction boundaries.
     """
-    startup_timeout = int(settings_service.get("appium.startup_timeout_sec"))
-    viability_timeout = int(settings_service.get("general.session_viability_timeout_sec"))
+    startup_timeout = int(_default_settings.get("appium.startup_timeout_sec"))
+    viability_timeout = int(_default_settings.get("general.session_viability_timeout_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
     await register_intents_and_reconcile(
         db,
@@ -266,7 +266,7 @@ async def run_probe(
         except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
             logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
-        timeout = int(settings_service.get("appium.startup_timeout_sec"))
+        timeout = int(_default_settings.get("appium.startup_timeout_sec"))
         started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
         if started_node is None:
             detail = "Verification node did not reach running state within timeout"
@@ -283,7 +283,7 @@ async def run_probe(
         )
 
         await set_stage(job, "session_probe", "running")
-        timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
+        timeout_sec = int(_default_settings.get("general.session_viability_timeout_sec"))
         capabilities = await capability_service.get_device_capabilities(
             db,
             device,

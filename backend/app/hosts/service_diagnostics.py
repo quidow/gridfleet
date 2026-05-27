@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+
 APPIUM_PROCESSES_NAMESPACE = "heartbeat.appium_processes"
 RECENT_RECOVERY_EVENT_FETCH_LIMIT = 50
 RECENT_RECOVERY_EVENT_LIMIT = 10
@@ -203,16 +205,20 @@ async def _list_recent_recovery_events(db: AsyncSession, host: Host) -> list[Hos
     return recent_events
 
 
-async def get_host_diagnostics(db: AsyncSession, host: Host | UUID) -> HostDiagnosticsRead | None:
+async def get_host_diagnostics(
+    db: AsyncSession,
+    host: Host | UUID,
+    *,
+    circuit_breaker: AgentCircuitBreaker | None = None,
+) -> HostDiagnosticsRead | None:
     resolved_host = host if isinstance(host, Host) else await db.get(Host, host)
     if resolved_host is None:
         return None
 
+    breaker = circuit_breaker or agent_circuit_breaker_module.agent_circuit_breaker
     return HostDiagnosticsRead(
         host_id=resolved_host.id,
-        circuit_breaker=HostCircuitBreakerRead.model_validate(
-            agent_circuit_breaker_module.agent_circuit_breaker.public_snapshot(resolved_host.ip)
-        ),
+        circuit_breaker=HostCircuitBreakerRead.model_validate(breaker.public_snapshot(resolved_host.ip)),
         appium_processes=await _build_appium_processes_snapshot(db, resolved_host),
         recent_recovery_events=await _list_recent_recovery_events(db, resolved_host),
     )

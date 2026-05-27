@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.services.heartbeat import _ingest_appium_restart_events
 from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -35,7 +36,7 @@ async def test_restart_succeeded_queues_node_state_changed(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
     await settle_after_commit_tasks()
 
@@ -66,7 +67,7 @@ async def test_restart_exhausted_queues_node_crash_and_device_crashed(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
     await settle_after_commit_tasks()
 
@@ -100,7 +101,7 @@ async def test_restart_failed_dropped_on_rollback(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.rollback()
     await settle_after_commit_tasks()
 

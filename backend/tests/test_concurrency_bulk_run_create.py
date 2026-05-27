@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.events.dependencies import get_event_services
+from app.events.services_container import EventServices
 from app.main import app
 from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.services_container import SettingsServices
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.asyncio
 
@@ -39,12 +42,22 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
     bulk_path = "/api/devices/bulk/enter-maintenance"
 
+    def _override_event_services() -> EventServices:
+        return EventServices(  # type: ignore[arg-type]
+            publisher=event_bus,
+            subscriber=event_bus,
+            reader=event_bus,
+            session_factory=db_session_maker,
+            engine=db_session_maker.kw["bind"],
+        )
+
     async def bulk_maintenance() -> int:
         async def override_get_db() -> AsyncGenerator[AsyncSession]:
             async with db_session_maker() as session:
                 yield session
 
         app.dependency_overrides[get_db] = override_get_db
+        app.dependency_overrides[get_event_services] = _override_event_services
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
@@ -54,6 +67,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 return resp.status_code
         finally:
             app.dependency_overrides.pop(get_db, None)
+            app.dependency_overrides.pop(get_event_services, None)
 
     async def run_create() -> int:
         async def override_get_db() -> AsyncGenerator[AsyncSession]:
@@ -65,6 +79,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_settings_services] = override_get_settings_services
+        app.dependency_overrides[get_event_services] = _override_event_services
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
@@ -80,6 +95,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
         finally:
             app.dependency_overrides.pop(get_db, None)
             app.dependency_overrides.pop(get_settings_services, None)
+            app.dependency_overrides.pop(get_event_services, None)
 
     statuses = await asyncio.gather(bulk_maintenance(), run_create())
 

@@ -20,6 +20,7 @@ from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -762,7 +763,7 @@ async def test_concurrent_create_run_reserves_device_once(
         async with session_factory() as session:
             run_payload = payload.model_copy(update={"name": name})
             try:
-                run, _devices = await run_service.create_run(session, run_payload)
+                run, _devices = await run_service.create_run(session, run_payload, publisher=event_bus)
                 return "success", str(run.id)
             except ValueError as exc:
                 return "error", str(exc)
@@ -814,6 +815,7 @@ async def test_fetch_session_counts_groups_by_status(
             name="counts-run",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
+        publisher=event_bus,
     )
     run_id = run[0].id
 
@@ -854,6 +856,7 @@ async def test_list_runs_returns_session_counts_per_run(
             name="list-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
+        publisher=event_bus,
     )
     run_id = run[0].id
 
@@ -892,6 +895,7 @@ async def test_get_run_detail_returns_session_counts(
             name="detail-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
+        publisher=event_bus,
     )
     run_id = run[0].id
 
@@ -1057,7 +1061,7 @@ async def test_sessions_straddle_active_signal_boundary(
 
     await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
-    await run_service.signal_active(db_session, run.id)
+    await run_service.signal_active(db_session, run.id, publisher=event_bus)
     await db_session.refresh(run)
     assert run.state == RunState.active
     assert run.started_at is not None

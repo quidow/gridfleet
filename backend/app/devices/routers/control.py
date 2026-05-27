@@ -29,6 +29,7 @@ from app.devices.services import identity, lifecycle_policy
 from app.devices.services import intent as intent_service
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services import presenter as device_presenter
+from app.events.dependencies import EventServicesDep
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions import service_viability as session_viability
@@ -86,9 +87,10 @@ async def merge_device_config(
     device_id: uuid.UUID,
     body: dict[str, Any],
     db: DbDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
-    return await config_service.merge_device_config(db, device, body)
+    return await config_service.merge_device_config(db, device, body, publisher=events.publisher)
 
 
 @router.get("/{device_id}/config/history", response_model=list[ConfigAuditEntryRead])

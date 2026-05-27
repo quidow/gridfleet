@@ -9,12 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.events.dependencies import get_event_services
+from app.events.services_container import EventServices
 from app.hosts.models import Host
 from app.main import app
 from app.settings import settings_service
 from app.settings.dependencies import get_settings_services
 from app.settings.services_container import SettingsServices
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
@@ -44,8 +47,18 @@ async def test_start_node_locks_device_before_reservation_check(
     def override_get_settings_services() -> SettingsServices:
         return SettingsServices(service=settings_service, session_factory=db_session_maker)
 
+    def _override_event_services() -> EventServices:
+        return EventServices(  # type: ignore[arg-type]
+            publisher=event_bus,
+            subscriber=event_bus,
+            reader=event_bus,
+            session_factory=db_session_maker,
+            engine=db_session_maker.kw["bind"],
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_services] = override_get_settings_services
+    app.dependency_overrides[get_event_services] = _override_event_services
 
     inside_start = asyncio.Event()
     proceed_start = asyncio.Event()
@@ -100,6 +113,7 @@ async def test_start_node_locks_device_before_reservation_check(
             nodes_module._assert_device_not_reserved = original_assert_not_reserved
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_settings_services, None)
+        app.dependency_overrides.pop(get_event_services, None)
 
     async with db_session_maker() as verify:
         reservations = (

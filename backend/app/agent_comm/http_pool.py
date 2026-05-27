@@ -222,4 +222,7 @@ class AgentHttpPool:
                 logger.exception("agent_http_pool_deferred_close_failed")
 
 
+# DEPRECATED: Created at import time for backwards compatibility.
+# New code should access via DI (AppServices.agent_comm.http_pool).
+# Will be removed when all consumers are migrated.
 agent_http_pool = AgentHttpPool()

@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, and_, asc, desc, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.appium_nodes.models import AppiumNode
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
@@ -21,11 +21,17 @@ from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, Inc
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import appium_node_stop_in_flight
 from app.events import queue_event_for_session
-from app.events.catalog import EventSeverity
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.models import Session, SessionStatus
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
+
+    from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 ready_operational_state = device_state.ready_operational_state
 set_operational_state = device_state.set_operational_state
@@ -102,11 +108,15 @@ def queue_session_started_event(
     *,
     device: Device | None,
     run_id: str | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     queue_event_for_session(
         db,
         "session.started",
         build_session_started_event_payload(session, device=device, run_id=run_id),
+        publisher=publisher,
     )
 
 
@@ -115,12 +125,16 @@ def queue_session_ended_event(
     session: Session,
     *,
     device: Device | None,
+    publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     queue_event_for_session(
         db,
         "session.ended",
         build_session_ended_event_payload(session, device=device),
         severity=_session_ended_severity(str(session.status), session.error_type),
+        publisher=publisher,
     )
 
 

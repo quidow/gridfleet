@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,8 +187,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
-    await bulk_service.bulk_start_nodes(db_session, [device.id])
+    await bulk_service.bulk_start_nodes(db_session, [device.id], publisher=event_bus)
 
     assert captured == ["bulk"]
 
@@ -220,7 +219,6 @@ async def test_bulk_start_nodes_accepts_group_caller(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
-    monkeypatch.setattr(bulk_service.event_bus, "publish", AsyncMock())
-    await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group")
+    await bulk_service.bulk_start_nodes(db_session, [device.id], caller="group", publisher=event_bus)
 
     assert captured == ["group"]

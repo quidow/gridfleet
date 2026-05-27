@@ -29,13 +29,14 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.review import clear_review_required
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.devices.models import Device
+    from app.settings.service import SettingsService
 
 
 def operator_start_source(device_id: uuid.UUID) -> str:
@@ -70,8 +71,10 @@ def operator_start_intent(device: Device, desired_port: int) -> IntentRegistrati
     )
 
 
-def operator_restart_intent(device: Device, desired_port: int) -> IntentRegistration:
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+def operator_restart_intent(
+    device: Device, desired_port: int, *, settings: SettingsService | None = None
+) -> IntentRegistration:
+    window_sec = int((settings or _default_settings).get("appium_reconciler.restart_window_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),
@@ -125,7 +128,7 @@ async def request_start(
         node = AppiumNode(
             device_id=device.id,
             port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
+            grid_url=_default_settings.get("grid.hub_url"),
         )
         db.add(node)
         await db.flush()

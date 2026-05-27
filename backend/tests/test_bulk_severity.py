@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -69,7 +70,7 @@ async def test_bulk_completed_succeeds_emits_success(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    fake_publisher = SimpleNamespace(publish=_fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)
@@ -88,6 +89,7 @@ async def test_bulk_completed_succeeds_emits_success(
         operation="start_nodes",
         action_fn=_ok_action,
         caller="test",
+        publisher=fake_publisher,
     )
 
     bulk_events = [p for p in published if p["name"] == "bulk.operation_completed"]
@@ -107,7 +109,7 @@ async def test_bulk_completed_all_fail_emits_critical(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    fake_publisher = SimpleNamespace(publish=_fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)
@@ -126,6 +128,7 @@ async def test_bulk_completed_all_fail_emits_critical(
         operation="start_nodes",
         action_fn=_fail_action,
         caller="test",
+        publisher=fake_publisher,
     )
 
     bulk_events = [p for p in published if p["name"] == "bulk.operation_completed"]
@@ -145,7 +148,7 @@ async def test_bulk_completed_partial_emits_warning(
     async def _fake_publish(name: str, data: dict[str, Any], severity: str | None = None) -> None:
         published.append({"name": name, "data": data, "severity": severity})
 
-    monkeypatch.setattr("app.devices.services.bulk.event_bus.publish", _fake_publish)
+    fake_publisher = SimpleNamespace(publish=_fake_publish)
 
     async def _fake_load_existing(_db: object, device_ids: list) -> list:
         return list(device_ids)
@@ -169,6 +172,7 @@ async def test_bulk_completed_partial_emits_warning(
         operation="start_nodes",
         action_fn=_counting_action,
         caller="test",
+        publisher=fake_publisher,
     )
 
     bulk_events = [p for p in published if p["name"] == "bulk.operation_completed"]

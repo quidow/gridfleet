@@ -502,7 +502,19 @@ async def test_recovery_rejoin_publishes_availability_event(
     async def fake_publish(name: str, payload: dict[str, object], *, severity: object = None) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
+    from tests.helpers import test_event_bus as event_bus
+
+    monkeypatch.setattr(event_bus, "publish", fake_publish)
+
+    from app.devices.services import state as state_mod
+
+    _orig_set_hold = state_mod.set_hold
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_policy.set_hold", _wrapped_set_hold)
 
     with state_write_guard.bypass():
         device = Device(
@@ -829,7 +841,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
-            "app.devices.services.lifecycle_policy.settings_service.get",
+            "app.devices.services.lifecycle_policy._default_settings.get",
             side_effect=lambda key: {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 20,
@@ -1798,7 +1810,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
     monkeypatch.setattr(
-        lifecycle_policy_module.settings_service,
+        lifecycle_policy_module._default_settings,
         "get",
         lambda key: {
             "general.lifecycle_recovery_backoff_base_sec": 5,

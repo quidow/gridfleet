@@ -42,6 +42,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import approve_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -100,7 +101,7 @@ async def test_approve_host_races_concurrent_reject(
     db_session.execute = _delete_between_select_and_commit  # type: ignore[assignment, method-assign]
     try:
         try:
-            approved = await approve_host(db_session, host_id)
+            approved = await approve_host(db_session, host_id, publisher=event_bus)
         except Exception as exc:  # noqa: BLE001
             pytest.fail(
                 f"approve_host leaked exception under concurrent reject race: {exc!r} — "

@@ -169,7 +169,27 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     async def fake_publish(name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.publish", fake_publish)
+    from tests.helpers import test_event_bus as _event_bus
+
+    monkeypatch.setattr(_event_bus, "publish", fake_publish)
+
+    from app.appium_nodes.services import heartbeat as heartbeat_mod
+    from app.devices.services.state import set_operational_state as _orig_set_op
+
+    _orig_apply = heartbeat_mod._apply_host_ping_result
+
+    async def _wrapped_apply(*args: object, **kwargs: object) -> None:
+        kwargs.setdefault("publisher", _event_bus)
+        await _orig_apply(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", _event_bus)
+        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(heartbeat_mod, "_apply_host_ping_result", _wrapped_apply)
+    monkeypatch.setattr(heartbeat_mod, "set_operational_state", _wrapped_set_op)
+    # Also inject into state machine for cascade via _restore_available_for_healthy_signal
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
 
     host = Host(
         hostname="cascade-host",

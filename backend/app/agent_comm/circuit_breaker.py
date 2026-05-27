@@ -9,12 +9,20 @@ from sqlalchemy import or_, select
 
 from app.core.database import async_session
 from app.core.observability import get_logger
-from app.events import event_bus
 from app.hosts.models.host import Host
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
+    from app.settings.service import SettingsService
+
+
+class _NullPublisher:
+    """No-op publisher used to bootstrap the module-level singleton before DI wires the real bus."""
+
+    async def publish(self, event_type: str, data: dict[str, Any], **_kwargs: Any) -> None:  # noqa: ANN401
+        pass
+
 
 logger = get_logger(__name__)
 
@@ -48,16 +56,17 @@ class CircuitState:
 
 
 class AgentCircuitBreaker:
-    def __init__(self, *, publisher: EventPublisher | None = None) -> None:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsService | None = None) -> None:
         self._states: dict[str, CircuitState] = {}
         self._lock = asyncio.Lock()
         self._publisher = publisher
+        self._settings = settings or _default_settings
 
     def _failure_threshold(self) -> int:
-        return int(settings_service.get("agent.circuit_breaker_failure_threshold"))
+        return int(self._settings.get("agent.circuit_breaker_failure_threshold"))
 
     def _cooldown_seconds(self) -> float:
-        return float(settings_service.get("agent.circuit_breaker_cooldown_seconds"))
+        return float(self._settings.get("agent.circuit_breaker_cooldown_seconds"))
 
     def failure_threshold(self) -> int:
         """Public read accessor for the current failure threshold (reads from settings)."""
@@ -102,8 +111,7 @@ class AgentCircuitBreaker:
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
             payload: dict[str, Any] = {"host": host, **(await _resolve_host_identity(host))}
-            _bus = self._publisher or event_bus
-            await _bus.publish(
+            await self._publisher.publish(
                 "host.circuit_breaker.closed",
                 payload,
             )
@@ -152,14 +160,10 @@ class AgentCircuitBreaker:
                 "last_error": error,
                 **(await _resolve_host_identity(host)),
             }
-            _bus = self._publisher or event_bus
-            await _bus.publish(
+            await self._publisher.publish(
                 "host.circuit_breaker.opened",
                 payload,
             )
-
-    def reset(self) -> None:
-        self._states.clear()
 
     def snapshot(self, host: str) -> dict[str, str | int | float | None]:
         state = self._states.get(host, CircuitState())
@@ -186,4 +190,7 @@ class AgentCircuitBreaker:
         }
 
 
-agent_circuit_breaker = AgentCircuitBreaker()
+# DEPRECATED: bootstrapped with a no-op publisher; replaced at startup by compose_app.
+# New code should access via DI (AppServices.agent_comm.circuit_breaker).
+# Will be removed when all consumers are migrated (Task 3.1 / Task 6.2).
+agent_circuit_breaker: AgentCircuitBreaker = AgentCircuitBreaker(publisher=_NullPublisher())

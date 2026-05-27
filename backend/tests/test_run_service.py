@@ -13,6 +13,7 @@ from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_force_release_clears_stop_pending(
@@ -74,7 +75,7 @@ async def test_force_release_clears_stop_pending(
 
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id)
+    await run_service.force_release(db_session, run.id, publisher=event_bus)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -172,7 +173,7 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     )
     monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id)
+    await run_service.force_release(db_session, run.id, publisher=event_bus)
 
     # _release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could

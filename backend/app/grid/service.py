@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
+
+if TYPE_CHECKING:
+    from app.settings.service import SettingsService
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +34,9 @@ async def close() -> None:
     _client = None
 
 
-async def get_grid_status() -> dict[str, Any]:
+async def get_grid_status(*, settings: SettingsService | None = None) -> dict[str, Any]:
     """Fetch Selenium Grid /status and return parsed JSON."""
-    url = f"{settings_service.get('grid.hub_url')}/status"
+    url = f"{(settings or _default_settings).get('grid.hub_url')}/status"
     try:
         resp = await _get_client().get(url, timeout=5)
         resp.raise_for_status()
@@ -42,13 +47,13 @@ async def get_grid_status() -> dict[str, Any]:
         return {"ready": False, "error": "grid_unreachable"}
 
 
-async def terminate_grid_session(session_id: str) -> bool:
+async def terminate_grid_session(session_id: str, *, settings: SettingsService | None = None) -> bool:
     """Delete a WebDriver session through the Selenium Grid hub.
 
     Selenium Grid exposes the normal WebDriver endpoint at DELETE /session/{id}.
     A 404 means the session is already gone and is safe to treat as success.
     """
-    url = f"{settings_service.get('grid.hub_url')}/session/{session_id}"
+    url = f"{(settings or _default_settings).get('grid.hub_url')}/session/{session_id}"
     try:
         resp = await _get_client().delete(url, timeout=10)
         if resp.status_code == 404:

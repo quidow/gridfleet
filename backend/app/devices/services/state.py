@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -48,13 +49,14 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.operational_state
     if old == new_state:
         return False
     device.operational_state = new_state
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -63,7 +65,13 @@ async def set_operational_state(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(session, "device.operational_state_changed", payload, severity=severity)
+        queue_event_for_session(
+            session,
+            "device.operational_state_changed",
+            payload,
+            severity=severity,
+            publisher=publisher,
+        )
     return True
 
 
@@ -74,13 +82,14 @@ async def set_hold(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
+    publisher: EventBus | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.hold
     if old == new_hold:
         return False
     device.hold = new_hold
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -89,7 +98,7 @@ async def set_hold(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(session, "device.hold_changed", payload, severity=severity)
+        queue_event_for_session(session, "device.hold_changed", payload, severity=severity, publisher=publisher)
     return True
 
 

@@ -15,7 +15,6 @@ from app.core.type_defs import AsyncTaskFactory
 from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import presenter as device_presenter
-from app.events import event_bus
 from app.events.dependencies import EventServicesDep
 from app.events.protocols import EventPublisher
 from app.hosts import service as host_service
@@ -112,9 +111,8 @@ def _serialize_host(host: Host) -> dict[str, Any]:
     return payload
 
 
-async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher | None = None) -> None:
+async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
-    _bus = publisher or event_bus
     try:
         async with async_session() as db:
             host = await host_service.get_host(db, host_id)
@@ -122,7 +120,7 @@ async def _auto_discover(host_id: uuid.UUID, publisher: EventPublisher | None = 
                 return
             result = await pack_discovery_service.discover_devices(db, host, agent_get_pack_devices=get_pack_devices)
             if result.new_devices:
-                await _bus.publish(
+                await publisher.publish(
                     "host.discovery_completed",
                     {
                         "host_id": str(host_id),
@@ -155,14 +153,14 @@ async def register_host(
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     try:
-        host, is_new = await host_service.register_host(db, data)
+        host, is_new = await host_service.register_host(db, data, publisher=event_services.publisher)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
     if is_new:
         response.status_code = 201
         if settings_services.service.get("agent.auto_accept_hosts"):
-            _fire_and_forget(_auto_discover, host.id, event_services.bus)
+            _fire_and_forget(_auto_discover, host.id, event_services.publisher)
             _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
 
     return _serialize_host(host)
@@ -170,10 +168,10 @@ async def register_host(
 
 @router.post("/{host_id}/approve", response_model=HostRead)
 async def approve_host(host_id: uuid.UUID, db: DbDep, event_services: EventServicesDep) -> dict[str, Any]:
-    host = await host_service.approve_host(db, host_id)
+    host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
-    _fire_and_forget(_auto_discover, host.id, event_services.bus)
+    _fire_and_forget(_auto_discover, host.id, event_services.publisher)
     _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
     return _serialize_host(host)
 

@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import appium_status as fetch_appium_status
@@ -39,7 +41,13 @@ from app.devices.services.intent_types import (
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.events import queue_event_for_session
 from app.grid import service as grid_service
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import EventBus
+    from app.settings.service import SettingsService
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -82,21 +90,21 @@ async def _check_node_health(node: AppiumNode, device: Device) -> ProbeResult:
         return ProbeResult(status="indeterminate", detail="agent transport error")
 
 
-def _grid_registration_grace_active(node: AppiumNode) -> bool:
+def _grid_registration_grace_active(node: AppiumNode, *, settings: SettingsService | None = None) -> bool:
     started_at = node.started_at
     if started_at is None:
         return False
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
     age_seconds = (datetime.now(UTC) - started_at).total_seconds()
-    return 0 <= age_seconds < int(settings_service.get("appium.startup_timeout_sec"))
+    return 0 <= age_seconds < int((settings or _default_settings).get("appium.startup_timeout_sec"))
 
 
-async def _attempt_node_restart(db: AsyncSession, *, device: Device) -> None:
+async def _attempt_node_restart(db: AsyncSession, *, device: Device, settings: SettingsService | None = None) -> None:
     node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
     if node is None:
         return
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+    window_sec = int((settings or _default_settings).get("appium_reconciler.restart_window_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
     precondition: NodeRunningPrecondition = {
         "kind": "node_running",
@@ -140,6 +148,7 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     if locked_node is None:
@@ -210,18 +219,20 @@ async def _process_node_health(
                 reason="Node health checks recovered",
                 record_incident=False,
             )
-            queue_event_for_session(
-                db,
-                "node.state_changed",
-                {
-                    "device_id": str(device.id),
-                    "device_name": device.name,
-                    "old_state": "error",
-                    "new_state": "running",
-                    "port": node.port,
-                },
-                severity=node_state_severity("error", "running"),
-            )
+            if publisher is not None:
+                queue_event_for_session(
+                    db,
+                    "node.state_changed",
+                    {
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "old_state": "error",
+                        "new_state": "running",
+                        "port": node.port,
+                    },
+                    severity=node_state_severity("error", "running"),
+                    publisher=publisher,
+                )
             await record_event(
                 db,
                 device.id,
@@ -249,7 +260,7 @@ async def _process_node_health(
 
     locked_node.consecutive_health_failures += 1
     count = locked_node.consecutive_health_failures
-    max_failures = settings_service.get("general.node_max_failures")
+    max_failures = _default_settings.get("general.node_max_failures")
     await device_health.apply_node_state_transition(
         db,
         device,
@@ -349,7 +360,7 @@ async def _check_nodes(db: AsyncSession) -> None:
 async def node_health_loop() -> None:
     """Background loop that checks Appium node health."""
     while True:
-        interval = float(settings_service.get("general.node_check_interval_sec"))
+        interval = float(_default_settings.get("general.node_check_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await _check_nodes(db)

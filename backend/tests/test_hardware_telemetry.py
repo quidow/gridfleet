@@ -4,10 +4,10 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
-from app.events import event_bus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.settings import settings_service
-from tests.helpers import create_device_record, create_host
+from tests.helpers import create_device_record, create_host, drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession, client: AsyncClient) -> None:
@@ -77,15 +77,15 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
         "support_status": "supported",
         "reported_at": "2026-04-16T10:05:00Z",
     }
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample)
+    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
-    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample)
+    await hardware_telemetry.apply_telemetry_sample(db_session, device, warning_sample, publisher=event_bus)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     events, total = await event_bus.get_recent_events_persisted(limit=10)
     assert total == 1
     assert events[0]["type"] == "device.hardware_health_changed"

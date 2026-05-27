@@ -57,7 +57,7 @@ async def test_webhook(webhook_id: uuid.UUID, db: DbDep, event_services: EventSe
     webhook = await webhook_service.get_webhook(db, webhook_id)
     if webhook is None:
         raise HTTPException(status_code=404, detail="Webhook not found")
-    await event_services.bus.publish(
+    await event_services.publisher.publish(
         "webhook.test",
         {
             "webhook_id": str(webhook.id),

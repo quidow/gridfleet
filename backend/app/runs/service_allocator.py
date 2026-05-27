@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, exists, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
@@ -26,7 +28,13 @@ from app.runs.schemas import (
     RunCreate,
 )
 from app.runs.service_reservation import get_run
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.event_bus import EventBus
+    from app.settings.service import SettingsService
 
 
 class _UnmetRequirementError(Exception):
@@ -168,18 +176,19 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
     return f"count={requirement.count}"
 
 
-def _resolve_run_options(data: RunCreate) -> tuple[int, int]:
+def _resolve_run_options(data: RunCreate, *, settings: SettingsService | None = None) -> tuple[int, int]:
+    _settings = settings or _default_settings
     ttl_minutes = data.ttl_minutes
     if ttl_minutes is None:
-        ttl_minutes = settings_service.get("reservations.default_ttl_minutes")
+        ttl_minutes = _settings.get("reservations.default_ttl_minutes")
 
-    max_ttl_minutes = settings_service.get("reservations.max_ttl_minutes")
+    max_ttl_minutes = _settings.get("reservations.max_ttl_minutes")
     if ttl_minutes > max_ttl_minutes:
         raise ValueError(f"TTL {ttl_minutes} exceeds maximum allowed TTL of {max_ttl_minutes} minutes")
 
     heartbeat_timeout_sec = data.heartbeat_timeout_sec
     if heartbeat_timeout_sec is None:
-        heartbeat_timeout_sec = settings_service.get("reservations.default_heartbeat_timeout_sec")
+        heartbeat_timeout_sec = _settings.get("reservations.default_heartbeat_timeout_sec")
 
     return ttl_minutes, heartbeat_timeout_sec
 
@@ -282,7 +291,9 @@ async def _attempt_create_run(
     return run, device_infos
 
 
-async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
+async def create_run(
+    db: AsyncSession, data: RunCreate, *, publisher: EventBus
+) -> tuple[TestRun, list[ReservedDeviceInfo]]:
     """Create a test run reservation. Returns (run, reserved_device_infos)."""
 
     ttl_minutes, heartbeat_timeout_sec = _resolve_run_options(data)
@@ -303,6 +314,7 @@ async def create_run(db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[R
                 "device_count": len(device_infos),
                 "created_by": run.created_by,
             },
+            publisher=publisher,
         )
         await db.commit()
     except _UnmetRequirementError as exc:

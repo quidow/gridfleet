@@ -32,7 +32,7 @@ def _device(**overrides: object) -> SimpleNamespace:
 async def test_run_device_health_success_failure_and_agent_error(monkeypatch: pytest.MonkeyPatch) -> None:
     job: dict[str, object] = {"stages": []}
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
-    monkeypatch.setattr(execution.settings_service, "get", lambda key: 30)
+    monkeypatch.setattr(execution._default_settings, "get", lambda key: 30)
     fetch = AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}})
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
     device = _device(device_type=DeviceType.emulator, tags={"emulator_headless": "false"})
@@ -202,7 +202,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     """
     job: dict[str, object] = {"stages": []}
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
-    monkeypatch.setattr(execution.settings_service, "get", lambda key: 30)
+    monkeypatch.setattr(execution._default_settings, "get", lambda key: 30)
     fetch = AsyncMock(return_value={"healthy": True})
     monkeypatch.setattr(execution, "fetch_pack_device_health", fetch)
 

@@ -52,7 +52,7 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
             desired_grid_run_id=run_id,
         )
     monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler_agent.settings_service.get",
+        "app.appium_nodes.services.reconciler_agent._default_settings.get",
         Mock(
             side_effect=lambda key: {
                 "grid.hub_url": "http://grid:4444",

@@ -8,13 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.settings import settings_service
 from tests.helpers import settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_update_queues_settings_changed(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.update(db_session, "general.heartbeat_interval_sec", 30)
+    await settings_service.update(db_session, "general.heartbeat_interval_sec", 30, publisher=event_bus)
     await settle_after_commit_tasks()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -26,7 +27,7 @@ async def test_bulk_update_queues_one_event(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.bulk_update(db_session, {"general.heartbeat_interval_sec": 45})
+    await settings_service.bulk_update(db_session, {"general.heartbeat_interval_sec": 45}, publisher=event_bus)
     await settle_after_commit_tasks()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -38,7 +39,7 @@ async def test_reset_queues_event(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.reset(db_session, "general.heartbeat_interval_sec")
+    await settings_service.reset(db_session, "general.heartbeat_interval_sec", publisher=event_bus)
     await settle_after_commit_tasks()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -50,7 +51,7 @@ async def test_reset_all_queues_event(
     db_session: AsyncSession,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.reset_all(db_session)
+    await settings_service.reset_all(db_session, publisher=event_bus)
     await settle_after_commit_tasks()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]

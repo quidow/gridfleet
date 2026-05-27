@@ -104,11 +104,6 @@ class EventBus:
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
 
-    async def drain_handlers(self) -> None:
-        tasks = {task for task in self._handler_tasks if not task.done()}
-        if tasks:
-            await asyncio.gather(*tasks)
-
     async def shutdown(self) -> None:
         cancellable_tasks = [task for task in (self._listener_task, self._poller_task) if task is not None]
         for task in cancellable_tasks:
@@ -187,15 +182,6 @@ class EventBus:
             events = [Event.from_system_event(row) for row in result.scalars().all()]
         return [event.to_dict() for event in events], total
 
-    def get_recent_events(self, limit: int = 100, event_types: list[str] | None = None) -> list[dict[str, Any]]:
-        events = list(self._log)
-        if event_types:
-            events = [event for event in events if event.type in event_types]
-        return [event.to_dict() for event in events[-limit:]]
-
-    def set_webhook_queue(self, q: asyncio.Queue[Event]) -> None:
-        self._webhook_queue = q
-
     def snapshot(self) -> dict[str, Any]:
         return {
             "subscriber_count": len(self._subscribers),
@@ -204,18 +190,6 @@ class EventBus:
             "persistent_mode": self._session_factory is not None,
             "started": self._started,
         }
-
-    def reset(self) -> None:
-        self._subscribers.clear()
-        self._log.clear()
-        self._webhook_queue = None
-        self._handlers.clear()
-        for task in list(self._handler_tasks):
-            task.cancel()
-        self._handler_tasks.clear()
-        self._session_factory = None
-        self._engine = None
-        self._last_seen_system_event_id = 0
 
     @property
     def subscriber_count(self) -> int:
@@ -363,12 +337,21 @@ class EventBus:
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
-event_bus = EventBus()
+# Late-bound reference set once by compose_app at startup.
+# Used only by _refresh_events_gauges; NOT a singleton.
+_bus_ref: EventBus | None = None
+
+
+def set_bus_ref(bus: EventBus) -> None:
+    """Set the module-level bus reference for gauge refresh. Called once at startup."""
+    global _bus_ref
+    _bus_ref = bus
 
 
 async def _refresh_events_gauges(db: object) -> None:
     del db
-    ACTIVE_SSE_CONNECTIONS.set(event_bus.subscriber_count)
+    if _bus_ref is not None:
+        ACTIVE_SSE_CONNECTIONS.set(_bus_ref.subscriber_count)
 
 
 register_gauge_refresher(_refresh_events_gauges)
@@ -393,7 +376,7 @@ def queue_event_for_session(
     data: dict[str, Any],
     *,
     severity: EventSeverity | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventBus,
 ) -> None:
     """Queue an event to dispatch after the outer transaction commits.
 
@@ -415,7 +398,7 @@ def queue_event_for_session(
     """
     sync_session = db.sync_session if isinstance(db, AsyncSession) else db
     loop = asyncio.get_running_loop()
-    _bus = publisher if publisher is not None else event_bus
+    _bus = publisher
 
     pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
         _PENDING_EVENTS_KEY, []
@@ -456,7 +439,7 @@ def queue_device_crashed_event(
     will_restart: bool,
     process: str | None = None,
     severity: EventSeverity | None = None,
-    publisher: EventBus | None = None,
+    publisher: EventBus,
 ) -> None:
     """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
     queue_event_for_session(

@@ -55,7 +55,7 @@ from app.devices.services.lifecycle_policy_actions import (
 )
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -242,7 +242,7 @@ LOOP_NAME = "appium_reconciler_loop"
 async def appium_reconciler_loop() -> None:
     """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
     while True:
-        interval = float(settings_service.get("appium_reconciler.interval_sec"))
+        interval = float(_default_settings.get("appium_reconciler.interval_sec"))
         cycle_start = time.monotonic()
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
@@ -455,7 +455,7 @@ async def _drive_convergence(
     health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
     require_leader: bool = True,
 ) -> None:
-    semaphore = asyncio.Semaphore(int(settings_service.get("appium_reconciler.host_parallelism")))
+    semaphore = asyncio.Semaphore(int(_default_settings.get("appium_reconciler.host_parallelism")))
     now = datetime.now(UTC)
     rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
     active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
@@ -792,8 +792,8 @@ async def _record_start_failure(
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
 ) -> None:
-    threshold = int(settings_service.get("appium_reconciler.start_failure_threshold"))
-    backoff_seconds = int(settings_service.get("appium.startup_timeout_sec")) * 4
+    threshold = int(_default_settings.get("appium_reconciler.start_failure_threshold"))
+    backoff_seconds = int(_default_settings.get("appium.startup_timeout_sec")) * 4
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         if require_leader:
@@ -851,14 +851,3 @@ def _make_reset_start_failure(
         await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope)
 
     return _reset
-
-
-async def run_one_cycle_for_test() -> None:
-    async with async_session() as db:
-        hosts = await _fetch_online_hosts(db)
-        rows = await _fetch_node_rows(db)
-        desired = await _fetch_desired_rows(db)
-        backoff = await _fetch_backoff_until(db)
-    health_by_host = await _reconcile_all(hosts, rows)
-    if reconciler_convergence_enabled():
-        await _drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)

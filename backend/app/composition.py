@@ -12,18 +12,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
-from app.agent_comm.http_pool import agent_http_pool
+    from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.events.event_bus import EventBus
+    from app.settings.service import SettingsService
+
 from app.agent_comm.services_container import AgentCommServices
 from app.devices.services_container import DeviceServices
-from app.events.event_bus import event_bus
 from app.events.services_container import EventServices
 from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
 from app.packs.services_container import PackServices
 from app.runs.services_container import RunServices
 from app.sessions.services_container import SessionServices
-from app.settings.service import settings_service
 from app.settings.services_container import SettingsServices
 
 
@@ -44,25 +45,40 @@ def compose_app(
     *,
     engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession],
+    bus: EventBus,
+    settings_svc: SettingsService,
+    http_pool: AgentHttpPool,
+    circuit_breaker: AgentCircuitBreaker,
 ) -> AppServices:
     """Wire the full dependency graph. Called once at startup.
 
-    Wraps the existing module-level singletons in domain containers.
-    The singletons are created at import time; the composition root
-    does not duplicate them — it gives them DI-accessible homes.
+    Receives singleton instances from the caller (main.py lifespan) and
+    publishes them on the source modules, replacing the import-time bootstrap
+    defaults.  All runtime code that accesses singletons via module attribute
+    transparently picks up the composition-root-owned instance.
     """
+    import app.agent_comm.circuit_breaker as _cb_mod  # noqa: PLC0415
+    import app.agent_comm.http_pool as _pool_mod  # noqa: PLC0415
+    import app.settings.service as _ss_mod  # noqa: PLC0415
+
+    _ss_mod.settings_service = settings_svc
+    _pool_mod.agent_http_pool = http_pool
+    _cb_mod.agent_circuit_breaker = circuit_breaker
+
     event_services = EventServices(
-        bus=event_bus,
+        publisher=bus,
+        subscriber=bus,
+        reader=bus,
         session_factory=session_factory,
         engine=engine,
     )
     settings_services = SettingsServices(
-        service=settings_service,
+        service=settings_svc,
         session_factory=session_factory,
     )
     agent_comm_services = AgentCommServices(
-        http_pool=agent_http_pool,
-        circuit_breaker=agent_circuit_breaker,
+        http_pool=http_pool,
+        circuit_breaker=circuit_breaker,
     )
 
     return AppServices(

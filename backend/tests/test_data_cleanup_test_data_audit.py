@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -37,7 +38,7 @@ async def test_cleanup_deletes_old_test_data_audit_rows(db_session: AsyncSession
     db_session.add(old)
     await db_session.commit()
 
-    await data_cleanup._cleanup_old_data(db_session)
+    await data_cleanup._cleanup_old_data(db_session, publisher=AsyncMock())
 
     refreshed = await db_session.get(DeviceTestDataAuditLog, old.id)
     assert refreshed is None

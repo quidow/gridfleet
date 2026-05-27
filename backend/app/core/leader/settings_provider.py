@@ -26,9 +26,3 @@ def get(key: str) -> SettingValue:
             "at startup before any leader loop runs."
         )
     return _provider(key)
-
-
-def reset_for_tests() -> None:
-    """Reset the provider state. Test-only helper."""
-    global _provider
-    _provider = None

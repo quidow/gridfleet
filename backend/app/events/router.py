@@ -10,10 +10,10 @@ from app.events import (
     EVENT_CATEGORY_DISPLAY_NAMES,
     PUBLIC_EVENT_CATALOG,
     Event,
-    event_bus,
     validate_public_event_names,
 )
 from app.events.catalog import ALL_SEVERITIES
+from app.events.dependencies import EventServicesDep
 from app.events.schemas import NotificationListRead
 from app.events.schemas_catalog import EventCatalogRead
 
@@ -55,13 +55,14 @@ async def get_event_catalog() -> dict[str, Any]:
 @router.get("/events")
 async def event_stream(
     request: Request,
+    events: EventServicesDep,
     types: str | None = Query(None, description="Comma-separated event types to filter"),
     device_ids: str | None = Query(None, description="Comma-separated device UUIDs to filter"),
 ) -> EventSourceResponse:
     type_filter = {t.strip() for t in types.split(",")} if types else None
     device_filter = {d.strip() for d in device_ids.split(",")} if device_ids else None
 
-    queue = event_bus.subscribe()
+    queue = events.subscriber.subscribe()
 
     async def generate() -> AsyncGenerator[dict[str, str], None]:
         try:
@@ -87,7 +88,7 @@ async def event_stream(
         except asyncio.CancelledError:
             pass
         finally:
-            event_bus.unsubscribe(queue)
+            events.subscriber.unsubscribe(queue)
 
     return EventSourceResponse(generate(), ping=KEEPALIVE_INTERVAL)
 
@@ -117,6 +118,7 @@ def _parse_types_filter(raw: str) -> list[str] | None:
 
 @router.get("/notifications", response_model=NotificationListRead)
 async def get_notifications(
+    events: EventServicesDep,
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     types: str | None = Query(None, description="Comma-separated event types to filter"),
@@ -124,14 +126,14 @@ async def get_notifications(
 ) -> dict[str, Any]:
     type_filter = _parse_types_filter(types) if types is not None else None
     severity_filter = _parse_severity_filter(severity) if severity is not None else None
-    events, total = await event_bus.get_recent_events_persisted(
+    notification_list, total = await events.reader.get_recent_events_persisted(
         limit=limit,
         offset=offset,
         event_types=type_filter,
         severities=severity_filter,
     )
     return {
-        "items": events,
+        "items": notification_list,
         "total": total,
         "limit": limit,
         "offset": offset,

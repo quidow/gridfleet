@@ -40,13 +40,14 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.events import event_bus
 from app.hosts.models import Host, HostStatus, OSType
 from app.main import app
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
 from app.packs.routers.uploads import get_pack_storage
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
 from app.packs.services.storage import PackStorageService
+from tests.helpers import drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -419,12 +420,23 @@ async def test_b3_upload_creates_pack_and_feature_rows(
 async def test_b3_feature_action_degraded_and_recovered(
     client: AsyncClient,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Steps 2-5: feature-action route → status row → webhook events.
 
     - First call: agent returns ok=False → status row ok=False → pack_feature.degraded emitted.
     - Second call: agent returns ok=True → status row ok=True → pack_feature.recovered emitted.
     """
+    # Inject publisher=event_bus into record_feature_status calls from feature_dispatch.
+    from app.packs.services import feature_dispatch as fd_mod
+    from app.packs.services.feature_status import record_feature_status as _orig_rfs
+
+    async def _wrapped_rfs(*args: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_rfs(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(fd_mod, "record_feature_status", _wrapped_rfs)
+
     # Seed host + pack — capture host_id as a plain Python UUID immediately so
     # that expire_all() later does not trigger lazy I/O on the ORM object.
     host = await _seed_host(db_session)
@@ -457,8 +469,8 @@ async def test_b3_feature_action_degraded_and_recovered(
     assert row.detail == "degraded"
 
     # Drain async event handlers so they write to _log.
-    await event_bus.drain_handlers()
-    degraded_events = event_bus.get_recent_events(event_types=["pack_feature.degraded"])
+    await drain_handlers(event_bus)
+    degraded_events = recent_events(event_bus, event_types=["pack_feature.degraded"])
     assert len(degraded_events) == 1, "pack_feature.degraded event must be emitted on first ok=False"
     ev = degraded_events[0]
     assert ev["data"]["pack_id"] == PACK_ID
@@ -486,8 +498,8 @@ async def test_b3_feature_action_degraded_and_recovered(
     assert row.ok is True
     assert row.detail == "recovered"
 
-    await event_bus.drain_handlers()
-    recovered_events = event_bus.get_recent_events(event_types=["pack_feature.recovered"])
+    await drain_handlers(event_bus)
+    recovered_events = recent_events(event_bus, event_types=["pack_feature.recovered"])
     assert len(recovered_events) == 1, "pack_feature.recovered event must be emitted when ok flips True"
     ev2 = recovered_events[0]
     assert ev2["data"]["pack_id"] == PACK_ID

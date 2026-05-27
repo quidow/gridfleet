@@ -9,6 +9,7 @@ from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.runs import service as run_service
 from app.runs.schemas import RunCreate
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -42,7 +43,7 @@ async def test_create_run_rechecks_readiness_after_lock(
 
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", gated_readiness)
 
-    async def create_run() -> None:
+    async def create_run(publisher: object = event_bus) -> None:
         async with db_session_maker() as session:
             with pytest.raises(ValueError, match="Not enough devices"):
                 await run_service.create_run(
@@ -51,6 +52,7 @@ async def test_create_run_rechecks_readiness_after_lock(
                         name="readiness-race-run",
                         requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
                     ),
+                    publisher=publisher,
                 )
 
     async def clear_verification_after_readiness() -> None:
@@ -61,7 +63,7 @@ async def test_create_run_rechecks_readiness_after_lock(
             await session.commit()
         allow_reservation.set()
 
-    await asyncio.gather(create_run(), clear_verification_after_readiness())
+    await asyncio.gather(create_run(publisher=event_bus), clear_verification_after_readiness())
 
     async with db_session_maker() as verify:
         reservation = (

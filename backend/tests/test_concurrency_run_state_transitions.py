@@ -8,6 +8,7 @@ from app.devices.models import DeviceHold, DeviceReservation
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device_record, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.mark.asyncio
@@ -29,7 +30,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
     async def activate() -> str:
         async with db_session_maker() as active_db:
             try:
-                await run_service.signal_active(active_db, run_id)
+                await run_service.signal_active(active_db, run_id, publisher=event_bus)
             except ValueError as exc:
                 return str(exc)
             return "activated"
@@ -43,7 +44,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
         await asyncio.sleep(0.15)
         assert not active_task.done()
 
-        await run_service.cancel_run(cancel_db, run_id)
+        await run_service.cancel_run(cancel_db, run_id, publisher=event_bus)
         active_result = await asyncio.wait_for(active_task, timeout=5.0)
 
     assert "Cannot signal active from state 'cancelled'" in active_result

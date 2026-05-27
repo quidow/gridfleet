@@ -685,7 +685,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
-    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -747,7 +747,7 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         device.appium_node = existing
     await db_session.commit()
 
-    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -791,7 +791,7 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
 
     device = await _loaded_device(db_session, db_host, "mark-start-no-stage")
 
-    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,
@@ -829,7 +829,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         }
     await db_session.commit()
 
-    monkeypatch.setattr(node_agent.settings_service, "get", lambda key: "http://grid")
+    monkeypatch.setattr(node_agent._default_settings, "get", lambda key: "http://grid")
     monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
     monkeypatch.setattr(
         node_agent.appium_node_locking,

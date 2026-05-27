@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +32,7 @@ async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSessio
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     expire_run.assert_awaited_once()
     assert expire_run.await_args is not None
@@ -53,7 +54,7 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     expire_run.assert_awaited_once()
     assert expire_run.await_args is not None
@@ -136,7 +137,7 @@ async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: Async
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session)
+        await _reap_stale_runs(db_session, publisher=event_bus)
 
     expire_run.assert_not_awaited()
 
@@ -184,7 +185,7 @@ async def test_expire_run_deletes_active_grid_session(
 
     monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
 
-    await run_service.expire_run(db_session, run, "Heartbeat timeout")
+    await run_service.expire_run(db_session, run, "Heartbeat timeout", publisher=event_bus)
 
     assert deleted == ["grid-live-expire"]
 
@@ -209,12 +210,14 @@ async def test_expire_run_emits_never_activated_for_preparing_run(
 
     events: list[tuple[str, dict[str, object], str | None]] = []
 
-    def capture(_db: object, name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
+    def capture(
+        _db: object, name: str, payload: dict[str, object], *, severity: str | None = None, publisher: object = None
+    ) -> None:
         events.append((name, payload, severity))
 
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)
 
-    await run_service.expire_run(db_session, run, "Heartbeat timeout")
+    await run_service.expire_run(db_session, run, "Heartbeat timeout", publisher=event_bus)
 
     names = [name for name, _, _ in events]
     assert "run.never_activated" in names
@@ -257,12 +260,14 @@ async def test_expire_run_does_not_emit_never_activated_for_active_run(
 
     events: list[tuple[str, dict[str, object], str | None]] = []
 
-    def capture(_db: object, name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
+    def capture(
+        _db: object, name: str, payload: dict[str, object], *, severity: str | None = None, publisher: object = None
+    ) -> None:
         events.append((name, payload, severity))
 
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)
 
-    await run_service.expire_run(db_session, run, "Heartbeat timeout")
+    await run_service.expire_run(db_session, run, "Heartbeat timeout", publisher=event_bus)
 
     names = [name for name, _, _ in events]
     assert "run.never_activated" not in names

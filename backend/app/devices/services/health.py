@@ -25,6 +25,8 @@ from app.events import queue_event_for_session
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.event_bus import EventBus
+
 __all__ = [
     "apply_node_state_transition",
     "build_public_summary",
@@ -53,7 +55,11 @@ def _maybe_emit_health_changed(
     db: AsyncSession,
     device: Device,
     previous: dict[str, Any],
+    *,
+    publisher: EventBus | None = None,
 ) -> None:
+    if publisher is None:
+        return
     nxt = build_public_summary(device)
     if previous.get("healthy") == nxt.get("healthy"):
         return
@@ -65,6 +71,7 @@ def _maybe_emit_health_changed(
             "healthy": nxt.get("healthy"),
             "summary": nxt.get("summary"),
         },
+        publisher=publisher,
     )
 
 
@@ -113,6 +120,7 @@ async def update_device_checks(
     *,
     healthy: bool,
     summary: str,
+    publisher: EventBus | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -123,7 +131,7 @@ async def update_device_checks(
     locked.device_checks_checked_at = _now()
     await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary)
     await _restore_available_for_healthy_signal(db, locked)
-    _maybe_emit_health_changed(db, locked, previous)
+    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 
 async def update_session_viability(
@@ -132,6 +140,7 @@ async def update_session_viability(
     *,
     status: str | None,
     error: str | None,
+    publisher: EventBus | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -146,7 +155,7 @@ async def update_session_viability(
         reason=error or "Session viability failed",
     )
     await _restore_available_for_healthy_signal(db, locked)
-    _maybe_emit_health_changed(db, locked, previous)
+    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 
 async def apply_node_state_transition(
@@ -157,6 +166,7 @@ async def apply_node_state_transition(
     health_state: str | None = None,
     mark_offline: bool = True,
     reason: str | None = None,
+    publisher: EventBus | None = None,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -179,7 +189,7 @@ async def apply_node_state_transition(
             reason=reason or f"Node: {node_summary_label(locked_node)}",
         )
     await _restore_available_for_healthy_signal(db, locked)
-    _maybe_emit_health_changed(db, locked, previous)
+    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
 
 
 async def update_emulator_state(db: AsyncSession, device: Device, state: str | None) -> None:

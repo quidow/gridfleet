@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.events import event_bus
+from tests.helpers import drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.db
 @pytest.mark.asyncio
 async def test_get_events_returns_page(client: AsyncClient, db_host: Host) -> None:
     await event_bus.publish("host.status_changed", {"host_id": str(db_host.id), "hostname": "h"})
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     resp = await client.get(f"/api/hosts/{db_host.id}/events")
     assert resp.status_code == 200
     body = resp.json()
@@ -29,7 +30,7 @@ async def test_get_events_returns_page(client: AsyncClient, db_host: Host) -> No
 async def test_get_events_type_filter(client: AsyncClient, db_host: Host) -> None:
     await event_bus.publish("host.heartbeat_lost", {"host_id": str(db_host.id), "missed_count": 1})
     await event_bus.publish("host.status_changed", {"host_id": str(db_host.id)})
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     resp = await client.get(
         f"/api/hosts/{db_host.id}/events",
         params={"types": "host.heartbeat_lost"},

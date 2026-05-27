@@ -66,7 +66,7 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions import service_viability as session_viability
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,8 +107,8 @@ class DeferredStopOutcome(StrEnum):
 
 
 def _set_backoff(state: dict[str, Any]) -> str:
-    base_seconds = int(settings_service.get("general.lifecycle_recovery_backoff_base_sec"))
-    max_seconds = max(base_seconds, int(settings_service.get("general.lifecycle_recovery_backoff_max_sec")))
+    base_seconds = int(_default_settings.get("general.lifecycle_recovery_backoff_base_sec"))
+    max_seconds = max(base_seconds, int(_default_settings.get("general.lifecycle_recovery_backoff_max_sec")))
     return _set_backoff_with_settings(state, base_seconds=base_seconds, max_seconds=max_seconds)
 
 
@@ -537,7 +537,7 @@ async def attempt_auto_recovery(
                 new_node = AppiumNode(
                     device_id=device.id,
                     port=desired_port,
-                    grid_url=settings_service.get("grid.hub_url"),
+                    grid_url=_default_settings.get("grid.hub_url"),
                 )
                 db.add(new_node)
                 await db.flush()
@@ -722,7 +722,7 @@ async def attempt_auto_recovery(
         # out of automated recovery scope and only a sanctioned operator
         # action (exit maintenance, restore from run, re-verify, restart
         # node) clears the flag.
-        review_threshold = int(settings_service.get("general.lifecycle_recovery_review_threshold"))
+        review_threshold = int(_default_settings.get("general.lifecycle_recovery_review_threshold"))
         attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
         if attempts >= review_threshold:
             from app.devices.services.review import mark_review_required  # noqa: PLC0415

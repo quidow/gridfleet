@@ -62,7 +62,7 @@ async def test_background_task_scheduler_and_shutdown_paths() -> None:
 
 
 async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(heartbeat.settings_service, "get", MagicMock(side_effect=RuntimeError("settings unavailable")))
+    monkeypatch.setattr(heartbeat._default_settings, "get", MagicMock(side_effect=RuntimeError("settings unavailable")))
     assert heartbeat._heartbeat_client_mode() is ClientMode.fresh
 
     with pytest.raises(AssertionError):
@@ -166,7 +166,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(heartbeat.settings_service, "get", lambda key: 0.01)
+    monkeypatch.setattr(heartbeat._default_settings, "get", lambda key: 0.01)
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(heartbeat, "async_session", lambda: Session())
     monkeypatch.setattr(heartbeat, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))

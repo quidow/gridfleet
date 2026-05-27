@@ -8,6 +8,7 @@ import pytest
 
 from app.hosts.service import _host_status_severity
 from app.hosts.service_hardware_telemetry import _hardware_severity
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,7 +104,7 @@ def _make_severity_capture(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, An
     async def _fake_publish(name: str, payload: dict[str, Any], *, severity: str | None = None) -> None:
         captured.append({"type": name, "severity": severity})
 
-    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
+    monkeypatch.setattr(event_bus, "publish", _fake_publish)
     return captured
 
 
@@ -128,7 +129,7 @@ async def test_approve_host_pending_to_online_emits_success(
     db_session.add(host)
     await db_session.flush()
 
-    approved = await host_service.approve_host(db_session, host.id)
+    approved = await host_service.approve_host(db_session, host.id, publisher=event_bus)
     assert approved is not None
 
     events = [e for e in captured if e["type"] == "host.status_changed"]

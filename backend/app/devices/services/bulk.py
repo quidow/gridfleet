@@ -22,7 +22,7 @@ from app.devices.services.operator_node_lifecycle import (
     request_stop,
 )
 from app.devices.services.service import delete_device
-from app.events import event_bus, queue_event_for_session
+from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.events.catalog import EventSeverity
-    from app.events.protocols import EventPublisher
+    from app.events.event_bus import EventBus
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -99,7 +99,7 @@ async def _run_per_device_node_action(
     operation: str,
     action_fn: Callable[..., Awaitable[object]],
     caller: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventBus,
 ) -> dict[str, Any]:
     existing_device_ids = await _load_existing_device_ids(db, device_ids)
     session_factory = _session_factory_from_db(db)
@@ -123,8 +123,7 @@ async def _run_per_device_node_action(
     succeeded = len(existing_device_ids) - len(errors)
     total = len(existing_device_ids)
     failed = len(errors)
-    _bus = publisher or event_bus
-    await _bus.publish(
+    await publisher.publish(
         "bulk.operation_completed",
         {
             "operation": operation,
@@ -142,6 +141,7 @@ async def bulk_start_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
+    publisher: EventBus,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -149,6 +149,7 @@ async def bulk_start_nodes(
         operation="start_nodes",
         action_fn=_bulk_start_one,
         caller=caller,
+        publisher=publisher,
     )
 
 
@@ -157,6 +158,7 @@ async def bulk_stop_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
+    publisher: EventBus,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -164,6 +166,7 @@ async def bulk_stop_nodes(
         operation="stop_nodes",
         action_fn=_bulk_stop_one,
         caller=caller,
+        publisher=publisher,
     )
 
 
@@ -172,6 +175,7 @@ async def bulk_restart_nodes(
     device_ids: list[uuid.UUID],
     *,
     caller: str = "bulk",
+    publisher: EventBus,
 ) -> dict[str, Any]:
     return await _run_per_device_node_action(
         db,
@@ -179,11 +183,17 @@ async def bulk_restart_nodes(
         operation="restart_nodes",
         action_fn=_bulk_restart_one,
         caller=caller,
+        publisher=publisher,
     )
 
 
 async def bulk_update_tags(
-    db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
+    db: AsyncSession,
+    device_ids: list[uuid.UUID],
+    tags: dict[str, str],
+    merge: bool = True,
+    *,
+    publisher: EventBus,
 ) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     for device in devices:
@@ -202,14 +212,13 @@ async def bulk_update_tags(
             "failed": 0,
         },
         severity=_bulk_severity(len(devices), len(devices), 0),
+        publisher=publisher,
     )
     await db.commit()
     return _result(len(devices), len(devices), {})
 
 
-async def bulk_delete(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher | None = None
-) -> dict[str, Any]:
+async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus) -> dict[str, Any]:
     errors: dict[str, str] = {}
     for device_id in device_ids:
         try:
@@ -221,8 +230,7 @@ async def bulk_delete(
     succeeded = len(device_ids) - len(errors)
     total = len(device_ids)
     failed = len(errors)
-    _bus = publisher or event_bus
-    await _bus.publish(
+    await publisher.publish(
         "bulk.operation_completed",
         {
             "operation": "delete",
@@ -235,7 +243,9 @@ async def bulk_delete(
     return _result(len(device_ids), succeeded, errors)
 
 
-async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_enter_maintenance(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus
+) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     ordered_ids = [device.id for device in devices]
     errors: dict[str, str] = {}
@@ -258,14 +268,13 @@ async def bulk_enter_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) 
             "failed": failed,
         },
         severity=_bulk_severity(total, succeeded, failed),
+        publisher=publisher,
     )
     await db.commit()
     return _result(len(ordered_ids), succeeded, errors)
 
 
-async def bulk_reconnect(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher | None = None
-) -> dict[str, Any]:
+async def bulk_reconnect(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus) -> dict[str, Any]:
     """Reconnect network-connected ADB devices."""
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
@@ -329,8 +338,7 @@ async def bulk_reconnect(
     succeeded = len(devices) - len(errors)
     total = len(devices)
     failed = len(errors)
-    _bus = publisher or event_bus
-    await _bus.publish(
+    await publisher.publish(
         "bulk.operation_completed",
         {
             "operation": "reconnect",
@@ -343,7 +351,9 @@ async def bulk_reconnect(
     return _result(len(devices), succeeded, errors)
 
 
-async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+async def bulk_exit_maintenance(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventBus
+) -> dict[str, Any]:
     devices = await _load_devices(db, device_ids)
     errors: dict[str, str] = {}
     successful: list[uuid.UUID] = []
@@ -368,6 +378,7 @@ async def bulk_exit_maintenance(db: AsyncSession, device_ids: list[uuid.UUID]) -
             "failed": failed,
         },
         severity=_bulk_severity(total, succeeded, failed),
+        publisher=publisher,
     )
     await db.commit()
 

@@ -110,7 +110,7 @@ async def _wait_for_job(
         job = resp.json()
         if job["status"] in {"completed", "failed"}:
             return dict(job)
-        await run_pending_jobs_once(session_factory)
+        await run_pending_jobs_once(session_factory, publisher=AsyncMock())
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
 

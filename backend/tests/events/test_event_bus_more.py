@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
 from app.events.models import SystemEvent
+from tests.helpers import recent_events, set_webhook_queue
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -65,7 +66,7 @@ async def test_load_system_event_dispatches_new_event(db_session: AsyncSession) 
 
     await bus._load_and_dispatch_system_event(int(row.id))
 
-    assert bus.get_recent_events()[-1]["id"] == "evt-new"
+    assert recent_events(bus)[-1]["id"] == "evt-new"
 
 
 async def test_publish_persists_and_reads_recent_events(db_session: AsyncSession) -> None:
@@ -82,7 +83,7 @@ async def test_publish_persists_and_reads_recent_events(db_session: AsyncSession
 
     assert total == 1
     assert persisted[0]["type"] == "device.updated"
-    assert bus.get_recent_events(limit=2)[-1]["type"] == "device.updated"
+    assert recent_events(bus, limit=2)[-1]["type"] == "device.updated"
 
 
 async def test_get_recent_events_persisted_falls_back_to_in_memory_log() -> None:
@@ -93,7 +94,7 @@ async def test_get_recent_events_persisted_falls_back_to_in_memory_log() -> None
     events, total = await bus.get_recent_events_persisted(limit=1, offset=0, event_types=["session.started"])
 
     assert total == 1
-    assert events == [bus.get_recent_events(event_types=["session.started"])[0]]
+    assert events == [recent_events(bus, event_types=["session.started"])[0]]
 
 
 async def test_load_system_event_skips_duplicate_entries(db_session: AsyncSession) -> None:
@@ -107,10 +108,10 @@ async def test_load_system_event_skips_duplicate_entries(db_session: AsyncSessio
     row_id = await db_session.scalar(select(SystemEvent.id))
     assert row_id is not None
 
-    original = bus.get_recent_events()
+    original = recent_events(bus)
     await bus._load_and_dispatch_system_event(int(row_id))
 
-    assert bus.get_recent_events() == original
+    assert recent_events(bus) == original
 
 
 async def test_dispatch_missed_events_loads_new_rows_and_skips_duplicates(db_session: AsyncSession) -> None:
@@ -128,7 +129,7 @@ async def test_dispatch_missed_events_loads_new_rows_and_skips_duplicates(db_ses
     bus._remember_and_dispatch(Event(type="a", data={"n": 1}, id="evt-a"))
     await bus._dispatch_missed_events()
 
-    assert [event["id"] for event in bus.get_recent_events(limit=10)] == ["evt-a", "evt-b"]
+    assert [event["id"] for event in recent_events(bus, limit=10)] == ["evt-a", "evt-b"]
     assert bus._last_seen_system_event_id >= int(row_b.id)
 
 
@@ -198,7 +199,7 @@ async def test_remember_and_dispatch_handles_full_subscriber_and_webhook_queues(
     await subscriber.put(Event(type="existing", data={}))
     webhook_queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=1)
     await webhook_queue.put(Event(type="existing", data={}))
-    bus.set_webhook_queue(webhook_queue)
+    set_webhook_queue(bus, webhook_queue)
 
     bus._remember_and_dispatch(Event(type="demo", data={}))
     await bus._shutdown_handler_tasks(timeout=1)

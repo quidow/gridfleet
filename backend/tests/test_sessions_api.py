@@ -8,9 +8,44 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.devices.services import state_write_guard
-from app.events import event_bus
+from app.devices.services.state import set_hold, set_operational_state
+from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
-from tests.helpers import create_device_record, create_reserved_run
+from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
+
+
+@pytest.fixture(autouse=True)
+def _inject_publisher_into_session_and_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject publisher=event_bus into session event helpers and state machine writers."""
+    _orig_started = session_module.queue_session_started_event
+    _orig_ended = session_module.queue_session_ended_event
+
+    def _wrapped_started(*args: object, **kwargs: object) -> None:
+        kwargs.setdefault("publisher", event_bus)
+        _orig_started(*args, **kwargs)  # type: ignore[arg-type]
+
+    def _wrapped_ended(*args: object, **kwargs: object) -> None:
+        kwargs.setdefault("publisher", event_bus)
+        _orig_ended(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(session_module, "queue_session_started_event", _wrapped_started)
+    monkeypatch.setattr(session_module, "queue_session_ended_event", _wrapped_ended)
+
+    _orig_set_op = set_operational_state
+    _orig_set_hold = set_hold
+
+    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        kwargs.setdefault("publisher", event_bus)
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
+
 
 DEVICE_PAYLOAD = {
     "identity_value": "sess-test-device",
@@ -474,13 +509,13 @@ async def test_register_terminal_error_session_persists_setup_failure_context(cl
     assert "requested_platform" not in detail
     assert detail["error_message"] == "Session could not be created"
 
-    await event_bus.drain_handlers()
-    recent_events = event_bus.get_recent_events(limit=2)
-    assert [event["type"] for event in recent_events] == ["session.started", "session.ended"]
-    assert recent_events[0]["data"]["requested_pack_id"] == "appium-uiautomator2"
-    assert recent_events[0]["data"]["requested_platform_id"] == "android_mobile"
-    assert recent_events[1]["data"]["status"] == "error"
-    assert recent_events[1]["data"]["error_type"] == "RuntimeError"
+    await drain_handlers(event_bus)
+    events = recent_events(event_bus, limit=2)
+    assert [event["type"] for event in events] == ["session.started", "session.ended"]
+    assert events[0]["data"]["requested_pack_id"] == "appium-uiautomator2"
+    assert events[0]["data"]["requested_platform_id"] == "android_mobile"
+    assert events[1]["data"]["status"] == "error"
+    assert events[1]["data"]["error_type"] == "RuntimeError"
 
 
 async def test_register_session_rejects_invalid_requested_enum_value(client: AsyncClient) -> None:
@@ -701,12 +736,12 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert data["status"] == "failed"
     assert data["ended_at"] is not None
 
-    await event_bus.drain_handlers()
-    recent_events = event_bus.get_recent_events(limit=1)
-    assert len(recent_events) == 1
-    assert recent_events[0]["type"] == "session.ended"
-    assert recent_events[0]["data"]["session_id"] == "gs-update"
-    assert recent_events[0]["data"]["status"] == "failed"
+    await drain_handlers(event_bus)
+    events = recent_events(event_bus, limit=1)
+    assert len(events) == 1
+    assert events[0]["type"] == "session.ended"
+    assert events[0]["data"]["session_id"] == "gs-update"
+    assert events[0]["data"]["status"] == "failed"
 
 
 async def test_grid_queue(client: AsyncClient) -> None:

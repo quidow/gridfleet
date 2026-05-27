@@ -87,19 +87,3 @@ async def get_verification_job(
 async def clear_verification_jobs(session_factory: SessionFactory = async_session) -> None:
     async with session_factory() as db:
         await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
-
-
-async def store_verification_job_for_test(
-    job_id: str,
-    job: dict[str, Any],
-    session_factory: SessionFactory = async_session,
-) -> None:
-    async with session_factory() as db:
-        await job_queue.create_job(
-            db,
-            kind=JOB_KIND_DEVICE_VERIFICATION,
-            payload={"mode": "create", "data": {}},
-            snapshot={**job, "job_id": job_id},
-            max_attempts=1,
-            job_id=uuid.UUID(job_id),
-        )

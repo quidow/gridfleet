@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.events import event_bus
 from app.packs.models import HostPackFeatureStatus
 from app.packs.services.feature_status import record_feature_status
+from tests.helpers import drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,7 @@ FEATURE_ID = "android.diagnostics"
 
 
 def _events(event_type: str) -> list[dict[str, object]]:
-    return event_bus.get_recent_events(event_types=[event_type])
+    return recent_events(event_bus, event_types=[event_type])
 
 
 @pytest.mark.asyncio
@@ -42,9 +43,10 @@ async def test_first_record_with_ok_true_does_not_emit(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert transitioned is False
     assert _events("pack_feature.degraded") == []
@@ -61,9 +63,10 @@ async def test_first_record_with_ok_false_emits_degraded(db_session: AsyncSessio
         feature_id=FEATURE_ID,
         ok=False,
         detail="adb offline",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert transitioned is True
     degraded = _events("pack_feature.degraded")
@@ -87,9 +90,10 @@ async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     assert _events("pack_feature.degraded") == []
 
     transitioned = await record_feature_status(
@@ -99,9 +103,10 @@ async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession,
         feature_id=FEATURE_ID,
         ok=False,
         detail="probe failed",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert transitioned is True
     degraded = _events("pack_feature.degraded")
@@ -119,9 +124,10 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
         feature_id=FEATURE_ID,
         ok=False,
         detail="boom",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     assert len(_events("pack_feature.degraded")) == 1
 
     transitioned = await record_feature_status(
@@ -131,9 +137,10 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
         feature_id=FEATURE_ID,
         ok=True,
         detail="ok now",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert transitioned is True
     recovered = _events("pack_feature.recovered")
@@ -159,9 +166,10 @@ async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host
         feature_id=FEATURE_ID,
         ok=False,
         detail="first",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     initial_degraded = len(_events("pack_feature.degraded"))
     assert initial_degraded == 1
 
@@ -172,9 +180,10 @@ async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host
         feature_id=FEATURE_ID,
         ok=False,
         detail="still busted",
+        publisher=event_bus,
     )
     await db_session.commit()
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
 
     assert transitioned is False
     assert len(_events("pack_feature.degraded")) == initial_degraded
@@ -191,6 +200,7 @@ async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncS
         feature_id=FEATURE_ID,
         ok=True,
         detail="initial",
+        publisher=event_bus,
     )
     await db_session.commit()
     first_row = (
@@ -214,6 +224,7 @@ async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncS
         feature_id=FEATURE_ID,
         ok=False,
         detail="something broke",
+        publisher=event_bus,
     )
     await db_session.commit()
     await db_session.refresh(first_row)

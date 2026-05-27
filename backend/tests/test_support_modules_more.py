@@ -23,6 +23,7 @@ from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -173,11 +174,11 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
             "app.runs.service_reaper._reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
         ),
-        patch("app.runs.service_reaper.settings_service.get", return_value=1),
+        patch("app.runs.service_reaper._default_settings.get", return_value=1),
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await run_reaper.run_reaper_loop()
+        await run_reaper.run_reaper_loop(publisher=event_bus)
 
     sleep.assert_awaited()
 

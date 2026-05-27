@@ -26,12 +26,13 @@ from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
 from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.events.catalog import EventSeverity
+    from app.events.event_bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -140,7 +141,7 @@ def hardware_telemetry_state_for_device(
     if support_status != HardwareTelemetrySupportStatus.supported or reported_at is None:
         return HardwareTelemetryState.unknown
 
-    timeout_seconds = stale_timeout_sec or int(settings_service.get("general.hardware_telemetry_stale_timeout_sec"))
+    timeout_seconds = stale_timeout_sec or int(_default_settings.get("general.hardware_telemetry_stale_timeout_sec"))
     if (now or _now()) - reported_at > timedelta(seconds=timeout_seconds):
         return HardwareTelemetryState.stale
     return HardwareTelemetryState.fresh
@@ -152,8 +153,8 @@ def derive_candidate_hardware_health_status(device: Device) -> HardwareHealthSta
         return HardwareHealthStatus.unknown
 
     temperature = device.battery_temperature_c
-    critical_threshold = float(settings_service.get("general.hardware_temperature_critical_c"))
-    warning_threshold = float(settings_service.get("general.hardware_temperature_warning_c"))
+    critical_threshold = float(_default_settings.get("general.hardware_temperature_critical_c"))
+    warning_threshold = float(_default_settings.get("general.hardware_temperature_warning_c"))
     if temperature is not None and temperature >= critical_threshold:
         return HardwareHealthStatus.critical
     if temperature is not None and temperature >= warning_threshold:
@@ -181,7 +182,7 @@ async def _resolve_effective_hardware_health_status(
         await control_plane_state_store.delete_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
         return candidate_status
 
-    required_samples = max(1, int(settings_service.get("general.hardware_telemetry_consecutive_samples")))
+    required_samples = max(1, int(_default_settings.get("general.hardware_telemetry_consecutive_samples")))
     state = await control_plane_state_store.get_value(db, HARDWARE_TELEMETRY_STATE_NAMESPACE, str(device.id))
     current_count = 0
     current_candidate = None
@@ -234,6 +235,8 @@ async def apply_telemetry_sample(
     db: AsyncSession,
     device: Device,
     sample: dict[str, Any],
+    *,
+    publisher: EventBus | None = None,
 ) -> HardwareHealthStatus:
     device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))
     device.battery_temperature_c = _coerce_float(sample.get("battery_temperature_c"))
@@ -257,12 +260,14 @@ async def apply_telemetry_sample(
             DeviceEventType.hardware_health_changed,
             payload,
         )
-        queue_event_for_session(
-            db,
-            "device.hardware_health_changed",
-            payload,
-            severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "device.hardware_health_changed",
+                payload,
+                severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+                publisher=publisher,
+            )
 
     return next_status
 
@@ -316,7 +321,7 @@ async def poll_hardware_telemetry_once(db: AsyncSession) -> None:
 
 async def hardware_telemetry_loop() -> None:
     while True:
-        interval = float(settings_service.get("general.hardware_telemetry_interval_sec"))
+        interval = float(_default_settings.get("general.hardware_telemetry_interval_sec"))
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
                 await poll_hardware_telemetry_once(db)

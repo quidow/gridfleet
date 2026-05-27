@@ -24,7 +24,7 @@ from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 __all__ = [
     "PROBE_TEST_NAME",
@@ -41,14 +41,11 @@ __all__ = [
     "close",
     "configure_health_failure_handler",
     "get_session_viability",
-    "get_session_viability_control_plane_state",
     "grid_probe_response_to_result",
     "probe_session_via_grid",
     "record_session_viability_result",
-    "reset_session_viability_control_plane_state",
     "run_session_viability_probe",
     "session_viability_loop",
-    "set_session_viability_control_plane_entry",
 ]
 
 SESSION_VIABILITY_KEY = "session_viability"
@@ -338,7 +335,7 @@ async def probe_session_via_grid(
     *,
     grid_url: str | None = None,
 ) -> tuple[bool, str | None]:
-    base = (grid_url or settings_service.get("grid.hub_url")).rstrip("/")
+    base = (grid_url or _default_settings.get("grid.hub_url")).rstrip("/")
     client = _get_grid_probe_client()
     try:
         create_resp = await client.post(
@@ -408,7 +405,7 @@ async def run_session_viability_probe(
     attempted_at = _now_iso()
     try:
         config_changed = _clear_session_viability_from_config(device)
-        timeout_sec = int(settings_service.get("general.session_viability_timeout_sec"))
+        timeout_sec = int(_default_settings.get("general.session_viability_timeout_sec"))
         node = device.appium_node
         if not node or not node.observed_running:
             state = await _write_session_viability(
@@ -517,7 +514,7 @@ async def run_session_viability_probe(
             if config_changed:
                 await db.commit()
         if not ok and checked_by != SessionViabilityCheckedBy.recovery and _health_failure_handler is not None:
-            threshold = max(1, int(settings_service.get("general.session_viability_failure_threshold")))
+            threshold = max(1, int(_default_settings.get("general.session_viability_failure_threshold")))
             if int(state.get("consecutive_failures") or 0) >= threshold:
                 await _health_failure_handler(
                     db,
@@ -545,28 +542,8 @@ async def run_session_viability_probe(
         await db.commit()
 
 
-async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespaces(
-        db,
-        [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE],
-    )
-    await db.commit()
-
-
-async def get_session_viability_control_plane_state(db: AsyncSession) -> dict[str, Any]:
-    return {
-        "running": sorted((await control_plane_state_store.get_values(db, SESSION_VIABILITY_RUNNING_NAMESPACE)).keys()),
-        "state": await control_plane_state_store.get_values(db, SESSION_VIABILITY_STATE_NAMESPACE),
-    }
-
-
-async def set_session_viability_control_plane_entry(db: AsyncSession, device_key: str, state: dict[str, Any]) -> None:
-    await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, device_key, state)
-    await db.commit()
-
-
 async def _check_due_devices(db: AsyncSession) -> None:
-    interval_sec = settings_service.get("general.session_viability_interval_sec")
+    interval_sec = _default_settings.get("general.session_viability_interval_sec")
     stmt = (
         select(Device)
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))

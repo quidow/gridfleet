@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.agent_comm.http_pool import AgentHttpPool
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
@@ -44,8 +46,8 @@ from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
 from app.devices.services import state_write_guard
-from app.events import event_bus
 from app.events import router as events
+from app.events.event_bus import EventBus, set_bus_ref
 from app.grid import router as grid
 from app.grid import service as grid_service
 from app.grid.event_bus_loop import event_bus_subscriber_loop
@@ -64,6 +66,7 @@ from app.sessions import service_sync as session_service_sync
 from app.sessions import service_viability as session_service_viability
 from app.settings import router as settings
 from app.settings import settings_service, validate_leader_keepalive_settings
+from app.settings.service import SettingsService
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
 
@@ -89,16 +92,6 @@ run_reaper_loop = run_service_reaper.run_reaper_loop
 session_sync_loop = session_service_sync.session_sync_loop
 session_viability_loop = session_service_viability.session_viability_loop
 close_session_viability_client = session_service_viability.close
-
-
-async def _reopen_agent_http_pool() -> None:
-    agent_http_pool_module = importlib.import_module("app.agent_comm.http_pool")
-    await agent_http_pool_module.agent_http_pool.reopen()
-
-
-async def _close_agent_http_pool() -> None:
-    agent_http_pool_module = importlib.import_module("app.agent_comm.http_pool")
-    await agent_http_pool_module.agent_http_pool.close()
 
 
 async def hardware_telemetry_loop() -> None:
@@ -173,24 +166,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
 
-    app_services = compose_app(engine=engine, session_factory=session_factory)
+    bus = EventBus()
+    set_bus_ref(bus)
+    svc = SettingsService()
+    pool = AgentHttpPool()
+    breaker = AgentCircuitBreaker(publisher=bus)
+
+    app_services = compose_app(
+        engine=engine,
+        session_factory=session_factory,
+        bus=bus,
+        settings_svc=svc,
+        http_pool=pool,
+        circuit_breaker=breaker,
+    )
     app.state.services = app_services
 
-    event_bus.configure(session_factory=session_factory, engine=engine)
-    settings_service.configure_store_refresh(session_factory)
+    bus.configure(session_factory=session_factory, engine=engine)
+    svc.configure_store_refresh(session_factory)
     webhook_dispatcher.configure(session_factory)
 
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:
-        await settings_service.initialize(db)
+        await svc.initialize(db)
         await _validate_online_agent_contracts(db)
-    register_settings_provider(settings_service.get)
+    register_settings_provider(svc.get)
     _validate_leader_keepalive_settings()
 
-    await _reopen_agent_http_pool()
-    event_bus.register_handler(settings_service.handle_system_event)
-    event_bus.register_handler(webhook_dispatcher.handle_system_event)
-    await event_bus.start()
+    await pool.reopen()
+    bus.register_handler(svc.handle_system_event)
+    bus.register_handler(webhook_dispatcher.handle_system_event)
+    await bus.start()
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
@@ -220,10 +226,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (property_refresh_loop(), "property_refresh_loop"),
             (hardware_telemetry_loop(), "hardware_telemetry_loop"),
             (host_resource_telemetry_loop(), "host_resource_telemetry_loop"),
-            (job_queue.durable_job_worker_loop(session_factory), "durable_job_worker_loop"),
+            (job_queue.durable_job_worker_loop(session_factory, publisher=bus), "durable_job_worker_loop"),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
-            (run_reaper_loop(), "run_reaper_loop"),
-            (data_cleanup_loop(), "data_cleanup_loop"),
+            (run_reaper_loop(publisher=bus), "run_reaper_loop"),
+            (data_cleanup_loop(publisher=bus), "data_cleanup_loop"),
             (session_viability_loop(), "session_viability_loop"),
             (fleet_capacity_collector_loop(), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
@@ -252,10 +258,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if watcher_task is not None:
             await _cancel_and_wait_for_tasks([watcher_task], label="leader watcher")
         await shutdown_background_tasks()
-        await settings_service.shutdown()
+        await svc.shutdown()
         await control_plane_leader.release()
-        await event_bus.shutdown()
-        await _close_agent_http_pool()
+        await bus.shutdown()
+        await pool.close()
         await grid_service.close()
         await close_session_viability_client()
         await engine.dispose()

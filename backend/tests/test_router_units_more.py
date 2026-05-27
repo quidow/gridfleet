@@ -85,6 +85,7 @@ from app.settings import settings_service
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.webhooks import router as webhooks
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -134,14 +135,20 @@ async def test_settings_router_error_paths() -> None:
     svc.bulk_update = AsyncMock(side_effect=KeyError("missing"))
     with pytest.raises(HTTPException) as caught:
         await settings_router.bulk_update_settings(
-            SettingsBulkUpdate(settings={"missing": 1}), db=object(), settings_services=ss
+            SettingsBulkUpdate(settings={"missing": 1}),
+            db=object(),
+            settings_services=ss,
+            events=SimpleNamespace(publisher=event_bus),
         )
     assert caught.value.status_code == 404
 
     svc.bulk_update = AsyncMock(side_effect=ValueError("bad"))
     with pytest.raises(HTTPException) as caught:
         await settings_router.bulk_update_settings(
-            SettingsBulkUpdate(settings={"bad": 1}), db=object(), settings_services=ss
+            SettingsBulkUpdate(settings={"bad": 1}),
+            db=object(),
+            settings_services=ss,
+            events=SimpleNamespace(publisher=event_bus),
         )
     assert caught.value.status_code == 400
 
@@ -152,17 +159,31 @@ async def test_settings_router_error_paths() -> None:
 
     svc.update = AsyncMock(side_effect=KeyError("missing"))
     with pytest.raises(HTTPException) as caught:
-        await settings_router.update_setting("missing", SettingUpdate(value=1), db=object(), settings_services=ss)
+        await settings_router.update_setting(
+            "missing",
+            SettingUpdate(value=1),
+            db=object(),
+            settings_services=ss,
+            events=SimpleNamespace(publisher=event_bus),
+        )
     assert caught.value.status_code == 404
 
     svc.update = AsyncMock(side_effect=ValueError("bad"))
     with pytest.raises(HTTPException) as caught:
-        await settings_router.update_setting("bad", SettingUpdate(value=1), db=object(), settings_services=ss)
+        await settings_router.update_setting(
+            "bad",
+            SettingUpdate(value=1),
+            db=object(),
+            settings_services=ss,
+            events=SimpleNamespace(publisher=event_bus),
+        )
     assert caught.value.status_code == 400
 
     svc.reset = AsyncMock(side_effect=KeyError("missing"))
     with pytest.raises(HTTPException) as caught:
-        await settings_router.reset_setting("missing", db=object(), settings_services=ss)
+        await settings_router.reset_setting(
+            "missing", db=object(), events=SimpleNamespace(publisher=event_bus), settings_services=ss
+        )
     assert caught.value.status_code == 404
 
 
@@ -251,16 +272,24 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     with patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
-            await device_groups.update_group(group_id, device_groups.DeviceGroupUpdate(name="new"), db=object())
+            await device_groups.update_group(
+                group_id,
+                device_groups.DeviceGroupUpdate(name="new"),
+                db=object(),
+                events=SimpleNamespace(publisher=event_bus),
+            )
     assert exc.value.status_code == 404
     updated_group = SimpleNamespace(id=group_id)
     with (
         patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=updated_group)),
         patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value={"id": group_id})),
     ):
-        assert await device_groups.update_group(group_id, device_groups.DeviceGroupUpdate(name="new"), db=object()) == {
-            "id": group_id
-        }
+        assert await device_groups.update_group(
+            group_id,
+            device_groups.DeviceGroupUpdate(name="new"),
+            db=object(),
+            events=SimpleNamespace(publisher=event_bus),
+        ) == {"id": group_id}
 
     with patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
@@ -268,6 +297,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
                 group_id,
                 device_groups.GroupMembershipUpdate(device_ids=[device_id]),
                 db=object(),
+                events=SimpleNamespace(publisher=event_bus),
             )
         assert exc.value.status_code == 404
         with pytest.raises(HTTPException) as exc:
@@ -275,6 +305,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
                 group_id,
                 device_groups.GroupMembershipUpdate(device_ids=[device_id]),
                 db=object(),
+                events=SimpleNamespace(publisher=event_bus),
             )
         assert exc.value.status_code == 404
 
@@ -306,6 +337,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
             include="config",
             db=db,
             settings_services=_mock_settings_svc(mock_svc),
+            events=SimpleNamespace(publisher=event_bus),
         )
     assert created["id"] == run.id
     hydrate.assert_awaited_once()
@@ -353,9 +385,9 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     reset_svc = Mock()
     reset_svc.reset_all = AsyncMock()
-    assert await settings_router.reset_all_settings(db=object(), settings_services=_mock_settings_svc(reset_svc)) == {
-        "status": "all settings reset to defaults"
-    }
+    assert await settings_router.reset_all_settings(
+        db=object(), events=SimpleNamespace(publisher=event_bus), settings_services=_mock_settings_svc(reset_svc)
+    ) == {"status": "all settings reset to defaults"}
     reset_svc.reset_all.assert_awaited_once()
 
     webhook_id = uuid.uuid4()
@@ -394,8 +426,12 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(events, "_wait_for_queue_event", fake_wait_then_cancel)
     monkeypatch.setattr(events, "KEEPALIVE_INTERVAL", 0.01)
+    mock_event_services = SimpleNamespace(
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=asyncio.Queue()), unsubscribe=Mock()),
+    )
     event_response = await events.event_stream(
         SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+        events=mock_event_services,
         types=None,
         device_ids=None,
     )
@@ -411,7 +447,9 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
     request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=[False, True]))
     initial_job = {"job_id": "job-stream", "status": "running", "current_stage": "probe"}
 
-    mock_event_services = SimpleNamespace(bus=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock()))
+    mock_event_services = SimpleNamespace(
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock())
+    )
 
     monkeypatch.setattr(
         devices_verification_router.device_verification,
@@ -521,14 +559,14 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
 
     host = SimpleNamespace(id=host_id, hostname="host-a")
     discovery_result = SimpleNamespace(new_devices=[SimpleNamespace(id=uuid.uuid4())])
+    mock_publisher = AsyncMock()
     with (
         patch.object(hosts, "async_session", return_value=SessionCtx()),
         patch.object(hosts.host_service, "get_host", new=AsyncMock(return_value=host)),
         patch.object(hosts.pack_discovery_service, "discover_devices", new=AsyncMock(return_value=discovery_result)),
-        patch.object(hosts.event_bus, "publish", new=AsyncMock()) as publish,
     ):
-        await hosts._auto_discover(host_id)
-    publish.assert_awaited_once()
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
+    mock_publisher.publish.assert_awaited_once()
 
     with (
         patch.object(hosts, "async_session", return_value=SessionCtx()),
@@ -543,7 +581,7 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         patch.object(hosts, "async_session", return_value=SessionCtx()),
         patch.object(hosts.host_service, "get_host", new=AsyncMock(return_value=None)),
     ):
-        await hosts._auto_discover(host_id)
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
         await hosts._auto_prepare_host_diagnostics(host_id)
 
     with (
@@ -551,7 +589,7 @@ async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
         patch.object(hosts.host_service, "get_host", new=AsyncMock(side_effect=RuntimeError("db"))),
         patch.object(hosts.logger, "exception", new=Mock()) as log_exception,
     ):
-        await hosts._auto_discover(host_id)
+        await hosts._auto_discover(host_id, publisher=mock_publisher)
         await hosts._auto_prepare_host_diagnostics(host_id)
     assert log_exception.call_count == 2
 
@@ -589,7 +627,11 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
         db = DummySession(execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
         grid_ss = _mock_settings_svc(grid_svc)
         response = await runs.create_run(
-            RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss
+            RunCreate(name="r", requirements=[]),
+            include="config",
+            db=db,
+            settings_services=grid_ss,
+            events=SimpleNamespace(publisher=event_bus),
         )
     assert response["id"] == run.id
     mark.assert_called_once()
@@ -769,7 +811,7 @@ async def test_bulk_router_delegates_all_operations() -> None:
         with patch(
             f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
         ):
-            assert await call(payload, db=object()) == {"ok": service_name}
+            assert await call(payload, db=object(), events=SimpleNamespace(publisher=event_bus)) == {"ok": service_name}
 
 
 async def test_devices_test_data_router_paths() -> None:
@@ -794,8 +836,12 @@ async def test_devices_test_data_router_paths() -> None:
         ),
     ):
         assert await devices_test_data.get_test_data(device_id, db=object()) == {"a": 1}
-        assert await devices_test_data.replace_test_data(device_id, payload, db=object()) == {"token": "abc"}  # type: ignore[arg-type]
-        assert await devices_test_data.merge_test_data(device_id, payload, db=object()) == {"merged": True}  # type: ignore[arg-type]
+        assert await devices_test_data.replace_test_data(
+            device_id, payload, db=object(), events=SimpleNamespace(publisher=event_bus)
+        ) == {"token": "abc"}  # type: ignore[arg-type]
+        assert await devices_test_data.merge_test_data(
+            device_id, payload, db=object(), events=SimpleNamespace(publisher=event_bus)
+        ) == {"merged": True}  # type: ignore[arg-type]
 
     audit_log = SimpleNamespace(
         id=uuid.uuid4(),
@@ -975,7 +1021,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
     response = SimpleNamespace(status_code=200)
 
-    mock_event_services = SimpleNamespace(bus=object())
+    mock_event_services = SimpleNamespace(publisher=object())
 
     host_settings_svc = Mock()
     host_settings_svc.get = Mock(return_value=True)
@@ -1222,7 +1268,12 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         patch("app.devices.routers.control.config_service.merge_device_config", new=AsyncMock(return_value=config)),
     ):
         assert await devices_control.get_device_config(device_id, keys=" env , other ", db=object()) == config
-        assert await devices_control.merge_device_config(device_id, {"env": {}}, db=object()) == config
+        assert (
+            await devices_control.merge_device_config(
+                device_id, {"env": {}}, db=object(), events=SimpleNamespace(publisher=event_bus)
+            )
+            == config
+        )
 
     audit_log = SimpleNamespace(
         id=uuid.uuid4(),
@@ -1795,10 +1846,20 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
         ),
     ):
         with pytest.raises(HTTPException) as exc:
-            await device_groups.add_members(group_id, body=SimpleNamespace(device_ids=device_ids), db=object())
+            await device_groups.add_members(
+                group_id,
+                body=SimpleNamespace(device_ids=device_ids),
+                db=object(),
+                events=SimpleNamespace(publisher=event_bus),
+            )
         assert exc.value.status_code == 400
         with pytest.raises(HTTPException) as exc:
-            await device_groups.remove_members(group_id, body=SimpleNamespace(device_ids=device_ids), db=object())
+            await device_groups.remove_members(
+                group_id,
+                body=SimpleNamespace(device_ids=device_ids),
+                db=object(),
+                events=SimpleNamespace(publisher=event_bus),
+            )
         assert exc.value.status_code == 400
 
     async def assert_bulk(
@@ -1813,7 +1874,7 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
             ),
             patch(f"app.devices.routers.groups.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": 1})),
         ):
-            assert await call(group_id, *args, db=object()) == {"ok": 1}
+            assert await call(group_id, *args, db=object(), events=SimpleNamespace(publisher=event_bus)) == {"ok": 1}
 
     await assert_bulk(device_groups.group_bulk_start, "bulk_start_nodes")
     await assert_bulk(device_groups.group_bulk_stop, "bulk_stop_nodes")
@@ -2031,7 +2092,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     )
 
     with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
-        mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
+        mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
         for call in (
             lambda: webhooks.get_webhook(webhook_id, db=object()),
             lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
@@ -2044,7 +2105,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
                 await call()
             assert exc.value.status_code == 404
 
-    mock_event_services_wh = SimpleNamespace(bus=AsyncMock())
+    mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
     with (
         patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
         patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
@@ -2052,7 +2113,7 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
     ):
         result = await webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh)
         assert result["webhook_name"] == "alerts"
-        mock_event_services_wh.bus.publish.assert_awaited_once()
+        mock_event_services_wh.publisher.publish.assert_awaited_once()
         deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
         assert deliveries["total"] == 1
         with pytest.raises(HTTPException) as exc:
@@ -2070,7 +2131,13 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     payload = RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android", "count": 1}])
     dummy_ss = _mock_settings_svc(Mock())
     with pytest.raises(HTTPException) as exc:
-        await runs.create_run(payload, include="capabilities", db=object(), settings_services=dummy_ss)
+        await runs.create_run(
+            payload,
+            include="capabilities",
+            db=object(),
+            events=SimpleNamespace(publisher=event_bus),
+            settings_services=dummy_ss,
+        )
     assert exc.value.status_code == 422
 
     for error, status_code in (
@@ -2080,7 +2147,13 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     ):
         with patch("app.runs.router.run_service.create_run", new=AsyncMock(side_effect=error)):
             with pytest.raises(HTTPException) as exc:
-                await runs.create_run(payload, include=None, db=object(), settings_services=dummy_ss)
+                await runs.create_run(
+                    payload,
+                    include=None,
+                    db=object(),
+                    events=SimpleNamespace(publisher=event_bus),
+                    settings_services=dummy_ss,
+                )
         assert exc.value.status_code == status_code
 
     run = _run_obj()
@@ -2095,7 +2168,13 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     run_grid_svc.get = Mock(return_value="http://grid:4444")
     run_grid_ss = _mock_settings_svc(run_grid_svc)
     with patch("app.runs.router.run_service.create_run", new=AsyncMock(return_value=(run, [device_info]))):
-        created = await runs.create_run(payload, include=None, db=object(), settings_services=run_grid_ss)
+        created = await runs.create_run(
+            payload,
+            include=None,
+            db=object(),
+            events=SimpleNamespace(publisher=event_bus),
+            settings_services=run_grid_ss,
+        )
     assert created["id"] == run.id
     assert created["grid_url"] == "http://grid:4444"
 
@@ -2164,7 +2243,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
     ) -> None:
         with patch(f"app.runs.router.run_service.{service_name}", new=AsyncMock(side_effect=ValueError("bad state"))):
             with pytest.raises(HTTPException) as exc:
-                await call(*args, db=object())
+                await call(*args, db=object(), events=SimpleNamespace(publisher=event_bus))
         assert exc.value.status_code in {404, 409}
 
     for call, service_name in (
@@ -2223,7 +2302,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             ),
             patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)),
         ):
-            assert (await call(run_id, db=object())).id == run_id
+            assert (await call(run_id, db=object(), events=SimpleNamespace(publisher=event_bus))).id == run_id
 
 
 async def test_devices_core_router_branches() -> None:
@@ -2348,7 +2427,7 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
     request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
     unsubscribe = Mock()
     mock_event_services = SimpleNamespace(
-        bus=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
+        subscriber=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
     )
     with patch.object(
         devices_verification_router.device_verification,

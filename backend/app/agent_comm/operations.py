@@ -32,12 +32,15 @@ from app.agent_comm.generated import (
     PluginSyncResponse,
     ToolsStatusResponse,
 )
-from app.agent_comm.http_pool import agent_http_pool
+from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.http_pool import agent_http_pool as _default_pool
 from app.core.errors import AgentResponseError, AgentUnreachableError
-from app.settings import settings_service
+from app.settings import settings_service as _default_settings
 
 if TYPE_CHECKING:
     import uuid
+
+    from app.settings.service import SettingsService
 
 _DEFAULT_HTTP_CLIENT_FACTORY = httpx.AsyncClient
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
@@ -73,13 +76,14 @@ async def _send_request(
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     params: QueryParams = None,
     json_body: JsonBody = None,
+    pool: AgentHttpPool | None = None,
 ) -> httpx.Response:
     auth = _agent_basic_auth()
     use_pool = http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled()
     if use_pool:
         max_keepalive = _settings_int("agent.http_pool_max_keepalive", default=10)
         idle_seconds = _settings_int("agent.http_pool_idle_seconds", default=60)
-        client = await agent_http_pool.get_client(
+        client = await (pool or _default_pool).get_client(
             host,
             agent_port,
             timeout=timeout,
@@ -115,16 +119,16 @@ async def _send_request(
         )
 
 
-def _pool_enabled() -> bool:
+def _pool_enabled(*, settings: SettingsService | None = None) -> bool:
     try:
-        return bool(settings_service.get("agent.http_pool_enabled"))
+        return bool((settings or _default_settings).get("agent.http_pool_enabled"))
     except (KeyError, RuntimeError):
         return False
 
 
-def _settings_int(key: str, *, default: int) -> int:
+def _settings_int(key: str, *, default: int, settings: SettingsService | None = None) -> int:
     try:
-        return int(settings_service.get(key))
+        return int((settings or _default_settings).get(key))
     except (KeyError, RuntimeError, TypeError, ValueError):
         return default
 
