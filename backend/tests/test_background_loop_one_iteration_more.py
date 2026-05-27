@@ -8,6 +8,7 @@ from app.appium_nodes.services import reconciler as appium_reconciler
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
+from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
@@ -121,7 +122,6 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(fleet_capacity, "async_session", _Session)
     monkeypatch.setattr(
         fleet_capacity,
         "collect_capacity_snapshot_once",
@@ -129,8 +129,16 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     )
     monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
+    loop = fleet_capacity.FleetCapacityLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            session_factory=_Session,
+        )
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await fleet_capacity.fleet_capacity_collector_loop(settings=FakeSettingsReader({}))
+        await loop.run()
 
     assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
 

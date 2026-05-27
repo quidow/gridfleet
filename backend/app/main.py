@@ -81,15 +81,15 @@ appium_reconciler_loop = appium_node_services.reconciler.appium_reconciler_loop
 heartbeat_loop = appium_node_services.heartbeat.heartbeat_loop
 node_health_loop = appium_node_services.node_health.node_health_loop
 shutdown_background_tasks = appium_node_services.heartbeat.shutdown_background_tasks
-data_cleanup_loop = device_services.data_cleanup.data_cleanup_loop
-device_connectivity_loop = device_services.connectivity.device_connectivity_loop
+DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
+DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
 device_health = device_services.health
-device_intent_reconciler_loop = device_services.intent_reconciler.device_intent_reconciler_loop
+DeviceIntentReconcilerLoop = device_services.intent_reconciler.DeviceIntentReconcilerLoop
 device_service = device_services.service
-fleet_capacity_collector_loop = device_services.fleet_capacity.fleet_capacity_collector_loop
+FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
 assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
-property_refresh_loop = device_services.property_refresh.property_refresh_loop
+PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
 run_reaper_loop = run_service_reaper.run_reaper_loop
 session_sync_loop = session_service_sync.session_sync_loop
 session_viability_loop = session_service_viability.session_viability_loop
@@ -226,14 +226,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
+        connectivity_loop = DeviceConnectivityLoop(services=app_services.devices)
+        data_cleanup = DataCleanupLoop(services=app_services.devices)
+        fleet_capacity = FleetCapacityLoop(services=app_services.devices)
+        intent_reconciler = DeviceIntentReconcilerLoop(services=app_services.devices)
+        property_refresh = PropertyRefreshLoop(services=app_services.devices)
+
         _leader_loops: list[tuple[Any, str]] = [
             (control_plane_leader_keepalive_loop(), "control_plane_leader_keepalive"),
             (heartbeat_loop(settings=svc, pool=pool, circuit_breaker=breaker), "heartbeat_loop"),
             (session_sync_loop(settings=svc), "session_sync_loop"),
             (event_bus_subscriber_loop(), "grid_event_bus_subscriber_loop"),
             (node_health_loop(settings=svc, pool=pool, circuit_breaker=breaker), "node_health_loop"),
-            (device_connectivity_loop(settings=svc), "device_connectivity_loop"),
-            (property_refresh_loop(settings=svc), "property_refresh_loop"),
+            (connectivity_loop.run(), "device_connectivity_loop"),
+            (property_refresh.run(), "property_refresh_loop"),
             (hardware_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker), "hardware_telemetry_loop"),
             (
                 host_resource_telemetry_loop(settings=svc, pool=pool, circuit_breaker=breaker),
@@ -245,12 +251,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ),
             (webhook_dispatcher.webhook_delivery_loop(session_factory), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper_loop(publisher=bus, settings=svc), "run_reaper_loop"),
-            (data_cleanup_loop(publisher=bus, settings=svc), "data_cleanup_loop"),
+            (data_cleanup.run(), "data_cleanup_loop"),
             (session_viability_loop(settings=svc), "session_viability_loop"),
-            (fleet_capacity_collector_loop(settings=svc), "fleet_capacity_collector_loop"),
+            (fleet_capacity.run(), "fleet_capacity_collector_loop"),
             (pack_drain_loop(), "pack_drain_loop"),
             (appium_reconciler_loop(settings=svc, pool=pool, circuit_breaker=breaker), "appium_reconciler_loop"),
-            (device_intent_reconciler_loop(settings=svc), "device_intent_reconciler_loop"),
+            (intent_reconciler.run(), "device_intent_reconciler_loop"),
             (background_loop_flush_loop(session_factory, settings=svc), "background_loop_flush_loop"),
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]

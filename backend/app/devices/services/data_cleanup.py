@@ -10,7 +10,6 @@ from sqlalchemy import delete, or_, select
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceTestDataAuditLog
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.core.protocols import SettingsReader
+    from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -234,15 +234,22 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher, sett
     )
 
 
-async def data_cleanup_loop(*, publisher: EventPublisher, settings: SettingsReader) -> None:
-    """Background loop that periodically cleans up old data."""
-    interval_hours: int = settings.get("retention.cleanup_interval_hours")
-    interval_seconds = float(interval_hours * 3600)
-    await schedule_background_loop(LOOP_NAME, interval_seconds)
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            async with observe_background_loop(LOOP_NAME, interval_seconds).cycle(), async_session() as db:
-                await _cleanup_old_data(db, publisher=publisher, settings=settings)
-        except Exception:
-            logger.exception("Data cleanup failed")
+class DataCleanupLoop:
+    def __init__(self, *, services: DeviceServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Background loop that periodically cleans up old data."""
+        interval_hours: int = self._services.settings.get("retention.cleanup_interval_hours")
+        interval_seconds = float(interval_hours * 3600)
+        await schedule_background_loop(LOOP_NAME, interval_seconds)
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                async with (
+                    observe_background_loop(LOOP_NAME, interval_seconds).cycle(),
+                    self._services.session_factory() as db,
+                ):
+                    await _cleanup_old_data(db, publisher=self._services.publisher, settings=self._services.settings)
+            except Exception:
+                logger.exception("Data cleanup failed")

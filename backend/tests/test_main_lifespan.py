@@ -55,6 +55,14 @@ async def _forever(**_: object) -> None:
     await asyncio.Event().wait()
 
 
+def _mock_loop(**_: object) -> object:
+    class _MockLoop:
+        async def run(self) -> None:
+            await _forever()
+
+    return _MockLoop()
+
+
 def test_main_imports_in_fresh_interpreter() -> None:
     result = subprocess.run(
         [sys.executable, "-c", "import app.main"],
@@ -171,18 +179,18 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "session_sync_loop", _forever)
     monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
     monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
     monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
     monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory, **_: _forever())
     monkeypatch.setattr(main, "run_reaper_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "data_cleanup_loop", lambda **_: _forever())
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
     monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
     monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -324,18 +332,18 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "session_sync_loop", _forever)
     monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
     monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
     monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
     monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
     monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory, **_: _forever())
     monkeypatch.setattr(main, "run_reaper_loop", lambda **_: _forever())
-    monkeypatch.setattr(main, "data_cleanup_loop", lambda **_: _forever())
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
     monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
     monkeypatch.setattr(main, "pack_drain_loop", _forever)
     monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass

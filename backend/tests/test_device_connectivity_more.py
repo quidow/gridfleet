@@ -18,6 +18,7 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
+from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -231,9 +232,16 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     async def fake_session() -> AsyncMock:
         yield AsyncMock()
 
+    loop = device_connectivity.DeviceConnectivityLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({"general.device_check_interval_sec": 1}),
+            session_factory=fake_session,
+        )
+    )
+
     with (
         patch("app.devices.services.connectivity.observe_background_loop", return_value=_Observation()),
-        patch("app.devices.services.connectivity.async_session", fake_session),
         patch(
             "app.devices.services.connectivity._check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
@@ -242,9 +250,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await device_connectivity.device_connectivity_loop(
-            settings=FakeSettingsReader({"general.device_check_interval_sec": 1})
-        )
+        await loop.run()
 
     sleep.assert_awaited()
 

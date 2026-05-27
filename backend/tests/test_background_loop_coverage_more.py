@@ -20,6 +20,7 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
+from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -41,7 +42,6 @@ async def _fake_session() -> AsyncGenerator[AsyncMock, None]:
 
 async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(intent_reconciler, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(intent_reconciler, "async_session", _fake_session)
     monkeypatch.setattr(
         intent_reconciler,
         "run_device_intent_reconciler_once",
@@ -49,17 +49,22 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     )
     monkeypatch.setattr(intent_reconciler.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    with pytest.raises(SystemExit):
-        await intent_reconciler.device_intent_reconciler_loop(
-            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
+    loop = intent_reconciler.DeviceIntentReconcilerLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
+            session_factory=_fake_session,
         )
+    )
+
+    with pytest.raises(SystemExit):
+        await loop.run()
 
     intent_reconciler.os._exit.assert_called_once_with(70)
 
 
 async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(intent_reconciler, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(intent_reconciler, "async_session", _fake_session)
     monkeypatch.setattr(
         intent_reconciler,
         "run_device_intent_reconciler_once",
@@ -68,10 +73,16 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     sleep = AsyncMock(side_effect=asyncio.CancelledError())
     monkeypatch.setattr(intent_reconciler.asyncio, "sleep", sleep)
 
-    with pytest.raises(asyncio.CancelledError):
-        await intent_reconciler.device_intent_reconciler_loop(
-            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
+    loop = intent_reconciler.DeviceIntentReconcilerLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
+            session_factory=_fake_session,
         )
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop.run()
 
     sleep.assert_awaited_once_with(1)
 
@@ -117,7 +128,6 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
 async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(device_connectivity, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(device_connectivity, "async_session", _fake_session)
     monkeypatch.setattr(device_connectivity, "_check_expired_cooldowns", AsyncMock())
     monkeypatch.setattr(
         device_connectivity,
@@ -126,8 +136,16 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     )
     monkeypatch.setattr(device_connectivity.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    loop = device_connectivity.DeviceConnectivityLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session,
+        )
+    )
+
     with pytest.raises(SystemExit):
-        await device_connectivity.device_connectivity_loop(settings=FakeSettingsReader({}))
+        await loop.run()
 
     device_connectivity.os._exit.assert_called_once_with(70)
 
@@ -168,13 +186,20 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
     monkeypatch.setattr(data_cleanup, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(data_cleanup, "async_session", _fake_session)
     monkeypatch.setattr(data_cleanup, "_cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom")))
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
 
+    loop = data_cleanup.DataCleanupLoop(
+        services=DeviceServices(
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session,
+        )
+    )
+
     with pytest.raises(asyncio.CancelledError):
-        await data_cleanup.data_cleanup_loop(publisher=AsyncMock(), settings=FakeSettingsReader({}))
+        await loop.run()
 
     data_cleanup.schedule_background_loop.assert_awaited_once_with(data_cleanup.LOOP_NAME, 3600.0)
     sleep.assert_any_await(3600.0)
