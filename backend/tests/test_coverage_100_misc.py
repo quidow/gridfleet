@@ -424,7 +424,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    clear = appium_reconciler._clear_token_factory(require_leader=True, session_scope=SessionCtx)
+    clear = appium_reconciler._clear_token_factory(
+        require_leader=True, session_scope=SessionCtx, settings=FakeSettingsReader({})
+    )
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear(row=SimpleNamespace(device_id=uuid.uuid4()), reason="done")

@@ -253,7 +253,7 @@ class AppiumReconcilerLoop:
             cycle_start = time.monotonic()
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await assert_current_leader(db)
+                    await assert_current_leader(db, settings=self._services.settings)
                     hosts = await _fetch_online_hosts(db)
                     rows = await _fetch_node_rows(db)
                     desired = await _fetch_desired_rows(db)
@@ -518,7 +518,7 @@ async def _drive_convergence(
             try:
                 async with async_session() as db:
                     if require_leader:
-                        await assert_current_leader(db)
+                        await assert_current_leader(db, settings=settings)
                 payload = (health_by_host or {}).get(host_id)
                 if payload is None:
                     payload = (
@@ -540,7 +540,7 @@ async def _drive_convergence(
                     ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
                     for entry in running
                 ]
-                await _touch_last_observed(rows)
+                await _touch_last_observed(rows, settings=settings)
                 active_rows = active_rows_by_host.get(host_id, [])
                 if not active_rows:
                     return
@@ -552,8 +552,8 @@ async def _drive_convergence(
                     start_agent=_make_start_agent(require_leader=require_leader, settings=settings),
                     stop_agent=_make_stop_agent(host_ip, agent_port, settings=settings),
                     write_observed=_write_observed_factory(require_leader=require_leader, settings=settings),
-                    clear_token=_clear_token_factory(require_leader=require_leader),
-                    reset_start_failure=_make_reset_start_failure(require_leader=require_leader),
+                    clear_token=_clear_token_factory(require_leader=require_leader, settings=settings),
+                    reset_start_failure=_make_reset_start_failure(require_leader=require_leader, settings=settings),
                 )
             finally:
                 APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
@@ -623,8 +623,10 @@ async def converge_device_now(
         start_agent=_make_start_agent(require_leader=False, session_scope=session_scope, settings=settings),
         stop_agent=_make_stop_agent(host.ip, host.agent_port, settings=settings),
         write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope, settings=settings),
-        clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope),
-        reset_start_failure=_make_reset_start_failure(require_leader=False, session_scope=session_scope),
+        clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope, settings=settings),
+        reset_start_failure=_make_reset_start_failure(
+            require_leader=False, session_scope=session_scope, settings=settings
+        ),
         raise_errors=True,
     )
     async with session_scope() as read_db:
@@ -645,7 +647,7 @@ def _make_start_agent(
     async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
         async with resolved_session_scope() as db:
             if require_leader:
-                await assert_current_leader(db)
+                await assert_current_leader(db, settings=settings)
             device = await _load_device_for_reconciler(db, row.device_id)
             if device is None:
                 raise RuntimeError(f"Device {row.device_id} no longer exists")
@@ -667,7 +669,12 @@ def _make_start_agent(
                     settings=settings,
                 )
                 raise
-            await _reset_start_failure(row, require_leader=require_leader, session_scope=resolved_session_scope)
+            await _reset_start_failure(
+                row,
+                require_leader=require_leader,
+                session_scope=resolved_session_scope,
+                settings=settings,
+            )
             return {
                 "port": handle.port,
                 "pid": handle.pid,
@@ -722,7 +729,7 @@ def _write_observed_factory(
     ) -> None:
         async with resolved_session_scope() as db:
             if require_leader:
-                await assert_current_leader(db)
+                await assert_current_leader(db, settings=settings)
             device = await _load_device_for_reconciler(db, row.device_id)
             if device is None:
                 return
@@ -781,13 +788,14 @@ def _clear_token_factory(
     *,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> Callable[..., Awaitable[None]]:
     resolved_session_scope = session_scope or async_session
 
     async def _clear(*, row: DesiredRow, reason: str) -> None:
         async with resolved_session_scope() as db:
             if require_leader:
-                await assert_current_leader(db)
+                await assert_current_leader(db, settings=settings)
             await _clear_transition_token(db, row)
 
     return _clear
@@ -832,11 +840,11 @@ async def _clear_transition_token(db: AsyncSession, row: DesiredRow) -> None:
     await db.commit()
 
 
-async def _touch_last_observed(rows: list[DesiredRow]) -> None:
+async def _touch_last_observed(rows: list[DesiredRow], *, settings: SettingsReader) -> None:
     if not rows:
         return
     async with async_session() as db:
-        await assert_current_leader(db)
+        await assert_current_leader(db, settings=settings)
         node_ids = [row.node_id for row in rows]
         await db.execute(
             update(AppiumNode).where(AppiumNode.id.in_(node_ids)).values(last_observed_at=datetime.now(UTC))
@@ -871,7 +879,7 @@ async def _record_start_failure(
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         if require_leader:
-            await assert_current_leader(db)
+            await assert_current_leader(db, settings=settings)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
@@ -894,11 +902,12 @@ async def _reset_start_failure(
     *,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> None:
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         if require_leader:
-            await assert_current_leader(db)
+            await assert_current_leader(db, settings=settings)
         device = await _lock_device_for_reconciler(db, row.device_id)
         if device is None:
             return
@@ -920,8 +929,9 @@ def _make_reset_start_failure(
     *,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
+    settings: SettingsReader,
 ) -> Callable[..., Awaitable[None]]:
     async def _reset(*, row: DesiredRow) -> None:
-        await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope)
+        await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope, settings=settings)
 
     return _reset

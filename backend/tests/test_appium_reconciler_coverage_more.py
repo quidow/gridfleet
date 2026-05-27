@@ -203,7 +203,7 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
 
 async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     assert appium_reconciler._session_scope(None) is appium_reconciler.async_session
-    await appium_reconciler._touch_last_observed([])
+    await appium_reconciler._touch_last_observed([], settings=FakeSettingsReader({}))
 
     class Session:
         async def __aenter__(self) -> "Session":
@@ -235,7 +235,9 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
         await start(row=row, port=4723)
 
     monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=scope)
+    await appium_reconciler._reset_start_failure(
+        row, require_leader=False, session_scope=scope, settings=FakeSettingsReader({})
+    )
 
 
 async def test_record_and_reset_start_failure_state(
@@ -270,7 +272,9 @@ async def test_record_and_reset_start_failure_state(
     assert device.lifecycle_policy_state["last_failure_source"] == "appium_reconciler"
     assert device.lifecycle_policy_state["last_failure_reason"] == "timeout"
 
-    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
+    await appium_reconciler._reset_start_failure(
+        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
+    )
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("recovery_backoff_attempts") in (None, 0)
@@ -314,7 +318,9 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
     async def _scope() -> AsyncSession:
         yield db_session
 
-    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
+    await appium_reconciler._reset_start_failure(
+        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
+    )
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("last_failure_source") == "connectivity"
@@ -346,7 +352,9 @@ async def test_reset_start_failure_clears_orphaned_reason(
     async def _scope() -> AsyncSession:
         yield db_session
 
-    await appium_reconciler._reset_start_failure(row, require_leader=False, session_scope=_scope)
+    await appium_reconciler._reset_start_failure(
+        row, require_leader=False, session_scope=_scope, settings=FakeSettingsReader({})
+    )
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("last_failure_source") is None
@@ -358,7 +366,7 @@ async def test_clear_transition_token_and_touch_noop(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    await appium_reconciler._touch_last_observed([])
+    await appium_reconciler._touch_last_observed([], settings=FakeSettingsReader({}))
     with monkeypatch.context() as ctx:
         ctx.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", AsyncMock(return_value=None))
         await appium_reconciler._clear_transition_token(db_session, _desired_row(device_id=uuid.uuid4()))
