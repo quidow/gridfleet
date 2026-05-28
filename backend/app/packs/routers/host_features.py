@@ -67,6 +67,7 @@ async def invoke_feature_action(
         action_id=action_id,
         args=body.args,
         circuit_breaker=agent_comm.circuit_breaker,
+        agent_auth=agent_comm.http_pool.auth,
     )
     await session.commit()
     return {"ok": result.ok, "detail": result.detail, "data": result.data}
