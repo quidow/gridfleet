@@ -555,7 +555,7 @@ class SessionSyncLoop:
         run as a drift reconciler against any bus event that was missed
         (hub restart, network partition, slow joiner).
         """
-        sync = self._services.sync  # type: ignore[attr-defined]  # TODO(Task 3): add sync to SessionServices
+        sync = self._services.sync
         while True:
             interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
             try:

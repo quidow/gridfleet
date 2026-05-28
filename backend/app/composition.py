@@ -32,6 +32,7 @@ from app.jobs.queue import DurableJobWorkerLoop
 from app.packs.services_container import PackServices
 from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
+from app.sessions.service_sync import SessionSyncService
 from app.sessions.services_container import SessionServices
 from app.settings.services_container import SettingsServices
 from app.webhooks.dispatcher import WebhookDeliveryLoop
@@ -105,6 +106,7 @@ def compose_app(
         ),
         sessions=SessionServices(
             crud=SessionCrudService(publisher=bus),
+            sync=SessionSyncService(publisher=bus, settings=settings_svc, grid=grid_svc),
             settings=settings_svc,
             grid=grid_svc,
             session_factory=session_factory,
