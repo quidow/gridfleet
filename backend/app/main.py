@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
-from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.config import agent_settings
+from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
@@ -150,7 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bus = EventBus()
     register_events_gauge_refresher(bus)
     svc = SettingsService()
-    pool = AgentHttpPool()
+    pool = AgentHttpPool(agent_auth=build_agent_basic_auth(agent_settings))
     breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
 
     app_services = compose_app(

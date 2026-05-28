@@ -11,7 +11,6 @@ from app.agent_comm.client import (
     AgentHttpClient,
     JsonBody,
     QueryParams,
-    _agent_basic_auth,
 )
 from app.agent_comm.client import (
     request as agent_request,
@@ -79,7 +78,7 @@ async def _send_request(
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
-    auth = _agent_basic_auth()
+    auth = pool.auth if pool is not None else None
     use_pool = (
         pool is not None and http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY and _pool_enabled(settings=settings)
     )

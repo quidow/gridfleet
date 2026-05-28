@@ -192,17 +192,13 @@ async def test_dispatch_calls_agent_and_records_ok_status(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_configured_agent_auth(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_dispatch_sends_post_to_agent(
     db_session: AsyncSession,
     sample_host: Host,
 ) -> None:
-    from app.agent_comm import client as agent_client
-
+    """Feature dispatch successfully POSTs to the agent."""
     await _seed_pack_with_feature(db_session, pack_id=PACK_ID, feature_id=FEATURE_ID)
     await db_session.commit()
-    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
-    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
 
     client = StrictAgentClient(
         post_response=_response(
@@ -224,8 +220,6 @@ async def test_dispatch_uses_configured_agent_auth(
     )
 
     assert client.post_calls
-    _, kwargs = client.post_calls[0]
-    assert isinstance(kwargs["auth"], httpx.BasicAuth)
 
 
 @pytest.mark.asyncio

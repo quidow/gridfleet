@@ -539,13 +539,11 @@ async def test_agent_request_passes_auth() -> None:
     assert kwargs["auth"] is auth
 
 
-async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.agent_comm import client as agent_client
+async def test_agent_request_omits_auth_when_not_passed() -> None:
+    """client.request() no longer reads settings; when auth is not supplied, no auth is applied."""
     from app.agent_comm.client import request as agent_request
 
     client = StrictAgentClient()
-    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
-    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
 
     await agent_request(
         "GET",
@@ -558,7 +556,7 @@ async def test_agent_request_uses_configured_auth_when_not_passed(monkeypatch: p
 
     assert client.get_calls, "expected one GET call"
     _, kwargs = client.get_calls[0]
-    assert isinstance(kwargs["auth"], httpx.BasicAuth)
+    assert "auth" not in kwargs
 
 
 def _make_capturing_factory(captured: list[httpx.Auth | None]) -> Callable[..., StrictAgentClient]:
@@ -587,11 +585,11 @@ def _make_capturing_factory(captured: list[httpx.Auth | None]) -> Callable[..., 
     return factory
 
 
-async def test_send_request_supplies_basic_auth_when_configured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_send_request_supplies_basic_auth_when_configured() -> None:
     expected_auth = httpx.BasicAuth("ops", "secret")
-    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: expected_auth)
+    from app.agent_comm.http_pool import AgentHttpPool
+
+    pool = AgentHttpPool(agent_auth=expected_auth)
     captured: list[httpx.Auth | None] = []
     factory = _make_capturing_factory(captured)
     await agent_operations.agent_health(
@@ -599,13 +597,13 @@ async def test_send_request_supplies_basic_auth_when_configured(
         agent_port=5100,
         http_client_factory=factory,
         settings=SETTINGS,
+        pool=pool,
         circuit_breaker=_noop_breaker(),
     )
     assert captured == [expected_auth]
 
 
-async def test_send_request_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
+async def test_send_request_omits_auth_when_unset() -> None:
     captured: list[httpx.Auth | None] = []
     factory = _make_capturing_factory(captured)
     await agent_operations.agent_health(
