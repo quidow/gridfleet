@@ -21,6 +21,7 @@ from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.fixture(autouse=True)
@@ -114,7 +115,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
     monkeypatch.setattr(session_viability, "_check_due_devices", AsyncMock())
     monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
-    services = SessionServices(settings=FakeSettingsReader({}), session_factory=_Session)
+    services = SessionServices(settings=FakeSettingsReader({}), session_factory=_Session, publisher=event_bus)
     with pytest.raises(asyncio.CancelledError):
         await SessionViabilityLoop(services=services).run()
 
@@ -129,6 +130,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         session_factory=_Session,
+        publisher=event_bus,
     )
     with pytest.raises(asyncio.CancelledError):
         await SessionSyncLoop(services=services).run()
@@ -144,6 +146,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         session_factory=_Session,
+        publisher=event_bus,
     )
     with pytest.raises(asyncio.CancelledError):
         await SessionSyncLoop(services=services).run()
@@ -257,6 +260,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         session_factory=_Session,
+        publisher=event_bus,
     )
     with pytest.raises(RuntimeError, match="exit 70"):
         await SessionSyncLoop(services=services).run()
