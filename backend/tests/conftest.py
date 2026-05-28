@@ -30,6 +30,7 @@ from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.grid.dependencies import get_grid_services
+from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
@@ -359,7 +360,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return GridServices(settings=settings_service, session_factory=sf)
+        return GridServices(grid=GridService(settings=settings_service), settings=settings_service, session_factory=sf)
 
     def override_get_pack_services() -> PackServices:
         assert db_session.bind is not None

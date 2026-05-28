@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from app.core.dependencies import DbDep
 from app.devices.services import service as device_service
-from app.grid import service as grid_service
+from app.grid.dependencies import GridServicesDep
 from app.grid.schemas import GridQueueRead, GridStatusRead
 from app.grid.slot_parser import list_slot_sessions
 from app.settings.dependencies import SettingsServicesDep
@@ -13,8 +13,8 @@ router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
 @router.get("/status", response_model=GridStatusRead)
-async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    grid_data = await grid_service.get_grid_status(settings=settings_services.service)
+async def grid_status(db: DbDep, grid_services: GridServicesDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+    grid_data = await grid_services.grid.get_status()
     devices = await device_service.list_devices(db, settings=settings_services.service)
 
     registry_devices = []
@@ -34,10 +34,6 @@ async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict
         }
         registry_devices.append(entry)
 
-    # Exclude probe sessions so this counter matches the Sessions table
-    # (which never persists probes as real sessions) and the device state
-    # machine (which never transitions devices to busy for probes). The
-    # parser also drops reserved-sentinel slots and malformed entries.
     active_sessions = sum(1 for parsed in list_slot_sessions(grid_data) if not parsed.is_probe)
     value = grid_data.get("value", {})
     queue_size = len(value.get("sessionQueueRequests", [])) if isinstance(value, dict) else 0
@@ -54,8 +50,8 @@ async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict
 
 
 @router.get("/queue", response_model=GridQueueRead)
-async def grid_queue(settings_services: SettingsServicesDep) -> dict[str, Any]:
-    grid_data = await grid_service.get_grid_status(settings=settings_services.service)
+async def grid_queue(grid_services: GridServicesDep) -> dict[str, Any]:
+    grid_data = await grid_services.grid.get_status()
     value = grid_data.get("value", {})
     requests = value.get("sessionQueueRequests", []) if isinstance(value, dict) else []
     return {
