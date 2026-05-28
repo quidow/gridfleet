@@ -1085,11 +1085,16 @@ async def test_manual_session_test_endpoint(
             "error": None,
             "checked_by": "manual",
         },
-    ):
+    ) as probe:
         resp = await client.post(f"/api/devices/{device_id}/session-test")
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "passed"
+    # The route must forward a publisher to run_session_viability_probe; otherwise
+    # the inner _MACHINE.transition → set_operational_state assertion fires and
+    # the manual "Test Session" button returns 500.
+    assert probe.await_args is not None
+    assert probe.await_args.kwargs.get("publisher") is not None
 
 
 @pytest.mark.asyncio
