@@ -14,6 +14,8 @@ from app.devices.services import state_write_guard
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.protocols import EventPublisher
+
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
@@ -319,10 +321,10 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
     handle_health_failure_called = False
     original_handler = lifecycle_policy.handle_health_failure
 
-    async def spy(db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
+    async def spy(db: AsyncSession, device: Device, *, source: str, reason: str, publisher: EventPublisher) -> str:
         nonlocal handle_health_failure_called
         handle_health_failure_called = True
-        return await original_handler(db, device, source=source, reason=reason)
+        return await original_handler(db, device, source=source, reason=reason, publisher=publisher)
 
     with (
         patch(
