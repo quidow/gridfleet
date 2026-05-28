@@ -1042,7 +1042,7 @@ async def test_sessions_straddle_active_signal_boundary(
     """Sessions started while a run is preparing carry run_id=NULL; sessions
     started after the explicit /active signal are linked to the run."""
     from app.runs.models import RunState
-    from app.sessions import service as session_service
+    from app.sessions.service import SessionCrudService
     from tests.helpers import create_reserved_run
 
     device = await create_device_record(
@@ -1058,28 +1058,28 @@ async def test_sessions_straddle_active_signal_boundary(
     await db_session.commit()
     run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
 
-    prep_session = await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    prep_session = await crud.register_session(
         db_session,
         session_id="sess-prep",
         test_name="prep-warmup",
         device_id=device.id,
-        publisher=event_bus,
     )
     assert prep_session.run_id is None
 
-    await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed, publisher=Mock())
+    crud_mock = SessionCrudService(publisher=Mock())
+    await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
     await run_service.signal_active(db_session, run.id, publisher=event_bus)
     await db_session.refresh(run)
     assert run.state == RunState.active
     assert run.started_at is not None
 
-    real_session = await session_service.register_session(
+    real_session = await crud.register_session(
         db_session,
         session_id="sess-real",
         test_name="real-test",
         device_id=device.id,
-        publisher=event_bus,
     )
     assert real_session.run_id == run.id
 

@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
-from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.service import SessionCrudService
 
 
 async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> tuple[Session, Session]:
@@ -58,7 +59,8 @@ async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> tuple[S
 @pytest.mark.db
 async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "default")
-    sessions, _total = await session_service.list_sessions(db_session)
+    crud = SessionCrudService(publisher=Mock())
+    sessions, _total = await crud.list_sessions(db_session)
     ids = {s.id for s in sessions}
     assert real.id in ids
     assert all(s.test_name != PROBE_TEST_NAME for s in sessions)
@@ -67,7 +69,8 @@ async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, d
 @pytest.mark.db
 async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "include")
-    sessions, _total = await session_service.list_sessions(db_session, include_probes=True)
+    crud = SessionCrudService(publisher=Mock())
+    sessions, _total = await crud.list_sessions(db_session, include_probes=True)
     ids = {s.id for s in sessions}
     assert real.id in ids
     assert probe.id in ids
@@ -76,7 +79,8 @@ async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSes
 @pytest.mark.db
 async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "cursor-default")
-    page = await session_service.list_sessions_cursor(db_session)
+    crud = SessionCrudService(publisher=Mock())
+    page = await crud.list_sessions_cursor(db_session)
     ids = {s.id for s in page.items}
     assert real.id in ids
     assert all(s.test_name != PROBE_TEST_NAME for s in page.items)
@@ -85,7 +89,8 @@ async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSes
 @pytest.mark.db
 async def test_list_sessions_cursor_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "cursor-include")
-    page = await session_service.list_sessions_cursor(db_session, include_probes=True)
+    crud = SessionCrudService(publisher=Mock())
+    page = await crud.list_sessions_cursor(db_session, include_probes=True)
     ids = {s.id for s in page.items}
     assert real.id in ids
     assert probe.id in ids

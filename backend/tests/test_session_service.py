@@ -12,7 +12,6 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
 from app.devices.services.state import set_hold, set_operational_state
 from app.hosts.models import Host
-from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.protocols import SessionCrudProtocol
 from app.sessions.service import SessionCrudService
@@ -61,9 +60,8 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
     device.verified_at = datetime.now(UTC)
     await db_session.commit()
 
-    updated = await session_service.update_session_status(
-        db_session, "android-sess-1", SessionStatus.passed, publisher=Mock()
-    )
+    crud = SessionCrudService(publisher=Mock())
+    updated = await crud.update_session_status(db_session, "android-sess-1", SessionStatus.passed)
 
     assert updated is not None
     assert updated.status == SessionStatus.passed
@@ -95,7 +93,8 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
     )
     await db_session.commit()
 
-    updated = await session_service.update_session_status(db_session, "sess-a", SessionStatus.failed, event_bus)
+    crud = SessionCrudService(publisher=event_bus)
+    updated = await crud.update_session_status(db_session, "sess-a", SessionStatus.failed)
 
     assert updated is not None
     await db_session.refresh(device)
@@ -126,9 +125,8 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     db_session.add(session)
     await db_session.commit()
 
-    updated = await session_service.update_session_status(
-        db_session, "reserved-sess", SessionStatus.error, publisher=Mock()
-    )
+    crud = SessionCrudService(publisher=Mock())
+    updated = await crud.update_session_status(db_session, "reserved-sess", SessionStatus.error)
 
     assert updated is not None
     await db_session.refresh(device)
@@ -177,9 +175,8 @@ async def test_update_session_status_clears_stop_pending(
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["stop_pending"] is True
 
-    updated = await session_service.update_session_status(
-        db_session, "sess-stuck-stop-1", SessionStatus.passed, publisher=Mock()
-    )
+    crud = SessionCrudService(publisher=Mock())
+    updated = await crud.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
     assert updated is not None
     assert updated.ended_at is not None
 
@@ -211,12 +208,12 @@ async def test_register_session_does_not_attach_run_id_when_run_is_preparing(
     await db_session.commit()
     run = await create_reserved_run(db_session, name="Prep Phase Run", devices=[device], state=RunState.preparing)
 
-    registered = await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    registered = await crud.register_session(
         db_session,
         session_id="prep-session-1",
         test_name="prep-warmup",
         device_id=device.id,
-        publisher=event_bus,
     )
 
     assert registered.run_id is None
@@ -245,12 +242,12 @@ async def test_register_session_attaches_run_id_when_run_is_active(
     await db_session.commit()
     run = await create_reserved_run(db_session, name="Active Phase Run", devices=[device], state=RunState.active)
 
-    registered = await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    registered = await crud.register_session(
         db_session,
         session_id="active-session-1",
         test_name="real-test",
         device_id=device.id,
-        publisher=event_bus,
     )
 
     assert registered.run_id == run.id
@@ -299,7 +296,8 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     running.ended_at = datetime.now(UTC)
     await db_session.commit()
 
-    await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    await crud.register_session(
         db_session,
         session_id="sess-stuck-stop-2-error",
         test_name="error-session",
@@ -307,7 +305,6 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
         status=SessionStatus.error,
         error_type="driver_init_failed",
         error_message="boom",
-        publisher=event_bus,
     )
 
     reloaded = await db_session.get(Device, device.id)
@@ -367,9 +364,8 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
         device.hold = DeviceHold.maintenance
     await db_session.commit()
 
-    updated = await session_service.update_session_status(
-        db_session, "sess-stuck-stop-non-busy", SessionStatus.passed, publisher=Mock()
-    )
+    crud = SessionCrudService(publisher=Mock())
+    updated = await crud.update_session_status(db_session, "sess-stuck-stop-non-busy", SessionStatus.passed)
     assert updated is not None
 
     reloaded = await db_session.get(Device, device.id)
@@ -401,17 +397,17 @@ async def test_register_session_running_returns_existing_on_conflict(
     )
     await db_session.commit()
 
-    first = await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    first = await crud.register_session(
         db_session,
         session_id="sess-conflict",
         test_name="first",
         device_id=device.id,
         connection_target="conflict-target",
-        publisher=event_bus,
     )
     assert first.test_name == "first"
 
-    real_get_session = session_service.get_session
+    real_get_session = crud.get_session
     pre_check_calls = {"n": 0}
 
     async def patched_get_session(db: AsyncSession, sid: str) -> Session | None:
@@ -422,15 +418,14 @@ async def test_register_session_running_returns_existing_on_conflict(
             return None
         return await real_get_session(db, sid)
 
-    monkeypatch.setattr(session_service, "get_session", patched_get_session)
+    monkeypatch.setattr(crud, "get_session", patched_get_session)
 
-    second = await session_service.register_session(
+    second = await crud.register_session(
         db_session,
         session_id="sess-conflict",
         test_name="second",
         device_id=device.id,
         connection_target="conflict-target",
-        publisher=event_bus,
     )
     # Conflict short-circuit returns the winner's row; loser's metadata is
     # discarded.
@@ -485,7 +480,8 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     await db_session.commit()
     event_bus_capture.clear()
 
-    updated = await session_service.update_session_status(db_session, "flap-sess", SessionStatus.passed, event_bus)
+    crud = SessionCrudService(publisher=event_bus)
+    updated = await crud.update_session_status(db_session, "flap-sess", SessionStatus.passed)
     await settle_after_commit_tasks()
 
     assert updated is not None
@@ -574,9 +570,8 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     await db_session.commit()
     event_bus_capture.clear()
 
-    updated = await session_service.update_session_status(
-        db_session, "stop-inflight-sess", SessionStatus.passed, event_bus
-    )
+    crud = SessionCrudService(publisher=event_bus)
+    updated = await crud.update_session_status(db_session, "stop-inflight-sess", SessionStatus.passed)
     await settle_after_commit_tasks()
 
     assert updated is not None
