@@ -21,7 +21,7 @@ from app.devices.services.verification import clear_verification_jobs
 from app.devices.services.verification_execution import _health_failure_detail
 from app.hosts.models import Host
 from app.jobs.models import Job
-from app.jobs.queue import reset_stale_running_jobs, run_pending_jobs_once
+from app.jobs.queue import DurableJobService
 from app.packs.models import DriverPack
 from app.sessions.service_viability import get_session_viability
 from tests.conftest import settings_service
@@ -121,9 +121,12 @@ async def _wait_for_job(
         job = resp.json()
         if job["status"] in {"completed", "failed"}:
             return dict(job)
-        await run_pending_jobs_once(
-            session_factory, publisher=AsyncMock(), settings=settings_service, circuit_breaker=_noop_circuit_breaker()
-        )
+        await DurableJobService(
+            session_factory=session_factory,
+            publisher=AsyncMock(),
+            settings=settings_service,
+            circuit_breaker=_noop_circuit_breaker(),
+        ).run_pending_once()
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
 
@@ -1460,7 +1463,12 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             }
             await db.commit()
 
-        recovered = await reset_stale_running_jobs(session_factory)
+        recovered = await DurableJobService(
+            session_factory=session_factory,
+            publisher=AsyncMock(),
+            settings=settings_service,
+            circuit_breaker=_noop_circuit_breaker(),
+        ).reset_stale_running_jobs()
         assert recovered == 1
         job = await _wait_for_job(client, job_id, session_factory=session_factory)
 

@@ -28,7 +28,7 @@ from app.events.services_container import EventServices
 from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
-from app.jobs.queue import DurableJobWorkerLoop
+from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
 from app.packs.services_container import PackServices
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
@@ -137,10 +137,12 @@ def compose_app(
             session_factory=session_factory,
         ),
         jobs=DurableJobWorkerLoop(
-            session_factory=session_factory,
-            publisher=bus,
-            settings=settings_svc,
-            circuit_breaker=circuit_breaker,
+            service=DurableJobService(
+                session_factory=session_factory,
+                publisher=bus,
+                settings=settings_svc,
+                circuit_breaker=circuit_breaker,
+            )
         ),
         webhooks=WebhookDeliveryLoop(session_factory=session_factory),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),

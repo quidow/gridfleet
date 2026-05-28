@@ -64,7 +64,7 @@ from app.devices.services import (
 from app.events import catalog as event_catalog
 from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
-from app.jobs import queue as job_queue
+from app.jobs.queue import DurableJobService
 from app.packs.manifest import AppiumInstallable
 from app.packs.models import PackState
 from app.packs.schemas import RuntimePolicy
@@ -812,13 +812,14 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             return None
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
-    monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
-    assert (
-        await job_queue.run_pending_jobs_once(
-            QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
-        is True
+    service = DurableJobService(
+        session_factory=QueueCtx,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
+    monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
+    assert await service.run_pending_once() is True
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"
