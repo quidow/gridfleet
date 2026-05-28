@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.hosts import service as host_service
 from app.hosts.schemas import HostRegister
 from app.settings import service_config as config_service
+from app.settings.protocols import SettingsConfigProtocol
+from app.settings.service_config import SettingsConfigService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -70,3 +72,7 @@ async def test_merge_device_config_queues_config_updated(
     updated = [p for n, p in event_bus_capture if n == "config.updated"]
     assert len(updated) == 1
     assert updated[0]["device_id"] == str(device.id)
+
+
+def test_settings_config_service_satisfies_protocol() -> None:
+    assert issubclass(SettingsConfigService, SettingsConfigProtocol)

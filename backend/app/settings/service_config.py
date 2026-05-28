@@ -97,3 +97,52 @@ async def get_config_history(
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+class SettingsConfigService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def merge_device_config(
+        self,
+        db: AsyncSession,
+        device: Device,
+        partial_config: dict[str, Any],
+        changed_by: str | None = None,
+    ) -> dict[str, Any]:
+        previous = device.device_config or {}
+        merged = _deep_merge(previous, partial_config)
+        if device_readiness.payload_requires_reverification(device, {"device_config": merged}):
+            device.verified_at = None
+        device.device_config = merged
+
+        log_entry = ConfigAuditLog(
+            device_id=device.id,
+            previous_config=copy.deepcopy(previous),
+            new_config=copy.deepcopy(merged),
+            changed_by=changed_by,
+        )
+        db.add(log_entry)
+        queue_event_for_session(
+            db,
+            "config.updated",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "changed_by": changed_by,
+            },
+            publisher=self._publisher,
+        )
+        await db.commit()
+        await db.refresh(device)
+        return copy.deepcopy(device.device_config or {})
+
+    async def get_config_history(self, db: AsyncSession, device_id: uuid.UUID, limit: int = 50) -> list[ConfigAuditLog]:
+        stmt = (
+            select(ConfigAuditLog)
+            .where(ConfigAuditLog.device_id == device_id)
+            .order_by(ConfigAuditLog.changed_at.desc())
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
