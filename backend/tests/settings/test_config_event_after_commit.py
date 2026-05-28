@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.hosts import service as host_service
 from app.hosts.schemas import HostRegister
-from app.settings import service_config as config_service
 from app.settings.protocols import SettingsConfigProtocol
 from app.settings.service_config import SettingsConfigService
 from tests.fakes import FakeSettingsReader
@@ -64,8 +63,8 @@ async def test_merge_device_config_queues_config_updated(
     _, device = await seed_host_and_device(db_session, identity="config-merge-1")
     event_bus_capture.clear()
 
-    await config_service.merge_device_config(
-        db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester", publisher=event_bus
+    await SettingsConfigService(publisher=event_bus).merge_device_config(
+        db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester"
     )
     await settle_after_commit_tasks()
 
