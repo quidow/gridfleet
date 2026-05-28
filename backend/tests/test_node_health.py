@@ -20,21 +20,10 @@ from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventT
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
-
-
-def _make_fake_grid(grid_data: dict | None = None) -> AsyncMock:
-    """Return a minimal fake GridServiceProtocol for node_health tests."""
-    from app.grid.service import GridService
-
-    data = grid_data if grid_data is not None else {}
-    fake = AsyncMock(spec=GridService)
-    fake.get_status = AsyncMock(return_value=data)
-    fake.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
-    return fake
 
 
 async def set_node_health_failure_count(db_session: AsyncSession, node_key: str, count: int) -> None:
@@ -99,7 +88,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -154,7 +143,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -213,7 +202,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
+            grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -273,7 +262,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
+            grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -329,7 +318,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(
+            grid=make_fake_grid(
                 {
                     "value": {
                         "ready": True,
@@ -407,7 +396,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
             ),
             circuit_breaker=Mock(),
             publisher=Mock(),
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     await db_session.refresh(node)
@@ -472,7 +461,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
             ),
             circuit_breaker=Mock(),
             publisher=Mock(),
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     await db_session.refresh(node)
@@ -537,7 +526,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
             ),
             circuit_breaker=Mock(),
             publisher=Mock(),
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     await db_session.refresh(node)
@@ -601,7 +590,7 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     status_mock.assert_awaited_once()
@@ -659,7 +648,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     status_mock.assert_awaited_once()
@@ -717,7 +706,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     status_mock.assert_awaited_once()
@@ -775,7 +764,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     status_mock.assert_awaited_once()
@@ -869,7 +858,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                 ),
                 circuit_breaker=Mock(),
                 publisher=event_bus,
-                grid=_make_fake_grid(),
+                grid=make_fake_grid(),
             )
         )
         await asyncio.wait_for(both_started.wait(), timeout=1)
@@ -1104,7 +1093,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     # Counter unchanged (still absent)
@@ -1186,7 +1175,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
@@ -1257,7 +1246,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
@@ -1337,7 +1326,7 @@ async def test_node_health_recovery_clears_pending_stop(
             ),
             circuit_breaker=Mock(),
             publisher=event_bus,
-            grid=_make_fake_grid(),
+            grid=make_fake_grid(),
         )
 
     reloaded = await db_session.get(Device, device.id)

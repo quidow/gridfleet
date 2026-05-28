@@ -19,7 +19,7 @@ import zmq.asyncio
 from app.grid import event_bus_loop, grid_settings
 from app.grid.services_container import GridServices
 from app.sessions import service_sync
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 
 pytestmark = [pytest.mark.grid, pytest.mark.asyncio]
 
@@ -71,11 +71,9 @@ async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.M
     # Point subscriber at the real hub XPUB (subscribers READ from here).
     monkeypatch.setattr(grid_settings, "event_bus_subscribe_url", f"tcp://{HUB_HOST}:{HUB_XPUB_PORT}")
 
-    from app.grid.service import GridService
-
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
-            grid=GridService(settings=FakeSettingsReader({})),
+            grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
         )

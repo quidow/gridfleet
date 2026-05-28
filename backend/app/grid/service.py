@@ -12,10 +12,17 @@ logger = logging.getLogger(__name__)
 
 
 class GridService:
-    # A single httpx.AsyncClient is reused across all calls (leader loops poll the
-    # hub every few seconds — ``session_sync_loop``, ``node_health_loop``,
-    # ``fleet_capacity_collector_loop``). Instantiating per call leaks ~0.8 MB of
-    # native state on macOS that aclose() does not release.
+    """Selenium Grid hub client.
+
+    A single ``httpx.AsyncClient`` is reused across all calls on a given
+    instance (leader loops poll the hub every few seconds —
+    ``session_sync_loop``, ``node_health_loop``,
+    ``fleet_capacity_collector_loop``). Instantiating per call leaks ~0.8 MB
+    of native state on macOS that ``aclose()`` does not release.
+
+    The composition root constructs one ``GridService`` for the process
+    lifetime so every consumer shares the same client.
+    """
 
     def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings

@@ -9,18 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
-
-
-def _fake_grid() -> object:
-    from unittest.mock import AsyncMock
-
-    fake = AsyncMock()
-    fake.terminate_session = AsyncMock(return_value=True)
-    return fake
-
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -108,7 +99,7 @@ async def test_complete_run_queues_run_completed(
     event_bus_capture.clear()
 
     await run_service.complete_run(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
     await settle_after_commit_tasks()
 
@@ -129,7 +120,7 @@ async def test_cancel_run_queues_run_cancelled(
     event_bus_capture.clear()
 
     await run_service.cancel_run(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
     await settle_after_commit_tasks()
 
@@ -150,7 +141,7 @@ async def test_force_release_queues_admin_cancelled(
     event_bus_capture.clear()
 
     await run_service.force_release(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
     await settle_after_commit_tasks()
 
@@ -172,7 +163,7 @@ async def test_expire_run_queues_run_expired(
     event_bus_capture.clear()
 
     await run_service.expire_run(
-        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
     await settle_after_commit_tasks()
 
@@ -195,7 +186,7 @@ async def test_expire_run_from_preparing_queues_never_activated_and_expired(
     event_bus_capture.clear()
 
     await run_service.expire_run(
-        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
     await settle_after_commit_tasks()
 

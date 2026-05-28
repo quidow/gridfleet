@@ -14,26 +14,18 @@ from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
-
-def _make_fake_grid(grid_data: dict[str, Any] | None = None) -> AsyncMock:
-    """Return a minimal fake GridServiceProtocol for session_sync tests."""
-    from app.grid.service import GridService
-
-    data = grid_data if grid_data is not None else {"value": {"ready": True, "nodes": []}}
-    fake = AsyncMock()
-    fake.get_status = AsyncMock(return_value=data)
-    fake.terminate_session = AsyncMock(return_value=True)
-    fake.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
-    return fake
+_GRID_UP_EMPTY: dict[str, Any] = {"value": {"ready": True, "nodes": []}}
 
 
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid())
+    await _sync_sessions_impl(
+        db, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_GRID_UP_EMPTY)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +192,7 @@ async def test_sync_tracks_real_hub_payload_with_stripped_capabilities(db_sessio
     }
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(
@@ -258,7 +250,7 @@ async def test_sync_hydrates_orphan_session_row_from_hub_stereotype(db_session: 
 
     grid_data = _grid_response([_grid_session("orphan-sess", "hydrate-target", device_id=str(device.id))])
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(orphan)
@@ -305,7 +297,7 @@ async def test_sync_hydrate_orphan_does_not_attach_run_id_when_preparing(
 
     grid_data = _grid_response([_grid_session("orphan-prep", "hydrate-prep", device_id=str(device.id))])
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(orphan)
@@ -351,7 +343,7 @@ async def test_sync_hydrate_orphan_attaches_run_id_when_active(db_session: Async
 
     grid_data = _grid_response([_grid_session("orphan-active", "hydrate-active", device_id=str(device.id))])
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(orphan)
@@ -386,7 +378,7 @@ async def test_sync_creates_session_does_not_attach_run_id_when_preparing(
 
     grid_data = _grid_response([_grid_session("sync-prep-sid", "sync-prep", "prep-warmup", device_id=str(device.id))])
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sync-prep-sid"))
@@ -421,7 +413,7 @@ async def test_sync_creates_session(db_session: AsyncSession, db_host: Host) -> 
     grid_data = _grid_response([_grid_session("sess-1", "dev-001", "test_login")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-1"))
@@ -462,7 +454,7 @@ async def test_sync_ends_session(db_session: AsyncSession, db_host: Host) -> Non
     grid_data = _grid_response([])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(session)
@@ -539,7 +531,7 @@ async def test_sync_ends_session_marks_offline_when_node_stop_pending(db_session
     grid_data = _grid_response([])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(session)
@@ -593,7 +585,7 @@ async def test_sync_ends_duplicate_running_sessions(db_session: AsyncSession, db
         grid_data = _grid_response([])
 
         await _sync_sessions_impl(
-            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
         )
 
         result = await db_session.execute(select(Session).where(Session.session_id == "sess-dup"))
@@ -682,7 +674,7 @@ async def test_sync_ends_duplicate_running_sessions_across_devices(db_session: A
         await db_session.commit()
 
         await _sync_sessions_impl(
-            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(_grid_response([]))
+            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
         )
 
         rows = (await db_session.execute(select(Session).where(Session.session_id == "sess-dup-multi"))).scalars().all()
@@ -738,7 +730,7 @@ async def test_sync_ends_session_after_identity_map_reset(db_session: AsyncSessi
     db_session.expunge_all()
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(_grid_response([]))
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-2b"))
@@ -787,7 +779,7 @@ async def test_sync_marks_late_ended_session_for_cancelled_run_as_error(
         db_session,
         settings=FakeSettingsReader({}),
         publisher=AsyncMock(),
-        grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+        grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
     )
 
     await db_session.refresh(session)
@@ -802,7 +794,7 @@ async def test_sync_ignores_unknown_connection_target(db_session: AsyncSession) 
     grid_data = _grid_response([_grid_session("sess-3", "unknown-device")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session))
@@ -832,7 +824,7 @@ async def test_sync_uses_manager_device_id_when_udid_is_transient(db_session: As
     grid_data = _grid_response([_grid_session("sess-avd", "emulator-5554", "test_login", device_id=str(device.id))])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-avd"))
@@ -872,7 +864,7 @@ async def test_sync_preserves_busy_for_multi_session(db_session: AsyncSession, d
     grid_data = _grid_response([_grid_session("sess-4b", "dev-004")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     await db_session.refresh(device)
@@ -907,7 +899,7 @@ async def test_sync_startup_recovery(db_session: AsyncSession, db_host: Host) ->
     grid_data = _grid_response([_grid_session("sess-5", "dev-005")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-5"))
@@ -951,7 +943,7 @@ async def test_sync_does_not_duplicate_terminal_session_seen_active_again(
     grid_data = _grid_response([_grid_session("sess-terminal-race", "dev-terminal-race", "test_terminal_race")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "sess-terminal-race"))
@@ -1010,7 +1002,7 @@ async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     await db_session.commit()
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(_grid_response([]))
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
     )
 
     await db_session.refresh(device)
@@ -1070,7 +1062,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     )
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(_grid_response([]))
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
     )
 
     await db_session.refresh(device)
@@ -1144,7 +1136,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
 
     # Session ends — Grid no longer reports it.
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(_grid_response([]))
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
     )
 
     await db_session.refresh(device)
@@ -1218,7 +1210,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
         db_session,
         settings=FakeSettingsReader({}),
         publisher=Mock(),
-        grid=_make_fake_grid(_grid_response([])),
+        grid=make_fake_grid(_grid_response([])),
     )
 
     await db_session.refresh(device)
@@ -1267,7 +1259,7 @@ async def test_sync_does_not_track_probe_sessions(db_session: AsyncSession, db_h
     )
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session))
@@ -1315,7 +1307,7 @@ async def test_sync_skips_probe_slot_when_device_marked_inflight(db_session: Asy
     probe_inflight.mark_probe_started(str(device.id))
     try:
         await _sync_sessions_impl(
-            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+            db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
         )
     finally:
         probe_inflight.mark_probe_finished(str(device.id))
@@ -1347,7 +1339,7 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
     grid_data = _grid_response([_grid_session("reserved", "emulator-5554")])
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=_make_fake_grid(grid_data)
+        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(grid_data)
     )
 
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved"))
@@ -1406,7 +1398,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
         db_session,
         settings=FakeSettingsReader({}),
         publisher=Mock(),
-        grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+        grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
     )
 
     reloaded = await db_session.get(Device, device.id)
@@ -1473,7 +1465,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
         db_session,
         settings=FakeSettingsReader({}),
         publisher=Mock(),
-        grid=_make_fake_grid({"value": {"ready": False}, "error": "connection refused"}),
+        grid=make_fake_grid({"value": {"ready": False}, "error": "connection refused"}),
     )
 
     reloaded = await db_session.get(Device, device.id)

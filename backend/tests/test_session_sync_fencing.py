@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import func, select
@@ -15,28 +15,19 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-
-def _make_fake_grid(grid_data: dict | None = None) -> object:
-    from unittest.mock import Mock
-
-    from app.grid.service import GridService
-
-    data = grid_data if grid_data is not None else {"value": {"ready": True, "nodes": []}}
-    fake = AsyncMock()
-    fake.get_status = AsyncMock(return_value=data)
-    fake.terminate_session = AsyncMock(return_value=True)
-    fake.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
-    return fake
+_GRID_UP_EMPTY: dict[str, object] = {"value": {"ready": True, "nodes": []}}
 
 
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=_make_fake_grid())
+    await _sync_sessions_impl(
+        db, settings=FakeSettingsReader({}), publisher=event_bus, grid=make_fake_grid(_GRID_UP_EMPTY)
+    )
 
 
 @pytest.mark.db
@@ -57,7 +48,7 @@ async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
             db_session,
             settings=FakeSettingsReader({}),
             publisher=event_bus,
-            grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+            grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
         )
 
     final_count = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
@@ -115,7 +106,7 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
             db_session,
             settings=FakeSettingsReader({}),
             publisher=event_bus,
-            grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+            grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
         )
 
     await db_session.refresh(session, attribute_names=["status", "ended_at"])

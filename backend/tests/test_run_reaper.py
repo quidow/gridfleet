@@ -8,14 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import _reap_stale_runs
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
-
-
-def _fake_grid() -> AsyncMock:
-    fake = AsyncMock()
-    fake.terminate_session = AsyncMock(return_value=True)
-    return fake
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +32,7 @@ async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSessio
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid())
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid())
 
     expire_run.assert_awaited_once()
     assert expire_run.await_args is not None
@@ -60,7 +54,7 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid())
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid())
 
     expire_run.assert_awaited_once()
     assert expire_run.await_args is not None
@@ -143,7 +137,7 @@ async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: Async
     await db_session.commit()
 
     with patch("app.runs.service_reaper.run_service.expire_run", new_callable=AsyncMock) as expire_run:
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid())
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid())
 
     expire_run.assert_not_awaited()
 
@@ -227,7 +221,7 @@ async def test_expire_run_emits_never_activated_for_preparing_run(
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)
 
     await run_service.expire_run(
-        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
 
     names = [name for name, _, _ in events]
@@ -279,7 +273,7 @@ async def test_expire_run_does_not_emit_never_activated_for_active_run(
     monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", capture)
 
     await run_service.expire_run(
-        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
     )
 
     names = [name for name, _, _ in events]

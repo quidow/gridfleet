@@ -20,10 +20,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from app.grid import event_bus_loop
-from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.sessions import service_sync
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 
 
 def _frames(event_type: str, payload: object) -> list[bytes]:
@@ -68,7 +67,7 @@ async def test_subscriber_loop_wakes_session_sync(
     service_sync._doorbell = None  # force fresh Event on the current loop
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
-            grid=GridService(settings=FakeSettingsReader({})),
+            grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
         )
@@ -93,7 +92,7 @@ async def test_subscriber_loop_shuts_down_cleanly(
     service_sync._doorbell = None
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
-            grid=GridService(settings=FakeSettingsReader({})),
+            grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
         )
