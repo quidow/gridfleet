@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -11,6 +11,7 @@ from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOu
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.hosts.models import Host, HostStatus, OSType
+from app.plugins.service import PluginService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -37,16 +38,16 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
     )
 
     host = SimpleNamespace(id=uuid.uuid4())
-    monkeypatch.setattr(heartbeat.plugin_service, "list_plugins", AsyncMock(return_value=["plugin"]))
+    monkeypatch.setattr(PluginService, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
-    monkeypatch.setattr(heartbeat.plugin_service, "auto_sync_host_plugins", sync)
+    monkeypatch.setattr(PluginService, "auto_sync_host_plugins", sync)
     await heartbeat._auto_sync_plugins_on_recovery(
         host.id,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         session_factory=lambda: FakeSession(host),
     )
-    sync.assert_awaited_once_with(host, ["plugin"], settings=ANY, circuit_breaker=ANY)
+    sync.assert_awaited_once_with(host, ["plugin"])
 
     await heartbeat._auto_sync_plugins_on_recovery(
         host.id,

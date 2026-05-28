@@ -5,6 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.plugins.models import AppiumPlugin
+from app.plugins.protocols import PluginProtocol
+from app.plugins.service import PluginService
+
+
+def test_plugin_service_satisfies_protocol() -> None:
+    assert issubclass(PluginService, PluginProtocol)
 
 
 async def _create_host(

@@ -1,14 +1,15 @@
-import uuid
+from __future__ import annotations
+
 from typing import Any
+from uuid import UUID  # noqa: TC003 - FastAPI inspects UUID parameter type at runtime.
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.agent_comm.dependencies import AgentCommServicesDep
-from app.core.dependencies import DbDep
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.hosts import service as host_service
-from app.plugins import service as plugin_service
-from app.plugins.models import AppiumPlugin
+from app.plugins.dependencies import PluginServicesDep  # noqa: TC001
+from app.plugins.models import AppiumPlugin  # noqa: TC001 - used in return type annotations
 from app.plugins.schemas import (
     FleetPluginSyncResult,
     HostPluginStatus,
@@ -17,69 +18,61 @@ from app.plugins.schemas import (
     PluginSyncResult,
     PluginUpdate,
 )
-from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api", tags=["plugins"])
 
 
 @router.get("/plugins", response_model=list[PluginRead])
-async def list_plugins(db: DbDep) -> list[AppiumPlugin]:
-    return await plugin_service.list_plugins(db)
+async def list_plugins(db: DbDep, plugin_services: PluginServicesDep) -> list[AppiumPlugin]:
+    return await plugin_services.plugin.list_plugins(db)
 
 
 @router.post("/plugins", response_model=PluginRead, status_code=201)
-async def create_plugin(data: PluginCreate, db: DbDep) -> AppiumPlugin:
+async def create_plugin(data: PluginCreate, db: DbDep, plugin_services: PluginServicesDep) -> AppiumPlugin:
     try:
-        return await plugin_service.create_plugin(db, data)
+        return await plugin_services.plugin.create_plugin(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Plugin with this name already exists") from None
 
 
 @router.patch("/plugins/{plugin_id}", response_model=PluginRead)
-async def update_plugin(plugin_id: uuid.UUID, data: PluginUpdate, db: DbDep) -> AppiumPlugin:
-    plugin = await plugin_service.update_plugin(db, plugin_id, data)
+async def update_plugin(
+    plugin_id: UUID,
+    data: PluginUpdate,
+    db: DbDep,
+    plugin_services: PluginServicesDep,
+) -> AppiumPlugin:
+    plugin = await plugin_services.plugin.update_plugin(db, plugin_id, data)
     if plugin is None:
         raise HTTPException(status_code=404, detail="Plugin not found")
     return plugin
 
 
 @router.delete("/plugins/{plugin_id}", status_code=204)
-async def delete_plugin(plugin_id: uuid.UUID, db: DbDep) -> None:
-    deleted = await plugin_service.delete_plugin(db, plugin_id)
+async def delete_plugin(plugin_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> None:
+    deleted = await plugin_services.plugin.delete_plugin(db, plugin_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Plugin not found")
 
 
 @router.post("/plugins/sync-all", response_model=FleetPluginSyncResult)
-async def sync_all_plugins(
-    db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
-) -> dict[str, Any]:
-    return await plugin_service.sync_all_host_plugins(
-        db, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
-    )
+async def sync_all_plugins(db: DbDep, plugin_services: PluginServicesDep) -> dict[str, Any]:
+    return await plugin_services.plugin.sync_all_host_plugins(db)
 
 
 @router.get("/hosts/{host_id}/plugins", response_model=list[HostPluginStatus])
-async def host_plugins(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
-) -> list[dict[str, Any]]:
+async def host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> list[dict[str, Any]]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    all_plugins = await plugin_service.list_plugins(db)
-    return await plugin_service.get_host_plugin_statuses(
-        host, all_plugins, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
-    )
+    all_plugins = await plugin_services.plugin.list_plugins(db)
+    return await plugin_services.plugin.get_host_plugin_statuses(host, all_plugins)
 
 
 @router.post("/hosts/{host_id}/plugins/sync", response_model=PluginSyncResult)
-async def sync_host_plugins(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
-) -> dict[str, Any]:
+async def sync_host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    all_plugins = await plugin_service.list_plugins(db)
-    return await plugin_service.sync_host_plugins(
-        host, all_plugins, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
-    )
+    all_plugins = await plugin_services.plugin.list_plugins(db)
+    return await plugin_services.plugin.sync_host_plugins(host, all_plugins)

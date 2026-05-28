@@ -38,6 +38,9 @@ from app.hosts.services_container import HostServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
 from app.packs.services_container import PackServices
+from app.plugins.dependencies import get_plugin_services
+from app.plugins.service import PluginService
+from app.plugins.services_container import PluginServices
 from app.runs.dependencies import get_run_services
 from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
@@ -393,6 +396,14 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         )
         return PackServices(session_factory=sf)
 
+    def override_get_plugin_services() -> PluginServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        plugin_svc = PluginService(settings=settings_service, circuit_breaker=test_circuit_breaker)
+        return PluginServices(plugin=plugin_svc, session_factory=sf)
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
@@ -403,6 +414,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     app.dependency_overrides[get_run_services] = override_get_run_services
     app.dependency_overrides[get_grid_services] = override_get_grid_services
     app.dependency_overrides[get_pack_services] = override_get_pack_services
+    app.dependency_overrides[get_plugin_services] = override_get_plugin_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

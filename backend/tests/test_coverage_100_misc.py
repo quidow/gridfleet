@@ -101,7 +101,7 @@ from app.packs.services import (
 from app.packs.services import (
     storage as pack_storage_service,
 )
-from app.plugins import service as plugin_service
+from app.plugins.service import PluginService
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
@@ -591,22 +591,22 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
     assert result.new_devices == []
 
-    monkeypatch.setattr(plugin_service, "list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
-    assert await plugin_service.fetch_host_plugins(
-        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    monkeypatch.setattr("app.plugins.service.list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
+    assert await PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock()).fetch_host_plugins(
+        SimpleNamespace(ip="127.0.0.1", agent_port=5100)
     ) == [{"name": "images"}]
 
     offline_host = SimpleNamespace(status=SimpleNamespace(value="offline"), hostname="host")
     assert (
-        await plugin_service.auto_sync_host_plugins(
-            offline_host, [{"name": "images"}], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        await PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock()).auto_sync_host_plugins(
+            offline_host, [{"name": "images"}]
         )
         is None
     )
     online_host = SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host")
     assert (
-        await plugin_service.auto_sync_host_plugins(
-            online_host, [], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        await PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock()).auto_sync_host_plugins(
+            online_host, []
         )
         is None
     )
@@ -869,14 +869,13 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         ("pack", "platform"): None
     }
 
-    monkeypatch.setattr(plugin_service, "sync_host_plugins", AsyncMock())
-    await plugin_service.auto_sync_host_plugins(
+    monkeypatch.setattr(PluginService, "sync_host_plugins", AsyncMock())
+    svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await svc.auto_sync_host_plugins(
         SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host"),
         [{"name": "images"}],
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
-    plugin_service.sync_host_plugins.assert_awaited_once()
+    PluginService.sync_host_plugins.assert_awaited_once()  # type: ignore[attr-defined]
 
     released_entry = SimpleNamespace(device_id=uuid.uuid4(), released_at=datetime.now(UTC))
     run = SimpleNamespace(device_reservations=[released_entry])

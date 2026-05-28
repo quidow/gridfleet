@@ -8,9 +8,9 @@ import httpx
 
 from app.core.errors import AgentCallError
 from app.hosts.models import Host, HostStatus, OSType
-from app.plugins import service as plugin_service
 from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import PluginCreate, PluginUpdate
+from app.plugins.service import PluginService
 from app.webhooks import service as webhook_service
 from app.webhooks.schemas import WebhookCreate, WebhookUpdate
 from tests.fakes import FakeSettingsReader
@@ -34,7 +34,8 @@ async def _host(db_session: AsyncSession, *, hostname: str, status: HostStatus) 
 
 
 async def test_plugin_service_crud_and_missing_paths(db_session: AsyncSession) -> None:
-    created = await plugin_service.create_plugin(
+    svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    created = await svc.create_plugin(
         db_session,
         PluginCreate(
             name="images",
@@ -46,18 +47,18 @@ async def test_plugin_service_crud_and_missing_paths(db_session: AsyncSession) -
         ),
     )
 
-    assert (await plugin_service.get_plugin(db_session, created.id)).name == "images"
-    assert [plugin.name for plugin in await plugin_service.list_plugins(db_session)] == ["images"]
+    assert (await svc.get_plugin(db_session, created.id)).name == "images"
+    assert [plugin.name for plugin in await svc.list_plugins(db_session)] == ["images"]
 
-    updated = await plugin_service.update_plugin(db_session, created.id, PluginUpdate(enabled=False, notes="paused"))
+    updated = await svc.update_plugin(db_session, created.id, PluginUpdate(enabled=False, notes="paused"))
     assert updated is not None
     assert updated.enabled is False
     assert updated.notes == "paused"
 
-    assert await plugin_service.update_plugin(db_session, uuid4_not_in_db(), PluginUpdate(version="2.1.0")) is None
-    assert await plugin_service.delete_plugin(db_session, uuid4_not_in_db()) is False
-    assert await plugin_service.delete_plugin(db_session, created.id) is True
-    assert await plugin_service.list_plugins(db_session) == []
+    assert await svc.update_plugin(db_session, uuid4_not_in_db(), PluginUpdate(version="2.1.0")) is None
+    assert await svc.delete_plugin(db_session, uuid4_not_in_db()) is False
+    assert await svc.delete_plugin(db_session, created.id) is True
+    assert await svc.list_plugins(db_session) == []
 
 
 async def test_host_plugin_statuses_classify_installed_versions() -> None:
@@ -69,8 +70,9 @@ async def test_host_plugin_statuses_classify_installed_versions() -> None:
         AppiumPlugin(name="disabled-plugin", version="9.0.0", source="npm:disabled", enabled=False),
     ]
 
-    with patch(
-        "app.plugins.service.fetch_host_plugins",
+    with patch.object(
+        PluginService,
+        "fetch_host_plugins",
         new=AsyncMock(
             return_value=[
                 {"name": "ok-plugin", "version": "1.0.0"},
@@ -78,9 +80,8 @@ async def test_host_plugin_statuses_classify_installed_versions() -> None:
             ]
         ),
     ):
-        statuses = await plugin_service.get_host_plugin_statuses(
-            host, plugins, settings=FakeSettingsReader(), circuit_breaker=Mock()
-        )
+        svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+        statuses = await svc.get_host_plugin_statuses(host, plugins)
 
     assert [status["name"] for status in statuses] == ["ok-plugin", "old-plugin", "missing-plugin"]
     assert [status["status"] for status in statuses] == ["ok", "mismatch", "missing"]
@@ -98,9 +99,8 @@ async def test_sync_host_plugins_sends_enabled_payload_only() -> None:
         "app.plugins.service.sync_agent_plugins",
         new=AsyncMock(return_value={"installed": ["execute-driver"], "updated": [], "removed": [], "errors": {}}),
     ) as sync_agent:
-        result = await plugin_service.sync_host_plugins(
-            host, plugins, settings=FakeSettingsReader(), circuit_breaker=Mock()
-        )
+        svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+        result = await svc.sync_host_plugins(host, plugins)
 
     assert result["installed"] == ["execute-driver"]
     sync_agent.assert_awaited_once()
@@ -116,19 +116,15 @@ async def test_sync_all_host_plugins_reports_synced_failed_and_skipped_hosts(db_
     db_session.add(AppiumPlugin(name="images", version="2.0.0", source="npm:images", enabled=True))
     await db_session.commit()
 
-    async def fake_sync(
-        host: Host, plugins: list[AppiumPlugin], *, settings: object, circuit_breaker: object
-    ) -> dict[str, Any]:
-        del settings, circuit_breaker
+    async def fake_sync(self: PluginService, host: Host, plugins: list[AppiumPlugin]) -> dict[str, Any]:
         assert [plugin.name for plugin in plugins] == ["images"]
         if host.id == failing.id:
             raise AgentCallError(host.ip, "agent failed")
         return {"installed": [host.hostname]}
 
-    with patch("app.plugins.service.sync_host_plugins", new=fake_sync):
-        result = await plugin_service.sync_all_host_plugins(
-            db_session, settings=FakeSettingsReader(), circuit_breaker=Mock()
-        )
+    with patch.object(PluginService, "sync_host_plugins", new=fake_sync):
+        svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+        result = await svc.sync_all_host_plugins(db_session)
 
     assert result == {
         "total_hosts": 3,
@@ -148,20 +144,19 @@ async def test_auto_sync_host_plugins_handles_non_actionable_and_agent_errors() 
     )
     plugin = AppiumPlugin(name="images", version="2.0.0", source="npm:images", enabled=True)
 
-    with patch("app.plugins.service.sync_host_plugins", new=AsyncMock()) as sync_host:
-        await plugin_service.auto_sync_host_plugins(
-            offline, [plugin], settings=FakeSettingsReader(), circuit_breaker=Mock()
-        )
-        await plugin_service.auto_sync_host_plugins(online, [], settings=FakeSettingsReader(), circuit_breaker=Mock())
+    with patch.object(PluginService, "sync_host_plugins", new=AsyncMock()) as sync_host:
+        svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+        await svc.auto_sync_host_plugins(offline, [plugin])
+        await svc.auto_sync_host_plugins(online, [])
     sync_host.assert_not_awaited()
 
-    with patch(
-        "app.plugins.service.sync_host_plugins",
+    with patch.object(
+        PluginService,
+        "sync_host_plugins",
         new=AsyncMock(side_effect=httpx.ConnectError("offline")),
     ) as sync_host:
-        await plugin_service.auto_sync_host_plugins(
-            online, [plugin], settings=FakeSettingsReader(), circuit_breaker=Mock()
-        )
+        svc = PluginService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+        await svc.auto_sync_host_plugins(online, [plugin])
     sync_host.assert_awaited_once()
 
 

@@ -34,7 +34,7 @@ from app.events import queue_device_crashed_event, queue_event_for_session
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
-from app.plugins import service as plugin_service
+from app.plugins.service import PluginService
 
 if TYPE_CHECKING:
     import uuid
@@ -74,10 +74,10 @@ async def _auto_sync_plugins_on_recovery(
             host = await db.get(Host, host_id)
             if host is None:
                 return
-            plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(
-                host, plugins, settings=settings, circuit_breaker=circuit_breaker
-            )
+            # transitional: local construction until appium_nodes converts to DI (Plan 10)
+            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
+            plugins = await svc.list_plugins(db)
+            await svc.auto_sync_host_plugins(host, plugins)
     except Exception:
         logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
 

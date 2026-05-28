@@ -48,7 +48,7 @@ from app.packs import schemas as pack_schemas
 from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
 from app.packs.services.status import persist_doctor_results
-from app.plugins import service as plugin_service
+from app.plugins.service import PluginService
 from app.settings.dependencies import SettingsServicesDep
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
@@ -153,10 +153,10 @@ async def _auto_prepare_host_diagnostics(
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
-            plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(
-                host, plugins, settings=settings, circuit_breaker=circuit_breaker
-            )
+            # transitional: local construction until hosts converts to DI (Plan 7)
+            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
+            plugins = await svc.list_plugins(db)
+            await svc.auto_sync_host_plugins(host, plugins)
     except Exception:
         logger.exception("Automatic diagnostics preparation failed for host %s", host_id)
 
