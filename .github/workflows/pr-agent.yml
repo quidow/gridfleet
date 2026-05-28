@@ -20,6 +20,9 @@ jobs:
       github.event.pull_request.head.repo.fork == false
       && github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
+    # Hard kill so a hung LiteLLM/Ollama Cloud call cannot burn 30 min of CI when
+    # `config.ai_timeout` fails to fire (observed on the streaming /api/chat path).
+    timeout-minutes: 12
     steps:
       - name: PR Agent action
         # Pinned 2026-05-19 (release 0.35.0). Bump after observing upstream main for breaking changes.
@@ -28,10 +31,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
 
-          # Model routing
+          # Model routing.
+          # `ollama_chat/` (not `ollama/`) is intentional — it routes through
+          # LiteLLM to Ollama's /api/chat endpoint, which applies the chat template
+          # required by instruct-tuned models like Kimi K2. PR-Agent's docs only
+          # show `ollama/` (the legacy /api/generate endpoint) but pass the prefix
+          # through to LiteLLM unchanged, so both work.
           config.model: "ollama_chat/kimi-k2.6:cloud"
           config.fallback_models: '["ollama_chat/kimi-k2.6:cloud"]'
-          config.custom_model_max_tokens: "128000"
+          # Both must be set: `custom_model_max_tokens` fills in for unknown models,
+          # but `pr_agent.algo.utils.get_max_tokens` then caps it via
+          # `min(max_model_tokens, custom_model_max_tokens)`. The default
+          # `max_model_tokens=32000` silently truncates diffs >32K tokens, producing
+          # malformed prompts that cause Ollama Cloud to hang.
+          config.custom_model_max_tokens: "262144"
+          config.max_model_tokens: "262144"
           config.duplicate_examples: "true"
           config.ai_timeout: "600"
           ollama.api_base: "https://ollama.com"
