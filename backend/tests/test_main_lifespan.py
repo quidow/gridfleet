@@ -172,8 +172,8 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
-    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(composition, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
     monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
     monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)
@@ -261,7 +261,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", create_task)
-    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
@@ -324,8 +324,8 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
-    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(composition, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(composition, "LeaderWatcherLoop", _mock_loop)
     monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
     monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
     monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)

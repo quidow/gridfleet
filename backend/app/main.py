@@ -32,8 +32,6 @@ from app.core.dependencies import DbDep
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
 from app.core.leader.advisory import control_plane_leader
-from app.core.leader.keepalive import LeaderKeepaliveLoop
-from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
@@ -161,6 +159,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings_svc=svc,
         http_pool=pool,
         circuit_breaker=breaker,
+        control_plane_leader=control_plane_leader,
     )
     app.state.services = app_services
 
@@ -193,7 +192,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    leader_watcher = LeaderWatcherLoop(settings=svc, leader=control_plane_leader, engine=engine)
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
@@ -216,10 +214,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         job_worker = app_services.jobs
         webhook_delivery = app_services.webhooks
         background_loop_flush = app_services.background_loop_flush
-        leader_keepalive = LeaderKeepaliveLoop(settings=svc)
 
         _leader_loops: list[tuple[Any, str]] = [
-            (leader_keepalive.run(), "control_plane_leader_keepalive"),
+            (app_services.leader_keepalive.run(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
             (session_sync.run(), "session_sync_loop"),
             (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
@@ -241,7 +238,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
-        leader_watcher.run(),
+        app_services.leader_watcher.run(),
         name="control_plane_leader_watcher",
     )
     try:
