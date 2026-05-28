@@ -30,6 +30,8 @@ from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobWorkerLoop
 from app.packs.services_container import PackServices
+from app.plugins.service import PluginService
+from app.plugins.services_container import PluginServices
 from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
@@ -47,6 +49,7 @@ class AppServices:
     devices: DeviceServices
     hosts: HostServices
     packs: PackServices
+    plugins: PluginServices
     sessions: SessionServices
     runs: RunServices
     grid: GridServices
@@ -121,6 +124,10 @@ def compose_app(
             session_factory=session_factory,
         ),
         packs=PackServices(session_factory=session_factory),
+        plugins=PluginServices(
+            plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker),
+            session_factory=session_factory,
+        ),
         appium_nodes=AppiumNodeServices(
             settings=settings_svc,
             pool=http_pool,
