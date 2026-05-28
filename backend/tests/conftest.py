@@ -356,10 +356,10 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
                 settings=settings_service,
                 grid=GridService(settings=settings_service),
             ),
-            publisher=test_event_bus,
             settings=settings_service,
             grid=GridService(settings=settings_service),
             session_factory=sf,
+            publisher=test_event_bus,
         )
 
     def override_get_run_services() -> RunServices:
