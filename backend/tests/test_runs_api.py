@@ -1064,6 +1064,7 @@ async def test_sessions_straddle_active_signal_boundary(
         session_id="sess-prep",
         test_name="prep-warmup",
         device_id=device.id,
+        publisher=event_bus,
     )
     assert prep_session.run_id is None
 
@@ -1079,6 +1080,7 @@ async def test_sessions_straddle_active_signal_boundary(
         session_id="sess-real",
         test_name="real-test",
         device_id=device.id,
+        publisher=event_bus,
     )
     assert real_session.run_id == run.id
 

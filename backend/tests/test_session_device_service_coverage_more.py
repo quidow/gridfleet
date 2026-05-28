@@ -15,6 +15,7 @@ from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -134,17 +135,20 @@ async def test_register_and_finish_session_guard_paths(
             session_id="missing-target",
             test_name="missing",
             connection_target="unknown-target",
+            publisher=event_bus,
         )
 
     running = await session_service.register_session(
         db_session,
         session_id="running-no-target",
         test_name="running",
+        publisher=event_bus,
     )
     same = await session_service.register_session(
         db_session,
         session_id="running-no-target",
         test_name="ignored",
+        publisher=event_bus,
     )
     assert same.id == running.id
 
@@ -156,11 +160,12 @@ async def test_register_and_finish_session_guard_paths(
         status=SessionStatus.failed,
         error_type="setup",
         error_message="bad caps",
+        publisher=event_bus,
     )
     assert terminal.ended_at is not None
 
-    assert await session_service.mark_session_finished(db_session, "does-not-exist") is None
-    already = await session_service.mark_session_finished(db_session, "terminal-session")
+    assert await session_service.mark_session_finished(db_session, "does-not-exist", publisher=event_bus) is None
+    already = await session_service.mark_session_finished(db_session, "terminal-session", publisher=event_bus)
     assert already is not None
     assert already.id == terminal.id
 
@@ -171,7 +176,7 @@ async def test_register_and_finish_session_guard_paths(
         "app.sessions.service.lifecycle_policy.handle_session_finished",
         AsyncMock(),
     )
-    finished = await session_service.mark_session_finished(db_session, "finish-device")
+    finished = await session_service.mark_session_finished(db_session, "finish-device", publisher=event_bus)
     assert finished is not None
     assert finished.ended_at is not None
 
@@ -196,11 +201,17 @@ async def test_register_and_finish_session_guard_paths(
         test_name="terminal reserved",
         device_id=device.id,
         status=SessionStatus.failed,
+        publisher=event_bus,
     )
     assert terminal_with_run.run_id is not None
 
-    assert await session_service.update_session_status(db_session, "missing-status", SessionStatus.passed) is None
-    unchanged = await session_service.update_session_status(db_session, "running-no-target", SessionStatus.running)
+    assert (
+        await session_service.update_session_status(db_session, "missing-status", SessionStatus.passed, event_bus)
+        is None
+    )
+    unchanged = await session_service.update_session_status(
+        db_session, "running-no-target", SessionStatus.running, event_bus
+    )
     assert unchanged is not None
     assert unchanged.ended_at is None
 
@@ -214,7 +225,7 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     monkeypatch.setattr(session_service, "get_session", AsyncMock(return_value=session))
     monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
 
-    result = await session_service.mark_session_finished(db, "vanished-device")
+    result = await session_service.mark_session_finished(db, "vanished-device", publisher=event_bus)
 
     assert result is session
     db.commit.assert_awaited_once()
@@ -227,10 +238,10 @@ async def test_session_service_missing_and_insert_conflict_guards(monkeypatch: p
     monkeypatch.setattr(session_service, "_lock_resolved_device_for_session", AsyncMock(return_value=None))
 
     with pytest.raises(ValueError, match="Session insert conflicted"):
-        await session_service.register_session(db, session_id="conflict", test_name="conflict")
+        await session_service.register_session(db, session_id="conflict", test_name="conflict", publisher=event_bus)
 
-    assert await session_service.mark_session_finished(db, "missing") is None
-    assert await session_service.update_session_status(db, "missing", SessionStatus.passed) is None
+    assert await session_service.mark_session_finished(db, "missing", publisher=event_bus) is None
+    assert await session_service.update_session_status(db, "missing", SessionStatus.passed, event_bus) is None
 
 
 async def test_register_terminal_session_with_device_runs_deferred_stop_completion(
@@ -259,6 +270,7 @@ async def test_register_terminal_session_with_device_runs_deferred_stop_completi
         test_name="terminal device",
         device_id=device.id,
         status=SessionStatus.failed,
+        publisher=event_bus,
     )
 
     assert session.device_id == device.id

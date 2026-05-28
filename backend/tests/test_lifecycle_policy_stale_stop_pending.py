@@ -14,6 +14,7 @@ from app.devices.services.lifecycle_policy import attempt_auto_recovery, build_l
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -101,7 +102,12 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
         ),
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Reconnected", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Reconnected",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     await db_session.refresh(device)
@@ -167,7 +173,12 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     await db_session.commit()
 
     recovered = await attempt_auto_recovery(
-        db_session, device, source="device_checks", reason="Reconnected", settings=FakeSettingsReader({})
+        db_session,
+        device,
+        source="device_checks",
+        reason="Reconnected",
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
     )
 
     await db_session.refresh(device)

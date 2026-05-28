@@ -24,6 +24,7 @@ from app.devices.services import state_write_guard
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     import uuid
@@ -172,6 +173,7 @@ async def test_cooldown_intent_payload_shape(
         ttl_seconds=120,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert not escalated  # non-escalation path registers the intents we want
 
@@ -297,6 +299,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
             source="device_connectivity",
             reason="Node went offline",
             settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 

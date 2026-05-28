@@ -121,6 +121,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
         locked,
         source="session_viability",
         reason="Recovery probe failed",
+        publisher=event_bus,
     )
     await db_session.commit()
     await settle_after_commit_tasks()

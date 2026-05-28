@@ -16,6 +16,7 @@ from app.hosts.models import Host
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -72,7 +73,9 @@ async def _run_node_health_with_gate(
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
-            await node_health._check_nodes(session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+            await node_health._check_nodes(
+                session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
+            )
 
 
 async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(

@@ -14,6 +14,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -59,7 +60,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(
-                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
                 )
 
     async def racer() -> None:
@@ -128,7 +129,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         ):
             async with db_session_maker() as session:
                 await device_connectivity._check_connectivity(
-                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
                 )
 
     async def racer() -> None:

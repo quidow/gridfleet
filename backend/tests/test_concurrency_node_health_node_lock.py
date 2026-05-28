@@ -13,6 +13,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -66,6 +67,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     result=ProbeResult(status="refused"),
                     grid_device_ids=set(),
                     settings=FakeSettingsReader({}),
+                    publisher=event_bus,
                 )
             await session.commit()
 

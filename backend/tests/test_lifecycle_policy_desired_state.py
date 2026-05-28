@@ -13,6 +13,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, Devic
 from app.devices.services import state_write_guard
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -217,6 +218,7 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         source="device_checks",
         reason="Device reconnected and passed health checks",
         settings=FakeSettingsReader({}),
+        publisher=event_bus,
     )
 
     leftover = (
@@ -258,6 +260,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
         device,
         source="connectivity_lost",
         reason="agent disconnected",
+        publisher=event_bus,
     )
 
     events = (
@@ -305,6 +308,7 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
         device,
         source="health_check_fail",
         reason="probe failed",
+        publisher=event_bus,
     )
 
     events = (

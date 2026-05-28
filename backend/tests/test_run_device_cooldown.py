@@ -20,6 +20,7 @@ from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -616,7 +617,12 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     await db_session.commit()
 
     recovered = await attempt_auto_recovery(
-        db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        db_session,
+        device,
+        source="device_checks",
+        reason="Healthy again",
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
     )
     assert recovered is False
 

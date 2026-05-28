@@ -22,6 +22,7 @@ from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 
 def _device(
@@ -212,7 +213,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 
     assert delete_value.await_count == 1
@@ -249,7 +250,7 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
@@ -344,7 +345,7 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
         await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

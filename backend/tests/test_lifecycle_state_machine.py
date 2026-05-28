@@ -9,6 +9,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.hosts.models import Host
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.db]
 
@@ -267,7 +268,7 @@ class TestIdempotency:
             name_suffix="i1",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED)
+        changed = await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=event_bus)
         assert changed is False
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold == DeviceHold.maintenance
@@ -277,7 +278,7 @@ class TestIdempotency:
             db_session, db_host, operational=DeviceOperationalState.busy, hold=None, name_suffix="i2"
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=event_bus)
         assert changed is False
 
     async def test_connectivity_lost_from_maintenance_is_noop(self, db_session: AsyncSession, db_host: Host) -> None:
@@ -289,7 +290,7 @@ class TestIdempotency:
             name_suffix="i3",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST)
+        changed = await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, publisher=event_bus)
         assert changed is False
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold == DeviceHold.maintenance
@@ -299,7 +300,7 @@ class TestIdempotency:
             db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="i4"
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_EXECUTED)
+        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, publisher=event_bus)
         assert changed is False
         assert device.operational_state == DeviceOperationalState.offline
 
@@ -313,7 +314,7 @@ class TestInvalidTransitions:
         )
         machine = DeviceStateMachine()
         with pytest.raises(InvalidTransitionError):
-            await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED)
+            await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, publisher=event_bus)
 
     async def test_connectivity_restored_from_busy_raises(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed_device(
@@ -321,7 +322,7 @@ class TestInvalidTransitions:
         )
         machine = DeviceStateMachine()
         with pytest.raises(InvalidTransitionError):
-            await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED)
+            await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, publisher=event_bus)
 
 
 class TestStateModel:
@@ -378,7 +379,7 @@ class TestPassThroughEvents:
         suffix = f"pt-disc-{operational.value}"
         device = await _seed_device(db_session, db_host, operational=operational, hold=hold, name_suffix=suffix)
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED)
+        changed = await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED, publisher=event_bus)
         assert changed is False
         assert device.operational_state == operational
         assert device.hold == hold
@@ -393,7 +394,7 @@ class TestPassThroughEvents:
         suffix = f"pt-defer-{operational.value}"
         device = await _seed_device(db_session, db_host, operational=operational, hold=None, name_suffix=suffix)
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_DEFERRED)
+        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_DEFERRED, publisher=event_bus)
         assert changed is False
         assert device.operational_state == operational
         assert device.hold is None

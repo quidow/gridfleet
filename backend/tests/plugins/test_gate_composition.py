@@ -9,6 +9,7 @@ from app.packs.services.desired_state import compute_desired
 from app.packs.services.service import list_catalog
 from app.packs.services.start_shim import build_pack_start_payload
 from app.packs.services.status import apply_status
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -70,7 +71,7 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
         ],
         "doctor": [],
     }
-    await apply_status(db_session, status_payload)
+    await apply_status(db_session, status_payload, publisher=event_bus)
     await db_session.commit()
 
     installs = (

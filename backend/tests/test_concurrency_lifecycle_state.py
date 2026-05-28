@@ -58,6 +58,7 @@ from sqlalchemy import select
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import lifecycle_policy as lifecycle_policy
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -110,6 +111,7 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
                 device_obj,
                 source=source,
                 reason=reason,
+                publisher=event_bus,
             )
 
     await asyncio.gather(*[writer(s, r) for s, r in inputs])
@@ -227,6 +229,7 @@ async def test_concurrent_health_failure_stale_overwrite(
                     device_obj,
                     source="src-a",
                     reason="reason-a",
+                    publisher=event_bus,
                 )
 
     async def writer_b() -> None:
@@ -241,6 +244,7 @@ async def test_concurrent_health_failure_stale_overwrite(
                 device_obj,
                 source="src-b",
                 reason="reason-b",
+                publisher=event_bus,
             )
         # Signal writer A that B has committed.
         b_has_committed.set()

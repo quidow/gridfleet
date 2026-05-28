@@ -381,11 +381,25 @@ async def test_cooldown_device_guard_paths(
 
     with pytest.raises(ValueError, match="ttl_seconds"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=31, settings=settings, circuit_breaker=Mock()
+            db_session,
+            run.id,
+            device.id,
+            reason="flaky",
+            ttl_seconds=31,
+            settings=settings,
+            circuit_breaker=Mock(),
+            publisher=event_bus,
         )
     with pytest.raises(ValueError, match="Cooldown reason"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason=" ", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+            db_session,
+            run.id,
+            device.id,
+            reason=" ",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
+            publisher=event_bus,
         )
     with pytest.raises(ValueError, match="Run not found"):
         await run_service.cooldown_device(
@@ -396,13 +410,21 @@ async def test_cooldown_device_guard_paths(
             ttl_seconds=5,
             settings=settings,
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     run.state = RunState.completed
     await db_session.commit()
     with pytest.raises(ValueError, match="terminal run"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+            db_session,
+            run.id,
+            device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     run.state = RunState.active
@@ -410,7 +432,14 @@ async def test_cooldown_device_guard_paths(
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     with pytest.raises(ValueError, match="Device not found"):
         await run_service.cooldown_device(
-            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+            db_session,
+            run.id,
+            device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     other_device = await create_device(
@@ -431,6 +460,7 @@ async def test_cooldown_device_guard_paths(
             ttl_seconds=5,
             settings=settings,
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
@@ -442,6 +472,7 @@ async def test_cooldown_device_guard_paths(
         ttl_seconds=5,
         settings=settings,
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
 
     assert excluded_until is not None
@@ -495,7 +526,12 @@ async def test_release_devices_branches_and_session_counts(
 
     empty = TestRun(name="empty", state=RunState.active, requirements=[], ttl_minutes=1, heartbeat_timeout_sec=1)
     empty.device_reservations = []
-    assert await run_service._release_devices(db_session, empty, commit=True, settings=FakeSettingsReader()) == []
+    assert (
+        await run_service._release_devices(
+            db_session, empty, commit=True, settings=FakeSettingsReader(), publisher=event_bus
+        )
+        == []
+    )
 
 
 async def test_mark_running_sessions_released_success_path(
@@ -572,11 +608,15 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="message is required"):
-        await run_service.report_preparation_failure(db_session, run.id, device.id, message="  ")
+        await run_service.report_preparation_failure(db_session, run.id, device.id, message="  ", publisher=event_bus)
     with pytest.raises(ValueError, match="not actively reserved"):
-        await run_service.report_preparation_failure(db_session, run.id, other_device.id, message="bad")
+        await run_service.report_preparation_failure(
+            db_session, run.id, other_device.id, message="bad", publisher=event_bus
+        )
 
-    refreshed = await run_service.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+    refreshed = await run_service.report_preparation_failure(
+        db_session, run.id, device.id, message="bad setup", publisher=event_bus
+    )
     assert refreshed.id == run.id
     assert refreshed.device_reservations[0].excluded is True
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
@@ -596,6 +636,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
             }
         ),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert escalated_until is None
     assert (count, escalated, threshold) == (1, True, 1)
@@ -617,7 +658,9 @@ async def test_report_preparation_failure_missing_device_path(
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
 
     with pytest.raises(ValueError, match="Device not found"):
-        await run_service.report_preparation_failure(db_session, run.id, device.id, message="bad setup")
+        await run_service.report_preparation_failure(
+            db_session, run.id, device.id, message="bad setup", publisher=event_bus
+        )
 
 
 async def test_release_devices_unusual_restore_branches(
@@ -707,7 +750,9 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
         ),
     )
 
-    pending = await run_service._release_devices(db, run, commit=True, settings=FakeSettingsReader())
+    pending = await run_service._release_devices(
+        db, run, commit=True, settings=FakeSettingsReader(), publisher=event_bus
+    )
 
     assert pending == [maintenance_id, restored_id]
     assert all(reservation.released_at is not None for reservation in reservations)
@@ -717,7 +762,9 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
 async def test_report_preparation_failure_missing_and_terminal_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.get_run", AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.report_preparation_failure(AsyncMock(), uuid.uuid4(), uuid.uuid4(), message="bad")
+        await run_service.report_preparation_failure(
+            AsyncMock(), uuid.uuid4(), uuid.uuid4(), message="bad", publisher=event_bus
+        )
 
     terminal = TestRun(
         id=uuid.uuid4(),
@@ -729,7 +776,9 @@ async def test_report_preparation_failure_missing_and_terminal_run(monkeypatch: 
     )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.get_run", AsyncMock(return_value=terminal))
     with pytest.raises(ValueError, match="terminal run"):
-        await run_service.report_preparation_failure(AsyncMock(), terminal.id, uuid.uuid4(), message="bad")
+        await run_service.report_preparation_failure(
+            AsyncMock(), terminal.id, uuid.uuid4(), message="bad", publisher=event_bus
+        )
 
 
 async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -764,7 +813,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
             return None
 
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.lifecycle_policy.complete_deferred_stop_if_session_ended", AsyncMock())
-    await run_service._complete_deferred_stops_post_commit(DeferredSession(), [missing_device_id])  # type: ignore[arg-type]
+    await run_service._complete_deferred_stops_post_commit(DeferredSession(), [missing_device_id], publisher=event_bus)  # type: ignore[arg-type]
     run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended.assert_not_awaited()
 
 

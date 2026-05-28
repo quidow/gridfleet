@@ -55,7 +55,9 @@ async def test_set_operational_state_writes_and_queues_event(
 @pytest.mark.asyncio
 async def test_set_operational_state_noop_when_unchanged(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    changed = await device_state.set_operational_state(device, DeviceOperationalState.offline, publish_event=False)
+    changed = await device_state.set_operational_state(
+        device, DeviceOperationalState.offline, publish_event=False, publisher=event_bus
+    )
     assert changed is False
 
 
@@ -81,8 +83,8 @@ async def test_set_hold_writes_and_queues_event(
 @pytest.mark.asyncio
 async def test_set_hold_to_none_clears(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False)
-    changed = await device_state.set_hold(device, None, publish_event=False)
+    await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False, publisher=event_bus)
+    changed = await device_state.set_hold(device, None, publish_event=False, publisher=event_bus)
     assert changed is True
     assert device.hold is None
 

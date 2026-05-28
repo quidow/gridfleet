@@ -15,6 +15,7 @@ import pytest
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
+from tests.helpers import test_event_bus as event_bus
 
 
 def _device() -> Device:
@@ -67,6 +68,7 @@ def test_assignment_from_allowlisted_module_is_permitted() -> None:
                 DeviceOperationalState.offline,
                 reason="test",
                 publish_event=False,
+                publisher=event_bus,
             )
         )
     finally:

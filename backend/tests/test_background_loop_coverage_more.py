@@ -134,7 +134,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
     from tests.fakes import FakeSettingsReader
 
-    await node_health._check_nodes(db, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    await node_health._check_nodes(db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus)
 
     db.commit.assert_awaited_once()
 

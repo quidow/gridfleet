@@ -17,6 +17,7 @@ import pytest
 from app.devices.models import DeviceOperationalState
 from app.sessions import service_viability
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +91,7 @@ async def test_exception_path_restores_previous_available_without_projection(
             available_device,
             checked_by=service_viability.SessionViabilityCheckedBy.manual,
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
+            publisher=event_bus,
         )
 
     # The exception path must have called set_operational_state with AVAILABLE
@@ -149,6 +151,7 @@ async def test_exception_path_from_offline_restores_offline(
             offline_device,
             checked_by=service_viability.SessionViabilityCheckedBy.recovery,
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
+            publisher=event_bus,
         )
 
     assert set_state.call_count >= 1, "set_operational_state was never called in the exception path"

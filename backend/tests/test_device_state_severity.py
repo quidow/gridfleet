@@ -187,7 +187,10 @@ async def test_state_machine_connectivity_lost_emits_warning(
         device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
-    changed = await DeviceStateMachine().transition(device, TransitionEvent.CONNECTIVITY_LOST, reason="ADB lost")
+    changed = await DeviceStateMachine().transition(
+        device, TransitionEvent.CONNECTIVITY_LOST, reason="ADB lost", publisher=event_bus
+    )
+
     assert changed is True
     await db_session.commit()
 
@@ -205,8 +208,9 @@ async def test_state_machine_connectivity_restored_emits_success(
     captured = _make_severity_capture(monkeypatch, inject_publisher=True)
 
     changed = await DeviceStateMachine().transition(
-        device, TransitionEvent.CONNECTIVITY_RESTORED, reason="ADB restored"
+        device, TransitionEvent.CONNECTIVITY_RESTORED, reason="ADB restored", publisher=event_bus
     )
+
     assert changed is True
     await db_session.commit()
 
@@ -227,7 +231,10 @@ async def test_state_machine_session_started_emits_info(
         device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
-    changed = await DeviceStateMachine().transition(device, TransitionEvent.SESSION_STARTED, reason="session started")
+    changed = await DeviceStateMachine().transition(
+        device, TransitionEvent.SESSION_STARTED, reason="session started", publisher=event_bus
+    )
+
     assert changed is True
     await db_session.commit()
 
@@ -249,8 +256,9 @@ async def test_state_machine_verification_failed_emits_warning(
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(
-        device, TransitionEvent.VERIFICATION_FAILED, reason="verification failed"
+        device, TransitionEvent.VERIFICATION_FAILED, reason="verification failed", publisher=event_bus
     )
+
     assert changed is True
     await db_session.commit()
 
@@ -272,8 +280,9 @@ async def test_state_machine_verification_passed_emits_success(
     await db_session.flush()
 
     changed = await DeviceStateMachine().transition(
-        device, TransitionEvent.VERIFICATION_PASSED, reason="verification passed"
+        device, TransitionEvent.VERIFICATION_PASSED, reason="verification passed", publisher=event_bus
     )
+
     assert changed is True
     await db_session.commit()
 
@@ -294,7 +303,10 @@ async def test_state_machine_maintenance_entered_emits_info_on_hold(
         device.operational_state = DeviceOperationalState.available
     await db_session.flush()
 
-    changed = await DeviceStateMachine().transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator")
+    changed = await DeviceStateMachine().transition(
+        device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=event_bus
+    )
+
     assert changed is True
     await db_session.commit()
 

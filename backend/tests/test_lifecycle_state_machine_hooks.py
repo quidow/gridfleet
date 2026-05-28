@@ -10,6 +10,7 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.hosts.models import Host
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.db]
 
@@ -69,7 +70,7 @@ class TestHookOrdering:
         await db_session.flush()
         log: list[str] = []
         machine = DeviceStateMachine(hooks=[_RecordingHook("A", log)])
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=event_bus)
         assert changed is False
         assert log == []
 
@@ -92,7 +93,7 @@ class TestEventLogHook:
             device.operational_state = DeviceOperationalState.busy
         await db_session.flush()
         machine = DeviceStateMachine(hooks=[EventLogHook()])
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=event_bus)
         assert changed is False
         await db_session.flush()
         rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
@@ -101,7 +102,7 @@ class TestEventLogHook:
     async def test_unmapped_event_writes_nothing(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed(db_session, db_host, "evt3")
         machine = DeviceStateMachine(hooks=[EventLogHook()])
-        await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED)
+        await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED, publisher=event_bus)
         await db_session.flush()
         rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
         assert rows == []

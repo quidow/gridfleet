@@ -17,6 +17,7 @@ from app.devices.services.intent_types import NODE_PROCESS
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +76,7 @@ async def test_mark_session_finished_revokes_active_session_intent(
 
     assert await _intent_exists(db_session, device.id, source), "Precondition: intent must exist before the call"
 
-    result = await session_service.mark_session_finished(db_session, session.session_id)
+    result = await session_service.mark_session_finished(db_session, session.session_id, publisher=event_bus)
 
     assert result is not None
     assert result.ended_at is not None

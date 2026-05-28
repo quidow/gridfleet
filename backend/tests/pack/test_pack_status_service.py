@@ -19,6 +19,7 @@ from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services import status as pack_status_service
 from app.packs.services.status import apply_status, get_host_driver_pack_status
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -77,7 +78,7 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
         "doctor": [],
     }
 
-    await apply_status(db_session, payload)
+    await apply_status(db_session, payload, publisher=event_bus)
     await db_session.commit()
 
     installs = (await db_session.execute(select(HostPackInstallation))).scalars().all()
@@ -128,6 +129,7 @@ async def test_apply_status_persists_plugin_status_per_runtime(db_session: Async
             "packs": [],
             "doctor": [],
         },
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -161,6 +163,7 @@ async def test_apply_status_persists_sidecar_feature_status(db_session: AsyncSes
                 }
             ],
         },
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -193,6 +196,7 @@ async def test_host_driver_pack_status_returns_feature_status(db_session: AsyncS
                 }
             ],
         },
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -364,7 +368,7 @@ async def test_apply_status_clears_stale_doctor_rows_when_pack_reports_empty(db_
         "doctor": [],
     }
 
-    await apply_status(db_session, payload)
+    await apply_status(db_session, payload, publisher=event_bus)
     await db_session.commit()
 
     rows = (
@@ -418,7 +422,7 @@ async def test_apply_status_ignores_doctor_entries_for_unreported_packs(db_sessi
         ],
     }
 
-    await apply_status(db_session, payload)
+    await apply_status(db_session, payload, publisher=event_bus)
     await db_session.commit()
 
     rows = (
@@ -474,7 +478,7 @@ async def test_apply_status_preserves_doctor_rows_for_blocked_packs(db_session: 
         "doctor": [],
     }
 
-    await apply_status(db_session, payload)
+    await apply_status(db_session, payload, publisher=event_bus)
     await db_session.commit()
 
     rows = (

@@ -93,7 +93,7 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
     )
     await db_session.commit()
 
-    updated = await session_service.update_session_status(db_session, "sess-a", SessionStatus.failed)
+    updated = await session_service.update_session_status(db_session, "sess-a", SessionStatus.failed, event_bus)
 
     assert updated is not None
     await db_session.refresh(device)
@@ -214,6 +214,7 @@ async def test_register_session_does_not_attach_run_id_when_run_is_preparing(
         session_id="prep-session-1",
         test_name="prep-warmup",
         device_id=device.id,
+        publisher=event_bus,
     )
 
     assert registered.run_id is None
@@ -247,6 +248,7 @@ async def test_register_session_attaches_run_id_when_run_is_active(
         session_id="active-session-1",
         test_name="real-test",
         device_id=device.id,
+        publisher=event_bus,
     )
 
     assert registered.run_id == run.id
@@ -303,6 +305,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
         status=SessionStatus.error,
         error_type="driver_init_failed",
         error_message="boom",
+        publisher=event_bus,
     )
 
     reloaded = await db_session.get(Device, device.id)
@@ -402,6 +405,7 @@ async def test_register_session_running_returns_existing_on_conflict(
         test_name="first",
         device_id=device.id,
         connection_target="conflict-target",
+        publisher=event_bus,
     )
     assert first.test_name == "first"
 
@@ -424,6 +428,7 @@ async def test_register_session_running_returns_existing_on_conflict(
         test_name="second",
         device_id=device.id,
         connection_target="conflict-target",
+        publisher=event_bus,
     )
     # Conflict short-circuit returns the winner's row; loser's metadata is
     # discarded.
@@ -478,7 +483,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     await db_session.commit()
     event_bus_capture.clear()
 
-    updated = await session_service.update_session_status(db_session, "flap-sess", SessionStatus.passed)
+    updated = await session_service.update_session_status(db_session, "flap-sess", SessionStatus.passed, event_bus)
     await settle_after_commit_tasks()
 
     assert updated is not None
@@ -567,7 +572,9 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     await db_session.commit()
     event_bus_capture.clear()
 
-    updated = await session_service.update_session_status(db_session, "stop-inflight-sess", SessionStatus.passed)
+    updated = await session_service.update_session_status(
+        db_session, "stop-inflight-sess", SessionStatus.passed, event_bus
+    )
     await settle_after_commit_tasks()
 
     assert updated is not None
