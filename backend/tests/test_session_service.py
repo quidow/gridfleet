@@ -14,6 +14,8 @@ from app.devices.services.state import set_hold, set_operational_state
 from app.hosts.models import Host
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
+from app.sessions.protocols import SessionCrudProtocol
+from app.sessions.service import SessionCrudService
 from tests.helpers import create_device_record, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -592,3 +594,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
+
+
+def test_session_crud_service_satisfies_protocol() -> None:
+    assert issubclass(SessionCrudService, SessionCrudProtocol)
