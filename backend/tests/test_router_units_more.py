@@ -126,7 +126,7 @@ class MutatingSession(DummySession):
 def _mock_settings_svc(service: object | None = None) -> SettingsServices:
     """Build a SettingsServices with a mock or real service for unit-test route calls."""
     svc = service if service is not None else settings_service
-    return SettingsServices(service=svc, session_factory=object())  # type: ignore[arg-type]
+    return SettingsServices(service=svc, config=Mock(), session_factory=object())  # type: ignore[arg-type]
 
 
 async def test_settings_router_error_paths() -> None:

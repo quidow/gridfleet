@@ -47,6 +47,7 @@ from app.sessions.services_container import SessionServices
 from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.service import SettingsService
+from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
@@ -313,7 +314,11 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return SettingsServices(service=settings_service, session_factory=sf)
+        return SettingsServices(
+            service=settings_service,
+            config=SettingsConfigService(publisher=test_event_bus),
+            session_factory=sf,
+        )
 
     def override_get_agent_comm_services() -> AgentCommServices:
         return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
