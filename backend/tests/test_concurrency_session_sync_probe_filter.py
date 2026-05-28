@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceOperationalState
-from app.sessions import service_sync as session_sync
 from app.sessions.models import Session
+from app.sessions.service_sync import SessionSyncService
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -75,7 +75,8 @@ async def test_session_sync_does_not_persist_probe_sessions(
     fake_grid.get_status = AsyncMock(return_value=fake_status)
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    await svc.sync(db_session)
 
     sessions = (
         (await db_session.execute(select(Session).where(Session.session_id == "probe-session-1"))).scalars().all()
@@ -126,7 +127,8 @@ async def test_session_sync_does_persist_real_session(
     fake_grid.get_status = AsyncMock(return_value=fake_status)
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    await svc.sync(db_session)
 
     sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()
     assert len(sessions) == 1

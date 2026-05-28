@@ -1229,12 +1229,13 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     )
 
     # Old session leaves the Grid (not in active map), triggering ended-session processing.
-    await session_sync._sync_sessions(
-        db_session,
-        settings=FakeSettingsReader({}),
+    svc = SessionSyncService(
         publisher=Mock(),
+        settings=FakeSettingsReader({}),
         grid=make_fake_grid(_grid_response([])),
     )
+    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
+    await svc.sync(db_session)
 
     await db_session.refresh(device)
     # The race-prone restore would have moved the device to ``available``.
@@ -1377,7 +1378,6 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.devices.services.lifecycle_policy import handle_health_failure
-    from app.sessions import service_sync as session_sync
 
     with state_write_guard.bypass():
         device = Device(
@@ -1417,12 +1417,12 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     await db_session.refresh(device)
     assert device.lifecycle_policy_state["stop_pending"] is True
 
-    await session_sync._sync_sessions(
-        db_session,
-        settings=FakeSettingsReader({}),
+    svc = SessionSyncService(
         publisher=Mock(),
+        settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
     )
+    await svc.sync(db_session)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -1442,8 +1442,6 @@ async def test_sweep_runs_when_grid_is_unreachable(
     sweep relies on DB state only. Audit P2 — sweep must run independent of
     Grid status.
     """
-    from app.sessions import service_sync as session_sync
-
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -1484,12 +1482,12 @@ async def test_sweep_runs_when_grid_is_unreachable(
 
     # Shape that triggers the early-return branch in _sync_sessions:
     # ready=False AND an "error" key present.
-    await session_sync._sync_sessions(
-        db_session,
-        settings=FakeSettingsReader({}),
+    svc = SessionSyncService(
         publisher=Mock(),
+        settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": False}, "error": "connection refused"}),
     )
+    await svc.sync(db_session)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
