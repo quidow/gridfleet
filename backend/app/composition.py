@@ -25,6 +25,7 @@ from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
+from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobWorkerLoop
@@ -100,7 +101,11 @@ def compose_app(
         ),
         sessions=SessionServices(settings=settings_svc, session_factory=session_factory, publisher=bus),
         runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
-        grid=GridServices(settings=settings_svc, session_factory=session_factory),
+        grid=GridServices(
+            grid=GridService(settings=settings_svc),
+            settings=settings_svc,
+            session_factory=session_factory,
+        ),
         packs=PackServices(session_factory=session_factory),
         appium_nodes=AppiumNodeServices(
             settings=settings_svc,

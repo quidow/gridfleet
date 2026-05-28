@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from app.grid import event_bus_loop
+from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.sessions import service_sync
 from tests.fakes import FakeSettingsReader
@@ -66,7 +67,11 @@ async def test_subscriber_loop_wakes_session_sync(
 ) -> None:
     service_sync._doorbell = None  # force fresh Event on the current loop
     loop = event_bus_loop.GridEventBusSubscriberLoop(
-        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+        services=GridServices(
+            grid=GridService(settings=FakeSettingsReader({})),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session_factory,
+        )
     )
     task = asyncio.create_task(loop.run())
     try:
@@ -87,7 +92,11 @@ async def test_subscriber_loop_shuts_down_cleanly(
 ) -> None:
     service_sync._doorbell = None
     loop = event_bus_loop.GridEventBusSubscriberLoop(
-        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+        services=GridServices(
+            grid=GridService(settings=FakeSettingsReader({})),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session_factory,
+        )
     )
     task = asyncio.create_task(loop.run())
     await asyncio.sleep(0.05)
