@@ -1405,7 +1405,10 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_session_test(
-                device_id, db=object(), settings_services=_mock_settings_svc(FakeSettingsReader({}))
+                device_id,
+                db=object(),
+                settings_services=_mock_settings_svc(FakeSettingsReader({})),
+                events=SimpleNamespace(publisher=event_bus),
             )
     assert exc.value.status_code == 409
 
@@ -1417,7 +1420,10 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         ),
     ):
         assert await devices_control.device_session_test(
-            device_id, db=object(), settings_services=_mock_settings_svc(FakeSettingsReader({}))
+            device_id,
+            db=object(),
+            settings_services=_mock_settings_svc(FakeSettingsReader({})),
+            events=SimpleNamespace(publisher=event_bus),
         ) == {"status": "passed"}
 
 

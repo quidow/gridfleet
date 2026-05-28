@@ -196,12 +196,19 @@ async def device_health(
 
 @router.post("/{device_id}/session-test", response_model=SessionViabilityRead)
 async def device_session_test(
-    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep
+    device_id: uuid.UUID,
+    db: DbDep,
+    settings_services: SettingsServicesDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         return await session_viability.run_session_viability_probe(
-            db, device, checked_by=SessionViabilityCheckedBy.manual, settings=settings_services.service
+            db,
+            device,
+            checked_by=SessionViabilityCheckedBy.manual,
+            settings=settings_services.service,
+            publisher=events.publisher,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
