@@ -8,7 +8,8 @@ from app.devices.models import DeviceOperationalState
 from app.sessions import service_sync as session_sync
 from app.sessions.models import SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
-from tests.fakes import FakeSettingsReader
+from app.sessions.service_sync import SessionSyncService
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -77,7 +78,8 @@ async def test_sweep_stale_stop_pending_handles_deleted_rows(monkeypatch: pytest
     complete = AsyncMock()
     monkeypatch.setattr(session_sync.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
 
-    await session_sync._sweep_stale_stop_pending(db, publisher=event_bus)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid())
+    await svc._sweep_stale_stop_pending(db)
 
     complete.assert_awaited_once_with(db, device, publisher=event_bus)
 
@@ -89,11 +91,12 @@ async def test_sync_sessions_unreachable_grid_still_sweeps(monkeypatch: pytest.M
     fake_grid.get_status = AsyncMock(return_value={"value": {"ready": False}, "error": "down"})
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     sweep = AsyncMock()
-    monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", sweep)
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", sweep)
+    await svc.sync(db)
 
-    sweep.assert_awaited_once_with(db, publisher=event_bus)
+    sweep.assert_awaited_once_with(db)
     db.commit.assert_awaited_once()
 
 
@@ -139,11 +142,12 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(session_sync, "ready_operational_state", AsyncMock(return_value=DeviceOperationalState.offline))
     machine = SimpleNamespace(transition=AsyncMock())
     monkeypatch.setattr(session_sync, "_MACHINE", machine)
-    monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
+    await svc.sync(db)
 
     machine.transition.assert_awaited_once()
     assert machine.transition.await_args.args[1] is session_sync.TransitionEvent.AUTO_STOP_EXECUTED
@@ -250,9 +254,10 @@ async def test_sync_sessions_new_session_race_and_invalid_capability_branches(
     monkeypatch.setattr(
         session_sync.run_service, "get_device_reservation_with_entry", AsyncMock(return_value=(None, None))
     )
-    monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
+    await svc.sync(db)
 
     assert db.get.await_count == 1
     db.commit.assert_awaited_once()
@@ -326,9 +331,10 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
         "lock_device",
         AsyncMock(return_value=SimpleNamespace(id=device_ids[4], operational_state=DeviceOperationalState.available)),
     )
-    monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
+    await svc.sync(db)
 
     assert session_sync.lifecycle_policy.handle_session_finished.await_count == 4
     session_sync.device_locking.lock_device.assert_awaited_once()

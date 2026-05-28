@@ -18,8 +18,9 @@ import zmq.asyncio
 
 from app.grid import event_bus_loop, grid_settings
 from app.grid.services_container import GridServices
-from app.sessions import service_sync
+from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.grid, pytest.mark.asyncio]
 
@@ -66,17 +67,17 @@ def _fake_session_factory() -> object:
 
 
 async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.MonkeyPatch) -> None:
-    service_sync._doorbell = None  # force fresh Event on the current loop
-
     # Point subscriber at the real hub XPUB (subscribers READ from here).
     monkeypatch.setattr(grid_settings, "event_bus_subscribe_url", f"tcp://{HUB_HOST}:{HUB_XPUB_PORT}")
 
+    waker = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid())
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
             grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
-        )
+        ),
+        session_sync_waker=waker,
     )
     task = asyncio.create_task(loop.run())
     try:
@@ -89,7 +90,7 @@ async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.M
         try:
             await asyncio.sleep(0.2)  # PUB → XSUB connect time
             await pub.send_multipart(_frames("session-created", {"id": f"e2e-{uuid4()}"}))
-            doorbell = service_sync._get_doorbell()
+            doorbell = waker._get_doorbell()
             await asyncio.wait_for(doorbell.wait(), timeout=2.0)
         finally:
             pub.close(linger=0)

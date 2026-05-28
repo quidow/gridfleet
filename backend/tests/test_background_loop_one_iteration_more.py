@@ -24,17 +24,6 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
-@pytest.fixture(autouse=True)
-def _reset_session_sync_doorbell() -> None:
-    """Force a fresh doorbell Event on each test's event loop.
-
-    ``session_sync_loop`` lazy-binds ``_doorbell`` on first call. Across
-    pytest-xdist workers this can re-use an Event from a dead loop and
-    raise ``RuntimeError: bound to a different event loop``.
-    """
-    session_sync._doorbell = None
-
-
 class _Cycle:
     def cycle(self) -> "_Cycle":
         return self
@@ -44,14 +33,6 @@ class _Cycle:
 
     async def __aexit__(self, *args: object) -> None:
         return None
-
-
-async def _cancel_after_closing(awaitable: object, *_args: object, **_kwargs: object) -> None:
-    # Drop the doorbell.wait() coroutine that callers construct before invoking
-    # asyncio.wait_for, otherwise the mocked CancelledError leaves it unawaited.
-    if hasattr(awaitable, "close"):
-        awaitable.close()
-    raise asyncio.CancelledError
 
 
 class _Session:
@@ -118,7 +99,12 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
     monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = SessionServices(
-        crud=Mock(), settings=FakeSettingsReader({}), grid=Mock(), session_factory=_Session, publisher=event_bus
+        crud=Mock(),
+        sync=Mock(),
+        settings=FakeSettingsReader({}),
+        grid=Mock(),
+        session_factory=_Session,
+        publisher=event_bus,
     )
     with pytest.raises(asyncio.CancelledError):
         await SessionViabilityLoop(services=services).run()
@@ -128,11 +114,13 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock())
-    monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
+    mock_sync = Mock()
+    mock_sync.sync = AsyncMock()
+    mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits the loop
 
     services = SessionServices(
         crud=Mock(),
+        sync=mock_sync,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,
@@ -141,16 +129,18 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
     with pytest.raises(asyncio.CancelledError):
         await SessionSyncLoop(services=services).run()
 
-    session_sync._sync_sessions.assert_awaited_once()
+    mock_sync.sync.assert_awaited_once()
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(session_sync.asyncio, "wait_for", _cancel_after_closing)
+    mock_sync = Mock()
+    mock_sync.sync = AsyncMock(side_effect=RuntimeError("boom"))
+    mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits after error
 
     services = SessionServices(
         crud=Mock(),
+        sync=mock_sync,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,
@@ -266,10 +256,13 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
         ).run()
 
     monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync, "_sync_sessions", AsyncMock(side_effect=LeadershipLost("lost")))
     monkeypatch.setattr(session_sync.os, "_exit", fake_exit)
+    mock_sync = Mock()
+    mock_sync.sync = AsyncMock(side_effect=LeadershipLost("lost"))
+    mock_sync.wait_for_wake = AsyncMock()
     services = SessionServices(
         crud=Mock(),
+        sync=mock_sync,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,

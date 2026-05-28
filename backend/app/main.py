@@ -208,7 +208,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
         run_reaper = RunReaperLoop(services=app_services.runs)
-        grid_event_bus = GridEventBusSubscriberLoop(services=app_services.grid)
+        grid_event_bus = GridEventBusSubscriberLoop(
+            services=app_services.grid,
+            session_sync_waker=app_services.sessions.sync,
+        )
         pack_drain = PackDrainLoop(services=app_services.packs)
         job_worker = app_services.jobs
         webhook_delivery = app_services.webhooks

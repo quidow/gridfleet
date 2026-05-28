@@ -21,8 +21,9 @@ if TYPE_CHECKING:
 
 from app.grid import event_bus_loop
 from app.grid.services_container import GridServices
-from app.sessions import service_sync
+from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.helpers import test_event_bus as event_bus
 
 
 def _frames(event_type: str, payload: object) -> list[bytes]:
@@ -64,21 +65,20 @@ async def test_subscriber_loop_wakes_session_sync(
     hub_pub: zmq.asyncio.Socket,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service_sync._doorbell = None  # force fresh Event on the current loop
+    waker = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid())
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
             grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
-        )
+        ),
+        session_sync_waker=waker,
     )
     task = asyncio.create_task(loop.run())
     try:
         await asyncio.sleep(0.1)  # let SUB connect + subscribe
         await hub_pub.send_multipart(_frames("session-created", {"id": "s-1"}))
-        # _get_doorbell will be called by wake_session_sync from the handler;
-        # we look it up directly to await the same Event the handler sets.
-        doorbell = service_sync._get_doorbell()
+        doorbell = waker._get_doorbell()
         await asyncio.wait_for(doorbell.wait(), timeout=1.0)
     finally:
         task.cancel()
@@ -89,13 +89,15 @@ async def test_subscriber_loop_wakes_session_sync(
 async def test_subscriber_loop_shuts_down_cleanly(
     hub_pub: zmq.asyncio.Socket,
 ) -> None:
-    service_sync._doorbell = None
+    from unittest.mock import Mock
+
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
             grid=make_fake_grid(),
             settings=FakeSettingsReader({}),
             session_factory=_fake_session_factory,
-        )
+        ),
+        session_sync_waker=Mock(),
     )
     task = asyncio.create_task(loop.run())
     await asyncio.sleep(0.05)

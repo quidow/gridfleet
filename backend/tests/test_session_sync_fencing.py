@@ -14,7 +14,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
+from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
@@ -25,9 +25,8 @@ _GRID_UP_EMPTY: dict[str, object] = {"value": {"ready": True, "nodes": []}}
 
 
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(
-        db, settings=FakeSettingsReader({}), publisher=event_bus, grid=make_fake_grid(_GRID_UP_EMPTY)
-    )
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(_GRID_UP_EMPTY))
+    await svc.sync(db)
 
 
 @pytest.mark.db
@@ -44,12 +43,12 @@ async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _sync_sessions_impl(
-            db_session,
-            settings=FakeSettingsReader({}),
+        svc = SessionSyncService(
             publisher=event_bus,
+            settings=FakeSettingsReader({}),
             grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
         )
+        await svc.sync(db_session)
 
     final_count = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
     assert final_count == initial_count
@@ -102,12 +101,12 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _sync_sessions_impl(
-            db_session,
-            settings=FakeSettingsReader({}),
+        svc = SessionSyncService(
             publisher=event_bus,
+            settings=FakeSettingsReader({}),
             grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
         )
+        await svc.sync(db_session)
 
     await db_session.refresh(session, attribute_names=["status", "ended_at"])
     assert session.status == SessionStatus.running

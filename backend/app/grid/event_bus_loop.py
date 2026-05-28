@@ -22,9 +22,9 @@ from app.grid.event_bus import (
     HubEventBusSubscriber,
     SubscriberMetrics,
 )
-from app.sessions.service_sync import wake_session_sync
 
 if TYPE_CHECKING:
+    from app.grid.protocols import SessionSyncWaker
     from app.grid.services_container import GridServices
 
 logger = get_logger(__name__)
@@ -34,14 +34,21 @@ _HEARTBEAT_INTERVAL_SEC = 5.0
 
 
 class GridEventBusSubscriberLoop:
-    def __init__(self, *, services: GridServices) -> None:
+    def __init__(self, *, services: GridServices, session_sync_waker: SessionSyncWaker) -> None:
         self._services = services
+        self._session_sync_waker = session_sync_waker
+
+    def _handle_event(self, event: DecodedEvent) -> None:
+        # Subscriber only forwards session-created / session-closed.
+        # Either one means session_sync_loop should look at the hub now.
+        self._session_sync_waker.wake()
+        logger.debug("grid_event_bus_event", type=event.type)
 
     async def run(self) -> None:
         while True:
             subscriber = HubEventBusSubscriber(
                 subscribe_url=grid_settings.event_bus_subscribe_url,
-                on_event=_handle_event,
+                on_event=self._handle_event,
             )
             try:
                 await subscriber.start()
@@ -75,10 +82,3 @@ async def _refresh_last_event_age(metrics: SubscriberMetrics) -> None:
         if metrics.last_event_received_at is not None:
             GRID_EVENT_BUS_LAST_EVENT_AGE_SECONDS.set(time.monotonic() - metrics.last_event_received_at)
         await asyncio.sleep(1.0)
-
-
-def _handle_event(event: DecodedEvent) -> None:
-    # Subscriber only forwards session-created / session-closed.
-    # Either one means session_sync_loop should look at the hub now.
-    wake_session_sync()
-    logger.debug("grid_event_bus_event", type=event.type)
