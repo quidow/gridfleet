@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -13,6 +13,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.connectivity import _check_connectivity
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +46,7 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(db_session)
+        await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
 
 @pytest.mark.db
@@ -99,7 +100,7 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(db_session)
+        await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
@@ -163,7 +164,7 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(db_session)
+        await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     stop_called.assert_not_called()
     await db_session.refresh(device, attribute_names=["operational_state"])
@@ -226,7 +227,7 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(db_session)
+        await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state

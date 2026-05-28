@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.devices.services import verification_preparation as preparation
 from app.devices.services.verification_job_state import new_job
 from app.devices.services.verification_preparation import PreparedVerificationContext
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -83,7 +84,12 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
 ) -> None:
     monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
     job = _job()
-    assert await execution.run_device_health(job, _device(None), http_client_factory=object) is None
+    assert (
+        await execution.run_device_health(
+            job, _device(None), http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is None
+    )
     assert job["current_stage"] == "device_health"
     assert job["stages"][1]["status"] == "skipped"
 
@@ -92,21 +98,33 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "down")),
     )
-    detail = await execution.run_device_health(_job(), device, http_client_factory=object)
+    detail = await execution.run_device_health(
+        _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
     assert detail == "Agent health check failed: down"
 
     monkeypatch.setattr(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}}),
     )
-    assert await execution.run_device_health(_job(), device, http_client_factory=object) is None
+    assert (
+        await execution.run_device_health(
+            _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is None
+    )
     assert device.connection_target == "emulator-5554"
 
     monkeypatch.setattr(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(return_value={"healthy": False, "checks": [{"check_id": "adb_ready", "ok": False, "message": "no"}]}),
     )
-    assert await execution.run_device_health(_job(), device, http_client_factory=object) == "adb ready failed (no)"
+    assert (
+        await execution.run_device_health(
+            _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        == "adb ready failed (no)"
+    )
 
 
 async def test_stop_existing_node_and_run_probe_failure_paths(
@@ -147,7 +165,14 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     monkeypatch.setattr(
         "app.devices.services.verification_execution.start_node", AsyncMock(side_effect=NodeManagerError("no node"))
     )
-    started, error = await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    started, error = await execution.run_probe(
+        _job(),
+        db_session,
+        existing,
+        probe_session_fn=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
     assert started is None
     assert error == "no node"
 
@@ -157,7 +182,14 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
     )
-    started, error = await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    started, error = await execution.run_probe(
+        _job(),
+        db_session,
+        existing,
+        probe_session_fn=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
 
@@ -183,6 +215,8 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         db_session,
         existing,
         probe_session_fn=probe_session,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     assert started is running_node
     assert error == "probe failed"
@@ -245,7 +279,15 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         raising=False,
     )
 
-    await execution.run_probe(_job(), db_session, existing, probe_session_fn=AsyncMock())
+    await execution.run_probe(
+        _job(),
+        db_session,
+        existing,
+        probe_session_fn=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        publisher=Mock(),
+    )
 
     converge_mock.assert_awaited_once()
     call_args = converge_mock.await_args
@@ -305,7 +347,14 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         return True, None
 
     assert probe_inflight.is_probe_inflight(device_key) is False
-    await execution.run_probe(_job(), db_session, existing, probe_session_fn=fake_probe_session)
+    await execution.run_probe(
+        _job(),
+        db_session,
+        existing,
+        probe_session_fn=fake_probe_session,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
     assert seen_inflight == [True]
     assert probe_inflight.is_probe_inflight(device_key) is False
 
@@ -357,7 +406,14 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         raise RuntimeError("probe blew up")
 
     with pytest.raises(RuntimeError, match="probe blew up"):
-        await execution.run_probe(_job(), db_session, existing, probe_session_fn=failing_probe_session)
+        await execution.run_probe(
+            _job(),
+            db_session,
+            existing,
+            probe_session_fn=failing_probe_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+        )
     assert probe_inflight.is_probe_inflight(device_key) is False
 
 
@@ -493,6 +549,8 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         context,
         http_client_factory=object,
         probe_session_fn=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
     assert outcome.status == "failed"
     assert outcome.error == "stop failed"
@@ -586,6 +644,8 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
             update_context,
             http_client_factory=object,
             probe_session_fn=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
 
     assert update_device.name == "new"
@@ -619,9 +679,9 @@ async def test_preparation_resolution_and_validation_error_paths(
         == db_host.id
     )
 
-    assert await preparation.resolve_host_derived_payload({}, None, http_client_factory=object, db=db_session) == (
-        "Assigned host is required"
-    )
+    assert await preparation.resolve_host_derived_payload(
+        {}, None, http_client_factory=object, db=db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ) == ("Assigned host is required")
 
     monkeypatch.setattr(
         "app.devices.services.verification_preparation.resolve_pack_platform",
@@ -647,7 +707,12 @@ async def test_preparation_resolution_and_validation_error_paths(
         "connection_type": ConnectionType.network,
     }
     assert await preparation.resolve_host_derived_payload(
-        payload, db_host, http_client_factory=object, db=db_session
+        payload,
+        db_host,
+        http_client_factory=object,
+        db=db_session,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     ) == ("serial: bad")
 
     monkeypatch.setattr(
@@ -659,7 +724,12 @@ async def test_preparation_resolution_and_validation_error_paths(
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "404 resolve")),
     )
     assert await preparation.resolve_host_derived_payload(
-        payload, db_host, http_client_factory=object, db=db_session
+        payload,
+        db_host,
+        http_client_factory=object,
+        db=db_session,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     ) == ("Device must resolve to a stable identity before save (action: resolve)")
 
     monkeypatch.setattr(
@@ -667,7 +737,14 @@ async def test_preparation_resolution_and_validation_error_paths(
         AsyncMock(return_value={"identity_value": "stable", "connection_target": "10.0.0.1:5555", "name": "Resolved"}),
     )
     assert (
-        await preparation.resolve_host_derived_payload(payload, db_host, http_client_factory=object, db=db_session)
+        await preparation.resolve_host_derived_payload(
+            payload,
+            db_host,
+            http_client_factory=object,
+            db=db_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+        )
         is None
     )
     assert payload["identity_value"] == "stable"
@@ -685,7 +762,12 @@ async def test_preparation_resolution_and_validation_error_paths(
         host_id=__import__("uuid").uuid4(),
     )
     context, error = await preparation.validate_create_request(
-        _job(), db_session, bad_create, http_client_factory=object
+        _job(),
+        db_session,
+        bad_create,
+        http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Assigned host was not found"
@@ -696,6 +778,8 @@ async def test_preparation_resolution_and_validation_error_paths(
         __import__("uuid").uuid4(),
         DeviceVerificationUpdate(name="missing", host_id=db_host.id),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Device was not found"
@@ -739,6 +823,8 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
                 db_host,
                 http_client_factory=object,
                 db=db_session,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
             )
             is None
         )
@@ -760,6 +846,8 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
             db_host,
             http_client_factory=object,
             db=db_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         == "Adapter rejected device input"
     )
@@ -795,6 +883,8 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
         db_session,
         DeviceVerificationCreate(**payload),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "late duplicate"
@@ -808,6 +898,8 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
         db_session,
         DeviceVerificationCreate(**payload),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "bad create"
@@ -871,6 +963,8 @@ async def test_preparation_normalization_success_and_resolution_errors(
             db_host,
             http_client_factory=object,
             db=db_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is None
     )
@@ -900,6 +994,8 @@ async def test_preparation_normalization_success_and_resolution_errors(
             db_host,
             http_client_factory=object,
             db=db_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         is None
     )
@@ -921,6 +1017,8 @@ async def test_preparation_normalization_success_and_resolution_errors(
             db_host,
             http_client_factory=object,
             db=db_session,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
         )
         == "Host resolution failed: agent down"
     )
@@ -975,6 +1073,8 @@ async def test_preparation_validation_conflict_and_update_branches(
         db_session,
         DeviceVerificationCreate(**base_payload),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "duplicate"
@@ -1014,6 +1114,8 @@ async def test_preparation_validation_conflict_and_update_branches(
         existing.id,
         DeviceVerificationUpdate(name="bad", host_id=existing.host_id),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "bad update"
@@ -1030,6 +1132,8 @@ async def test_preparation_validation_conflict_and_update_branches(
         existing.id,
         DeviceVerificationUpdate(name="missing host", host_id=existing.host_id),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Assigned host was not found"
@@ -1045,6 +1149,8 @@ async def test_preparation_validation_conflict_and_update_branches(
         existing.id,
         DeviceVerificationUpdate(name="resolution", host_id=existing.host_id),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "resolution failed"
@@ -1063,6 +1169,8 @@ async def test_preparation_validation_conflict_and_update_branches(
         existing.id,
         DeviceVerificationUpdate(name="duplicate", host_id=existing.host_id),
         http_client_factory=object,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "update duplicate"

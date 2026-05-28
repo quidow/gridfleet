@@ -11,35 +11,7 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
 
-ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
-    "app/hosts/router.py:_auto_discover": (
-        "_auto_discover calls pack_discovery_service.discover_devices, which is read-only. "
-        "No writer transaction exists to bind this notification to."
-    ),
-    "app/webhooks/router.py:test_webhook": "webhook.test is a synthetic broadcaster with no paired DB write.",
-    "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_success": (
-        "In-memory state-machine transition to closed; no DB write paired."
-    ),
-    "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_failure": (
-        "In-memory state-machine transition to opened; no DB write paired."
-    ),
-    "app/devices/services/bulk.py:_run_per_device_node_action": (
-        "_run_per_device_node_action summary. Per-device sessions commit independently of the outer db."
-    ),
-    "app/devices/services/bulk.py:bulk_delete": (
-        "bulk_delete summary spans delete_device calls that commit independently; no aggregate transaction."
-    ),
-    "app/devices/services/bulk.py:bulk_reconnect": "bulk_reconnect summary is HTTP-only with no paired DB writes.",
-    "app/devices/services/data_cleanup.py:_cleanup_old_data": (
-        "Background-loop summary aggregating committed delete batches across inner sessions."
-    ),
-    "app/devices/services/verification_job_state.py:publish": (
-        "persist_job opens and commits its own session before publish; no caller-level outer transaction."
-    ),
-    "app/events/event_bus.py:_publish_pending_events": (
-        "Internal recursive dispatch from _publish_pending_events after the writer transaction committed."
-    ),
-}
+ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {}
 
 
 class _PublishSiteVisitor(ast.NodeVisitor):

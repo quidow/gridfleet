@@ -8,7 +8,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.hosts.service_hardware_telemetry import apply_telemetry_sample
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -20,9 +22,8 @@ async def test_hardware_health_changed_queues_after_commit(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="hardware-warning-1")
     event_bus_capture.clear()
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: 1 if key == "general.hardware_telemetry_consecutive_samples" else 40,
+    _hw_settings = FakeSettingsReader(
+        {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
 
     await apply_telemetry_sample(
@@ -33,6 +34,8 @@ async def test_hardware_health_changed_queues_after_commit(
             "battery_level_percent": 80,
             "battery_temperature_c": 50,
         },
+        publisher=event_bus,
+        settings=_hw_settings,
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == []
@@ -53,9 +56,8 @@ async def test_hardware_health_changed_dropped_on_rollback(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="hardware-rollback-1")
     event_bus_capture.clear()
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: 1 if key == "general.hardware_telemetry_consecutive_samples" else 40,
+    _rollback_settings = FakeSettingsReader(
+        {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
 
     await apply_telemetry_sample(
@@ -66,6 +68,8 @@ async def test_hardware_health_changed_dropped_on_rollback(
             "battery_level_percent": 80,
             "battery_temperature_c": 50,
         },
+        publisher=event_bus,
+        settings=_rollback_settings,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

@@ -48,23 +48,16 @@ CLAIM_LEASE_SEC = 30
 POLL_INTERVAL_SEC = 1
 LOOP_NAME = "webhook_delivery"
 
-_session_factory: async_sessionmaker[AsyncSession] | None = None
-
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def configure(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    global _session_factory
-    _session_factory = session_factory
-
-
-async def handle_system_event(event: Event) -> None:
-    if _session_factory is None:
-        return
-
-    async with _session_factory() as db:
+async def handle_system_event(
+    event: Event,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
         row_result = await db.execute(select(SystemEvent).where(SystemEvent.event_id == event.id))
         system_event = row_result.scalar_one_or_none()
         if system_event is None:
@@ -183,19 +176,21 @@ async def run_pending_webhook_deliveries_once(
     return True
 
 
-async def webhook_delivery_loop(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with httpx.AsyncClient() as client:
-        while True:
-            try:
-                async with observe_background_loop(LOOP_NAME, float(POLL_INTERVAL_SEC)).cycle():
-                    worked = await run_pending_webhook_deliveries_once(session_factory, client=client)
-                if not worked:
+class WebhookDeliveryLoop:
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def run(self) -> None:
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
+                    async with observe_background_loop(LOOP_NAME, float(POLL_INTERVAL_SEC)).cycle():
+                        worked = await run_pending_webhook_deliveries_once(self._session_factory, client=client)
+                    if not worked:
+                        await asyncio.sleep(POLL_INTERVAL_SEC)
+                except Exception:
+                    logger.exception("Webhook dispatcher error")
                     await asyncio.sleep(POLL_INTERVAL_SEC)
-            except Exception:
-                logger.exception("Webhook dispatcher error")
-                await asyncio.sleep(POLL_INTERVAL_SEC)
 
 
 async def _process_delivery(

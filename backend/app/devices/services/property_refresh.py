@@ -8,15 +8,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_device_properties
-from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 from app.packs.services import discovery as pack_discovery
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.devices.services_container import DeviceServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "property_refresh"
@@ -25,8 +29,13 @@ LOOP_NAME = "property_refresh"
 MAX_PARALLEL_HOST_FETCHES = 8
 
 
-async def _refresh_all_properties() -> None:
-    async with async_session() as db:
+async def _refresh_all_properties(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> None:
+    async with session_factory() as db:
         host_result = await db.execute(select(Host).where(Host.status == HostStatus.online))
         online_host_ids = [host.id for host in host_result.scalars().all()]
         if not online_host_ids:
@@ -65,7 +74,11 @@ async def _refresh_all_properties() -> None:
                         continue
                     try:
                         data = await pack_discovery.fetch_pack_device_properties(
-                            host, device, agent_get_pack_device_properties=get_pack_device_properties
+                            host,
+                            device,
+                            agent_get_pack_device_properties=get_pack_device_properties,
+                            settings=settings,
+                            circuit_breaker=circuit_breaker,
                         )
                     except Exception:
                         logger.exception("Failed to fetch properties for device %s", device.identity_value)
@@ -85,13 +98,21 @@ async def _refresh_all_properties() -> None:
                 await db.rollback()
 
 
-async def property_refresh_loop() -> None:
-    """Background loop that periodically refreshes device properties."""
-    while True:
-        interval = float(settings_service.get("general.property_refresh_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle():
-                await _refresh_all_properties()
-        except Exception:
-            logger.exception("Property refresh cycle failed")
-        await asyncio.sleep(interval)
+class PropertyRefreshLoop:
+    def __init__(self, *, services: DeviceServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        """Background loop that periodically refreshes device properties."""
+        while True:
+            interval = float(self._services.settings.get("general.property_refresh_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle():
+                    await _refresh_all_properties(
+                        session_factory=self._services.session_factory,
+                        settings=self._services.settings,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except Exception:
+                logger.exception("Property refresh cycle failed")
+            await asyncio.sleep(interval)

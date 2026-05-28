@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -15,7 +15,8 @@ from app.devices.services.data_cleanup import _cleanup_old_data
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.devices.services.review import mark_review_required
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -290,7 +291,7 @@ async def test_data_cleanup_deletes_snapshots_past_retention(
     )
     db_session.add_all([old, fresh])
     await db_session.commit()
-    await _cleanup_old_data(db_session)
+    await _cleanup_old_data(db_session, publisher=AsyncMock(), settings=FakeSettingsReader({}))
     result = await db_session.execute(
         select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
     )

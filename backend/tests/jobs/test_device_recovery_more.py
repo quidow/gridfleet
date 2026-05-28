@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from app.devices.services import recovery_job as device_recovery_job
 from app.jobs.statuses import JOB_STATUS_FAILED
+from tests.fakes import FakeSettingsReader
 
 
 class RecoverySession:
@@ -53,6 +54,8 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
             job_id,
             {"device_id": str(device_id)},
             session_factory=RecoverySessionFactory(session),  # type: ignore[arg-type]
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
         )
 
     assert row.status == JOB_STATUS_FAILED
@@ -81,6 +84,8 @@ async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:
             job_id,
             {"device_id": str(device_id), "source": "manual", "reason": "operator"},
             session_factory=RecoverySessionFactory(first_session, failure_session),  # type: ignore[arg-type]
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
         )
 
     assert failure_row.status == JOB_STATUS_FAILED

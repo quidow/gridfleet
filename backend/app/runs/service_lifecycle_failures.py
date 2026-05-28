@@ -1,9 +1,10 @@
-import uuid
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import app.devices.services.health as device_health
@@ -29,7 +30,15 @@ from app.runs.service_reservation_lookup import (
     exclude_device_from_run,
     get_reservation_entry_for_device,
 )
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 
 async def _enter_maintenance(
@@ -37,6 +46,7 @@ async def _enter_maintenance(
     device: Device,
     *,
     maintenance_reason: str = "Operator entered maintenance",
+    publisher: EventPublisher | None = None,
 ) -> Device:
     from app.devices.services.maintenance import enter_maintenance  # noqa: PLC0415
 
@@ -46,6 +56,7 @@ async def _enter_maintenance(
         commit=False,
         allow_reserved=True,
         maintenance_reason=maintenance_reason,
+        publisher=publisher,
     )
 
 
@@ -105,6 +116,7 @@ async def report_preparation_failure(
     *,
     message: str,
     source: str = "ci_preparation",
+    publisher: EventPublisher | None = None,
 ) -> TestRun:
     run = await get_run(db, run_id)
     if run is None:
@@ -135,8 +147,8 @@ async def report_preparation_failure(
         source=source,
     )
 
-    await _enter_maintenance(db, device, maintenance_reason="CI preparation failure")
-    await device_health.update_device_checks(db, device, healthy=False, summary=reason)
+    await _enter_maintenance(db, device, maintenance_reason="CI preparation failure", publisher=publisher)
+    await device_health.update_device_checks(db, device, healthy=False, summary=reason, publisher=publisher)
 
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
@@ -166,19 +178,22 @@ async def cooldown_device(
     *,
     reason: str,
     ttl_seconds: int,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> tuple[datetime | None, int, bool, int]:
     """Apply a run-scoped cooldown to a reserved device.
 
     Returns (excluded_until, cooldown_count, escalated, threshold).
     """
-    max_ttl = int(settings_service.get("general.device_cooldown_max_sec"))
+    max_ttl = int(settings.get("general.device_cooldown_max_sec"))
     if ttl_seconds > max_ttl:
         raise ValueError(f"ttl_seconds must be <= {max_ttl}")
     clean_reason = reason.strip()
     if not clean_reason:
         raise ValueError("Cooldown reason is required")
 
-    threshold = int(settings_service.get("general.device_cooldown_escalation_threshold"))
+    threshold = int(settings.get("general.device_cooldown_escalation_threshold"))
 
     run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
     run = run_result.scalar_one_or_none()
@@ -271,6 +286,8 @@ async def cooldown_device(
             device.id,
             agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
             raise_on_failure=True,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return excluded_until, cooldown_count_after, False, threshold
 
@@ -289,7 +306,7 @@ async def cooldown_device(
         source="testkit",
     )
 
-    await _enter_maintenance(db, device, maintenance_reason="Cooldown escalation")
+    await _enter_maintenance(db, device, maintenance_reason="Cooldown escalation", publisher=publisher)
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
         device,
@@ -313,5 +330,7 @@ async def cooldown_device(
         device.id,
         agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
         raise_on_failure=True,
+        settings=settings,
+        circuit_breaker=circuit_breaker,
     )
     return None, cooldown_count_after, True, threshold

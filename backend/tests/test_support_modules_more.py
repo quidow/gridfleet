@@ -23,6 +23,9 @@ from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
 from app.grid import service as grid_service
 from app.runs import service_reaper as run_reaper
+from app.runs.services_container import RunServices
+from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -63,14 +66,22 @@ def test_request_kwargs_and_build_agent_headers() -> None:
 async def test_agent_client_request_handles_circuit_open_and_transport_errors(monkeypatch: MonkeyPatch) -> None:
     request = httpx.Request("GET", "http://10.0.0.5:5100/agent/health")
     monkeypatch.setattr("app.agent_comm.client.record_agent_call", Mock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=1.5))
+    mock_breaker = AsyncMock()
+    mock_breaker.before_request = AsyncMock(return_value=1.5)
 
     with pytest.raises(CircuitOpenError):
-        await agent_client.request("GET", "http://10.0.0.5:5100/agent/health", endpoint="health", host="10.0.0.5")
+        await agent_client.request(
+            "GET",
+            "http://10.0.0.5:5100/agent/health",
+            endpoint="health",
+            host="10.0.0.5",
+            circuit_breaker=mock_breaker,
+        )
 
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_failure", AsyncMock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_success", AsyncMock())
+    mock_breaker2 = AsyncMock()
+    mock_breaker2.before_request = AsyncMock(return_value=None)
+    mock_breaker2.record_failure = AsyncMock()
+    mock_breaker2.record_success = AsyncMock()
     client = DummyAgentClient(error=httpx.ConnectError("boom", request=request))
 
     with pytest.raises(AgentUnreachableError, match="Cannot reach agent host"):
@@ -80,21 +91,24 @@ async def test_agent_client_request_handles_circuit_open_and_transport_errors(mo
             endpoint="health",
             host="10.0.0.5",
             client=client,
+            circuit_breaker=mock_breaker2,
         )
 
 
 async def test_agent_client_request_uses_owned_client_factory(monkeypatch: MonkeyPatch) -> None:
     response = httpx.Response(200, request=httpx.Request("GET", "http://10.0.0.5:5100/agent/health"), json={"ok": True})
     monkeypatch.setattr("app.agent_comm.client.record_agent_call", Mock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.before_request", AsyncMock(return_value=None))
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_failure", AsyncMock())
-    monkeypatch.setattr("app.agent_comm.client.agent_circuit_breaker.record_success", AsyncMock())
+    mock_breaker = AsyncMock()
+    mock_breaker.before_request = AsyncMock(return_value=None)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     result = await agent_client.request(
         "GET",
         "http://10.0.0.5:5100/agent/health",
         endpoint="health",
         host="10.0.0.5",
+        circuit_breaker=mock_breaker,
         client_factory=lambda: DummyAgentClient(response=response),
     )
 
@@ -105,7 +119,8 @@ async def test_check_readiness_short_circuits_when_shutting_down(monkeypatch: Mo
     monkeypatch.setattr(health.shutdown_coordinator, "is_shutting_down", lambda: True)
     monkeypatch.setattr(health.shutdown_coordinator, "active_requests", lambda: 2)
 
-    payload, status = await health.check_readiness(AsyncMock())
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(AsyncMock(), settings=settings)
 
     assert status == 503
     assert payload["checks"]["shutdown"]["shutting_down"] is True
@@ -124,7 +139,8 @@ async def test_check_readiness_marks_unhealthy_stale_loop(monkeypatch: MonkeyPat
         lambda snapshot, now, extra_grace_seconds=0.0: False,
     )
 
-    payload, status = await health.check_readiness(db)
+    settings = FakeSettingsReader({"general.background_loop_flush_interval_sec": 1})
+    payload, status = await health.check_readiness(db, settings=settings)
 
     assert status == 503
     assert payload["checks"]["control_plane_leader"] is False
@@ -168,16 +184,21 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
 
     with (
         patch("app.runs.service_reaper.observe_background_loop", return_value=_Observation()),
-        patch("app.runs.service_reaper.async_session", fake_session),
         patch(
             "app.runs.service_reaper._reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
         ),
-        patch("app.runs.service_reaper.settings_service.get", return_value=1),
         patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        await run_reaper.run_reaper_loop()
+        loop = run_reaper.RunReaperLoop(
+            services=RunServices(
+                publisher=event_bus,
+                settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+                session_factory=fake_session,
+            )
+        )
+        await loop.run()
 
     sleep.assert_awaited()
 

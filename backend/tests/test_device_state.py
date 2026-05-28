@@ -10,6 +10,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state as device_state
 from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,12 +36,16 @@ async def test_set_operational_state_writes_and_queues_event(
     device = await _persisted_device(db_session, default_host_id)
     captured: list[tuple[str, dict[str, object]]] = []
 
-    def fake_queue(session: object, name: str, payload: dict[str, object], *, severity: object = None) -> None:
+    def fake_queue(
+        session: object, name: str, payload: dict[str, object], *, severity: object = None, publisher: object = None
+    ) -> None:
         captured.append((name, payload))
 
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", fake_queue)
 
-    changed = await device_state.set_operational_state(device, DeviceOperationalState.available, reason="test")
+    changed = await device_state.set_operational_state(
+        device, DeviceOperationalState.available, reason="test", publisher=event_bus
+    )
     assert changed is True
     assert device.operational_state == DeviceOperationalState.available
     assert any(name == "device.operational_state_changed" for name, _ in captured)
@@ -50,7 +55,7 @@ async def test_set_operational_state_writes_and_queues_event(
 @pytest.mark.asyncio
 async def test_set_operational_state_noop_when_unchanged(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    changed = await device_state.set_operational_state(device, DeviceOperationalState.offline)
+    changed = await device_state.set_operational_state(device, DeviceOperationalState.offline, publish_event=False)
     assert changed is False
 
 
@@ -63,10 +68,10 @@ async def test_set_hold_writes_and_queues_event(
     captured: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
         "app.devices.services.state.queue_event_for_session",
-        lambda s, n, p, *, severity=None: captured.append((n, p)),
+        lambda s, n, p, *, severity=None, publisher=None: captured.append((n, p)),
     )
 
-    changed = await device_state.set_hold(device, DeviceHold.reserved, reason="run-1")
+    changed = await device_state.set_hold(device, DeviceHold.reserved, reason="run-1", publisher=event_bus)
     assert changed is True
     assert device.hold == DeviceHold.reserved
     assert any(name == "device.hold_changed" for name, _ in captured)
@@ -76,8 +81,8 @@ async def test_set_hold_writes_and_queues_event(
 @pytest.mark.asyncio
 async def test_set_hold_to_none_clears(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    await device_state.set_hold(device, DeviceHold.maintenance)
-    changed = await device_state.set_hold(device, None)
+    await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False)
+    changed = await device_state.set_hold(device, None, publish_event=False)
     assert changed is True
     assert device.hold is None
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -20,6 +20,7 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
 
 HOST_PAYLOAD = {
@@ -168,7 +169,7 @@ async def test_start_node_with_verification_caller_skips_readiness(
         return False
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", fake_ready)
-    node = await node_agent.start_node(db_session, device, caller="verification")
+    node = await node_agent.start_node(db_session, device, caller="verification", settings=FakeSettingsReader({}))
     assert node.desired_state is AppiumDesiredState.running
 
 
@@ -268,7 +269,9 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
     with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_started(db_session, loaded, port=4723, pid=12345)
+        await node_agent.mark_node_started(
+            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
+        )
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -279,7 +282,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.appium_nodes.exceptions import NodeManagerError
-    from app.events import event_bus
+    from tests.helpers import test_event_bus as event_bus
 
     host = Host(
         hostname="lock-host-3",
@@ -323,7 +326,9 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
         patch.object(event_bus, "publish", publish_spy),
         pytest.raises(NodeManagerError, match="no longer exists"),
     ):
-        await node_agent.mark_node_started(db_session, loaded, port=4723, pid=12345)
+        await node_agent.mark_node_started(
+            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
+        )
 
     publish_spy.assert_not_awaited()
 
@@ -376,7 +381,7 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
     with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_stopped(db_session, loaded)
+        await node_agent.mark_node_stopped(db_session, loaded, publisher=Mock())
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -455,6 +460,8 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
             loaded,
             loaded.appium_node,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     assert restarted is True
@@ -507,9 +514,11 @@ async def test_build_payload_headless_defaults_to_true(client: AsyncClient, db_s
         device_type="emulator",
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
-        mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
-        payload = build_agent_start_payload(device, 4723)
+    payload = build_agent_start_payload(
+        device,
+        4723,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
+    )
 
     assert payload["headless"] is True
 
@@ -528,9 +537,11 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
         tags={"emulator_headless": "false"},
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
-        mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
-        payload = build_agent_start_payload(device, 4724)
+    payload = build_agent_start_payload(
+        device,
+        4724,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
+    )
 
     assert payload["headless"] is False
 
@@ -552,9 +563,11 @@ async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_and
         name="Android Browser Device",
     )
 
-    with patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings:
-        mock_settings.get.side_effect = lambda key: "http://grid:4444" if key == "grid.hub_url" else True
-        payload = build_agent_start_payload(device, 4725)
+    payload = build_agent_start_payload(
+        device,
+        4725,
+        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
+    )
 
     assert payload["extra_caps"] is None
     # browserName is intentionally absent from stereotype_caps — the agent adds
@@ -613,13 +626,7 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             new=AsyncMock(return_value={"appium:automationName": "XCUITest"}),
         ),
         patch("app.appium_nodes.services.reconciler_agent.get_default_plugins", return_value=[]),
-        patch("app.appium_nodes.services.reconciler_agent.settings_service") as mock_settings,
     ):
-        mock_settings.get.side_effect = lambda key: {
-            "grid.hub_url": "http://selenium-hub:4444",
-            "appium.session_override": True,
-            "appium.startup_timeout_sec": 30,
-        }[key]
         await start_remote_node(
             db_session,
             loaded,
@@ -627,6 +634,14 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
             allocated_caps={"appium:wdaLocalPort": 8100},
             agent_base="http://192.168.88.105:5100",
             http_client_factory=AsyncMock(),
+            settings=FakeSettingsReader(
+                {
+                    "grid.hub_url": "http://selenium-hub:4444",
+                    "appium.session_override": True,
+                    "appium.startup_timeout_sec": 30,
+                }
+            ),
+            circuit_breaker=AsyncMock(),
         )
 
     assert start_mock.await_args is not None
@@ -677,6 +692,8 @@ async def test_start_remote_node_rejects_disabled_pack(client: AsyncClient, db_s
             allocated_caps=None,
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
             http_client_factory=lambda: mock_client_obj,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     mock_client_obj.post.assert_not_called()
@@ -730,6 +747,8 @@ async def test_start_remote_node_renders_stereotype_once(
     def _client_factory(**_kwargs: object) -> AsyncMock:
         return mock_client_obj
 
+    cb = AsyncMock()
+    cb.before_request = AsyncMock(return_value=None)
     with patch("app.appium_nodes.services.reconciler_agent.httpx.AsyncClient", return_value=mock_client_obj):
         await start_remote_node(
             db_session,
@@ -738,6 +757,8 @@ async def test_start_remote_node_renders_stereotype_once(
             allocated_caps=None,
             agent_base=f"http://{HOST_PAYLOAD['ip']}:{HOST_PAYLOAD['agent_port']}",
             http_client_factory=_client_factory,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=cb,
         )
 
     assert calls == 1
@@ -758,7 +779,9 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    await node_agent.mark_node_started(db_session, loaded, port=4725, pid=999)
+    await node_agent.mark_node_started(
+        db_session, loaded, port=4725, pid=999, settings=FakeSettingsReader({}), publisher=Mock()
+    )
 
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None
@@ -782,6 +805,8 @@ async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
     assert result is False
 
@@ -801,6 +826,8 @@ async def test_stop_remote_node_returns_true_on_agent_ack() -> None:
             host="10.0.0.1",
             agent_port=5100,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
     assert result is True
 
@@ -853,6 +880,8 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
             loaded,
             loaded.appium_node,
             http_client_factory=AsyncMock,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
         )
 
     assert result is False

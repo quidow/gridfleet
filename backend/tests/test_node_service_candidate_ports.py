@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -29,7 +29,8 @@ from app.core.metrics_recorders import APPIUM_RECONCILER_ALLOCATION_COLLISIONS
 from app.devices.models import Device
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
-from app.settings import settings_service
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -97,7 +98,7 @@ async def _add_stopped_node(db_session: AsyncSession, *, host: Host, port: int) 
 
 async def test_candidate_ports_returns_first_when_none_used(db_session: AsyncSession) -> None:
     host = await _make_host(db_session, ip="10.0.0.10")
-    ports = await candidate_ports(db_session, host_id=host.id)
+    ports = await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
     start = settings_service.get("appium.port_range_start")
     assert ports[0] == start
 
@@ -106,7 +107,7 @@ async def test_candidate_ports_excludes_same_host_running(db_session: AsyncSessi
     host = await _make_host(db_session, ip="10.0.0.11")
     start = settings_service.get("appium.port_range_start")
     await _add_running_node(db_session, host=host, port=start)
-    ports = await candidate_ports(db_session, host_id=host.id)
+    ports = await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
     assert start not in ports
     assert ports[0] == start + 1
 
@@ -117,7 +118,7 @@ async def test_candidate_ports_ignores_other_host_running(db_session: AsyncSessi
     start = settings_service.get("appium.port_range_start")
     # Host A has a running node on `start`; that must NOT exclude `start` for Host B.
     await _add_running_node(db_session, host=host_a, port=start)
-    ports = await candidate_ports(db_session, host_id=host_b.id)
+    ports = await candidate_ports(db_session, host_id=host_b.id, settings=FakeSettingsReader({}))
     assert ports[0] == start
 
 
@@ -125,7 +126,7 @@ async def test_candidate_ports_ignores_stopped_nodes_on_same_host(db_session: As
     host = await _make_host(db_session, ip="10.0.0.30")
     start = settings_service.get("appium.port_range_start")
     await _add_stopped_node(db_session, host=host, port=start)
-    ports = await candidate_ports(db_session, host_id=host.id)
+    ports = await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
     assert ports[0] == start
 
 
@@ -153,7 +154,7 @@ async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSe
         )
     await db_session.flush()
 
-    ports = await candidate_ports(db_session, host_id=host.id)
+    ports = await candidate_ports(db_session, host_id=host.id, settings=FakeSettingsReader({}))
 
     assert start not in ports
     assert ports[0] == start + 1
@@ -166,29 +167,32 @@ async def test_candidate_ports_preferred_port_first_when_free_on_host(db_session
     preferred = start + 5
     # Another host using `preferred` must not block it for host_b.
     await _add_running_node(db_session, host=host_a, port=preferred)
-    ports = await candidate_ports(db_session, host_id=host_b.id, preferred_port=preferred)
+    ports = await candidate_ports(
+        db_session, host_id=host_b.id, preferred_port=preferred, settings=FakeSettingsReader({})
+    )
     assert ports[0] == preferred
 
 
 async def test_candidate_ports_exclude_ports_skips_attempted(db_session: AsyncSession) -> None:
     host = await _make_host(db_session, ip="10.0.0.50")
     start = settings_service.get("appium.port_range_start")
-    ports = await candidate_ports(db_session, host_id=host.id, exclude_ports={start})
+    ports = await candidate_ports(db_session, host_id=host.id, exclude_ports={start}, settings=FakeSettingsReader({}))
     assert start not in ports
     assert ports[0] == start + 1
 
 
-async def test_candidate_ports_raises_when_all_ports_used_on_host(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_candidate_ports_raises_when_all_ports_used_on_host(db_session: AsyncSession) -> None:
     host = await _make_host(db_session, ip="10.0.0.60")
     start = settings_service.get("appium.port_range_start")
-    monkeypatch.setitem(settings_service._cache, "appium.port_range_end", start + 3)
-    end = settings_service.get("appium.port_range_end")
+    end = start + 3
     for port in range(start, end + 1):
         await _add_running_node(db_session, host=host, port=port)
     with pytest.raises(NodeManagerError):
-        await candidate_ports(db_session, host_id=host.id)
+        await candidate_ports(
+            db_session,
+            host_id=host.id,
+            settings=FakeSettingsReader({"appium.port_range_start": start, "appium.port_range_end": end}),
+        )
 
 
 async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) -> None:
@@ -199,8 +203,8 @@ async def test_two_hosts_can_share_port_range_start(db_session: AsyncSession) ->
     start = settings_service.get("appium.port_range_start")
     await _add_running_node(db_session, host=host_a, port=start)
 
-    ports_for_a = await candidate_ports(db_session, host_id=host_a.id)
-    ports_for_b = await candidate_ports(db_session, host_id=host_b.id)
+    ports_for_a = await candidate_ports(db_session, host_id=host_a.id, settings=FakeSettingsReader({}))
+    ports_for_b = await candidate_ports(db_session, host_id=host_b.id, settings=FakeSettingsReader({}))
 
     assert ports_for_a[0] != start, "Same host must skip the in-use port"
     assert ports_for_b[0] == start, "Different host must reuse the same port"
@@ -360,10 +364,7 @@ async def test_start_node_reserves_main_appium_port_and_retries_collision(
     )
     with patch("app.appium_nodes.services.reconciler_agent.start_remote_node", new=remote_start):
         handle = await appium_reconciler_agent._start_for_node(
-            db_session,
-            device,
-            node=node,
-            preferred_port=start,
+            db_session, device, node=node, preferred_port=start, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
     assert handle.port == start + 1

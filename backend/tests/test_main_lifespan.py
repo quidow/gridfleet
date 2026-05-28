@@ -14,8 +14,9 @@ from unittest.mock import AsyncMock, Mock
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import select
 
-from app import main
+from app import composition, main
 from app.hosts.models import Host, HostStatus
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -50,8 +51,16 @@ class FakeSessionFactory:
         return False
 
 
-async def _forever() -> None:
+async def _forever(**_: object) -> None:
     await asyncio.Event().wait()
+
+
+def _mock_loop(**_: object) -> object:
+    class _MockLoop:
+        async def run(self) -> None:
+            await _forever()
+
+    return _MockLoop()
 
 
 def test_main_imports_in_fresh_interpreter() -> None:
@@ -76,13 +85,44 @@ def _setting_value(key: str) -> int:
     return values[key]
 
 
+def _patch_compose_app_constructors(monkeypatch: MonkeyPatch) -> None:
+    """Prevent main.py lifespan from replacing the test-patched singletons."""
+    import app.main as _main_mod
+    from tests.conftest import settings_service as _ss
+    from tests.helpers import test_event_bus
+
+    def _reuse_eb(**_: object) -> object:
+        return test_event_bus
+
+    def _reuse_ss(**_: object) -> object:
+        return _ss
+
+    _pool = importlib.import_module("app.agent_comm.http_pool").AgentHttpPool()
+
+    def _reuse_pool(**_: object) -> object:
+        return _pool
+
+    _cb = importlib.import_module("app.agent_comm.circuit_breaker").AgentCircuitBreaker(
+        publisher=test_event_bus,
+        settings=_ss,
+    )
+
+    def _reuse_cb(**_: object) -> object:
+        return _cb
+
+    monkeypatch.setattr(_main_mod, "EventBus", _reuse_eb)
+    monkeypatch.setattr(_main_mod, "SettingsService", _reuse_ss)
+    monkeypatch.setattr(_main_mod, "AgentHttpPool", _reuse_pool)
+    monkeypatch.setattr(_main_mod, "AgentCircuitBreaker", _reuse_cb)
+
+
 def _patch_agent_http_pool(monkeypatch: MonkeyPatch) -> tuple[AsyncMock, AsyncMock]:
-    import app.agent_comm.http_pool as agent_http_pool_module
+    from app.agent_comm.http_pool import AgentHttpPool
 
     reopen = AsyncMock()
     close = AsyncMock()
-    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "reopen", reopen)
-    monkeypatch.setattr(agent_http_pool_module.agent_http_pool, "close", close)
+    monkeypatch.setattr(AgentHttpPool, "reopen", reopen)
+    monkeypatch.setattr(AgentHttpPool, "close", close)
     return reopen, close
 
 
@@ -104,26 +144,25 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         return task
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
+    from tests.helpers import test_event_bus
 
-    event_bus_module = importlib.import_module("app.events.event_bus")
-
+    _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())
+    monkeypatch.setattr(composition, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -133,24 +172,25 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
-    monkeypatch.setattr(main, "session_sync_loop", _forever)
-    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
-    monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
-    monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
-    monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory: _forever())
-    monkeypatch.setattr(main, "run_reaper_loop", _forever)
-    monkeypatch.setattr(main, "data_cleanup_loop", _forever)
-    monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
-    monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
+    monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
+    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         expected_leader_loop_names = {
@@ -179,7 +219,7 @@ async def test_lifespan_starts_and_cleans_up_background_tasks(monkeypatch: Monke
         loop.callbacks[signal.SIGTERM]()
         await asyncio.sleep(0)
 
-    assert settings_service_module.settings_service.initialize.await_count == 1
+    assert _ss.initialize.await_count == 1
     assert pool_reopen.await_count == 1
     assert pool_close.await_count == 1
     assert len(loop.removed) == 2
@@ -194,24 +234,23 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     create_task = Mock(side_effect=asyncio.create_task)
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
+    from tests.helpers import test_event_bus
 
-    event_bus_module = importlib.import_module("app.events.event_bus")
-
+    _patch_compose_app_constructors(monkeypatch)
     pool_reopen, pool_close = _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
@@ -222,7 +261,7 @@ async def test_lifespan_skips_background_tasks_when_not_control_plane_leader(mon
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", create_task)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
@@ -257,26 +296,25 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
         return True
 
     import app.core.database as database_module
-    import app.settings.service as settings_service_module
+    from tests.conftest import settings_service as _ss
+    from tests.helpers import test_event_bus
 
-    event_bus_module = importlib.import_module("app.events.event_bus")
-
+    _patch_compose_app_constructors(monkeypatch)
     _patch_agent_http_pool(monkeypatch)
     monkeypatch.setattr(database_module, "async_session", session_factory)
     monkeypatch.setattr(main, "session_factory", session_factory)
     monkeypatch.setattr(main, "_validate_online_agent_contracts", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "configure", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "register_handler", Mock())
-    monkeypatch.setattr(event_bus_module.event_bus, "start", AsyncMock())
-    monkeypatch.setattr(event_bus_module.event_bus, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "configure_store_refresh", Mock())
-    monkeypatch.setattr(settings_service_module.settings_service, "initialize", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "get", Mock(side_effect=_setting_value))
-    monkeypatch.setattr(settings_service_module.settings_service, "shutdown", AsyncMock())
-    monkeypatch.setattr(settings_service_module.settings_service, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "configure", Mock())
+    monkeypatch.setattr(test_event_bus, "register_handler", Mock())
+    monkeypatch.setattr(test_event_bus, "start", AsyncMock())
+    monkeypatch.setattr(test_event_bus, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "configure_store_refresh", Mock())
+    monkeypatch.setattr(_ss, "initialize", AsyncMock())
+    monkeypatch.setattr(_ss, "get", Mock(side_effect=_setting_value))
+    monkeypatch.setattr(_ss, "shutdown", AsyncMock())
+    monkeypatch.setattr(_ss, "handle_system_event", AsyncMock())
     monkeypatch.setattr(main.webhook_dispatcher, "handle_system_event", AsyncMock())
-    monkeypatch.setattr(main.webhook_dispatcher, "webhook_delivery_loop", lambda session_factory: _forever())
+    monkeypatch.setattr(composition, "WebhookDeliveryLoop", _mock_loop)
     monkeypatch.setattr(main.shutdown_coordinator, "reset", Mock())
     monkeypatch.setattr(main.shutdown_coordinator, "begin_shutdown", AsyncMock())
     monkeypatch.setattr(main.shutdown_coordinator, "wait_for_drain", AsyncMock())
@@ -286,24 +324,25 @@ async def test_lifespan_does_not_self_preempt_during_startup(monkeypatch: Monkey
     monkeypatch.setattr(main, "engine", engine)
     monkeypatch.setattr(main.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(main.asyncio, "create_task", tracking_create_task)
-    monkeypatch.setattr(main, "control_plane_leader_keepalive_loop", _forever)
-    monkeypatch.setattr(main, "control_plane_leader_watcher_loop", _forever)
-    monkeypatch.setattr(main, "heartbeat_loop", _forever)
-    monkeypatch.setattr(main, "session_sync_loop", _forever)
-    monkeypatch.setattr(main, "event_bus_subscriber_loop", _forever)
-    monkeypatch.setattr(main, "node_health_loop", _forever)
-    monkeypatch.setattr(main, "device_connectivity_loop", _forever)
-    monkeypatch.setattr(main, "property_refresh_loop", _forever)
-    monkeypatch.setattr(main, "hardware_telemetry_loop", _forever)
-    monkeypatch.setattr(main, "host_resource_telemetry_loop", _forever)
-    monkeypatch.setattr(main.job_queue, "durable_job_worker_loop", lambda session_factory: _forever())
-    monkeypatch.setattr(main, "run_reaper_loop", _forever)
-    monkeypatch.setattr(main, "data_cleanup_loop", _forever)
-    monkeypatch.setattr(main, "session_viability_loop", _forever)
-    monkeypatch.setattr(main, "fleet_capacity_collector_loop", _forever)
-    monkeypatch.setattr(main, "pack_drain_loop", _forever)
-    monkeypatch.setattr(main, "appium_reconciler_loop", _forever)
-    monkeypatch.setattr(main, "device_intent_reconciler_loop", _forever)
+    monkeypatch.setattr(main, "LeaderKeepaliveLoop", _mock_loop)
+    monkeypatch.setattr(main, "LeaderWatcherLoop", _mock_loop)
+    monkeypatch.setattr(main, "HeartbeatLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionSyncLoop", _mock_loop)
+    monkeypatch.setattr(main, "GridEventBusSubscriberLoop", _mock_loop)
+    monkeypatch.setattr(main, "NodeHealthLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceConnectivityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PropertyRefreshLoop", _mock_loop)
+    monkeypatch.setattr(main, "HardwareTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(main, "HostResourceTelemetryLoop", _mock_loop)
+    monkeypatch.setattr(composition, "DurableJobWorkerLoop", _mock_loop)
+    monkeypatch.setattr(main, "RunReaperLoop", _mock_loop)
+    monkeypatch.setattr(main, "DataCleanupLoop", _mock_loop)
+    monkeypatch.setattr(main, "SessionViabilityLoop", _mock_loop)
+    monkeypatch.setattr(main, "FleetCapacityLoop", _mock_loop)
+    monkeypatch.setattr(main, "PackDrainLoop", _mock_loop)
+    monkeypatch.setattr(main, "AppiumReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(main, "DeviceIntentReconcilerLoop", _mock_loop)
+    monkeypatch.setattr(composition, "BackgroundLoopFlushLoop", _mock_loop)
 
     async with main.lifespan(main.app):
         pass
@@ -348,8 +387,9 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert await main.live_health() == {"status": "ok"}
 
     monkeypatch.setattr(main, "check_readiness", AsyncMock(return_value=({"status": "ready"}, 202)))
-    ready = await main.ready_health(db=AsyncMock())
-    health = await main.health(db=AsyncMock())
+    fake_settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
+    ready = await main.ready_health(db=AsyncMock(), settings_services=fake_settings_services)
+    health = await main.health(db=AsyncMock(), settings_services=fake_settings_services)
     assert isinstance(ready, JSONResponse)
     assert isinstance(health, JSONResponse)
     assert ready.status_code == 202
@@ -380,7 +420,12 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
         Mock(side_effect=[True, False]),
     )
 
-    availability = await main.check_availability(platform_id="android_mobile", count=2, db=AsyncMock())
+    availability = await main.check_availability(
+        platform_id="android_mobile",
+        count=2,
+        db=AsyncMock(),
+        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+    )
 
     assert availability == {
         "available": False,

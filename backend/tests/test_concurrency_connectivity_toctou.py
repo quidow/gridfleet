@@ -1,7 +1,7 @@
 """Verify device_connectivity availability re-checks after row locks."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -57,7 +58,9 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(session)
+                await device_connectivity._check_connectivity(
+                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                )
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
@@ -124,7 +127,9 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(session)
+                await device_connectivity._check_connectivity(
+                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                )
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)

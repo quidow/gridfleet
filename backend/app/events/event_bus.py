@@ -28,6 +28,8 @@ from app.events.models import SystemEvent
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+    from app.events.protocols import EventPublisher
+
 logger = get_logger(__name__)
 
 NOTIFY_CHANNEL = "system_events"
@@ -104,11 +106,6 @@ class EventBus:
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
 
-    async def drain_handlers(self) -> None:
-        tasks = {task for task in self._handler_tasks if not task.done()}
-        if tasks:
-            await asyncio.gather(*tasks)
-
     async def shutdown(self) -> None:
         cancellable_tasks = [task for task in (self._listener_task, self._poller_task) if task is not None]
         for task in cancellable_tasks:
@@ -141,6 +138,10 @@ class EventBus:
     def unsubscribe(self, q: asyncio.Queue[Event]) -> None:
         self._subscribers.discard(q)
         logger.info("SSE client unsubscribed (total: %d)", len(self._subscribers))
+
+    def track_task(self, task: asyncio.Task[None]) -> None:
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
 
     async def publish(self, event_type: str, data: dict[str, Any], severity: EventSeverity | None = None) -> None:
         if event_type in PUBLIC_EVENT_NAME_SET:
@@ -187,15 +188,6 @@ class EventBus:
             events = [Event.from_system_event(row) for row in result.scalars().all()]
         return [event.to_dict() for event in events], total
 
-    def get_recent_events(self, limit: int = 100, event_types: list[str] | None = None) -> list[dict[str, Any]]:
-        events = list(self._log)
-        if event_types:
-            events = [event for event in events if event.type in event_types]
-        return [event.to_dict() for event in events[-limit:]]
-
-    def set_webhook_queue(self, q: asyncio.Queue[Event]) -> None:
-        self._webhook_queue = q
-
     def snapshot(self) -> dict[str, Any]:
         return {
             "subscriber_count": len(self._subscribers),
@@ -204,18 +196,6 @@ class EventBus:
             "persistent_mode": self._session_factory is not None,
             "started": self._started,
         }
-
-    def reset(self) -> None:
-        self._subscribers.clear()
-        self._log.clear()
-        self._webhook_queue = None
-        self._handlers.clear()
-        for task in list(self._handler_tasks):
-            task.cancel()
-        self._handler_tasks.clear()
-        self._session_factory = None
-        self._engine = None
-        self._last_seen_system_event_id = 0
 
     @property
     def subscriber_count(self) -> int:
@@ -263,12 +243,11 @@ class EventBus:
             except asyncio.QueueFull:
                 logger.warning("Webhook queue full, dropping event")
         task = asyncio.create_task(self._dispatch_handlers(event))
-        self._handler_tasks.add(task)
-        task.add_done_callback(self._handler_tasks.discard)
+        self.track_task(task)
 
     async def _shutdown_handler_tasks(self, timeout: float = HANDLER_DRAIN_TIMEOUT_SEC) -> None:
         # Handler tasks can spawn additional handler tasks (e.g. an
-        # ``after_commit`` callback awaits ``event_bus.publish`` which schedules
+        # ``after_commit`` callback awaits ``publisher.publish`` which schedules
         # ``_dispatch_handlers`` as a new tracked task). A one-shot
         # ``asyncio.wait`` snapshot would let those children outlive shutdown
         # and contend with ``DROP SCHEMA CASCADE`` in tests. Drain in a loop
@@ -363,24 +342,30 @@ class EventBus:
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
-event_bus = EventBus()
+def register_events_gauge_refresher(bus: EventBus) -> None:
+    """Register a gauge refresher that reads subscriber_count from the given bus.
 
+    Called once at startup — the closure captures the bus instance, avoiding
+    module-level mutable state.
+    """
 
-async def _refresh_events_gauges(db: object) -> None:
-    del db
-    ACTIVE_SSE_CONNECTIONS.set(event_bus.subscriber_count)
+    async def _refresh(db: object) -> None:
+        del db
+        ACTIVE_SSE_CONNECTIONS.set(bus.subscriber_count)
 
+    register_gauge_refresher(_refresh)
 
-register_gauge_refresher(_refresh_events_gauges)
 
 _PENDING_EVENTS_KEY = "_pending_event_bus_events"
 _PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"
 
 
-async def _publish_pending_events(events: list[tuple[str, dict[str, Any], EventSeverity | None]]) -> None:
+async def _publish_pending_events(
+    events: list[tuple[str, dict[str, Any], EventSeverity | None]], bus: EventPublisher
+) -> None:
     for event_type, data, severity in events:
         try:
-            await event_bus.publish(event_type, data, severity=severity)
+            await bus.publish(event_type, data, severity=severity)
         except Exception:
             logger.exception("Failed to publish deferred event %s", event_type)
 
@@ -391,6 +376,7 @@ def queue_event_for_session(
     data: dict[str, Any],
     *,
     severity: EventSeverity | None = None,
+    publisher: EventPublisher,
 ) -> None:
     """Queue an event to dispatch after the outer transaction commits.
 
@@ -399,7 +385,7 @@ def queue_event_for_session(
     sync object directly and can pass it without reconstructing the
     ``AsyncSession``.
 
-    On commit, ``loop.create_task(event_bus.publish(event_type, data))`` runs
+    On commit, ``loop.create_task(publisher.publish(event_type, data))`` runs
     for each queued event. On rollback, the queue is dropped — webhook/SSE
     subscribers never see a transition that did not become durable. ``data``
     is captured by reference — do not mutate it after queuing.
@@ -427,9 +413,8 @@ def queue_event_for_session(
         sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
         if not events:
             return
-        task = loop.create_task(_publish_pending_events(events))
-        event_bus._handler_tasks.add(task)
-        task.add_done_callback(event_bus._handler_tasks.discard)
+        task = loop.create_task(_publish_pending_events(events, publisher))
+        publisher.track_task(task)
 
     def _drop_on_rollback(_session: object) -> None:
         sync_session.info.pop(_PENDING_EVENTS_KEY, None)
@@ -452,6 +437,7 @@ def queue_device_crashed_event(
     will_restart: bool,
     process: str | None = None,
     severity: EventSeverity | None = None,
+    publisher: EventPublisher,
 ) -> None:
     """Queue ``device.crashed`` to dispatch after the outer transaction commits."""
     queue_event_for_session(
@@ -466,4 +452,5 @@ def queue_device_crashed_event(
             "process": process,
         },
         severity=severity,
+        publisher=publisher,
     )

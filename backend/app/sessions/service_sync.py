@@ -1,16 +1,16 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from prometheus_client import Counter
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.core.database import async_session
 from app.core.errors import InvalidTransitionError
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
@@ -32,7 +32,13 @@ from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
+    from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
@@ -164,7 +170,9 @@ async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) 
     return None
 
 
-async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str, Any]) -> None:
+async def _hydrate_orphan_session_row(
+    db: AsyncSession, sid: str, info: dict[str, Any], *, publisher: EventPublisher | None = None
+) -> None:
     """Bind a device-less ``Session`` row to its Device and fire the busy
     transition.
 
@@ -246,6 +254,7 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
                 locked_device,
                 TransitionEvent.SESSION_STARTED,
                 suppress_events=True,
+                publisher=publisher,
             )
         except InvalidTransitionError as exc:
             logger.warning(
@@ -275,13 +284,15 @@ async def _hydrate_orphan_session_row(db: AsyncSession, sid: str, info: dict[str
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
 
-async def _sync_sessions(db: AsyncSession) -> None:
+async def _sync_sessions(
+    db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher | None = None
+) -> None:
     """Sync Grid sessions with the Session table."""
-    grid_data = await grid_service.get_grid_status()
+    grid_data = await grid_service.get_grid_status(settings=settings)
 
     # Fence: Grid /status is a slow external call. If another backend took
     # leadership while we awaited it, drop all writes from this cycle.
-    await assert_current_leader(db)
+    await assert_current_leader(db, settings=settings)
 
     # Skip the Grid-driven sync when the hub is unreachable, but still run
     # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
@@ -314,7 +325,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
             # ``device_id`` / ``connection_target`` from driver.capabilities
             # because those caps are not reliable). Hydrate the row now
             # using the prefix-stable hub stereotype.
-            await _hydrate_orphan_session_row(db, sid, info)
+            await _hydrate_orphan_session_row(db, sid, info, publisher=publisher)
             continue
 
         if sid in known_running or sid in known_session_ids:
@@ -394,6 +405,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
             locked_device,
             TransitionEvent.SESSION_STARTED,
             suppress_events=True,
+            publisher=publisher,
         )
         await register_intents_and_reconcile(
             db,
@@ -509,6 +521,7 @@ async def _sync_sessions(db: AsyncSession) -> None:
                     locked_device,
                     TransitionEvent.SESSION_ENDED,
                     reason="Session ended",
+                    publisher=publisher,
                 )
             else:
                 # Probe failed during the session — auto-stop the device.
@@ -517,39 +530,44 @@ async def _sync_sessions(db: AsyncSession) -> None:
                     locked_device,
                     TransitionEvent.AUTO_STOP_EXECUTED,
                     reason="Session ended on unhealthy device",
+                    publisher=publisher,
                 )
 
     await _sweep_stale_stop_pending(db)
     await db.commit()
 
 
-async def session_sync_loop() -> None:
-    """Background loop that syncs Grid sessions.
+class SessionSyncLoop:
+    def __init__(self, *, services: SessionServices) -> None:
+        self._services = services
 
-    Wakes on either the doorbell (set by the hub event-bus subscriber
-    on ``session-created`` / ``session-closed``) or the registry-
-    configured timeout, whichever comes first. The poll continues to
-    run as a drift reconciler against any bus event that was missed
-    (hub restart, network partition, slow joiner).
-    """
-    doorbell = _get_doorbell()
-    while True:
-        interval = float(settings_service.get("grid.session_poll_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _sync_sessions(db)
-        except LeadershipLost as exc:
-            logger.error(
-                "session_sync_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Session sync failed")
-        try:
-            await asyncio.wait_for(doorbell.wait(), timeout=interval)
-            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
-        except TimeoutError:
-            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
-        doorbell.clear()
+    async def run(self) -> None:
+        """Background loop that syncs Grid sessions.
+
+        Wakes on either the doorbell (set by the hub event-bus subscriber
+        on ``session-created`` / ``session-closed``) or the registry-
+        configured timeout, whichever comes first. The poll continues to
+        run as a drift reconciler against any bus event that was missed
+        (hub restart, network partition, slow joiner).
+        """
+        doorbell = _get_doorbell()
+        while True:
+            interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await _sync_sessions(db, settings=self._services.settings, publisher=self._services.publisher)
+            except LeadershipLost as exc:
+                logger.error(
+                    "session_sync_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("Session sync failed")
+            try:
+                await asyncio.wait_for(doorbell.wait(), timeout=interval)
+                SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell").inc()
+            except TimeoutError:
+                SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="tick").inc()
+            doorbell.clear()

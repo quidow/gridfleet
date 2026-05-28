@@ -29,12 +29,12 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.review import clear_review_required
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.core.protocols import SettingsReader
     from app.devices.models import Device
 
 
@@ -70,8 +70,8 @@ def operator_start_intent(device: Device, desired_port: int) -> IntentRegistrati
     )
 
 
-def operator_restart_intent(device: Device, desired_port: int) -> IntentRegistration:
-    window_sec = int(settings_service.get("appium_reconciler.restart_window_sec"))
+def operator_restart_intent(device: Device, desired_port: int, *, settings: SettingsReader) -> IntentRegistration:
+    window_sec = int(settings.get("appium_reconciler.restart_window_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=window_sec)
     return IntentRegistration(
         source=operator_start_source(device.id),
@@ -109,6 +109,7 @@ async def request_start(
     *,
     caller: DesiredStateCaller,
     reason: str,
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Register an operator:start intent and return the (existing or newly-created)
     AppiumNode row. The intent reconciler runs synchronously inside
@@ -118,14 +119,14 @@ async def request_start(
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned")
 
-    desired_port = (await candidate_ports(db, host_id=device.host_id))[0]
+    desired_port = (await candidate_ports(db, host_id=device.host_id, settings=settings))[0]
 
     node: AppiumNode | None = device.appium_node
     if node is None:
         node = AppiumNode(
             device_id=device.id,
             port=desired_port,
-            grid_url=settings_service.get("grid.hub_url"),
+            grid_url=settings.get("grid.hub_url"),
         )
         db.add(node)
         await db.flush()
@@ -189,6 +190,7 @@ async def request_restart(
     *,
     caller: DesiredStateCaller,
     reason: str,
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Register an operator:start intent in restart form (with fresh
     transition_token + expires_at). If the node isn't currently observed running,
@@ -197,12 +199,12 @@ async def request_restart(
     """
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
-        return await request_start(db, device, caller=caller, reason=reason)
+        return await request_start(db, device, caller=caller, reason=reason, settings=settings)
 
     await register_intents_and_reconcile(
         db,
         device_id=device.id,
-        intents=[operator_restart_intent(device, node.port)],
+        intents=[operator_restart_intent(device, node.port, settings=settings)],
         reason=reason,
     )
     if caller == "operator_restart":

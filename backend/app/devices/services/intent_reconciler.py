@@ -13,7 +13,6 @@ from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deli
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.core import metrics_recorders
-from app.core.database import async_session
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
@@ -37,50 +36,66 @@ from app.devices.services.intent_evaluator import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
+    from app.core.protocols import SettingsReader
+    from app.devices.services_container import DeviceServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
 
 
-async def device_intent_reconciler_loop() -> None:
-    cycle = 0
-    while True:
-        interval = int(settings_service.get("general.intent_reconcile_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, float(interval)).cycle(), async_session() as db:
-                await run_device_intent_reconciler_once(db, cycle=cycle)
-        except LeadershipLost as exc:
-            logger.error(
-                "device_intent_reconciler_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("device_intent_reconciler_cycle_failed")
-        cycle += 1
-        await asyncio.sleep(interval)
+class DeviceIntentReconcilerLoop:
+    def __init__(self, *, services: DeviceServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        cycle = 0
+        while True:
+            interval = int(self._services.settings.get("general.intent_reconcile_interval_sec"))
+            try:
+                async with (
+                    observe_background_loop(LOOP_NAME, float(interval)).cycle(),
+                    self._services.session_factory() as db,
+                ):
+                    await run_device_intent_reconciler_once(
+                        db,
+                        cycle=cycle,
+                        settings=self._services.settings,
+                        circuit_breaker=self._services.circuit_breaker,
+                    )
+            except LeadershipLost as exc:
+                logger.error(
+                    "device_intent_reconciler_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
+            except Exception:
+                logger.exception("device_intent_reconciler_cycle_failed")
+            cycle += 1
+            await asyncio.sleep(interval)
 
 
-async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> None:
-    await assert_current_leader(db)
-    full_scan_every = int(settings_service.get("general.intent_reconcile_full_scan_every_cycles"))
-    await deliver_pending_agent_reconfigures(db)
-    await _reconcile_expired_intents(db)
+async def run_device_intent_reconciler_once(
+    db: AsyncSession, *, cycle: int, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
+    await assert_current_leader(db, settings=settings)
+    full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
+    await deliver_pending_agent_reconfigures(db, settings=settings, circuit_breaker=circuit_breaker)
+    await _reconcile_expired_intents(db, settings=settings, circuit_breaker=circuit_breaker)
     try:
         await _sweep_orphaned_intents(db)
     except Exception:
         await db.rollback()
         logger.exception("stale_intent_sweep_failed")
-    await _reconcile_terminal_run_intents(db)
+    await _reconcile_terminal_run_intents(db, settings=settings, circuit_breaker=circuit_breaker)
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
@@ -89,22 +104,26 @@ async def run_device_intent_reconciler_once(db: AsyncSession, *, cycle: int) -> 
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, affected_id)
+        await deliver_agent_reconfigures(db, affected_id, settings=settings, circuit_breaker=circuit_breaker)
     if cycle % full_scan_every == 0:
-        await _reconcile_all_devices_once(db)
+        await _reconcile_all_devices_once(db, settings=settings, circuit_breaker=circuit_breaker)
     else:
-        await _reconcile_dirty_devices(db)
+        await _reconcile_dirty_devices(db, settings=settings, circuit_breaker=circuit_breaker)
 
 
-async def _reconcile_all_devices_once(db: AsyncSession) -> None:
+async def _reconcile_all_devices_once(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     for device_id in rows:
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
-async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> None:
+async def _reconcile_dirty_devices(
+    db: AsyncSession, *, settings: SettingsReader, limit: int = 100, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
     metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
     rows = (
@@ -118,10 +137,12 @@ async def _reconcile_dirty_devices(db: AsyncSession, *, limit: int = 100) -> Non
         if current is not None and current.generation == generation:
             await db.delete(current)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
-async def _reconcile_expired_intents(db: AsyncSession) -> None:
+async def _reconcile_expired_intents(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     now = datetime.now(UTC)
     device_ids = (
         (
@@ -140,7 +161,7 @@ async def _reconcile_expired_intents(db: AsyncSession) -> None:
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
 async def _sweep_orphaned_intents(db: AsyncSession) -> None:
@@ -214,7 +235,9 @@ async def _sweep_orphaned_intents(db: AsyncSession) -> None:
     await db.flush()
 
 
-async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
+async def _reconcile_terminal_run_intents(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     """Defense-in-depth sweep for intents tied to runs that are already terminal.
 
     The release path (``_clear_desired_grid_run_id_for_run``) is the primary
@@ -244,7 +267,7 @@ async def _reconcile_terminal_run_intents(db: AsyncSession) -> None:
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
 async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:

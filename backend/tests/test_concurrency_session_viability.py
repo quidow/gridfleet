@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.sessions import service_viability as session_viability
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -70,6 +72,7 @@ async def test_session_viability_restore_handles_external_reservation(
         capabilities: dict[str, Any],
         timeout_sec: int,
         *,
+        settings: FakeSettingsReader,
         grid_url: str | None = None,
     ) -> tuple[bool, str | None]:
         nonlocal observed_grid_url
@@ -96,7 +99,9 @@ async def test_session_viability_restore_handles_external_reservation(
                 .options(selectinload(Device.appium_node), selectinload(Device.host))
             )
             device_obj = (await session.execute(stmt)).scalar_one()
-            await session_viability.run_session_viability_probe(session, device_obj, checked_by="manual")
+            await session_viability.run_session_viability_probe(
+                session, device_obj, checked_by="manual", settings=FakeSettingsReader({}), publisher=Mock()
+            )
 
     async def reserve_externally() -> None:
         await probe_started.wait()

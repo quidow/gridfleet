@@ -21,7 +21,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
     from contextlib import AbstractAsyncContextManager
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.core.protocols import SettingsReader
 
     SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -41,6 +43,7 @@ LOOP_HEARTBEAT_NAMESPACE = "observability.background_loops"
 LOOP_HEARTBEAT_STALE_GRACE_SEC = 10
 BACKGROUND_LOOP_NAMES = (
     "control_plane_leader_keepalive",
+    "control_plane_leader_watcher",
     "heartbeat",
     "session_sync",
     "node_health",
@@ -54,6 +57,10 @@ BACKGROUND_LOOP_NAMES = (
     "data_cleanup",
     "session_viability",
     "fleet_capacity_collector",
+    "grid_event_bus_subscriber",
+    "pack_drain",
+    "appium_reconciler",
+    "device_intent_reconciler",
 )
 
 _PROCESS_OWNER = f"{socket.gethostname()}:{os.getpid()}"
@@ -360,16 +367,6 @@ async def schedule_background_loop(loop_name: str, interval_seconds: float) -> N
     _update_loop_snapshot(loop_name, interval_seconds=interval_seconds)
 
 
-def reset_background_loop_snapshots() -> None:
-    """Clear the in-memory snapshot cache. Test-only entrypoint."""
-    _heartbeat_buffer.clear()
-
-
-def current_background_loop_snapshots() -> dict[str, dict[str, Any]]:
-    """Return a shallow copy of the in-memory snapshots. Test-only entrypoint."""
-    return _heartbeat_buffer.copy()
-
-
 async def flush_background_loop_snapshots(
     session_factory: SessionFactory | None = None,
 ) -> int:
@@ -395,38 +392,33 @@ async def flush_background_loop_snapshots(
     return len(snapshot_copy)
 
 
-async def background_loop_flush_loop(
-    session_factory: SessionFactory | None = None,
-    *,
-    interval_provider: Callable[[], float] | None = None,
-) -> None:
-    """Periodic flusher started by the leader. Cancels on task cancellation.
+class BackgroundLoopFlushLoop:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: SettingsReader,
+    ) -> None:
+        self._session_factory = session_factory
+        self._settings = settings
 
-    ``interval_provider`` defaults to reading
-    ``general.background_loop_flush_interval_sec`` from the settings cache; tests
-    override it for deterministic intervals.
-    """
-    while True:
-        try:
-            await flush_background_loop_snapshots(session_factory)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger = get_logger(__name__)
-            logger.exception("background_loop_flush_failed")
-        interval = float(interval_provider() if interval_provider else _default_flush_interval())
-        await asyncio.sleep(interval)
+    async def run(self) -> None:
+        """Periodic flusher started by the leader. Cancels on task cancellation."""
+        while True:
+            try:
+                await flush_background_loop_snapshots(self._session_factory)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger = get_logger(__name__)
+                logger.exception("background_loop_flush_failed")
+            interval = float(_default_flush_interval(settings=self._settings))
+            await asyncio.sleep(interval)
 
 
-def current_background_loop_flush_interval_seconds() -> float:
-    """Read the active flush window from the settings registry.
-
-    Lazily imports ``app.settings`` via ``importlib`` so ``app/core/*`` modules
-    can call it without violating the core-purity import-graph guard
-    (``tests/test_import_graph.py``).
-    """
-    settings_service = importlib.import_module("app.settings").settings_service
-    return float(settings_service.get("general.background_loop_flush_interval_sec"))
+def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:
+    """Read the active flush window from the settings registry."""
+    return float(settings.get("general.background_loop_flush_interval_sec"))
 
 
 # Internal alias retained for the flush task default; tests stub it directly.

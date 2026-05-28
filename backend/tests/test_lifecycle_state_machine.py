@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +48,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.available, hold=None, name_suffix="t1"
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert changed
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold is None
@@ -56,7 +58,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.busy, hold=None, name_suffix="t2"
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.SESSION_ENDED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_ENDED, publisher=Mock())
         assert changed
         assert device.operational_state == DeviceOperationalState.available
 
@@ -65,7 +67,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.available, hold=None, name_suffix="t3"
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST)
+        await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.offline
 
     async def test_offline_to_available_on_connectivity_restored(self, db_session: AsyncSession, db_host: Host) -> None:
@@ -73,7 +75,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="t4"
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED)
+        await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.available
 
     async def test_maintenance_entered_sets_hold_only(self, db_session: AsyncSession, db_host: Host) -> None:
@@ -81,7 +83,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.available, hold=None, name_suffix="t5"
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED)
+        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.available
         assert device.hold == DeviceHold.maintenance
 
@@ -94,7 +96,7 @@ class TestValidTransitions:
             name_suffix="t6",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED)
+        await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold is None
 
@@ -103,7 +105,7 @@ class TestValidTransitions:
             db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="t7"
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert changed
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold is None
@@ -117,7 +119,7 @@ class TestValidTransitions:
             name_suffix="t8",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert changed
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold == DeviceHold.reserved
@@ -133,7 +135,7 @@ class TestValidTransitions:
             name_suffix="verify-start",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.VERIFICATION_STARTED)
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_STARTED, publisher=Mock())
         assert changed is True
         assert device.operational_state is DeviceOperationalState.verifying
         assert device.hold is None
@@ -147,7 +149,7 @@ class TestValidTransitions:
             name_suffix="verify-fail",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.VERIFICATION_FAILED)
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_FAILED, publisher=Mock())
         assert changed is True
         assert device.operational_state is DeviceOperationalState.offline
         assert device.hold is None
@@ -163,7 +165,7 @@ class TestValidTransitions:
             name_suffix="verify-pass",
         )
         machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.VERIFICATION_PASSED)
+        changed = await machine.transition(device, TransitionEvent.VERIFICATION_PASSED, publisher=Mock())
         assert changed is True
         assert device.operational_state is DeviceOperationalState.available
         assert device.hold is None
@@ -179,7 +181,7 @@ class TestReservedHoldTransparent:
             name_suffix="r1",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold == DeviceHold.reserved
 
@@ -192,7 +194,7 @@ class TestReservedHoldTransparent:
             name_suffix="r2",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST)
+        await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.offline
         assert device.hold == DeviceHold.reserved
 
@@ -207,7 +209,7 @@ class TestMaintenanceHoldTransparent:
             name_suffix="mt1",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold == DeviceHold.maintenance
 
@@ -220,7 +222,7 @@ class TestMaintenanceHoldTransparent:
             name_suffix="mt2",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.SESSION_ENDED)
+        await machine.transition(device, TransitionEvent.SESSION_ENDED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.available
         assert device.hold == DeviceHold.maintenance
 
@@ -235,7 +237,7 @@ class TestMaintenanceHoldTransparent:
             name_suffix="mt3",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED)
+        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.busy
         assert device.hold == DeviceHold.maintenance
 
@@ -250,7 +252,7 @@ class TestMaintenanceHoldTransparent:
             name_suffix="mt4",
         )
         machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED)
+        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.available
         assert device.hold == DeviceHold.maintenance
 
@@ -355,7 +357,7 @@ class TestSkipHooks:
                 calls.append((event.value, after.label()))
 
         machine = DeviceStateMachine(hooks=[_RecordingHook()])
-        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, skip_hooks=True)
+        changed = await machine.transition(device, TransitionEvent.SESSION_STARTED, skip_hooks=True, publisher=Mock())
         assert changed is True
         assert device.operational_state == DeviceOperationalState.busy
         assert calls == []

@@ -14,6 +14,7 @@ from app.devices.services.state import set_hold, set_operational_state
 if TYPE_CHECKING:
     from app.devices.models import Device
     from app.events.catalog import EventSeverity
+    from app.events.protocols import EventPublisher
 
 
 # Operational-axis transitions. Hold is ignored unless the event explicitly
@@ -139,6 +140,7 @@ class DeviceStateMachine:
         reason: str | None = None,
         suppress_events: bool = False,
         skip_hooks: bool = False,
+        publisher: EventPublisher | None = None,
     ) -> bool:
         """Apply ``event`` to ``device``. Returns True iff state actually changed.
 
@@ -171,6 +173,7 @@ class DeviceStateMachine:
                     reason=reason,
                     publish_event=not suppress_events,
                     severity=op_severity,
+                    publisher=publisher,
                 )
                 or changed
             )
@@ -182,6 +185,7 @@ class DeviceStateMachine:
                     reason=reason,
                     publish_event=not suppress_events,
                     severity=hold_severity,
+                    publisher=publisher,
                 )
                 or changed
             )

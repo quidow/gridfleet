@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 import app.appium_nodes.services.heartbeat as hb
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -20,11 +21,6 @@ def _skip_leader_fencing() -> Iterator[None]:
     """No-op assert_current_leader so tests don't need a real leader advisory lock."""
     with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
         yield
-
-
-@pytest.fixture(autouse=True)
-def _reset_last_cycle_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(hb, "_LAST_CYCLE_MONOTONIC", None)
 
 
 def test_resume_guard_helper() -> None:
@@ -104,17 +100,18 @@ async def test_long_gap_then_recovery_does_not_emit_offline(
     assert isinstance(db_session, AsyncSession)
 
     # Pre-position the cycle counter as if we paused for 10 intervals (10 * 15 = 150s gap).
-    monkeypatch.setattr(hb, "_LAST_CYCLE_MONOTONIC", time.monotonic() - 10 * 15.0)
+    services = Mock()
+    services.session_factory = db_session_maker
+    loop = hb.HeartbeatLoop(services=services)
+    loop._last_cycle_monotonic = time.monotonic() - 10 * 15.0
 
-    # Redirect per-host sessions to the test schema engine.
-    with patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker):
-        # Cycle 1: agent times out but guard is active — should NOT mark host offline.
-        with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
-            await hb._check_hosts(db_session)
+    # Cycle 1: agent times out but guard is active — should NOT mark host offline.
+    with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_timeout())):
+        await loop._check_hosts(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
-        # Cycle 2: agent comes back online.
-        with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
-            await hb._check_hosts(db_session)
+    # Cycle 2: agent comes back online.
+    with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(return_value=_ok())):
+        await loop._check_hosts(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     # Yield to the event loop so any after-commit publish tasks can run.
     import asyncio

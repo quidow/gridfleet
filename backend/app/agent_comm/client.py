@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from time import perf_counter
-from typing import Protocol, Self, cast
+from typing import TYPE_CHECKING, Protocol, Self, cast
 
 import httpx
 from httpx._types import HeaderTypes, QueryParamTypes
 
 from app.agent_comm import agent_settings as _settings
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.core.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
 from app.core.metrics_recorders import record_agent_call
 from app.core.observability import REQUEST_ID_HEADER, get_request_id
+
+if TYPE_CHECKING:
+    from app.agent_comm.protocols import CircuitBreakerProtocol
 
 type QueryParams = QueryParamTypes | None
 type JsonBody = object | None
@@ -103,6 +105,7 @@ async def request(
     json_body: JsonBody = None,
     timeout: float | int | None = None,
     auth: httpx.Auth | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     request_headers = build_agent_headers(headers)
     effective_auth = auth if auth is not None else _agent_basic_auth()
@@ -116,7 +119,7 @@ async def request(
     )
     started = perf_counter()
     outcome = "success"
-    retry_after = await agent_circuit_breaker.before_request(host)
+    retry_after = await circuit_breaker.before_request(host)
     if retry_after is not None:
         record_agent_call(
             host=host,
@@ -139,15 +142,15 @@ async def request(
         status_code = getattr(response, "status_code", None)
         if isinstance(status_code, int) and status_code >= 500:
             outcome = "http_error"
-            await agent_circuit_breaker.record_failure(host, error=f"HTTP {status_code}")
+            await circuit_breaker.record_failure(host, error=f"HTTP {status_code}")
         else:
-            await agent_circuit_breaker.record_success(host)
+            await circuit_breaker.record_success(host)
         return response
     except httpx.HTTPError as exc:
         outcome_label, error_category = classify_httpx_transport(exc)
         exc_message = str(exc)
         breaker_error = f"{type(exc).__name__}: {exc_message}" if exc_message else type(exc).__name__
-        await agent_circuit_breaker.record_failure(host, error=breaker_error)
+        await circuit_breaker.record_failure(host, error=breaker_error)
         outcome = outcome_label
         raise AgentUnreachableError(
             host,

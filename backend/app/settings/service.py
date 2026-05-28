@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.events import Event
+    from app.events.protocols import EventPublisher
 from app.settings.registry import (
     CATEGORY_DISPLAY_NAMES,
     SETTINGS_REGISTRY,
@@ -25,8 +26,8 @@ from app.settings.registry import (
 )
 
 
-def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any]) -> None:
-    queue_event_for_session(db, "settings.changed", payload)
+def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publisher: EventPublisher) -> None:
+    queue_event_for_session(db, "settings.changed", payload, publisher=publisher)
 
 
 if TYPE_CHECKING:
@@ -224,7 +225,9 @@ class SettingsService:
             stale_threshold_sec=int(candidate["general.leader_stale_threshold_sec"]),
         )
 
-    async def update(self, db: AsyncSession, key: str, value: SettingValue) -> dict[str, Any]:
+    async def update(
+        self, db: AsyncSession, key: str, value: SettingValue, *, publisher: EventPublisher
+    ) -> dict[str, Any]:
         """Update a single setting. Validates, persists, updates cache, publishes SSE."""
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")
@@ -249,7 +252,7 @@ class SettingsService:
             row.value = normalized_value
         else:
             db.add(Setting(key=key, value=normalized_value, category=defn.category))
-        _queue_settings_changed(db, {"key": key, "value": normalized_value})
+        _queue_settings_changed(db, {"key": key, "value": normalized_value}, publisher=publisher)
         await db.commit()
         # Cache mutations after commit so a rollback does not leave the in-memory
         # state inconsistent with the database. A concurrent refresh_from_store
@@ -260,7 +263,9 @@ class SettingsService:
         self._cache[key] = normalized_value
         return self.get_setting_response(key)
 
-    async def bulk_update(self, db: AsyncSession, updates: dict[str, Any]) -> list[dict[str, Any]]:
+    async def bulk_update(
+        self, db: AsyncSession, updates: dict[str, Any], *, publisher: EventPublisher
+    ) -> list[dict[str, Any]]:
         """Update multiple settings in one transaction."""
         # Validate all first
         for key, value in updates.items():
@@ -290,7 +295,7 @@ class SettingsService:
                 db.add(Setting(key=key, value=normalized_value, category=defn.category))
             normalized_pairs.append((key, normalized_value))
 
-        _queue_settings_changed(db, {"keys": list(updates.keys())})
+        _queue_settings_changed(db, {"keys": list(updates.keys())}, publisher=publisher)
         await db.commit()
 
         # Cache mutations after commit (see ``update`` for the rationale).
@@ -300,25 +305,25 @@ class SettingsService:
 
         return [self.get_setting_response(key) for key in updates]
 
-    async def reset(self, db: AsyncSession, key: str) -> dict[str, Any]:
+    async def reset(self, db: AsyncSession, key: str, *, publisher: EventPublisher) -> dict[str, Any]:
         """Reset a single setting to its default."""
         if key not in SETTINGS_REGISTRY:
             raise KeyError(f"Unknown setting: {key}")
 
         await self._cancel_refresh_task()
         await db.execute(delete(Setting).where(Setting.key == key))
-        _queue_settings_changed(db, {"key": key, "reset": True})
+        _queue_settings_changed(db, {"key": key, "reset": True}, publisher=publisher)
         await db.commit()
         # Cache mutations after commit (see ``update`` for the rationale).
         self._overrides.pop(key, None)
         self._cache[key] = self._defaults[key]
         return self.get_setting_response(key)
 
-    async def reset_all(self, db: AsyncSession) -> None:
+    async def reset_all(self, db: AsyncSession, *, publisher: EventPublisher) -> None:
         """Reset all settings to defaults."""
         await self._cancel_refresh_task()
         await db.execute(delete(Setting))
-        _queue_settings_changed(db, {"reset_all": True})
+        _queue_settings_changed(db, {"reset_all": True}, publisher=publisher)
         await db.commit()
         # Cache mutations after commit (see ``update`` for the rationale).
         self._overrides.clear()
@@ -371,6 +376,3 @@ class SettingsService:
                 }
             )
         return groups
-
-
-settings_service = SettingsService()

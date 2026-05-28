@@ -16,6 +16,9 @@ from app.devices.models import Device
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+
 DELIVERY_BATCH_SIZE = 5
 MAX_DELIVERY_ATTEMPTS = 10
 ABANDONED_REASON_MAX_ATTEMPTS = "max delivery attempts exceeded"
@@ -50,6 +53,8 @@ async def deliver_agent_reconfigures(
     limit: int = DELIVERY_BATCH_SIZE,
     agent_call_timeout: float | None = None,
     raise_on_failure: bool = False,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
     await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
@@ -108,6 +113,8 @@ async def deliver_agent_reconfigures(
                     accepting_new_sessions=row.accepting_new_sessions,
                     stop_pending=row.stop_pending,
                     grid_run_id=row.grid_run_id,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
             else:
                 await agent_operations.agent_appium_reconfigure(
@@ -118,6 +125,8 @@ async def deliver_agent_reconfigures(
                     stop_pending=row.stop_pending,
                     grid_run_id=row.grid_run_id,
                     timeout=agent_call_timeout,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
         except (AgentUnreachableError, AgentResponseError) as exc:
             _record_delivery_failure(row)
@@ -131,7 +140,9 @@ async def deliver_agent_reconfigures(
         await db.commit()
 
 
-async def deliver_pending_agent_reconfigures(db: AsyncSession, *, limit: int = 100) -> None:
+async def deliver_pending_agent_reconfigures(
+    db: AsyncSession, *, limit: int = 100, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     device_ids = (
         (
             await db.execute(
@@ -150,7 +161,7 @@ async def deliver_pending_agent_reconfigures(db: AsyncSession, *, limit: int = 1
         .all()
     )
     for device_id in device_ids:
-        await deliver_agent_reconfigures(db, device_id)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
 async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id: object) -> None:

@@ -21,6 +21,7 @@ from app.core.observability import (
     get_logger,
     set_background_loop_snapshot,
 )
+from tests.fakes import FakeSettingsReader
 
 
 async def _seed_ready_loops(db_session: AsyncSession) -> None:
@@ -76,7 +77,7 @@ async def test_check_readiness_reports_db_failure() -> None:
     failing_db = AsyncMock()
     failing_db.execute.side_effect = RuntimeError("db unavailable")
 
-    payload, status_code = await check_readiness(failing_db)
+    payload, status_code = await check_readiness(failing_db, settings=FakeSettingsReader({}))
 
     assert status_code == 503
     assert payload["status"] == "unhealthy"
@@ -112,6 +113,7 @@ async def test_agent_request_forwards_request_id_and_records_metrics() -> None:
         host="10.0.0.1",
         client=client,
         timeout=5,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     clear_request_context()

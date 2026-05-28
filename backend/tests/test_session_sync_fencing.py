@@ -14,10 +14,15 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_sync import _sync_sessions
+from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def _sync_sessions(db: AsyncSession) -> None:
+    await _sync_sessions_impl(db, settings=FakeSettingsReader({}))
 
 
 @pytest.mark.db

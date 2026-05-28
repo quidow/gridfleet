@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
+    from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 
@@ -243,6 +244,7 @@ async def handle_node_crash(
     *,
     source: str,
     reason: str,
+    publisher: EventPublisher | None = None,
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 
@@ -274,22 +276,25 @@ async def handle_node_crash(
             DeviceEventType.node_crash,
             {"error": reason, "source": source, "will_restart": True},
         )
-        queue_device_crashed_event(
-            db,
-            device_id=str(device.id),
-            device_name=device.name,
-            source=source,
-            reason=reason,
-            will_restart=True,
-            process=None,
-            severity="warning",
-        )
+        if publisher is not None:
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source=source,
+                reason=reason,
+                will_restart=True,
+                process=None,
+                severity="warning",
+                publisher=publisher,
+            )
 
     if node is not None and node.observed_running:
         await _MACHINE.transition(
             device,
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
+            publisher=publisher,
         )
         await register_intents_and_reconcile(
             db,
@@ -303,6 +308,7 @@ async def handle_node_crash(
             device,
             TransitionEvent.AUTO_STOP_EXECUTED,
             reason=f"Node crash recorded ({source}): {reason}",
+            publisher=publisher,
         )
         if node is not None:
             await register_intents_and_reconcile(
@@ -408,6 +414,7 @@ async def complete_auto_stop(
     reason: str,
     source: str,
     detail: str,
+    publisher: EventPublisher | None = None,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
@@ -416,6 +423,7 @@ async def complete_auto_stop(
         device,
         source=source,
         reason=reason,
+        publisher=publisher,
     )
     next_state["stop_pending"] = False
     next_state["stop_pending_reason"] = None

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app.agent_comm import operations as agent_operations
+from tests.fakes import FakeSettingsReader
 
 _VALID_HEALTH_PAYLOAD: dict[str, object] = {
     "status": "ok",
@@ -56,6 +58,8 @@ async def test_backend_sends_basic_auth_when_configured(monkeypatch: pytest.Monk
         "agent.local",
         agent_port=5100,
         http_client_factory=factory,
+        settings=FakeSettingsReader(),
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload is not None
@@ -73,6 +77,8 @@ async def test_backend_omits_authorization_when_unconfigured(monkeypatch: pytest
         "agent.local",
         agent_port=5100,
         http_client_factory=factory,
+        settings=FakeSettingsReader(),
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload is not None

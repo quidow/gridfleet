@@ -29,6 +29,7 @@ assert_runnable = pack_platform_resolver.assert_runnable
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.protocols import SettingsReader
     from app.devices.models import Device, DeviceReservation
     from app.runs.models import TestRun
 
@@ -135,6 +136,8 @@ async def _serialize_orchestration(db: AsyncSession, device: Device) -> dict[str
 async def serialize_device(
     db: AsyncSession,
     device: Device,
+    *,
+    settings: SettingsReader,
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
     health_summary: dict[str, Any] | None = None,
     platform_label: str | None = None,
@@ -196,7 +199,7 @@ async def serialize_device(
         "charging_state": device.charging_state,
         "hardware_health_status": hardware_status,
         "hardware_telemetry_reported_at": device.hardware_telemetry_reported_at,
-        "hardware_telemetry_state": hardware_telemetry.hardware_telemetry_state_for_device(device),
+        "hardware_telemetry_state": hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings),
         "readiness_state": readiness.readiness_state,
         "missing_setup_fields": readiness.missing_setup_fields,
         "verified_at": device.verified_at,
@@ -217,6 +220,8 @@ async def serialize_device(
 async def serialize_device_detail(
     db: AsyncSession,
     device: Device,
+    *,
+    settings: SettingsReader,
     reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
     health_summary: dict[str, Any] | None = None,
     platform_label: str | None = None,
@@ -224,7 +229,8 @@ async def serialize_device_detail(
     payload = await serialize_device(
         db,
         device,
-        reservation_context,
+        settings=settings,
+        reservation_context=reservation_context,
         health_summary=health_summary,
         platform_label=platform_label,
     )

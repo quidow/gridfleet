@@ -1,6 +1,6 @@
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -51,18 +51,19 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
             stop_pending=True,
             desired_grid_run_id=run_id,
         )
-    monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler_agent.settings_service.get",
-        Mock(
-            side_effect=lambda key: {
+    from tests.fakes import FakeSettingsReader
+
+    payload = build_agent_start_payload(
+        device,
+        4723,
+        settings=FakeSettingsReader(
+            {
                 "grid.hub_url": "http://grid:4444",
                 "appium.session_override": True,
                 "appium.default_plugins": "",
-            }[key]
+            }
         ),
     )
-
-    payload = build_agent_start_payload(device, 4723)
 
     assert payload["accepting_new_sessions"] is False
     assert payload["stop_pending"] is True

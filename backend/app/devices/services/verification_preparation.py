@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
     from app.devices.schemas.device import DeviceVerificationUpdate
 
 
@@ -145,6 +147,8 @@ async def resolve_host_derived_payload(
     *,
     http_client_factory: AgentClientFactory,
     db: AsyncSession | None = None,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> str | None:
     if host is None:
         return "Assigned host is required"
@@ -169,6 +173,8 @@ async def resolve_host_derived_payload(
                     if key not in {"device_config", "replace_device_config", "host_id"}
                 },
                 http_client_factory=http_client_factory,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
             )
         except AgentCallError:
             normalized = None
@@ -225,6 +231,8 @@ async def resolve_host_derived_payload(
                 platform_id=payload.get("platform_id", ""),
                 action=action,
                 http_client_factory=http_client_factory,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
             )
         except AgentCallError as exc:
             error_msg = str(exc)
@@ -271,6 +279,8 @@ async def validate_create_request(
     data: DeviceVerificationCreate,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[PreparedVerificationContext | None, str | None]:
     await set_stage(job, "validation", "running")
     try:
@@ -292,7 +302,14 @@ async def validate_create_request(
         except DeviceIdentityConflictError as exc:
             return await _validation_failed(job, str(exc))
 
-    resolution_error = await resolve_host_derived_payload(payload, host, http_client_factory=http_client_factory, db=db)
+    resolution_error = await resolve_host_derived_payload(
+        payload,
+        host,
+        http_client_factory=http_client_factory,
+        db=db,
+        settings=settings,
+        circuit_breaker=circuit_breaker,
+    )
     if resolution_error:
         return await _validation_failed(job, resolution_error)
     try:
@@ -341,6 +358,8 @@ async def validate_update_request(
     data: DeviceVerificationUpdate,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[PreparedVerificationContext | None, str | None]:
     await set_stage(job, "validation", "running")
     existing = await device_service.get_device(db, device_id)
@@ -389,6 +408,8 @@ async def validate_update_request(
         host,
         http_client_factory=http_client_factory,
         db=db,
+        settings=settings,
+        circuit_breaker=circuit_breaker,
     )
     if resolution_error:
         return await _validation_failed(job, resolution_error)

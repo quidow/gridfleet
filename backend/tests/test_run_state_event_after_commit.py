@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -37,7 +39,9 @@ async def test_create_run_queues_run_created(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-create-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "contract-run"))
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "contract-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
     await settle_after_commit_tasks()
 
     created = [p for n, p in event_bus_capture if n == "run.created"]
@@ -51,11 +55,13 @@ async def test_run_created_dropped_on_rollback(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     from app.events import queue_event_for_session
+    from tests.helpers import test_event_bus as event_bus
 
     queue_event_for_session(
         db_session,
         "run.created",
         {"run_id": "00000000-0000-0000-0000-000000000000", "name": "rollback-test"},
+        publisher=event_bus,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()
@@ -69,10 +75,12 @@ async def test_signal_ready_emits_active(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-states-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "states-run"))
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "states-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
     event_bus_capture.clear()
 
-    await run_service.signal_ready(db_session, run.id)
+    await run_service.signal_ready(db_session, run.id, publisher=event_bus)
     await settle_after_commit_tasks()
     assert any(n == "run.active" for n, _ in event_bus_capture)
 
@@ -83,12 +91,14 @@ async def test_complete_run_queues_run_completed(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-complete-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "complete-run"))
-    await run_service.signal_ready(db_session, run.id)
-    await run_service.signal_active(db_session, run.id)
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "complete-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
+    await run_service.signal_ready(db_session, run.id, publisher=event_bus)
+    await run_service.signal_active(db_session, run.id, publisher=event_bus)
     event_bus_capture.clear()
 
-    await run_service.complete_run(db_session, run.id)
+    await run_service.complete_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
     await settle_after_commit_tasks()
 
     completed = [p for n, p in event_bus_capture if n == "run.completed"]
@@ -102,10 +112,12 @@ async def test_cancel_run_queues_run_cancelled(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-cancel-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "cancel-run"))
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "cancel-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
     event_bus_capture.clear()
 
-    await run_service.cancel_run(db_session, run.id)
+    await run_service.cancel_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
     await settle_after_commit_tasks()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
@@ -119,10 +131,12 @@ async def test_force_release_queues_admin_cancelled(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-force-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "force-run"))
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "force-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
     event_bus_capture.clear()
 
-    await run_service.force_release(db_session, run.id)
+    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
     await settle_after_commit_tasks()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
@@ -136,11 +150,13 @@ async def test_expire_run_queues_run_expired(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-expire-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "expire-run"))
-    await run_service.signal_active(db_session, run.id)
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "expire-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
+    await run_service.signal_active(db_session, run.id, publisher=event_bus)
     event_bus_capture.clear()
 
-    await run_service.expire_run(db_session, run, "ttl")
+    await run_service.expire_run(db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader())
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
@@ -156,10 +172,12 @@ async def test_expire_run_from_preparing_queues_never_activated_and_expired(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="run-expire-prep-1")
     event_bus_capture.clear()
-    run, _ = await run_service.create_run(db_session, _build_request(device, "expire-prep-run"))
+    run, _ = await run_service.create_run(
+        db_session, _build_request(device, "expire-prep-run"), publisher=event_bus, settings=FakeSettingsReader({})
+    )
     event_bus_capture.clear()
 
-    await run_service.expire_run(db_session, run, "ttl")
+    await run_service.expire_run(db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader())
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]

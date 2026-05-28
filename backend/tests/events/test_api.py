@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
 from app.devices.routers.verification import stream_device_verification_job_events
-from app.devices.services.verification import store_verification_job_for_test
 from app.devices.services.verification_job_state import new_job
-from app.events import event_bus
 from app.events.router import event_stream
+from app.events.services_container import EventServices
+from tests.helpers import reset_event_bus, store_verification_job_for_test
+from tests.helpers import test_event_bus as event_bus
 
 
 def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, str], None]:
@@ -23,7 +24,7 @@ def _event_stream_iterator(body_iterator: object) -> AsyncGenerator[dict[str, st
 
 @pytest.fixture(autouse=True)
 def reset_bus() -> None:
-    event_bus.reset()
+    reset_event_bus(event_bus)
 
 
 async def test_notifications_filters_recent_events(client: AsyncClient) -> None:
@@ -69,8 +70,12 @@ async def test_event_catalog_lists_public_emitted_events(client: AsyncClient) ->
 
 
 async def test_event_stream_filters_types_and_device_ids() -> None:
+    event_services = EventServices(  # type: ignore[arg-type]
+        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+    )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
+        events=event_services,
         types="device.operational_state_changed",
         device_ids="dev-1",
     )
@@ -94,8 +99,12 @@ async def test_event_stream_filters_types_and_device_ids() -> None:
 
 
 async def test_event_stream_emits_keepalive_on_timeout() -> None:
+    event_services = EventServices(  # type: ignore[arg-type]
+        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+    )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
+        events=event_services,
         types=None,
         device_ids=None,
     )
@@ -110,8 +119,12 @@ async def test_event_stream_emits_keepalive_on_timeout() -> None:
 
 @pytest.mark.filterwarnings("ignore:coroutine 'Queue.get' was never awaited:RuntimeWarning")
 async def test_event_stream_unsubscribes_after_client_disconnect() -> None:
+    event_services = EventServices(  # type: ignore[arg-type]
+        publisher=event_bus, subscriber=event_bus, reader=event_bus, session_factory=None, engine=None
+    )
     response = await event_stream(
         Request({"type": "http", "method": "GET", "path": "/api/events", "headers": [], "query_string": b""}),
+        events=event_services,
         types=None,
         device_ids=None,
     )
@@ -133,10 +146,18 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
     job = new_job("11111111-1111-1111-1111-111111111111")
     await store_verification_job_for_test(job["job_id"], job, session_factory=session_factory)
 
+    event_services = EventServices(  # type: ignore[arg-type]
+        publisher=event_bus,
+        subscriber=event_bus,
+        reader=event_bus,
+        session_factory=session_factory,
+        engine=db_session.bind,
+    )
     response = await stream_device_verification_job_events(
         job["job_id"],
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
+        event_services=event_services,
     )
     iterator = _event_stream_iterator(response.body_iterator)
 
@@ -185,10 +206,18 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
     job = new_job("33333333-3333-3333-3333-333333333333")
     await store_verification_job_for_test(job["job_id"], job, session_factory=session_factory)
 
+    event_services = EventServices(  # type: ignore[arg-type]
+        publisher=event_bus,
+        subscriber=event_bus,
+        reader=event_bus,
+        session_factory=session_factory,
+        engine=db_session.bind,
+    )
     response = await stream_device_verification_job_events(
         job["job_id"],
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
+        event_services=event_services,
     )
     iterator = _event_stream_iterator(response.body_iterator)
 

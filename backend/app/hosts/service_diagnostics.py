@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, TypedDict
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm import circuit_breaker as agent_circuit_breaker_module
 from app.appium_nodes.models import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import Device, DeviceEvent, DeviceEventType
@@ -23,6 +22,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
 
 APPIUM_PROCESSES_NAMESPACE = "heartbeat.appium_processes"
 RECENT_RECOVERY_EVENT_FETCH_LIMIT = 50
@@ -203,16 +204,20 @@ async def _list_recent_recovery_events(db: AsyncSession, host: Host) -> list[Hos
     return recent_events
 
 
-async def get_host_diagnostics(db: AsyncSession, host: Host | UUID) -> HostDiagnosticsRead | None:
+async def get_host_diagnostics(
+    db: AsyncSession,
+    host: Host | UUID,
+    *,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> HostDiagnosticsRead | None:
     resolved_host = host if isinstance(host, Host) else await db.get(Host, host)
     if resolved_host is None:
         return None
 
+    breaker = circuit_breaker
     return HostDiagnosticsRead(
         host_id=resolved_host.id,
-        circuit_breaker=HostCircuitBreakerRead.model_validate(
-            agent_circuit_breaker_module.agent_circuit_breaker.public_snapshot(resolved_host.ip)
-        ),
+        circuit_breaker=HostCircuitBreakerRead.model_validate(breaker.public_snapshot(resolved_host.ip)),
         appium_processes=await _build_appium_processes_snapshot(db, resolved_host),
         recent_recovery_events=await _list_recent_recovery_events(db, resolved_host),
     )

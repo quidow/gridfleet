@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 import pytest_asyncio
@@ -655,7 +655,7 @@ async def test_list_devices_filter_hardware_telemetry_state(
     unsupported_device.hardware_telemetry_reported_at = datetime.now(UTC)
     await db_session.commit()
 
-    from app.settings import settings_service
+    from tests.conftest import settings_service
 
     settings_service._cache["general.hardware_telemetry_stale_timeout_sec"] = 60
 
@@ -1639,7 +1639,9 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
         verified=True,
     )
 
-    await device_health.update_device_checks(db_session, unhealthy, healthy=False, summary="Disconnected")
+    await device_health.update_device_checks(
+        db_session, unhealthy, healthy=False, summary="Disconnected", publisher=Mock()
+    )
     await db_session.commit()
 
     resp = await client.get("/api/devices", params={"needs_attention": "true"})

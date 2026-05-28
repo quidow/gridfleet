@@ -220,6 +220,3 @@ class AgentHttpPool:
                 await stale.aclose()
             except Exception:
                 logger.exception("agent_http_pool_deferred_close_failed")
-
-
-agent_http_pool = AgentHttpPool()

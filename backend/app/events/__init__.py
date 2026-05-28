@@ -10,7 +10,6 @@ from app.events.catalog import (
 from app.events.event_bus import (
     Event,
     EventBus,
-    event_bus,
     queue_device_crashed_event,
     queue_event_for_session,
 )
@@ -23,7 +22,6 @@ __all__ = [
     "PUBLIC_EVENT_NAME_SET",
     "Event",
     "EventBus",
-    "event_bus",
     "normalize_public_event_names",
     "queue_device_crashed_event",
     "queue_event_for_session",

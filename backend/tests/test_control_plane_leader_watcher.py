@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import text
@@ -15,6 +15,18 @@ from app.core.leader.watcher import run_watcher_once
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+
+def _mock_settings(**kwargs: object) -> MagicMock:
+    defaults: dict[str, object] = {
+        "general.leader_keepalive_enabled": True,
+        "general.leader_keepalive_interval_sec": 5,
+        "general.leader_stale_threshold_sec": 30,
+    }
+    defaults.update(kwargs)
+    mock = MagicMock()
+    mock.get = lambda key: defaults[key]  # type: ignore[return-value]
+    return mock
 
 
 @pytest.mark.db
@@ -28,11 +40,7 @@ async def test_watcher_no_op_when_heartbeat_fresh(
     assert await leader.try_acquire(setup_database)
     try:
         non_leader = ControlPlaneLeader()
-        with patch(
-            "app.core.leader.watcher._setting",
-            side_effect=lambda key: True if "enabled" in key else 30,
-        ):
-            await run_watcher_once(non_leader, engine=setup_database)
+        await run_watcher_once(non_leader, engine=setup_database, settings=_mock_settings())
         assert non_leader._connection is None
     finally:
         await leader.release()
@@ -54,17 +62,11 @@ async def test_watcher_preempts_and_exits(
         await db_session.commit()
 
         non_leader = ControlPlaneLeader()
-        with (
-            patch(
-                "app.core.leader.watcher._setting",
-                side_effect=lambda key: True if "enabled" in key else 30,
-            ),
-            patch(
-                "app.core.leader.watcher._exit_after_preempt",
-                new_callable=AsyncMock,
-            ) as exit_stub,
-        ):
-            await run_watcher_once(non_leader, engine=setup_database)
+        with patch(
+            "app.core.leader.watcher._exit_after_preempt",
+            new_callable=AsyncMock,
+        ) as exit_stub:
+            await run_watcher_once(non_leader, engine=setup_database, settings=_mock_settings())
         exit_stub.assert_awaited_once()
         assert non_leader._connection is not None
         await non_leader.release()
@@ -77,9 +79,9 @@ async def test_watcher_preempts_and_exits(
 async def test_watcher_does_not_preempt_when_disabled() -> None:
     non_leader = ControlPlaneLeader()
     non_leader.try_acquire = AsyncMock(return_value=False)  # type: ignore[method-assign]
-    with patch(
-        "app.core.leader.watcher._setting",
-        side_effect=lambda key: False if "enabled" in key else 30,
-    ):
-        await run_watcher_once(non_leader, engine=None)
+    await run_watcher_once(
+        non_leader,
+        engine=None,
+        settings=_mock_settings(**{"general.leader_keepalive_enabled": False}),
+    )
     non_leader.try_acquire.assert_not_called()

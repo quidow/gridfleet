@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -12,7 +13,9 @@ from app.devices.services import state_write_guard
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:
@@ -71,6 +74,8 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
             heartbeat_timeout_sec=120,
             created_by="tester",
         ),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
     )
     return run.id
 
@@ -108,8 +113,8 @@ async def test_complete_run_clears_desired_grid_run_id(
     )
     run_id = await _create_run(db_session)
 
-    await run_service.signal_ready(db_session, run_id)
-    await run_service.complete_run(db_session, run_id)
+    await run_service.signal_ready(db_session, run_id, publisher=event_bus)
+    await run_service.complete_run(db_session, run_id, publisher=event_bus, settings=FakeSettingsReader())
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None
@@ -135,7 +140,9 @@ async def test_exclude_device_clears_only_that_device(
     )
     run_id = await _create_run(db_session, count=2)
 
-    await run_service.report_preparation_failure(db_session, run_id, device_id, message="install failed")
+    await run_service.report_preparation_failure(
+        db_session, run_id, device_id, message="install failed", publisher=Mock()
+    )
 
     rows = (
         await db_session.execute(

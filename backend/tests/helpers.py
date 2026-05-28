@@ -1,16 +1,33 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
-
-from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import Mock
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
+from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
+from app.jobs import queue as job_queue
 from app.runs.models import RunState, TestRun
+from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.type_defs import SessionFactory
+    from app.events.event_bus import Event
+
+# Shared test-owned EventBus instance. Replaces the removed production singleton.
+# All test files should import this instead of the old ``from app.events import event_bus``.
+test_event_bus = EventBus()
+register_events_gauge_refresher(test_event_bus)  # Wire gauge refresher so metrics tests work.
 
 DEFAULT_HOST_PAYLOAD = {
     "hostname": "test-host",
@@ -218,13 +235,11 @@ async def settle_after_commit_tasks() -> None:
     ``event_bus._handler_tasks`` set is deterministic — it only returns after
     every queued publish task has completed.
     """
-    from app.events import event_bus
-
     # Yield once so any after_commit hooks fired during the just-completed
     # await have a chance to call ``loop.create_task`` and register on
     # ``_handler_tasks`` before we snapshot the set.
     await asyncio.sleep(0)
-    pending = {task for task in event_bus._handler_tasks if not task.done()}
+    pending = {task for task in test_event_bus._handler_tasks if not task.done()}
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
@@ -347,3 +362,139 @@ async def seed_existing_device(
         identity_scheme=identity_scheme,
         identity_scope=identity_scope,
     )
+
+
+# ---------------------------------------------------------------------------
+# EventBus test helpers — replacements for removed test-infrastructure methods
+# ---------------------------------------------------------------------------
+
+
+def recent_events(
+    bus: EventBus,
+    limit: int = 100,
+    event_types: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read recent events from the bus's in-memory log."""
+    events = list(bus._log)
+    if event_types:
+        events = [e for e in events if e.type in event_types]
+    return [e.to_dict() for e in events[-limit:]]
+
+
+async def drain_handlers(bus: EventBus) -> None:
+    """Wait for all pending handler tasks to complete."""
+    tasks = {t for t in bus._handler_tasks if not t.done()}
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+def set_webhook_queue(bus: EventBus, q: asyncio.Queue[Event]) -> None:
+    """Configure the webhook queue on the bus."""
+    bus._webhook_queue = q
+
+
+def reset_event_bus(bus: EventBus) -> None:
+    """Clear all mutable state on an EventBus instance.
+
+    Replacement for the removed ``EventBus.reset()`` method — keeps
+    the reset logic in test infrastructure rather than on the production
+    class.
+    """
+    bus._subscribers.clear()
+    bus._log.clear()
+    bus._webhook_queue = None
+    bus._handlers.clear()
+    for task in list(bus._handler_tasks):
+        task.cancel()
+    bus._handler_tasks.clear()
+    bus._session_factory = None
+    bus._engine = None
+    bus._last_seen_system_event_id = 0
+
+
+# ---------------------------------------------------------------------------
+# Control-plane state test helpers — moved from production modules
+# ---------------------------------------------------------------------------
+
+CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
+SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
+SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
+
+
+async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:
+    await control_plane_state_store.delete_namespace(db, CONNECTIVITY_NAMESPACE)
+    await db.commit()
+
+
+async def get_connectivity_control_plane_state(db: AsyncSession) -> set[str]:
+    return set((await control_plane_state_store.get_values(db, CONNECTIVITY_NAMESPACE)).keys())
+
+
+async def track_previously_offline_device(db: AsyncSession, identity_value: str) -> None:
+    await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, identity_value, True)
+    await db.commit()
+
+
+async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
+    await control_plane_state_store.delete_namespaces(
+        db,
+        [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE],
+    )
+    await db.commit()
+
+
+async def get_session_viability_control_plane_state(db: AsyncSession) -> dict[str, Any]:
+    return {
+        "running": sorted((await control_plane_state_store.get_values(db, SESSION_VIABILITY_RUNNING_NAMESPACE)).keys()),
+        "state": await control_plane_state_store.get_values(db, SESSION_VIABILITY_STATE_NAMESPACE),
+    }
+
+
+async def set_session_viability_control_plane_entry(db: AsyncSession, device_key: str, state: dict[str, Any]) -> None:
+    await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, device_key, state)
+    await db.commit()
+
+
+async def store_verification_job_for_test(
+    job_id: str,
+    job: dict[str, Any],
+    session_factory: SessionFactory,
+) -> None:
+    async with session_factory() as db:
+        await job_queue.create_job(
+            db,
+            kind=JOB_KIND_DEVICE_VERIFICATION,
+            payload={"mode": "create", "data": {}},
+            snapshot={**job, "job_id": job_id},
+            max_attempts=1,
+            job_id=uuid.UUID(job_id),
+        )
+
+
+async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -> None:
+    """Run a single appium reconciler cycle. Replacement for the removed
+    ``reconciler.run_one_cycle_for_test()`` — tests monkeypatch the private
+    functions so this just calls through the same code path.
+    """
+    from app.appium_nodes.services import reconciler as appium_reconciler
+
+    async with appium_reconciler.async_session() as db:
+        hosts = await appium_reconciler._fetch_online_hosts(db)
+        rows = await appium_reconciler._fetch_node_rows(db)
+        desired = await appium_reconciler._fetch_desired_rows(db)
+        backoff = await appium_reconciler._fetch_backoff_until(db)
+    resolved_settings = settings or FakeSettingsReader({})
+    health_by_host = await appium_reconciler._reconcile_all(
+        hosts, rows, settings=resolved_settings, circuit_breaker=Mock()
+    )
+    if appium_reconciler.reconciler_convergence_enabled():
+        await appium_reconciler._drive_convergence(
+            hosts,
+            desired,
+            backoff,
+            health_by_host=health_by_host,
+            settings=resolved_settings,
+            circuit_breaker=Mock(),
+            session_factory=appium_reconciler.async_session,
+            publisher=test_event_bus,
+        )

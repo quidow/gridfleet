@@ -8,6 +8,9 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
+
 import httpx
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import NoResultFound
@@ -57,7 +60,6 @@ from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
-from app.settings import settings_service
 
 assert_runnable = pack_platform_resolver.assert_runnable
 build_device_context = pack_start_shim.build_device_context
@@ -74,8 +76,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.core.protocols import SettingsReader
     from app.devices.models import Device
+    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
@@ -130,8 +135,8 @@ async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Devic
         raise NodeManagerError(f"Device {device_id} no longer exists") from None
 
 
-async def allocate_port(db: AsyncSession, *, host_id: uuid.UUID) -> int:
-    return (await candidate_ports(db, host_id=host_id))[0]
+async def allocate_port(db: AsyncSession, *, host_id: uuid.UUID, settings: SettingsReader) -> int:
+    return (await candidate_ports(db, host_id=host_id, settings=settings))[0]
 
 
 def upsert_node(
@@ -140,18 +145,20 @@ def upsert_node(
     port: int,
     pid: int | None,
     active_connection_target: str | None,
+    *,
+    settings: SettingsReader,
 ) -> AppiumNode:
     if device.appium_node:
         node = cast("AppiumNode", device.appium_node)
         node.port = port
-        node.grid_url = settings_service.get("grid.hub_url")
+        node.grid_url = settings.get("grid.hub_url")
         node.pid = pid
         node.active_connection_target = active_connection_target
     else:
         node = AppiumNode(
             device_id=device.id,
             port=port,
-            grid_url=settings_service.get("grid.hub_url"),
+            grid_url=settings.get("grid.hub_url"),
             pid=pid,
             active_connection_target=active_connection_target,
         )
@@ -169,11 +176,13 @@ async def mark_node_started(
     active_connection_target: str | None = None,
     allocated_caps: dict[str, Any] | None = None,
     clear_transition: bool = False,
+    publisher: EventPublisher,
+    settings: SettingsReader,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     await appium_node_locking.lock_appium_node_for_device(db, device.id)
     active_connection_target = active_connection_target or appium_connection_target(device)
-    node = upsert_node(db, device, port, pid, active_connection_target)
+    node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
     await db.flush()
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot promote Appium resource claims")
@@ -197,6 +206,7 @@ async def mark_node_started(
         db,
         device,
         mark_offline=False,
+        publisher=publisher,
     )
     reset_reconciler_start_failure_state(device)
     if clear_transition:
@@ -228,24 +238,26 @@ async def mark_node_started(
             )
         )
         await db.flush()
-    queue_event_for_session(
-        db,
-        "node.state_changed",
-        {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_state": "stopped",
-            "new_state": "running",
-            "port": port,
-        },
-        severity=node_state_severity("stopped", "running"),
-    )
+    if publisher is not None:
+        queue_event_for_session(
+            db,
+            "node.state_changed",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_state": "stopped",
+                "new_state": "running",
+                "port": port,
+            },
+            severity=node_state_severity("stopped", "running"),
+            publisher=publisher,
+        )
     await db.commit()
     await db.refresh(node)
     return node
 
 
-async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
+async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     assert node is not None
@@ -263,23 +275,31 @@ async def mark_node_stopped(db: AsyncSession, device: Device) -> AppiumNode:
     # observation columns above still get cleared so the convergence loop
     # can drop a stale ``running`` flag without leaving the row wedged.
     if _MACHINE.is_valid(DeviceStateModel.from_device(device), TransitionEvent.AUTO_STOP_EXECUTED):
-        await _MACHINE.transition(device, TransitionEvent.AUTO_STOP_EXECUTED, reason="Node stopped")
+        await _MACHINE.transition(
+            device,
+            TransitionEvent.AUTO_STOP_EXECUTED,
+            reason="Node stopped",
+            publisher=publisher,
+        )
     await device_health.apply_node_state_transition(
         db,
         device,
         mark_offline=False,
+        publisher=publisher,
     )
-    queue_event_for_session(
-        db,
-        "node.state_changed",
-        {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_state": "running",
-            "new_state": "stopped",
-        },
-        severity=node_state_severity("running", "stopped"),
-    )
+    if publisher is not None:
+        queue_event_for_session(
+            db,
+            "node.state_changed",
+            {
+                "device_id": str(device.id),
+                "device_name": device.name,
+                "old_state": "running",
+                "new_state": "stopped",
+            },
+            severity=node_state_severity("running", "stopped"),
+            publisher=publisher,
+        )
     await db.commit()
     await db.refresh(node)
     return node
@@ -303,6 +323,7 @@ def build_agent_start_payload(
     *,
     allocated_caps: dict[str, Any] | None = None,
     extra_caps: dict[str, Any] | None = None,
+    settings: SettingsReader,
 ) -> dict[str, Any]:
     headless = (device.tags or {}).get("emulator_headless", "true") != "false"
     manager_owned_keys = appium_capability_keys.manager_owned_cap_keys(frozenset((allocated_caps or {}).keys()))
@@ -322,8 +343,8 @@ def build_agent_start_payload(
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
         "port": port,
-        "grid_url": settings_service.get("grid.hub_url"),
-        "plugins": get_default_plugins() or None,
+        "grid_url": settings.get("grid.hub_url"),
+        "plugins": get_default_plugins(settings=settings) or None,
         "extra_caps": extra_caps
         if extra_caps is not None
         else (
@@ -341,7 +362,7 @@ def build_agent_start_payload(
         "device_type": device.device_type.value,
         "ip_address": device.ip_address,
         "allocated_caps": allocated_caps or None,
-        "session_override": settings_service.get("appium.session_override"),
+        "session_override": settings.get("appium.session_override"),
         "headless": headless,
     }
 
@@ -378,8 +399,8 @@ async def _merge_appium_default_pack_caps(db: AsyncSession, device: Device, payl
     }
 
 
-def _agent_start_timeout(device: Device) -> float | int:
-    base = int(settings_service.get("appium.startup_timeout_sec")) + 5
+def _agent_start_timeout(device: Device, *, settings: SettingsReader) -> float | int:
+    base = int(settings.get("appium.startup_timeout_sec")) + 5
     if device_is_virtual(device):
         return max(AVD_LAUNCH_HTTP_TIMEOUT_SECS, base)
     return base
@@ -393,6 +414,8 @@ async def start_remote_node(
     allocated_caps: dict[str, Any] | None,
     agent_base: str,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> RemoteStartResult:
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
@@ -422,6 +445,7 @@ async def start_remote_node(
         port,
         allocated_caps=allocated_caps,
         extra_caps=extra_caps,
+        settings=settings,
     )
     await _merge_appium_default_pack_caps(db, device, payload)
     try:
@@ -458,7 +482,9 @@ async def start_remote_node(
             agent_port=host.agent_port,
             payload=payload,
             http_client_factory=http_client_factory,
-            timeout=_agent_start_timeout(device),
+            timeout=_agent_start_timeout(device, settings=settings),
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
@@ -521,6 +547,8 @@ async def stop_remote_node(
     host: str,
     agent_port: int,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     """Ask the agent to stop the Appium node on ``port``.
 
@@ -537,6 +565,8 @@ async def stop_remote_node(
             agent_port=agent_port,
             port=port,
             http_client_factory=http_client_factory,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
         return True
@@ -549,6 +579,8 @@ async def stop_node_via_agent(
     node: AppiumNode,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     try:
         host = require_management_host(device, action="stop Appium nodes")
@@ -561,6 +593,8 @@ async def stop_node_via_agent(
             agent_port=host.agent_port,
             port=node.port,
             http_client_factory=http_client_factory,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
         return True
@@ -574,6 +608,8 @@ async def restart_node_via_agent(
     node: AppiumNode,
     *,
     http_client_factory: AgentClientFactory,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> bool:
     try:
         host = require_management_host(device, action="restart Appium nodes")
@@ -596,6 +632,8 @@ async def restart_node_via_agent(
             host=host.ip,
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         if not stopped:
             # Agent did not acknowledge the stop. Starting on a different
@@ -609,7 +647,9 @@ async def restart_node_via_agent(
         # The DB row still says the old node is running, so candidate_ports()
         # intentionally excludes node.port here. That is desirable after an
         # unmanaged-listener conflict: restart on the next free managed port.
-        for candidate_port in await candidate_ports(db, host_id=device.host_id, preferred_port=node.port):
+        for candidate_port in await candidate_ports(
+            db, host_id=device.host_id, preferred_port=node.port, settings=settings
+        ):
             try:
                 started_handle = await start_remote_node(
                     db,
@@ -618,6 +658,8 @@ async def restart_node_via_agent(
                     allocated_caps=allocated_caps,
                     agent_base=agent_base,
                     http_client_factory=http_client_factory,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 break
             except NodePortConflictError as exc:
@@ -645,6 +687,8 @@ async def restart_node_via_agent(
             host=host.ip,
             agent_port=host.agent_port,
             http_client_factory=http_client_factory,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return False
 
@@ -655,6 +699,8 @@ async def _start_for_node(
     *,
     node: AppiumNode,
     preferred_port: int | None = None,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> RemoteStartResult:
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
@@ -702,7 +748,7 @@ async def _start_for_node(
     agent_base = await agent_url(device)
     try:
         last_conflict: NodePortConflictError | None = None
-        for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port):
+        for port in await candidate_ports(db, host_id=device.host_id, preferred_port=preferred_port, settings=settings):
             try:
                 short_session = _short_session_factory(db)
                 async with short_session() as reserve_db:
@@ -720,6 +766,8 @@ async def _start_for_node(
                     allocated_caps=allocated_caps,
                     agent_base=agent_base,
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
                 break
             except NodePortConflictError as exc:
@@ -755,6 +803,7 @@ async def start_node(
     device: Device,
     *,
     caller: DesiredStateCaller = "operator_route",
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Operator-initiated single-device start.
 
@@ -768,7 +817,7 @@ async def start_node(
     if caller != "verification" and not await is_ready_for_use_async(db, device):
         raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
-    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested")
+    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested", settings=settings)
     await db.commit()
     await db.refresh(node)
     return node
@@ -818,6 +867,7 @@ async def restart_node(
     device: Device,
     *,
     caller: DesiredStateCaller = "operator_restart",
+    settings: SettingsReader,
 ) -> AppiumNode:
     """Operator-initiated single-device restart. Routes through
     ``operator_node_lifecycle.request_restart`` so the operator:start intent
@@ -825,9 +875,9 @@ async def restart_node(
     expires_at on every restart).
     """
     if not device.appium_node or not device.appium_node.observed_running:
-        return await start_node(db, device, caller=caller)
+        return await start_node(db, device, caller=caller, settings=settings)
 
-    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
+    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested", settings=settings)
     await db.commit()
     await db.refresh(node)
     return node

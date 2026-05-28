@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.services.heartbeat import _ingest_appium_restart_events
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -35,7 +38,7 @@ async def test_restart_succeeded_queues_node_state_changed(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
     await settle_after_commit_tasks()
 
@@ -66,7 +69,7 @@ async def test_restart_exhausted_queues_node_crash_and_device_crashed(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
     await settle_after_commit_tasks()
 
@@ -100,7 +103,7 @@ async def test_restart_failed_dropped_on_rollback(
         }
     }
 
-    await _ingest_appium_restart_events(db_session, host, health_data)
+    await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.rollback()
     await settle_after_commit_tasks()
 
@@ -118,11 +121,6 @@ async def test_probe_failure_threshold_writes_restart_intent(
     _, device, node = await seed_host_and_running_node(db_session, identity="probe-fail-1")
     event_bus_capture.clear()
 
-    monkeypatch.setattr(
-        "app.settings.service.settings_service.get",
-        lambda key: 1 if key == "general.node_max_failures" else 30,
-    )
-
     await node_health._process_node_health(
         db_session,
         node,
@@ -132,6 +130,14 @@ async def test_probe_failure_threshold_writes_restart_intent(
         observed_port=node.port,
         observed_pid=node.pid,
         observed_active_connection_target=node.active_connection_target,
+        settings=FakeSettingsReader(
+            {
+                "general.node_max_failures": 1,
+                "appium.startup_timeout_sec": 30,
+                "appium_reconciler.restart_window_sec": 30,
+            }
+        ),
+        publisher=Mock(),
     )
     await db_session.commit()
     await settle_after_commit_tasks()

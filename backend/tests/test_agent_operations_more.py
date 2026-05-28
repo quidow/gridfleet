@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from app.agent_comm import operations as agent_operations
 from app.core.errors import AgentResponseError, AgentUnreachableError
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory, QueryParams, RequestHeaders
+
+SETTINGS = FakeSettingsReader()
 
 
 def _response(method: str, url: str, *, status_code: int = 200, payload: object) -> httpx.Response:
@@ -136,6 +140,8 @@ async def test_pack_device_properties_returns_none_for_404() -> None:
         "demo",
         "appium-uiautomator2",
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload is None
@@ -155,6 +161,8 @@ async def test_pack_device_properties_success_and_error_paths() -> None:
         "demo",
         "appium-uiautomator2",
         http_client_factory=_strict_client_factory(success),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     ) == {"serial": "demo"}
 
     failure = StrictAgentClient(
@@ -172,6 +180,8 @@ async def test_pack_device_properties_success_and_error_paths() -> None:
             "demo",
             "appium-uiautomator2",
             http_client_factory=_strict_client_factory(failure),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 
@@ -194,6 +204,8 @@ async def test_normalize_pack_device_returns_none_for_404() -> None:
             platform_id="android",
             raw_input={},
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
         is None
     )
@@ -212,6 +224,8 @@ async def test_get_pack_devices_uses_discovery_timeout() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload == {"candidates": []}
@@ -238,6 +252,8 @@ async def test_appium_status_returns_none_for_non_200() -> None:
         5100,
         4723,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload is None
@@ -258,6 +274,8 @@ async def test_appium_status_returns_none_for_invalid_payload() -> None:
         5100,
         4723,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
     assert result is None
 
@@ -274,6 +292,8 @@ async def test_agent_health_raises_response_error_for_non_200() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
     assert caught.value.http_status == 503
@@ -292,6 +312,8 @@ async def test_agent_host_telemetry_returns_payload() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload == {"cpu_percent": 71.2}
@@ -311,6 +333,8 @@ async def test_agent_host_telemetry_returns_none_for_non_200() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload is None
@@ -334,6 +358,8 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
             http_client_factory=_strict_client_factory(health_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
     with pytest.raises(AgentUnreachableError, match="lifecycle action reconnect failed"):
@@ -346,6 +372,8 @@ async def test_pack_device_health_and_lifecycle_raise_for_invalid_payload() -> N
             action="reconnect",
             args={"ip_address": "10.0.0.20"},
             http_client_factory=_strict_client_factory(lifecycle_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 
@@ -362,6 +390,8 @@ async def test_agent_reconfigure_invalid_payload() -> None:
             stop_pending=True,
             grid_run_id=None,
             http_client_factory=_strict_client_factory(reconfigure_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 
@@ -386,6 +416,8 @@ async def test_pack_device_health_includes_optional_probe_params() -> None:
         ip_ping_timeout_sec=1.5,
         ip_ping_count=3,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
     assert result["healthy"] is True
     params = client.get_calls[0][1]["params"]
@@ -416,6 +448,8 @@ async def test_pack_device_telemetry_returns_none_for_404_and_passes_optional_pa
             connection_type=None,
             ip_address=None,
             http_client_factory=_strict_client_factory(not_found),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
         is None
     )
@@ -433,6 +467,8 @@ async def test_pack_device_telemetry_returns_none_for_404_and_passes_optional_pa
         connection_type="usb",
         ip_address="10.0.0.9",
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     ) == {"ok": True}
     params = client.get_calls[0][1]["params"]
     assert params["connection_type"] == "usb"
@@ -454,6 +490,8 @@ async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
             4723,
             lines=10,
             http_client_factory=_strict_client_factory(logs_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
     with pytest.raises(AgentUnreachableError, match="fetch tool status failed"):
@@ -461,6 +499,8 @@ async def test_appium_logs_and_tool_status_raise_for_invalid_payload() -> None:
             "10.0.0.5",
             5100,
             http_client_factory=_strict_client_factory(tool_status_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 
@@ -477,6 +517,8 @@ async def test_list_plugins_filters_non_dict_payload_entries() -> None:
         "10.0.0.5",
         5100,
         http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
     assert payload == [{"name": "images", "version": "1.0.0"}, {"name": "execute-driver", "version": "2.0.0"}]
@@ -493,6 +535,8 @@ async def test_sync_plugins_endpoint_returns_valid_payload() -> None:
             5100,
             plugins=[],
             http_client_factory=_strict_client_factory(sync_plugins_client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
     ) == {"installed": []}
 
@@ -512,6 +556,8 @@ async def test_sync_plugins_raises_for_invalid_payload() -> None:
             5100,
             plugins=[{"name": "images"}],
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 
@@ -533,6 +579,8 @@ async def test_pack_device_lifecycle_resolve_raises_for_invalid_payload() -> Non
             platform_id="android_mobile",
             action="resolve",
             http_client_factory=_strict_client_factory(client),
+            settings=SETTINGS,
+            circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
         )
 
 

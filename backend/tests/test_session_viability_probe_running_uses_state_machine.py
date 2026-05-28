@@ -5,7 +5,7 @@ side effects; the previous direct write skipped them.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -18,6 +18,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
 from app.sessions.service_viability import run_session_viability_probe
+from tests.fakes import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -88,6 +89,8 @@ async def test_probe_running_busy_mark_writes_device_event_row(
             db_session,
             loaded_device,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     assert result["status"] == "passed"

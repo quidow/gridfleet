@@ -4,9 +4,10 @@ from typing import Any
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.events import event_bus
 from app.events.models import SystemEvent
 from app.webhooks.models import WebhookDelivery
+from tests.helpers import drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 WEBHOOK_PAYLOAD = {
     "name": "CI Notifications",
@@ -23,7 +24,7 @@ async def _create_webhook(client: AsyncClient, **overrides: object) -> dict[str,
 
 
 async def _wait_for_deliveries(client: AsyncClient, webhook_id: str) -> dict[str, Any]:
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     resp = await client.get(f"/api/webhooks/{webhook_id}/deliveries")
     assert resp.status_code == 200
     payload = resp.json()

@@ -1,18 +1,20 @@
 import asyncio
 import contextlib
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.services import heartbeat as heartbeat
+from app.appium_nodes.services.heartbeat import HeartbeatLoop
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
-from app.settings import settings_service
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -48,6 +50,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         reason: str | None = None,
         publish_event: bool = True,
         severity: str | None = None,
+        publisher: object = None,
     ) -> None:
         if device.id == device_id and operational_state == DeviceOperationalState.offline:
             inside_offline_branch.set()
@@ -64,6 +67,7 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             reason=reason,
             publish_event=publish_event,
             severity=severity,
+            publisher=publisher,
         )
 
     _dead_result = HeartbeatPingResult(
@@ -80,11 +84,13 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             patch.object(heartbeat, "_ping_agent", new=AsyncMock(return_value=_dead_result)),
             patch.object(heartbeat, "set_operational_state", new=gated_set_operational_state),
             patch.object(heartbeat, "assert_current_leader", new=AsyncMock()),
-            patch.object(heartbeat, "async_session", db_session_maker),
         ):
             async with db_session_maker() as db:
+                services = Mock()
+                services.session_factory = db_session_maker
+                loop = HeartbeatLoop(services=services)
                 for _ in range(threshold):
-                    await heartbeat._check_hosts(db)
+                    await loop._check_hosts(db, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     async def race_writer() -> None:
         await asyncio.wait_for(inside_offline_branch.wait(), timeout=2.0)

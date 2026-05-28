@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+
 
 _DEFAULT_TIMEOUT_SEC: float = 30.0
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
@@ -55,6 +57,7 @@ async def dispatch_feature_action(
     args: dict[str, Any],
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _DEFAULT_TIMEOUT_SEC,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> FeatureActionResult:
     """Forward a feature-action call to the host agent and persist the result.
 
@@ -105,6 +108,7 @@ async def dispatch_feature_action(
             body=body,
             http_client_factory=http_client_factory,
             timeout=timeout,
+            circuit_breaker=circuit_breaker,
         )
     except _AgentDispatchError as exc:
         # Record the degraded state so webhook subscribers learn about the
@@ -145,6 +149,7 @@ async def _call_agent(
     body: dict[str, Any],
     http_client_factory: AgentClientFactory,
     timeout: float | int,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> FeatureActionResult:
     """POST the action body to the agent and parse the response.
 
@@ -166,6 +171,7 @@ async def _call_agent(
                 client=_as_agent_client(client),
                 json_body=body,
                 timeout=timeout,
+                circuit_breaker=circuit_breaker,
             )
     except AgentCallError as exc:
         raise _AgentDispatchError(f"Agent unreachable: {exc.message}") from exc

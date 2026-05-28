@@ -1,14 +1,13 @@
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import DeviceEvent, DeviceEventType
@@ -16,6 +15,8 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from tests.conftest import test_circuit_breaker
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 HOST_PAYLOAD = {
@@ -288,9 +289,9 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
     )
     await db_session.commit()
 
-    threshold = agent_circuit_breaker.failure_threshold()
+    threshold = test_circuit_breaker.failure_threshold()
     for _ in range(threshold):
-        await agent_circuit_breaker.record_failure(host["ip"], error="timeout")
+        await test_circuit_breaker.record_failure(host["ip"], error="timeout")
 
     resp = await client.get(f"/api/hosts/{host['id']}/diagnostics")
     assert resp.status_code == 200
@@ -398,7 +399,7 @@ async def test_get_host_tool_status_proxies_to_agent(client: AsyncClient, db_ses
     assert payload["host"]["node_provider"]["version"] == "fnm"
     assert payload["host"]["node"]["version"] == "24.14.1"
     assert payload["packs"] == {}
-    status_mock.assert_awaited_once_with("10.0.0.40", 5100)
+    status_mock.assert_awaited_once_with("10.0.0.40", 5100, settings=ANY, circuit_breaker=ANY)
 
 
 async def test_get_host_tool_status_requires_online_host(client: AsyncClient) -> None:
@@ -448,7 +449,9 @@ async def test_delete_host_with_attached_devices_returns_conflict(
 async def test_register_host_returns_version_status_and_schedules_discovery(client: AsyncClient) -> None:
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
         scheduled.append((task_fn, args))
 
     with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
@@ -471,10 +474,10 @@ async def test_register_host_returns_version_status_and_schedules_discovery(clie
     assert data["recommended_agent_version"] == "0.3.0"
     assert data["agent_update_available"] is True
     host_id = UUID(data["id"])
-    assert scheduled == [
-        (_auto_discover, (host_id,)),
-        (_auto_prepare_host_diagnostics, (host_id,)),
-    ]
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
 
 async def test_hosts_list_and_detail_include_recommended_agent_version(client: AsyncClient) -> None:
@@ -558,7 +561,9 @@ async def test_register_host_exposes_missing_prerequisites(client: AsyncClient) 
 async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncClient) -> None:
     scheduled: list[tuple[Callable[..., Coroutine[object, object, None]], tuple[object, ...]]] = []
 
-    def capture_schedule(task_fn: Callable[..., Coroutine[object, object, None]], *args: object) -> None:
+    def capture_schedule(
+        task_fn: Callable[..., Coroutine[object, object, None]], *args: object, **_kwargs: object
+    ) -> None:
         scheduled.append((task_fn, args))
 
     with patch("app.hosts.router._fire_and_forget", side_effect=capture_schedule):
@@ -587,10 +592,10 @@ async def test_approve_host_schedules_discovery_and_diagnostics(client: AsyncCli
     assert approve_resp.status_code == 200
     assert approve_resp.json()["agent_version_status"] == "ok"
     host_id = UUID(approve_resp.json()["id"])
-    assert scheduled == [
-        (_auto_discover, (host_id,)),
-        (_auto_prepare_host_diagnostics, (host_id,)),
-    ]
+    assert len(scheduled) == 2
+    assert scheduled[0][0] is _auto_discover
+    assert scheduled[0][1][0] == host_id  # host_id arg
+    assert scheduled[1] == (_auto_prepare_host_diagnostics, (host_id,))
 
     reset_resp = await client.post("/api/settings/reset/agent.auto_accept_hosts")
     assert reset_resp.status_code == 200
@@ -613,9 +618,9 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
         patch("app.hosts.router.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
         patch("app.hosts.router.plugin_service.auto_sync_host_plugins", sync),
     ):
-        await _auto_prepare_host_diagnostics(host.id)
+        await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
-    sync.assert_awaited_once_with(host, [])
+    sync.assert_awaited_once_with(host, [], settings=ANY, circuit_breaker=ANY)
 
 
 @pytest.mark.asyncio

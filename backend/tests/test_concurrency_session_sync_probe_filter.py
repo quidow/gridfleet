@@ -11,6 +11,7 @@ from app.devices.models import DeviceOperationalState
 from app.sessions import service_sync as session_sync
 from app.sessions.models import Session
 from app.sessions.service_viability import PROBE_TEST_NAME
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -65,12 +66,12 @@ async def test_session_sync_does_not_persist_probe_sessions(
         }
     }
 
-    async def fake_status_fetch() -> dict[str, object]:
+    async def fake_status_fetch(*, settings: FakeSettingsReader) -> dict[str, object]:
         return fake_status
 
     monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
 
-    await session_sync._sync_sessions(db_session)
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
 
     sessions = (
         (await db_session.execute(select(Session).where(Session.session_id == "probe-session-1"))).scalars().all()
@@ -113,12 +114,12 @@ async def test_session_sync_does_persist_real_session(
         }
     }
 
-    async def fake_status_fetch() -> dict[str, object]:
+    async def fake_status_fetch(*, settings: FakeSettingsReader) -> dict[str, object]:
         return fake_status
 
     monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
 
-    await session_sync._sync_sessions(db_session)
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
 
     sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()
     assert len(sessions) == 1

@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
@@ -24,8 +24,19 @@ from app.jobs.models import Job
 from app.jobs.queue import reset_stale_running_jobs, run_pending_jobs_once
 from app.packs.models import DriverPack
 from app.sessions.service_viability import get_session_viability
+from tests.conftest import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
+
+
+def _noop_circuit_breaker() -> Mock:
+    """Return a permissive circuit-breaker mock (before_request always allows)."""
+    cb = Mock()
+    cb.before_request = AsyncMock(return_value=None)
+    cb.record_success = AsyncMock()
+    cb.record_failure = AsyncMock()
+    return cb
+
 
 DEVICE_PAYLOAD = {
     "identity_value": "verify-001",
@@ -110,7 +121,9 @@ async def _wait_for_job(
         job = resp.json()
         if job["status"] in {"completed", "failed"}:
             return dict(job)
-        await run_pending_jobs_once(session_factory)
+        await run_pending_jobs_once(
+            session_factory, publisher=AsyncMock(), settings=settings_service, circuit_breaker=_noop_circuit_breaker()
+        )
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
 

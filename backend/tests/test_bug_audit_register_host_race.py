@@ -23,6 +23,8 @@ from sqlalchemy.exc import IntegrityError
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostRegister
 from app.hosts.service import register_host
+from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -82,6 +84,8 @@ async def test_register_host_races_concurrent_same_hostname(
                     agent_version="0.3.0",
                     capabilities={"orchestration_contract_version": 2},
                 ),
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
             )
         except IntegrityError as exc:
             pytest.fail(f"register_host raised IntegrityError on concurrent same-hostname insert: {exc}")

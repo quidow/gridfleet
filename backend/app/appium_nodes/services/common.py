@@ -1,9 +1,13 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from app.appium_nodes.services.capability_keys import core_manager_owned_cap_keys, sanitize_appium_caps
-from app.devices.models import Device
-from app.events.catalog import EventSeverity
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
+    from app.devices.models import Device
+    from app.events.catalog import EventSeverity
 
 
 def node_state_severity(old_state: str, new_state: str) -> EventSeverity:
@@ -19,8 +23,8 @@ def node_state_severity(old_state: str, new_state: str) -> EventSeverity:
     return "info"
 
 
-def get_default_plugins() -> list[str]:
-    configured = settings_service.get("appium.default_plugins")
+def get_default_plugins(*, settings: SettingsReader) -> list[str]:
+    configured = settings.get("appium.default_plugins")
     if not isinstance(configured, str):
         return []
     return [plugin.strip() for plugin in configured.split(",") if plugin.strip()]

@@ -27,6 +27,7 @@ from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.sessions import service_viability
 from app.sessions.service_viability import run_session_viability_probe
 from app.sessions.viability_types import SessionViabilityCheckedBy
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
@@ -108,6 +109,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
             db_session,
             device,
             checked_by=SessionViabilityCheckedBy.manual,
+            settings=FakeSettingsReader({}),
         )
 
     # Fixed behavior: the probe re-checks hold under the lock and raises

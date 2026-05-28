@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from httpx import AsyncClient  # noqa: TC002
@@ -17,7 +17,8 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.runs.models import RunState, TestRun
-from app.settings import settings_service
+from tests.conftest import settings_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
 
@@ -560,7 +561,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
@@ -614,7 +615,9 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     db_session.add(reservation)
     await db_session.commit()
 
-    recovered = await attempt_auto_recovery(db_session, device, source="device_checks", reason="Healthy again")
+    recovered = await attempt_auto_recovery(
+        db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+    )
     assert recovered is False
 
     policy_result = await db_session.execute(select(Device).where(Device.id == device.id))
@@ -682,7 +685,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         device.hold = DeviceHold.maintenance
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
 
     # Exclusion should be cleared
     await db_session.refresh(reservation)
@@ -733,7 +736,7 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session)
+    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
 
     # Stale released row should be untouched
     await db_session.refresh(reservation)

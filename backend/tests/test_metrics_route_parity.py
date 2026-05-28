@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.devices.models import DeviceReservation
-from app.events import event_bus
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -82,7 +82,8 @@ async def test_metrics_route_reports_all_four_cross_domain_gauges(
     )
     await db_session.commit()
 
-    event_bus.reset()
+    event_bus._subscribers.clear()
+    event_bus._log.clear()
     subscriber = event_bus.subscribe()
     try:
         response = await client.get("/metrics")

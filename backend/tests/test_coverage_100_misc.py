@@ -109,8 +109,10 @@ from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.webhooks.schemas import WebhookUpdate
+from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
-event_bus = import_module("app.events.event_bus")
+event_bus_mod = import_module("app.events.event_bus")
 
 
 def test_config_and_error_guard_branches() -> None:
@@ -243,7 +245,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     with state_write_guard.bypass():
         device = Device(id=uuid.uuid4(), name="d", hold=DeviceHold.maintenance)
     monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
-    assert await device_state.set_hold(device, DeviceHold.maintenance) is False
+    assert await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False) is False
 
     assert event_catalog.normalize_public_event_names("bad") == []
     assert event_catalog.normalize_public_event_names(["bad", 1, "device.hold_changed", "device.hold_changed"]) == [
@@ -251,8 +253,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     ]
     assert host_versioning.normalize_agent_version_setting(123) is None
 
-    monkeypatch.setattr(node_service_common.settings_service, "get", lambda _key: [])
-    assert node_service_common.get_default_plugins() == []
+    assert node_service_common.get_default_plugins(settings=FakeSettingsReader({"appium.default_plugins": []})) == []
     device_for_caps = SimpleNamespace(
         id=uuid.uuid4(),
         name="device",
@@ -347,8 +348,18 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    assert await device_verification_runner._load_persisted_job(str(uuid.uuid4()), SessionCtx) is None
-    await device_verification_runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"}, SessionCtx)
+    assert (
+        await device_verification_runner._load_persisted_job(str(uuid.uuid4()), SessionCtx, publisher=AsyncMock())
+        is None
+    )
+    await device_verification_runner.run_persisted_verification_job(
+        str(uuid.uuid4()),
+        {"mode": "create"},
+        SessionCtx,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
 
 
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -380,26 +391,26 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     with pytest.raises(SystemExit):
         await control_plane_leader_watcher._exit_after_preempt()
 
-    monkeypatch.setattr(event_bus.event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
-    monkeypatch.setattr(event_bus.logger, "exception", Mock())
-    await event_bus._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)])
-    event_bus.logger.exception.assert_called_once()
+    monkeypatch.setattr(event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
+    monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
+    await event_bus_mod._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)], event_bus)
+    event_bus_mod.logger.exception.assert_called_once()
 
     listeners: dict[str, object] = {}
 
     def capture_listener(_target: object, identifier: str, fn: object, **_kwargs: object) -> None:
         listeners[identifier] = fn
 
-    monkeypatch.setattr(event_bus.sa_event, "listen", capture_listener)
+    monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
     sync_session = SimpleNamespace(info={})
-    event_bus.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"})
-    event_bus.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"})
-    listener = sync_session.info[event_bus._PENDING_EVENTS_LISTENER_KEY]
+    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
+    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
+    listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
-    event_bus.event_bus._handler_tasks.clear()
-    sync_session.info[event_bus._PENDING_EVENTS_KEY] = []
+    event_bus._handler_tasks.clear()
+    sync_session.info[event_bus_mod._PENDING_EVENTS_KEY] = []
     listeners["after_commit"](sync_session)  # type: ignore[operator]
-    assert event_bus.event_bus._handler_tasks == set()
+    assert event_bus._handler_tasks == set()
 
     assert (
         appium_reconciler.detect_orphans(
@@ -418,7 +429,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    clear = appium_reconciler._clear_token_factory(require_leader=True, session_scope=SessionCtx)
+    clear = appium_reconciler._clear_token_factory(
+        require_leader=True, session_scope=SessionCtx, settings=FakeSettingsReader({})
+    )
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
     await clear(row=SimpleNamespace(device_id=uuid.uuid4()), reason="done")
@@ -463,14 +476,32 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             ExecuteResult(no_host_device),
         ]
     )
-    await agent_reconfigure_delivery.deliver_agent_reconfigures(reconfigure_db, row.device_id)
+    await agent_reconfigure_delivery.deliver_agent_reconfigures(
+        reconfigure_db, row.device_id, settings=FakeSettingsReader(), circuit_breaker=Mock()
+    )
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 
-    monkeypatch.setattr(data_cleanup.settings_service, "get", lambda key: 0 if key == "retention.audit_log_days" else 1)
     cleanup_db = AsyncMock()
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
-    monkeypatch.setattr(data_cleanup.event_bus, "publish", AsyncMock())
-    await data_cleanup._cleanup_old_data(cleanup_db)
+    await data_cleanup._cleanup_old_data(
+        cleanup_db,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader(
+            {
+                "retention.audit_log_days": 0,
+                "retention.event_log_days": 1,
+                "retention.webhook_delivery_days": 1,
+                "retention.system_event_days": 1,
+                "retention.background_loop_heartbeat_days": 1,
+                "retention.automation_artifact_days": 1,
+                "retention.host_resource_telemetry_hours": 1,
+                "retention.hardware_telemetry_days": 1,
+                "retention.diagnostic_snapshots_days": 1,
+                "retention.agent_log_days": 1,
+                "retention.test_data_audit_days": 1,
+            }
+        ),
+    )
 
     assert session_viability._format_http_error(
         session_viability.httpx.RequestError(
@@ -535,7 +566,10 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
 
     class DummyClient:
-        async def get_pack_devices(self, _host: str, _port: int) -> dict[str, object]:
+        async def get_pack_devices(
+            self, _host: str, _port: int, *, settings: object, circuit_breaker: object
+        ) -> dict[str, object]:
+            del settings, circuit_breaker
             return {"devices": []}
 
     discovery_db = AsyncMock()
@@ -547,18 +581,30 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         discovery_db,
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
         agent_get_pack_devices=DummyClient().get_pack_devices,
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     assert result.new_devices == []
 
     monkeypatch.setattr(plugin_service, "list_agent_plugins", AsyncMock(return_value=[{"name": "images"}]))
-    assert await plugin_service.fetch_host_plugins(SimpleNamespace(ip="127.0.0.1", agent_port=5100)) == [
-        {"name": "images"}
-    ]
+    assert await plugin_service.fetch_host_plugins(
+        SimpleNamespace(ip="127.0.0.1", agent_port=5100), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    ) == [{"name": "images"}]
 
     offline_host = SimpleNamespace(status=SimpleNamespace(value="offline"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(offline_host, [{"name": "images"}]) is None
+    assert (
+        await plugin_service.auto_sync_host_plugins(
+            offline_host, [{"name": "images"}], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
+        is None
+    )
     online_host = SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host")
-    assert await plugin_service.auto_sync_host_plugins(online_host, []) is None
+    assert (
+        await plugin_service.auto_sync_host_plugins(
+            online_host, [], settings=FakeSettingsReader(), circuit_breaker=Mock()
+        )
+        is None
+    )
 
     class ClientManager:
         async def __aenter__(self) -> object:
@@ -579,6 +625,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
+            circuit_breaker=Mock(),
         )
     monkeypatch.setattr(
         pack_feature_dispatch_service,
@@ -592,6 +639,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
+            circuit_breaker=Mock(),
         )
 
     feature_db = AsyncMock()
@@ -635,7 +683,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         is appium_reconciler_agent.async_session
     )
     monkeypatch.setattr(appium_reconciler_agent, "candidate_ports", AsyncMock(return_value=[4799]))
-    assert await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4()) == 4799
+    assert (
+        await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4(), settings=FakeSettingsReader({}))
+        == 4799
+    )
 
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
@@ -664,11 +715,11 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     group_db.execute = AsyncMock(
         side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
     )
-    listed = await device_group_service.list_groups(group_db)
+    listed = await device_group_service.list_groups(group_db, settings=FakeSettingsReader({}))
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
-    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4()) is False
+    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4(), publisher=event_bus) is False
 
     assert device_write._is_transport_identity(identity_value="10.0.0.1:5555", connection_target=None, ip_address=None)
     assert device_write._is_transport_identity(identity_value="10.0.0.1", connection_target=None, ip_address=None)
@@ -710,9 +761,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     test_data_db = TestDataDb()
     monkeypatch.setattr(test_data_service, "queue_event_for_session", Mock())
     device = SimpleNamespace(id=uuid.uuid4(), name="device", test_data={"a": 1})
-    assert await test_data_service.replace_device_test_data(test_data_db, device, {"b": 2}, changed_by="operator") == {
-        "b": 2
-    }
+    assert await test_data_service.replace_device_test_data(
+        test_data_db, device, {"b": 2}, changed_by="operator", publisher=event_bus
+    ) == {"b": 2}
 
     host_db = AsyncMock()
     host_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
@@ -741,6 +792,8 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
         session_factory=RecoveryCtx,
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
     )
 
     class QueueCtx:
@@ -754,7 +807,12 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     monkeypatch.setattr(job_queue, "claim_next_job", AsyncMock(return_value=job))
-    assert await job_queue.run_pending_jobs_once(QueueCtx) is True
+    assert (
+        await job_queue.run_pending_jobs_once(
+            QueueCtx, publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+        is True
+    )
 
     storage = pack_storage_service.PackStorageService(tmp_path)
     outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"
@@ -809,6 +867,8 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     await plugin_service.auto_sync_host_plugins(
         SimpleNamespace(status=SimpleNamespace(value="online"), hostname="host"),
         [{"name": "images"}],
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
     )
     plugin_service.sync_host_plugins.assert_awaited_once()
 

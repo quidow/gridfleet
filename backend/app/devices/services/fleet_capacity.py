@@ -10,17 +10,18 @@ from sqlalchemy import and_, func, or_, select, text
 from app.analytics import schemas as analytics_schemas
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode
-from app.core.database import async_session
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.grid import service as grid_service
 from app.hosts.models import Host, HostStatus
 from app.sessions.filters import exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.protocols import SettingsReader
+    from app.devices.services_container import DeviceServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "fleet_capacity_collector"
@@ -332,8 +333,9 @@ async def collect_capacity_snapshot_once(
     db: AsyncSession,
     *,
     captured_at: datetime | None = None,
+    settings: SettingsReader,
 ) -> AnalyticsCapacitySnapshot | None:
-    grid_data = await grid_service.get_grid_status()
+    grid_data = await grid_service.get_grid_status(settings=settings)
     grid_counts = _extract_grid_counts(grid_data)
     if grid_counts is None:
         logger.warning("Fleet capacity snapshot skipped because Grid status was unavailable")
@@ -363,12 +365,16 @@ async def collect_capacity_snapshot_once(
     return snapshot
 
 
-async def fleet_capacity_collector_loop() -> None:
-    while True:
-        interval = float(settings_service.get("general.fleet_capacity_snapshot_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await collect_capacity_snapshot_once(db)
-        except Exception:
-            logger.exception("Fleet capacity collector failed")
-        await asyncio.sleep(interval)
+class FleetCapacityLoop:
+    def __init__(self, *, services: DeviceServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        while True:
+            interval = float(self._services.settings.get("general.fleet_capacity_snapshot_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await collect_capacity_snapshot_once(db, settings=self._services.settings)
+            except Exception:
+                logger.exception("Fleet capacity collector failed")
+            await asyncio.sleep(interval)

@@ -4,6 +4,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -12,23 +13,45 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from app.agent_comm.circuit_breaker import agent_circuit_breaker
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.agent_comm.dependencies import get_agent_comm_services
+from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
-from app.core.leader import settings_provider as leader_settings_provider
 from app.core.shutdown import shutdown_coordinator
+from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
-from app.events import event_bus
+from app.devices.services_container import DeviceServices
+from app.events.dependencies import get_event_services
+from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
+from app.events.services_container import EventServices
+from app.grid.dependencies import get_grid_services
+from app.grid.services_container import GridServices
+from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
+from app.hosts.services_container import HostServices
 from app.main import app
-from app.settings import settings_service
+from app.packs.dependencies import get_pack_services
+from app.packs.services_container import PackServices
+from app.runs.dependencies import get_run_services
+from app.runs.services_container import RunServices
+from app.sessions.dependencies import get_session_services
+from app.sessions.services_container import SessionServices
+from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
+from app.settings.service import SettingsService
+from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.models import Webhook, WebhookDelivery
-from tests.helpers import create_host
+from tests.helpers import create_host, reset_event_bus, test_event_bus
+
+settings_service = SettingsService()
+test_http_pool = AgentHttpPool()
+test_circuit_breaker = AgentCircuitBreaker(publisher=test_event_bus, settings=settings_service)
 
 
 def _test_database_url(base_database_url: str, worker_id: str | None = None) -> str:
@@ -97,8 +120,6 @@ async def _ensure_test_database_exists() -> None:
 
 async def _shutdown_control_plane_services() -> None:
     await shutdown_heartbeat_background_tasks()
-    await settings_service.shutdown()
-    await event_bus.shutdown()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -142,21 +163,48 @@ async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngi
             )
         )
     yield engine
-    # Drain event-bus handler tasks (and other control-plane background tasks)
-    # before DROP SCHEMA. After-commit handlers spawned during the test query
-    # tables in the per-test schema; if they outlive the test body they hold
+    # Drain heartbeat background tasks and event-bus handler tasks before
+    # DROP SCHEMA. After-commit handlers spawned during the test query tables
+    # in the per-test schema; if they outlive the test body they hold
     # AccessShareLock that deadlocks the AccessExclusiveLock taken by
-    # DROP SCHEMA CASCADE. autouse reset_control_plane_state runs its
-    # post-yield shutdown LATER than this fixture's teardown, so we must
-    # shut services down here too.
+    # DROP SCHEMA CASCADE. autouse reset_test_event_bus runs its post-yield
+    # shutdown LATER than this fixture's teardown, so we must shut the event
+    # bus down here too.
     await _shutdown_control_plane_services()
+    await test_event_bus.shutdown()
     async with engine.begin() as conn:
         await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
     await engine.dispose()
 
 
+@pytest.fixture
+def _test_event_bus() -> EventBus:
+    return test_event_bus
+
+
 @pytest_asyncio.fixture(autouse=True)
-async def reset_control_plane_state() -> AsyncGenerator[None]:
+async def reset_test_event_bus(_test_event_bus: EventBus) -> AsyncGenerator[None]:
+    await _test_event_bus.shutdown()
+    reset_event_bus(_test_event_bus)
+    yield
+    await _test_event_bus.shutdown()
+    reset_event_bus(_test_event_bus)
+
+
+@pytest.fixture
+def _test_circuit_breaker() -> AgentCircuitBreaker:
+    return test_circuit_breaker
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_test_circuit_breaker(_test_circuit_breaker: AgentCircuitBreaker) -> AsyncGenerator[None]:
+    _test_circuit_breaker._states.clear()
+    yield
+    _test_circuit_breaker._states.clear()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_process_config() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
     from app.grid import grid_settings
@@ -167,24 +215,10 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
     grid_snapshot = grid_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
-    leader_settings_provider.reset_for_tests()
-    leader_settings_provider.register_settings_provider(settings_service.get)
     await _shutdown_control_plane_services()
-    event_bus.reset()
-    agent_circuit_breaker.reset()
     shutdown_coordinator.reset()
-    # Ensure circuit-breaker settings are always present even without a DB session.
-    for key in (
-        "agent.circuit_breaker_failure_threshold",
-        "agent.circuit_breaker_cooldown_seconds",
-    ):
-        if key not in settings_service._cache:
-            defn = SETTINGS_REGISTRY[key]
-            settings_service._cache[key] = resolve_default(defn)
     yield
     await _shutdown_control_plane_services()
-    event_bus.reset()
-    agent_circuit_breaker.reset()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
     # snapshots taken before yield so auth, agent, pack, and grid state
@@ -197,25 +231,24 @@ async def reset_control_plane_state() -> AsyncGenerator[None]:
         setattr(grid_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
-    leader_settings_provider.reset_for_tests()
 
 
 @pytest_asyncio.fixture
-async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     """Yield a configured async_sessionmaker bound to the test engine.
 
     Wires the same control-plane services (event_bus, settings_service,
     webhook_dispatcher) as db_session so ORM insertions that trigger
     event-bus side effects work correctly.
     """
+    await settings_service.shutdown()
     session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
         setup_database, class_=AsyncSession, expire_on_commit=False
     )
-    event_bus.configure(session_factory=session_factory, engine=setup_database)
+    test_event_bus.configure(session_factory=session_factory, engine=setup_database)
     settings_service.configure_store_refresh(session_factory)
-    webhook_dispatcher.configure(session_factory)
-    event_bus.register_handler(settings_service.handle_system_event)
-    event_bus.register_handler(webhook_dispatcher.handle_system_event)
+    test_event_bus.register_handler(settings_service.handle_system_event)
+    test_event_bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))
     settings_service._cache.clear()
     settings_service._overrides.clear()
     settings_service._defaults.clear()
@@ -224,7 +257,16 @@ async def db_session_maker(setup_database: AsyncEngine) -> async_sessionmaker[As
         settings_service._defaults[key] = default_value
         settings_service._cache[key] = default_value
     settings_service._cache["agent.recommended_version"] = "0.3.0"
-    return session_factory
+    # Ensure circuit-breaker settings are always present even without a DB session.
+    for key in (
+        "agent.circuit_breaker_failure_threshold",
+        "agent.circuit_breaker_cooldown_seconds",
+    ):
+        if key not in settings_service._cache:
+            defn = SETTINGS_REGISTRY[key]
+            settings_service._cache[key] = resolve_default(defn)
+    yield session_factory
+    await settings_service.shutdown()
 
 
 @pytest_asyncio.fixture
@@ -249,7 +291,92 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
+    def override_get_event_services() -> EventServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return EventServices(  # type: ignore[arg-type]
+            publisher=test_event_bus,
+            subscriber=test_event_bus,
+            reader=test_event_bus,
+            session_factory=sf,
+            engine=db_session.bind,
+        )
+
+    def override_get_settings_services() -> SettingsServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return SettingsServices(reader=settings_service, service=settings_service, session_factory=sf)
+
+    def override_get_agent_comm_services() -> AgentCommServices:
+        return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
+
+    def override_get_device_services() -> DeviceServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return DeviceServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            session_factory=sf,
+            circuit_breaker=Mock(),
+        )
+
+    def override_get_host_services() -> HostServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return HostServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            pool=test_http_pool,
+            circuit_breaker=test_circuit_breaker,
+            session_factory=sf,
+        )
+
+    def override_get_session_services() -> SessionServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return SessionServices(settings=settings_service, session_factory=sf)
+
+    def override_get_run_services() -> RunServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return RunServices(publisher=test_event_bus, settings=settings_service, session_factory=sf)
+
+    def override_get_grid_services() -> GridServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return GridServices(settings=settings_service, session_factory=sf)
+
+    def override_get_pack_services() -> PackServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return PackServices(session_factory=sf)
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_event_services] = override_get_event_services
+    app.dependency_overrides[get_settings_services] = override_get_settings_services
+    app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
+    app.dependency_overrides[get_device_services] = override_get_device_services
+    app.dependency_overrides[get_host_services] = override_get_host_services
+    app.dependency_overrides[get_session_services] = override_get_session_services
+    app.dependency_overrides[get_run_services] = override_get_run_services
+    app.dependency_overrides[get_grid_services] = override_get_grid_services
+    app.dependency_overrides[get_pack_services] = override_get_pack_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
@@ -289,7 +416,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     async def _fake_publish(name: str, payload: dict[str, Any], severity: str | None = None) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.events.event_bus.publish", _fake_publish)
+    monkeypatch.setattr(test_event_bus, "publish", _fake_publish)
     return captured
 
 

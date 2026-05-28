@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -11,6 +11,7 @@ from app.appium_nodes.services import reconciler_agent as node_service
 from app.devices.models import Device
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -108,6 +109,8 @@ async def test_restart_node_via_agent_locks_device_and_node(
                     target,
                     target_node,
                     http_client_factory=httpx.AsyncClient,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
                 )
             await session.commit()
 

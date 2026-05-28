@@ -37,6 +37,7 @@ from app.devices.services import (
 )
 from app.runs import service as run_service
 from app.sessions import service as session_service
+from app.settings.dependencies import SettingsServicesDep
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
@@ -101,14 +102,17 @@ DeviceFiltersDep = Annotated[DeviceQueryFilters, Depends(build_device_query_filt
 async def list_devices(
     filters: DeviceFiltersDep,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     limit: int | None = Query(None, ge=1, le=500),
     offset: int | None = Query(None, ge=0),
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if limit is not None:
         effective_offset = offset if offset is not None else 0
-        devices, total = await device_service.list_devices_paginated(db, filters, limit, effective_offset)
+        devices, total = await device_service.list_devices_paginated(
+            db, filters, limit, effective_offset, settings=settings_services.reader
+        )
     else:
-        devices = await device_service.list_devices_by_filters(db, filters)
+        devices = await device_service.list_devices_by_filters(db, filters, settings=settings_services.reader)
         total = None
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
@@ -123,6 +127,7 @@ async def list_devices(
         payload = await device_presenter.serialize_device(
             db,
             device,
+            settings=settings_services.reader,
             reservation_context=reservation_context,
             health_summary=health_summary_map.get(str(device.id)),
             platform_label=label_map.get((device.pack_id, device.platform_id)),
@@ -140,7 +145,9 @@ async def list_devices(
 
 
 @router.get("/by-connection-target/{target}", response_model=DeviceRead)
-async def get_device_by_connection_target(target: str, db: DbDep) -> dict[str, Any]:
+async def get_device_by_connection_target(
+    target: str, db: DbDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     result = (
         await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
     ).scalar_one_or_none()
@@ -151,11 +158,13 @@ async def get_device_by_connection_target(target: str, db: DbDep) -> dict[str, A
         pack_id=result.pack_id,
         platform_id=result.platform_id,
     )
-    return await device_presenter.serialize_device(db, result, platform_label=platform_label)
+    return await device_presenter.serialize_device(
+        db, result, settings=settings_services.reader, platform_label=platform_label
+    )
 
 
 @router.get("/{device_id}", response_model=DeviceDetail)
-async def get_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def get_device(device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     platform_label = await platform_label_service.load_platform_label(
         db,
@@ -165,6 +174,7 @@ async def get_device(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     return await device_presenter.serialize_device_detail(
         db,
         device,
+        settings=settings_services.reader,
         health_summary=device_health.build_public_summary(device),
         platform_label=platform_label,
     )
@@ -177,7 +187,9 @@ async def device_capabilities(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]
 
 
 @router.patch("/{device_id}", response_model=DeviceRead)
-async def update_device(device_id: uuid.UUID, data: DevicePatch, db: DbDep) -> dict[str, Any]:
+async def update_device(
+    device_id: uuid.UUID, data: DevicePatch, db: DbDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     try:
         device = await device_service.update_device(db, device_id, data)
     except DeviceIdentityConflictError as e:
@@ -186,7 +198,7 @@ async def update_device(device_id: uuid.UUID, data: DevicePatch, db: DbDep) -> d
         raise HTTPException(status_code=422, detail=str(e)) from e
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    return await device_presenter.serialize_device(db, device)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
 
 
 @router.delete("/{device_id}", status_code=204)

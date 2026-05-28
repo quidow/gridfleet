@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.appium_nodes.services.heartbeat import _apply_host_ping_result
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -37,7 +38,15 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         http_status=200,
         error_category=None,
     )
-    await _apply_host_ping_result(db_session, db_host, success, guard_active=False)
+    await _apply_host_ping_result(
+        db_session,
+        db_host,
+        success,
+        guard_active=False,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        session_factory=lambda: db_session,
+    )
     await db_session.commit()
     refreshed = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalars().one()
     assert refreshed.last_heartbeat is not None
@@ -65,6 +74,9 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         guard_active=True,
         guard_gap_sec=150.0,
         guard_threshold_sec=45.0,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        session_factory=lambda: db_session,
     )
     await db_session.commit()
     await db_session.refresh(db_host)

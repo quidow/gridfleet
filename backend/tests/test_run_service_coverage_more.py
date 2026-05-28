@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.exc import NoResultFound
@@ -15,7 +15,9 @@ from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
 RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
@@ -223,18 +225,18 @@ async def test_run_listing_cursor_and_state_transition_branches(db_session: Asyn
     assert empty_page.items == []
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.signal_ready(db_session, uuid.uuid4())
+        await run_service.signal_ready(db_session, uuid.uuid4(), publisher=event_bus)
     with pytest.raises(ValueError, match="Cannot signal ready"):
-        await run_service.signal_ready(db_session, active.id)
+        await run_service.signal_ready(db_session, active.id, publisher=event_bus)
 
-    ready = await run_service.signal_ready(db_session, older.id)
+    ready = await run_service.signal_ready(db_session, older.id, publisher=event_bus)
     assert ready.state == RunState.active
     assert ready.started_at is not None
 
-    already_active = await run_service.signal_active(db_session, active.id)
+    already_active = await run_service.signal_active(db_session, active.id, publisher=event_bus)
     assert already_active.state == RunState.active
     with pytest.raises(ValueError, match="Cannot signal active"):
-        await run_service.signal_active(db_session, terminal.id)
+        await run_service.signal_active(db_session, terminal.id, publisher=event_bus)
 
     before = terminal.last_heartbeat
     heartbeat_terminal = await run_service.heartbeat(db_session, terminal.id)
@@ -272,31 +274,33 @@ async def test_run_terminal_transition_paths(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.complete_run(db_session, uuid.uuid4())
+        await run_service.complete_run(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
     with pytest.raises(ValueError, match="terminal state"):
-        await run_service.complete_run(db_session, terminal.id)
-    completed = await run_service.complete_run(db_session, active.id)
+        await run_service.complete_run(db_session, terminal.id, publisher=event_bus, settings=FakeSettingsReader())
+    completed = await run_service.complete_run(
+        db_session, active.id, publisher=event_bus, settings=FakeSettingsReader()
+    )
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cancel_run(db_session, uuid.uuid4())
-    cancelled = await run_service.cancel_run(db_session, cancel.id)
+        await run_service.cancel_run(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+    cancelled = await run_service.cancel_run(db_session, cancel.id, publisher=event_bus, settings=FakeSettingsReader())
     assert cancelled.state == RunState.cancelled
 
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db_session, uuid.uuid4())
-    forced = await run_service.force_release(db_session, force.id)
+        await run_service.force_release(db_session, uuid.uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+    forced = await run_service.force_release(db_session, force.id, publisher=event_bus, settings=FakeSettingsReader())
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
-    await run_service.expire_run(db_session, expired, "timeout")
+    await run_service.expire_run(db_session, expired, "timeout", publisher=event_bus, settings=FakeSettingsReader())
     await db_session.refresh(expired)
     assert expired.state == RunState.expired
     assert expired.error == "timeout"
 
     before = terminal.completed_at
-    await run_service.expire_run(db_session, terminal, "ignored")
+    await run_service.expire_run(db_session, terminal, "ignored", publisher=event_bus, settings=FakeSettingsReader())
     await db_session.refresh(terminal)
     assert terminal.completed_at == before
 
@@ -366,31 +370,48 @@ async def test_cooldown_device_guard_paths(
         operational_state=DeviceOperationalState.available,
     )
     run = await create_reserved_run(db_session, name="cooldown-run", devices=[device], state=RunState.active)
-    settings = {
-        "general.device_cooldown_max_sec": 30,
-        "general.device_cooldown_escalation_threshold": 3,
-    }
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.settings_service.get", lambda key: settings[key])
+    settings = FakeSettingsReader(
+        {
+            "general.device_cooldown_max_sec": 30,
+            "general.device_cooldown_escalation_threshold": 3,
+        }
+    )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="ttl_seconds"):
-        await run_service.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=31)
+        await run_service.cooldown_device(
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=31, settings=settings, circuit_breaker=Mock()
+        )
     with pytest.raises(ValueError, match="Cooldown reason"):
-        await run_service.cooldown_device(db_session, run.id, device.id, reason=" ", ttl_seconds=5)
+        await run_service.cooldown_device(
+            db_session, run.id, device.id, reason=" ", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+        )
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.cooldown_device(db_session, uuid.uuid4(), device.id, reason="flaky", ttl_seconds=5)
+        await run_service.cooldown_device(
+            db_session,
+            uuid.uuid4(),
+            device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
+        )
 
     run.state = RunState.completed
     await db_session.commit()
     with pytest.raises(ValueError, match="terminal run"):
-        await run_service.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=5)
+        await run_service.cooldown_device(
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+        )
 
     run.state = RunState.active
     await db_session.commit()
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     with pytest.raises(ValueError, match="Device not found"):
-        await run_service.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=5)
+        await run_service.cooldown_device(
+            db_session, run.id, device.id, reason="flaky", ttl_seconds=5, settings=settings, circuit_breaker=Mock()
+        )
 
     other_device = await create_device(
         db_session,
@@ -402,7 +423,15 @@ async def test_cooldown_device_guard_paths(
     await db_session.commit()
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=other_device))
     with pytest.raises(ValueError, match="not actively reserved"):
-        await run_service.cooldown_device(db_session, run.id, other_device.id, reason="flaky", ttl_seconds=5)
+        await run_service.cooldown_device(
+            db_session,
+            run.id,
+            other_device.id,
+            reason="flaky",
+            ttl_seconds=5,
+            settings=settings,
+            circuit_breaker=Mock(),
+        )
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_locking.lock_device", AsyncMock(return_value=device))
     excluded_until, count, escalated, threshold = await run_service.cooldown_device(
@@ -411,6 +440,8 @@ async def test_cooldown_device_guard_paths(
         device.id,
         reason="flaky",
         ttl_seconds=5,
+        settings=settings,
+        circuit_breaker=Mock(),
     )
 
     assert excluded_until is not None
@@ -443,7 +474,14 @@ async def test_release_devices_branches_and_session_counts(
 
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=False))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
-    pending_ids = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
+    pending_ids = await run_service._release_devices(
+        db_session,
+        run,
+        commit=False,
+        terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
+        publisher=Mock(),
+    )
     assert pending_ids == [device.id]
     assert run.device_reservations[0].released_at is not None
 
@@ -457,7 +495,7 @@ async def test_release_devices_branches_and_session_counts(
 
     empty = TestRun(name="empty", state=RunState.active, requirements=[], ttl_minutes=1, heartbeat_timeout_sec=1)
     empty.device_reservations = []
-    assert await run_service._release_devices(db_session, empty, commit=True) == []
+    assert await run_service._release_devices(db_session, empty, commit=True, settings=FakeSettingsReader()) == []
 
 
 async def test_mark_running_sessions_released_success_path(
@@ -484,6 +522,7 @@ async def test_mark_running_sessions_released_success_path(
         run,
         datetime.now(UTC),
         terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
     )
 
     assert session.status == SessionStatus.error
@@ -500,6 +539,7 @@ async def test_mark_running_sessions_released_success_path(
         run,
         datetime.now(UTC),
         terminate_grid_sessions=False,
+        settings=FakeSettingsReader(),
     )
     assert untouched.status == SessionStatus.running
 
@@ -541,13 +581,6 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].excluded is True
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
-    monkeypatch.setattr(
-        f"{RUN_FAILURES_MODULE}.settings_service.get",
-        lambda key: {
-            "general.device_cooldown_max_sec": 60,
-            "general.device_cooldown_escalation_threshold": 1,
-        }[key],
-    )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.exclude_run_if_needed", AsyncMock())
     escalated_until, count, escalated, threshold = await run_service.cooldown_device(
@@ -556,6 +589,13 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         device.id,
         reason="still flaky",
         ttl_seconds=5,
+        settings=FakeSettingsReader(
+            {
+                "general.device_cooldown_max_sec": 60,
+                "general.device_cooldown_escalation_threshold": 1,
+            }
+        ),
+        circuit_breaker=Mock(),
     )
     assert escalated_until is None
     assert (count, escalated, threshold) == (1, True, 1)
@@ -621,7 +661,14 @@ async def test_release_devices_unusual_restore_branches(
 
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.grid_service.terminate_grid_session", AsyncMock(return_value=True))
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
-    pending = await run_service._release_devices(db_session, run, commit=False, terminate_grid_sessions=True)
+    pending = await run_service._release_devices(
+        db_session,
+        run,
+        commit=False,
+        terminate_grid_sessions=True,
+        settings=FakeSettingsReader(),
+        publisher=Mock(),
+    )
 
     assert set(pending) == {maintenance.id, busy.id, odd.id}
 
@@ -660,7 +707,7 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
         ),
     )
 
-    pending = await run_service._release_devices(db, run, commit=True)
+    pending = await run_service._release_devices(db, run, commit=True, settings=FakeSettingsReader())
 
     assert pending == [maintenance_id, restored_id]
     assert all(reservation.released_at is not None for reservation in reservations)
@@ -689,10 +736,12 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
     assert run_service._reserved_entry_is_excluded(
         SimpleNamespace(excluded=True, excluded_until=datetime.now(UTC) + timedelta(minutes=1))
     )
-    monkeypatch.setattr("app.runs.service_allocator.settings_service.get", lambda key: 10)
     with pytest.raises(ValueError, match="exceeds maximum"):
         run_service._resolve_run_options(
             SimpleNamespace(ttl_minutes=20, heartbeat_timeout_sec=None),
+            settings=FakeSettingsReader(
+                {"reservations.max_ttl_minutes": 10, "reservations.default_heartbeat_timeout_sec": 30}
+            ),
         )
 
     class CountsResult:

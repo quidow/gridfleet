@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
 from app.devices.services import state_write_guard
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -81,6 +82,8 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             device,
             source="health_recovery",
             reason="test",
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     intent = (
@@ -213,6 +216,7 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         device,
         source="device_checks",
         reason="Device reconnected and passed health checks",
+        settings=FakeSettingsReader({}),
     )
 
     leftover = (

@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.core.type_defs import SessionFactory
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.verification_execution import execute_verification_context
 from app.devices.services.verification_job_state import finish_job, hydrate_job
@@ -13,6 +14,12 @@ from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions import service_viability as session_viability
 
+if TYPE_CHECKING:
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
+    from app.events.protocols import EventPublisher
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,11 +27,13 @@ async def _probe_session_via_gridfleet_marker(
     capabilities: dict[str, Any],
     timeout_sec: int,
     *,
+    settings: SettingsReader,
     grid_url: str | None = None,
 ) -> tuple[bool, str | None]:
     return await session_viability.probe_session_via_grid(
         session_viability.build_probe_capabilities(capabilities),
         timeout_sec,
+        settings=settings,
         grid_url=grid_url,
     )
 
@@ -33,8 +42,12 @@ async def run_persisted_verification_job(
     job_id: str,
     request: dict[str, Any],
     session_factory: SessionFactory,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
 ) -> None:
-    job = await _load_persisted_job(job_id, session_factory)
+    job = await _load_persisted_job(job_id, session_factory, publisher=publisher)
     if job is None:
         return
 
@@ -46,6 +59,8 @@ async def run_persisted_verification_job(
                     db,
                     DeviceVerificationCreate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
             else:
                 context, validation_error = await validate_update_request(
@@ -54,6 +69,8 @@ async def run_persisted_verification_job(
                     uuid.UUID(str(request["device_id"])),
                     DeviceVerificationUpdate.model_validate(request["data"]),
                     http_client_factory=httpx.AsyncClient,
+                    settings=settings,
+                    circuit_breaker=circuit_breaker,
                 )
 
             if validation_error is not None or context is None:
@@ -65,7 +82,12 @@ async def run_persisted_verification_job(
                 db,
                 context,
                 http_client_factory=httpx.AsyncClient,
-                probe_session_fn=_probe_session_via_gridfleet_marker,
+                probe_session_fn=lambda caps, timeout, grid_url=None: _probe_session_via_gridfleet_marker(
+                    caps, timeout, settings=settings, grid_url=grid_url
+                ),
+                publisher=publisher,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
             )
             await finish_job(
                 job,
@@ -78,9 +100,14 @@ async def run_persisted_verification_job(
         await finish_job(job, status="failed", error="Verification job crashed unexpectedly")
 
 
-async def _load_persisted_job(job_id: str, session_factory: SessionFactory) -> dict[str, Any] | None:
+async def _load_persisted_job(
+    job_id: str,
+    session_factory: SessionFactory,
+    *,
+    publisher: EventPublisher,
+) -> dict[str, Any] | None:
     async with session_factory() as db:
         row = await db.get(Job, uuid.UUID(job_id))
     if row is None or row.kind != JOB_KIND_DEVICE_VERIFICATION:
         return None
-    return hydrate_job(row.snapshot, db_job_id=job_id, session_factory=session_factory)
+    return hydrate_job(row.snapshot, db_job_id=job_id, session_factory=session_factory, publisher=publisher)

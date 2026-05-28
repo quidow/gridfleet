@@ -8,14 +8,18 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
+from app.agent_comm.dependencies import AgentCommServicesDep
+from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.protocols import SettingsReader
 from app.core.type_defs import AsyncTaskFactory
 from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import presenter as device_presenter
-from app.events import event_bus
+from app.events.dependencies import EventServicesDep
+from app.events.protocols import EventPublisher
 from app.hosts import service as host_service
 from app.hosts import service_diagnostics as host_diagnostics
 from app.hosts import service_resource_telemetry as host_resource_telemetry
@@ -45,7 +49,7 @@ from app.packs.services import discovery as pack_discovery_service
 from app.packs.services import status as pack_status
 from app.packs.services.status import persist_doctor_results
 from app.plugins import service as plugin_service
-from app.settings import settings_service
+from app.settings.dependencies import SettingsServicesDep
 
 get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 
@@ -85,18 +89,18 @@ def _expand_levels(raw: str | None) -> list[str] | None:
     return sorted(out) or None
 
 
-def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object) -> None:
+def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
     """Schedule a coroutine factory as a background task with proper reference tracking."""
-    task = asyncio.create_task(task_fn(*args))
+    task = asyncio.create_task(task_fn(*args, **kwargs))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
 
-def _serialize_host(host: Host) -> dict[str, Any]:
-    required_version = host_versioning.normalize_agent_version_setting(settings_service.get("agent.min_version"))
-    recommended_version = host_versioning.normalize_agent_version_setting(
-        settings_service.get("agent.recommended_version")
-    )
+def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[str, Any]:
+    min_version = settings_services.reader.get("agent.min_version")
+    required_version = host_versioning.normalize_agent_version_setting(min_version)
+    rec_version = settings_services.reader.get("agent.recommended_version")
+    recommended_version = host_versioning.normalize_agent_version_setting(rec_version)
     payload = HostRead.model_validate(host).model_dump()
     payload["required_agent_version"] = required_version
     payload["recommended_agent_version"] = recommended_version
@@ -109,16 +113,27 @@ def _serialize_host(host: Host) -> dict[str, Any]:
     return payload
 
 
-async def _auto_discover(host_id: uuid.UUID) -> None:
+async def _auto_discover(
+    host_id: uuid.UUID,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
     try:
         async with async_session() as db:
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
-            result = await pack_discovery_service.discover_devices(db, host, agent_get_pack_devices=get_pack_devices)
+            result = await pack_discovery_service.discover_devices(
+                db,
+                host,
+                agent_get_pack_devices=get_pack_devices,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
+            )
             if result.new_devices:
-                await event_bus.publish(
+                await publisher.publish(
                     "host.discovery_completed",
                     {
                         "host_id": str(host_id),
@@ -130,42 +145,75 @@ async def _auto_discover(host_id: uuid.UUID) -> None:
         logger.exception("Auto-discovery failed for host %s", host_id)
 
 
-async def _auto_prepare_host_diagnostics(host_id: uuid.UUID) -> None:
+async def _auto_prepare_host_diagnostics(
+    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     try:
         async with async_session() as db:
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
             plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(host, plugins)
+            await plugin_service.auto_sync_host_plugins(
+                host, plugins, settings=settings, circuit_breaker=circuit_breaker
+            )
     except Exception:
         logger.exception("Automatic diagnostics preparation failed for host %s", host_id)
 
 
 @router.post("/register", response_model=HostRead)
-async def register_host(data: HostRegister, response: Response, db: DbDep) -> dict[str, Any]:
+async def register_host(
+    data: HostRegister,
+    response: Response,
+    db: DbDep,
+    event_services: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
+) -> dict[str, Any]:
     try:
-        host, is_new = await host_service.register_host(db, data)
+        host, is_new = await host_service.register_host(
+            db, data, publisher=event_services.publisher, settings=settings_services.reader
+        )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
     if is_new:
         response.status_code = 201
-        if settings_service.get("agent.auto_accept_hosts"):
-            _fire_and_forget(_auto_discover, host.id)
-            _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
+        if settings_services.reader.get("agent.auto_accept_hosts"):
+            _fire_and_forget(
+                _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+            )
+            _fire_and_forget(
+                _auto_prepare_host_diagnostics,
+                host.id,
+                settings=settings_services.reader,
+                circuit_breaker=agent_comm.circuit_breaker,
+            )
 
-    return _serialize_host(host)
+    return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/approve", response_model=HostRead)
-async def approve_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
-    host = await host_service.approve_host(db, host_id)
+async def approve_host(
+    host_id: uuid.UUID,
+    db: DbDep,
+    event_services: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
+) -> dict[str, Any]:
+    host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
-    _fire_and_forget(_auto_discover, host.id)
-    _fire_and_forget(_auto_prepare_host_diagnostics, host.id)
-    return _serialize_host(host)
+    _fire_and_forget(
+        _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+    )
+    _fire_and_forget(
+        _auto_prepare_host_diagnostics,
+        host.id,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
+    )
+    return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/reject", status_code=204)
@@ -176,26 +224,26 @@ async def reject_host(host_id: uuid.UUID, db: DbDep) -> None:
 
 
 @router.post("", response_model=HostRead, status_code=201)
-async def create_host(data: HostCreate, db: DbDep) -> dict[str, Any]:
+async def create_host(data: HostCreate, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     try:
-        host = await host_service.create_host(db, data)
+        host = await host_service.create_host(db, data, settings=settings_services.reader)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
-    return _serialize_host(host)
+    return _serialize_host(host, settings_services)
 
 
 @router.get("", response_model=list[HostRead])
-async def list_hosts(db: DbDep) -> list[dict[str, Any]]:
-    return [_serialize_host(host) for host in await host_service.list_hosts(db)]
+async def list_hosts(db: DbDep, settings_services: SettingsServicesDep) -> list[dict[str, Any]]:
+    return [_serialize_host(host, settings_services) for host in await host_service.list_hosts(db)]
 
 
 @router.get("/{host_id}", response_model=HostDetail)
-async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def get_host(host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
 
-    payload = _serialize_host(host)
+    payload = _serialize_host(host, settings_services)
     label_map = await platform_label_service.load_platform_label_map(
         db,
         ((device.pack_id, device.platform_id) for device in host.devices),
@@ -204,6 +252,7 @@ async def get_host(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
         await device_presenter.serialize_device(
             db,
             device,
+            settings=settings_services.reader,
             platform_label=label_map.get((device.pack_id, device.platform_id)),
         )
         for device in host.devices
@@ -280,6 +329,8 @@ async def trigger_driver_doctor(
     host_id: uuid.UUID,
     pack_id: str,
     db: DbDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
     host = await db.get(Host, host_id)
     if host is None:
@@ -287,7 +338,9 @@ async def trigger_driver_doctor(
     if host.status.value != "online":
         raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
 
-    checks = await agent_operations.pack_doctor(host.ip, host.agent_port, pack_id)
+    checks = await agent_operations.pack_doctor(
+        host.ip, host.agent_port, pack_id, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+    )
 
     await persist_doctor_results(db, host_id, pack_id, checks)
     await db.commit()
@@ -304,8 +357,8 @@ async def trigger_driver_doctor(
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
-async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep) -> HostDiagnosticsRead:
-    payload = await host_diagnostics.get_host_diagnostics(db, host_id)
+async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, agent_comm: AgentCommServicesDep) -> HostDiagnosticsRead:
+    payload = await host_diagnostics.get_host_diagnostics(db, host_id, circuit_breaker=agent_comm.circuit_breaker)
     if payload is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return payload
@@ -315,12 +368,13 @@ async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep) -> HostDiagnostics
 async def get_host_resource_telemetry(
     host_id: uuid.UUID,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     since: datetime | None = None,
     until: datetime | None = None,
     bucket_minutes: int = Query(5, ge=1, le=1440),
 ) -> HostResourceTelemetryResponse:
     window_end = until or datetime.now(UTC)
-    default_window_minutes = int(settings_service.get("general.host_resource_telemetry_window_minutes"))
+    default_window_minutes = int(settings_services.reader.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:
         payload = await host_resource_telemetry.fetch_host_resource_telemetry(
@@ -329,6 +383,7 @@ async def get_host_resource_telemetry(
             since=window_start,
             until=window_end,
             bucket_minutes=bucket_minutes,
+            settings=settings_services.reader,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -338,7 +393,9 @@ async def get_host_resource_telemetry(
 
 
 @router.get("/{host_id}/tools/status", response_model=HostToolStatusRead)
-async def get_host_tool_status(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def get_host_tool_status(
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -347,6 +404,8 @@ async def get_host_tool_status(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
     return await get_agent_tool_status(
         host.ip,
         host.agent_port,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
 
@@ -361,28 +420,56 @@ async def delete_host(host_id: uuid.UUID, db: DbDep) -> None:
 
 
 @router.post("/{host_id}/discover", response_model=DiscoveryResult)
-async def discover_devices(host_id: uuid.UUID, db: DbDep) -> DiscoveryResult:
+async def discover_devices(
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> DiscoveryResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    return await pack_discovery_service.discover_devices(db, host, agent_get_pack_devices=get_pack_devices)
+    return await pack_discovery_service.discover_devices(
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
+    )
 
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
-async def intake_candidates(host_id: uuid.UUID, db: DbDep) -> list[IntakeCandidateRead]:
+async def intake_candidates(
+    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+) -> list[IntakeCandidateRead]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    return await pack_discovery_service.list_intake_candidates(db, host, agent_get_pack_devices=get_pack_devices)
+    return await pack_discovery_service.list_intake_candidates(
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
+    )
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
-async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDep) -> DiscoveryConfirmResult:
+async def confirm_discovery(
+    host_id: uuid.UUID,
+    data: DiscoveryConfirm,
+    db: DbDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
+) -> DiscoveryConfirmResult:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     # Re-run discovery to get fresh data for validation
-    result = await pack_discovery_service.discover_devices(db, host, agent_get_pack_devices=get_pack_devices)
+    result = await pack_discovery_service.discover_devices(
+        db,
+        host,
+        agent_get_pack_devices=get_pack_devices,
+        settings=settings_services.reader,
+        circuit_breaker=agent_comm.circuit_breaker,
+    )
     try:
         return await pack_discovery_service.confirm_discovery(
             db,
@@ -390,6 +477,7 @@ async def confirm_discovery(host_id: uuid.UUID, data: DiscoveryConfirm, db: DbDe
             data.add_identity_values,
             data.remove_identity_values,
             result,
+            settings=settings_services.reader,
         )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

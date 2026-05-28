@@ -16,6 +16,7 @@ import pytest
 
 from app.devices.models import DeviceOperationalState
 from app.sessions import service_viability
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,7 +70,6 @@ async def test_exception_path_restores_previous_available_without_projection(
     monkeypatch.setattr(service_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(service_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(service_viability.settings_service, "get", lambda key: 5)
     monkeypatch.setattr(service_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     # Busy-mark goes through _MACHINE.transition (SESSION_STARTED)
     monkeypatch.setattr(service_viability._MACHINE, "transition", AsyncMock(return_value=True))
@@ -89,6 +89,7 @@ async def test_exception_path_restores_previous_available_without_projection(
             db_session,
             available_device,
             checked_by=service_viability.SessionViabilityCheckedBy.manual,
+            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
     # The exception path must have called set_operational_state with AVAILABLE
@@ -131,7 +132,6 @@ async def test_exception_path_from_offline_restores_offline(
     monkeypatch.setattr(service_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(service_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(service_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(service_viability.settings_service, "get", lambda key: 5)
     monkeypatch.setattr(service_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
     monkeypatch.setattr(service_viability._MACHINE, "transition", AsyncMock(return_value=True))
 
@@ -148,6 +148,7 @@ async def test_exception_path_from_offline_restores_offline(
             db_session,
             offline_device,
             checked_by=service_viability.SessionViabilityCheckedBy.recovery,
+            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
     assert set_state.call_count >= 1, "set_operational_state was never called in the exception path"

@@ -6,6 +6,8 @@ import pytest
 
 from app.runs import service as run_service
 from app.runs.models import RunState
+from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 def _run(state: RunState = RunState.preparing) -> SimpleNamespace:
@@ -34,23 +36,23 @@ async def test_signal_active_and_device_session_state_branches(monkeypatch: pyte
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=run))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=run))
 
-    active = await run_service.signal_active(db, run.id)
+    active = await run_service.signal_active(db, run.id, publisher=event_bus)
     assert active.state == RunState.active
     assert active.started_at is not None
     assert active.last_heartbeat is not None
 
     already_active = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=already_active))
-    assert await run_service.signal_active(db, already_active.id) is already_active
+    assert await run_service.signal_active(db, already_active.id, publisher=event_bus) is already_active
 
     with pytest.raises(ValueError, match="Run not found"):
         monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-        await run_service.signal_active(db, __import__("uuid").uuid4())
+        await run_service.signal_active(db, __import__("uuid").uuid4(), publisher=event_bus)
 
     terminal = _run(RunState.completed)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=terminal))
     with pytest.raises(ValueError, match="Cannot signal active"):
-        await run_service.signal_active(db, terminal.id)
+        await run_service.signal_active(db, terminal.id, publisher=event_bus)
 
     # Regression: there is no observed-session helper. The only public path
     # out of preparing is signal_ready / signal_active, both driven by an
@@ -70,49 +72,51 @@ async def test_run_terminal_transitions_success_and_guard_paths(monkeypatch: pyt
     active.started_at = datetime.now(UTC)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=active))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=active))
-    completed = await run_service.complete_run(db, active.id)
+    completed = await run_service.complete_run(db, active.id, publisher=event_bus, settings=FakeSettingsReader())
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     for fn in (run_service.complete_run, run_service.cancel_run):
         monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
         with pytest.raises(ValueError, match="Run not found"):
-            await fn(db, __import__("uuid").uuid4())
+            await fn(db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader())
         monkeypatch.setattr(
             "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.completed))
         )
         with pytest.raises(ValueError, match="terminal state"):
-            await fn(db, __import__("uuid").uuid4())
+            await fn(db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader())
 
     cancellable = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=cancellable))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=cancellable))
-    cancelled = await run_service.cancel_run(db, cancellable.id)
+    cancelled = await run_service.cancel_run(db, cancellable.id, publisher=event_bus, settings=FakeSettingsReader())
     assert cancelled.state == RunState.cancelled
 
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Run not found"):
-        await run_service.force_release(db, __import__("uuid").uuid4())
+        await run_service.force_release(
+            db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader()
+        )
 
     releasable = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=releasable))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=releasable))
-    forced = await run_service.force_release(db, releasable.id)
+    forced = await run_service.force_release(db, releasable.id, publisher=event_bus, settings=FakeSettingsReader())
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
     missing = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-    await run_service.expire_run(db, missing, "timeout")
+    await run_service.expire_run(db, missing, "timeout", publisher=event_bus, settings=FakeSettingsReader())
 
     terminal = _run(RunState.completed)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=terminal))
-    await run_service.expire_run(db, terminal, "timeout")
+    await run_service.expire_run(db, terminal, "timeout", publisher=event_bus, settings=FakeSettingsReader())
     assert terminal.state == RunState.completed
 
     expiring = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=expiring))
-    await run_service.expire_run(db, expiring, "timeout")
+    await run_service.expire_run(db, expiring, "timeout", publisher=event_bus, settings=FakeSettingsReader())
     assert expiring.state == RunState.expired
     assert expiring.error == "timeout"
 

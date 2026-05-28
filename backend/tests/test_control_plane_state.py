@@ -6,23 +6,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.connectivity import (
-    get_connectivity_control_plane_state,
-    reset_connectivity_control_plane_state,
-    track_previously_offline_device,
-)
 from app.devices.services.state import ready_operational_state, set_operational_state
-from app.devices.services.verification import clear_verification_jobs, store_verification_job_for_test
-from app.events import event_bus
+from app.devices.services.verification import clear_verification_jobs
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_viability import (
+from tests.helpers import (
+    drain_handlers,
+    get_connectivity_control_plane_state,
     get_session_viability_control_plane_state,
+    recent_events,
+    reset_connectivity_control_plane_state,
     reset_session_viability_control_plane_state,
     set_session_viability_control_plane_entry,
+    store_verification_job_for_test,
+    track_previously_offline_device,
 )
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncSession, db_host: Host) -> None:
@@ -109,15 +110,17 @@ async def test_set_operational_state_publishes_only_on_change(db_session: AsyncS
     db_session.add(device)
     await db_session.commit()
 
-    changed = await set_operational_state(device, DeviceOperationalState.available)
+    changed = await set_operational_state(device, DeviceOperationalState.available, publisher=event_bus)
     assert changed is False
-    assert event_bus.get_recent_events() == []
+    assert recent_events(event_bus) == []
 
-    changed = await set_operational_state(device, DeviceOperationalState.busy, reason="Probe started")
+    changed = await set_operational_state(
+        device, DeviceOperationalState.busy, reason="Probe started", publisher=event_bus
+    )
     assert changed is True
     await db_session.commit()
-    await event_bus.drain_handlers()
-    events = event_bus.get_recent_events()
+    await drain_handlers(event_bus)
+    events = recent_events(event_bus)
     assert len(events) == 1
     assert events[0]["data"]["old_operational_state"] == "available"
     assert events[0]["data"]["new_operational_state"] == "busy"

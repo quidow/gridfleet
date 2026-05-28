@@ -21,6 +21,10 @@ from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
+
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
@@ -148,6 +152,9 @@ async def claim_next_job(
 async def run_pending_jobs_once(
     session_factory: async_sessionmaker[AsyncSession],
     *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
     kind: str | None = None,
 ) -> bool:
     row = await claim_next_job(session_factory, kind=kind)
@@ -159,6 +166,9 @@ async def run_pending_jobs_once(
             str(row.id),
             row.payload,
             session_factory=session_factory,
+            publisher=publisher,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
         )
         return True
 
@@ -167,6 +177,8 @@ async def run_pending_jobs_once(
             str(row.id),
             row.payload,
             session_factory=session_factory,
+            publisher=publisher,
+            settings=settings,
         )
         return True
 
@@ -185,18 +197,35 @@ async def run_pending_jobs_once(
     return True
 
 
-async def durable_job_worker_loop(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
-        await reset_stale_running_jobs(session_factory)
-        await reset_stale_running_jobs(session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
-    while True:
-        try:
-            async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
-                worked = await run_pending_jobs_once(session_factory)
-            if not worked:
+class DurableJobWorkerLoop:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+    ) -> None:
+        self._session_factory = session_factory
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+
+    async def run(self) -> None:
+        async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
+            await reset_stale_running_jobs(self._session_factory)
+            await reset_stale_running_jobs(self._session_factory, kind=JOB_KIND_DEVICE_RECOVERY)
+        while True:
+            try:
+                async with observe_background_loop(LOOP_NAME, float(JOB_POLL_INTERVAL_SEC)).cycle():
+                    worked = await run_pending_jobs_once(
+                        self._session_factory,
+                        publisher=self._publisher,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                    )
+                if not worked:
+                    await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
+            except Exception:
+                logger.exception("Durable job worker error")
                 await asyncio.sleep(JOB_POLL_INTERVAL_SEC)
-        except Exception:
-            logger.exception("Durable job worker error")
-            await asyncio.sleep(JOB_POLL_INTERVAL_SEC)

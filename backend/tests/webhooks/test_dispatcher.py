@@ -8,7 +8,6 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.events import event_bus
 from app.webhooks.dispatcher import (
     _compute_retry_delay,
     _is_retryable_exception,
@@ -17,6 +16,8 @@ from app.webhooks.dispatcher import (
     run_pending_webhook_deliveries_once,
 )
 from app.webhooks.models import WebhookDelivery
+from tests.helpers import drain_handlers
+from tests.helpers import test_event_bus as event_bus
 
 
 def _make_response(*, status_code: int = 200) -> MagicMock:
@@ -34,7 +35,7 @@ def _make_response(*, status_code: int = 200) -> MagicMock:
 
 
 async def _wait_for_delivery_rows(client: AsyncClient, webhook_id: str) -> dict[str, Any]:
-    await event_bus.drain_handlers()
+    await drain_handlers(event_bus)
     deliveries = cast("dict[str, Any]", (await client.get(f"/api/webhooks/{webhook_id}/deliveries")).json())
     assert deliveries["total"] > 0
     return deliveries

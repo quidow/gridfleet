@@ -1,6 +1,6 @@
 """Verify restart_node_via_agent ORM mutations are flushed by the caller's commit."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -12,6 +12,7 @@ from app.appium_nodes.services import reconciler_agent as node_service
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -94,6 +95,8 @@ async def test_restart_mutations_visible_after_caller_commit(
                 target,
                 target_node,
                 http_client_factory=httpx.AsyncClient,
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
             )
         assert result is True
 

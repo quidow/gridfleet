@@ -92,13 +92,12 @@ async def test_list_deliveries_counts_rows() -> None:
     assert total == 2
 
 
-async def test_handle_system_event_no_factory_and_missing_event_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(webhook_dispatcher, "_session_factory", None)
-    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
-
+async def test_handle_system_event_missing_event_returns_early() -> None:
     db = _Db()
-    monkeypatch.setattr(webhook_dispatcher, "_session_factory", _Factory(db))
-    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
+    await webhook_dispatcher.handle_system_event(
+        SimpleNamespace(id=uuid.uuid4(), type="device.created"),
+        session_factory=_Factory(db),
+    )
     db.execute.assert_awaited_once()
 
 
@@ -137,7 +136,8 @@ async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytes
     monkeypatch.setattr(webhook_dispatcher.logger, "exception", log_exception)
 
     with pytest.raises(asyncio.CancelledError):
-        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        await loop.run()
 
     log_exception.assert_called_once_with("Webhook dispatcher error")
 
@@ -161,7 +161,8 @@ async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.Mon
     monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     with pytest.raises(asyncio.CancelledError):
-        await webhook_dispatcher.webhook_delivery_loop(_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        await loop.run()
 
 
 async def test_process_delivery_missing_records_marks_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,7 +243,7 @@ async def test_process_delivery_success_and_failure_paths(monkeypatch: pytest.Mo
     )
 
 
-async def test_handle_system_event_no_matching_webhooks(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_handle_system_event_no_matching_webhooks() -> None:
     """Line 77: system_event found but no enabled webhook subscribes to the event type."""
 
     class _ScalarResult:
@@ -265,8 +266,10 @@ async def test_handle_system_event_no_matching_webhooks(monkeypatch: pytest.Monk
 
     db = _Db()
     db.execute = AsyncMock(side_effect=_execute)
-    monkeypatch.setattr(webhook_dispatcher, "_session_factory", _Factory(db))
-    await webhook_dispatcher.handle_system_event(SimpleNamespace(id=uuid.uuid4(), type="device.created"))
+    await webhook_dispatcher.handle_system_event(
+        SimpleNamespace(id=uuid.uuid4(), type="device.created"),
+        session_factory=_Factory(db),
+    )
     # Two executes: one for SystemEvent lookup, one for Webhook list
     assert call_count == 2
     db.commit.assert_not_awaited()

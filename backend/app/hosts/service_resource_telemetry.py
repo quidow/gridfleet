@@ -9,18 +9,20 @@ import httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
-from app.core.database import async_session
 from app.core.errors import AgentCallError
 from app.core.observability import get_logger, observe_background_loop, parse_timestamp
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
-from app.settings import settings_service
 
 if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.engine import Row
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.hosts.services_container import HostServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "host_resource_telemetry"
@@ -70,7 +72,9 @@ async def apply_host_resource_sample(
     return row
 
 
-async def poll_host_resource_telemetry_once(db: AsyncSession) -> None:
+async def poll_host_resource_telemetry_once(
+    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+) -> None:
     result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
     hosts = result.scalars().all()
 
@@ -80,6 +84,8 @@ async def poll_host_resource_telemetry_once(db: AsyncSession) -> None:
                 host.ip,
                 host.agent_port,
                 http_client_factory=httpx.AsyncClient,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
             )
             if payload is None:
                 continue
@@ -116,12 +122,13 @@ async def fetch_host_resource_telemetry(
     since: datetime,
     until: datetime,
     bucket_minutes: int,
+    settings: SettingsReader,
 ) -> HostResourceTelemetryResponse | None:
     host_exists = await db.scalar(select(Host.id).where(Host.id == host_id))
     if host_exists is None:
         return None
 
-    retention_hours = int(settings_service.get("retention.host_resource_telemetry_hours"))
+    retention_hours = int(settings.get("retention.host_resource_telemetry_hours"))
     if since >= until:
         raise ValueError("since must be earlier than until")
     if not 1 <= bucket_minutes <= 1440:
@@ -175,12 +182,18 @@ async def fetch_host_resource_telemetry(
     )
 
 
-async def host_resource_telemetry_loop() -> None:
-    while True:
-        interval = float(settings_service.get("general.host_resource_telemetry_interval_sec"))
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await poll_host_resource_telemetry_once(db)
-        except Exception:
-            logger.exception("Host resource telemetry loop failed")
-        await asyncio.sleep(interval)
+class HostResourceTelemetryLoop:
+    def __init__(self, *, services: HostServices) -> None:
+        self._services = services
+
+    async def run(self) -> None:
+        while True:
+            interval = float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
+            try:
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await poll_host_resource_telemetry_once(
+                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
+                    )
+            except Exception:
+                logger.exception("Host resource telemetry loop failed")
+            await asyncio.sleep(interval)

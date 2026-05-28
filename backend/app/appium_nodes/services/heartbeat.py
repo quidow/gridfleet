@@ -1,14 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import os
 import time
-import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_health
@@ -20,13 +20,11 @@ from app.appium_nodes.services.heartbeat_outcomes import (
     HeartbeatOutcome,
     HeartbeatPingResult,
 )
-from app.core.database import async_session
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
 from app.core.observability import get_logger, observe_background_loop
-from app.core.type_defs import AsyncTaskFactory
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.services import health as device_health
@@ -37,7 +35,18 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from app.plugins import service as plugin_service
-from app.settings import settings_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.agent_comm.http_pool import AgentHttpPool
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.services_container import AppiumNodeServices
+    from app.core.protocols import SettingsReader
+    from app.core.type_defs import AsyncTaskFactory
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -51,20 +60,30 @@ APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
 
 
-async def _auto_sync_plugins_on_recovery(host_id: uuid.UUID) -> None:
+async def _auto_sync_plugins_on_recovery(
+    host_id: uuid.UUID,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol | None,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    if circuit_breaker is None:
+        return
     try:
-        async with async_session() as db:
+        async with session_factory() as db:
             host = await db.get(Host, host_id)
             if host is None:
                 return
             plugins = await plugin_service.list_plugins(db)
-            await plugin_service.auto_sync_host_plugins(host, plugins)
+            await plugin_service.auto_sync_host_plugins(
+                host, plugins, settings=settings, circuit_breaker=circuit_breaker
+            )
     except Exception:
         logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
 
 
-def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object) -> None:
-    task: asyncio.Task[None] = asyncio.create_task(task_fn(*args))
+def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
+    task: asyncio.Task[None] = asyncio.create_task(task_fn(*args, **kwargs))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -93,18 +112,33 @@ _TRANSPORT_TO_OUTCOME = {
 }
 
 
-def _heartbeat_client_mode() -> ClientMode:
+def _heartbeat_client_mode(*, settings: SettingsReader) -> ClientMode:
     try:
-        return ClientMode.pooled if bool(settings_service.get("agent.http_pool_enabled")) else ClientMode.fresh
+        pool_enabled = bool(settings.get("agent.http_pool_enabled"))
+        return ClientMode.pooled if pool_enabled else ClientMode.fresh
     except (KeyError, RuntimeError):
         return ClientMode.fresh
 
 
-async def _ping_agent(ip: str, port: int) -> HeartbeatPingResult:
+async def _ping_agent(
+    ip: str,
+    port: int,
+    *,
+    settings: SettingsReader,
+    pool: AgentHttpPool | None = None,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> HeartbeatPingResult:
     started = time.monotonic()
-    client_mode = _heartbeat_client_mode()
+    client_mode = _heartbeat_client_mode(settings=settings)
     try:
-        payload = await agent_health(ip, port, http_client_factory=httpx.AsyncClient)
+        payload = await agent_health(
+            ip,
+            port,
+            http_client_factory=httpx.AsyncClient,
+            settings=settings,
+            pool=pool,
+            circuit_breaker=circuit_breaker,
+        )
     except CircuitOpenError as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
         return HeartbeatPingResult(
@@ -191,17 +225,6 @@ def _emit_heartbeat_log(
         leader_id=leader_id,
         loop_iteration=loop_iteration,
     )
-
-
-_LOOP_ITERATION = 0
-_LAST_CYCLE_MONOTONIC: float | None = None
-_HEARTBEAT_PARALLELISM = 8
-
-
-def _next_loop_iteration() -> int:
-    global _LOOP_ITERATION
-    _LOOP_ITERATION += 1
-    return _LOOP_ITERATION
 
 
 def _resume_guard_active(
@@ -310,7 +333,9 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
     )
 
 
-async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_data: dict[str, Any]) -> None:
+async def _ingest_appium_restart_events(
+    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher | None = None
+) -> None:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
         return
@@ -416,7 +441,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             if process == "appium" and pid is not None:
                 locked_node.pid = pid
             locked_node.consecutive_health_failures = 0
-            if process == "appium":
+            if process == "appium" and publisher is not None:
                 queue_event_for_session(
                     db,
                     "node.state_changed",
@@ -428,6 +453,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                         "port": port,
                     },
                     severity=node_state_severity("error", "running"),
+                    publisher=publisher,
                 )
             await record_event(
                 db,
@@ -444,32 +470,36 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
+                publisher=publisher,
             )
             continue
 
         error_message = _restart_error_message(kind, process, exit_code)
-        queue_event_for_session(
-            db,
-            "node.crash",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "error": error_message,
-                "will_restart": will_retry,
-                "process": process,
-            },
-            severity="warning" if will_retry else None,
-        )
-        queue_device_crashed_event(
-            db,
-            device_id=str(device.id),
-            device_name=device.name,
-            source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
-            reason=error_message,
-            will_restart=will_retry,
-            process=process,
-            severity="warning" if will_retry else None,
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "node.crash",
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "error": error_message,
+                    "will_restart": will_retry,
+                    "process": process,
+                },
+                severity="warning" if will_retry else None,
+                publisher=publisher,
+            )
+            queue_device_crashed_event(
+                db,
+                device_id=str(device.id),
+                device_name=device.name,
+                source="agent_restart_exhausted" if kind == "restart_exhausted" else "appium_crash",
+                reason=error_message,
+                will_restart=will_retry,
+                process=process,
+                severity="warning" if will_retry else None,
+                publisher=publisher,
+            )
         await record_event(
             db,
             device.id,
@@ -490,6 +520,7 @@ async def _ingest_appium_restart_events(db: AsyncSession, host: Host, health_dat
             health_state=degraded_state,
             mark_offline=False,
             reason=error_message,
+            publisher=publisher,
         )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
@@ -503,6 +534,10 @@ async def _apply_host_ping_result(
     guard_active: bool,
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
+    publisher: EventPublisher | None = None,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol | None,
+    session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -527,24 +562,32 @@ async def _apply_host_ping_result(
             host.agent_version = agent_version
         if host.status != HostStatus.online:
             logger.info("Host %s (%s) is back online", host.hostname, host.ip)
-            queue_event_for_session(
-                db,
-                "host.status_changed",
-                {
-                    "host_id": str(host.id),
-                    "hostname": host.hostname,
-                    "old_status": host.status.value,
-                    "new_status": "online",
-                },
-            )
+            if publisher is not None:
+                queue_event_for_session(
+                    db,
+                    "host.status_changed",
+                    {
+                        "host_id": str(host.id),
+                        "hostname": host.hostname,
+                        "old_status": host.status.value,
+                        "new_status": "online",
+                    },
+                    publisher=publisher,
+                )
             host.status = HostStatus.online
-            _schedule_background_task(_auto_sync_plugins_on_recovery, host.id)
+            _schedule_background_task(
+                _auto_sync_plugins_on_recovery,
+                host.id,
+                settings=settings,
+                circuit_breaker=circuit_breaker,
+                session_factory=session_factory,
+            )
         host.last_heartbeat = datetime.now(UTC)
         if health_data is not None:
             if "missing_prerequisites" in health_data:
                 host_service.update_missing_prerequisites_from_health(host, health_data.get("missing_prerequisites"))
             await _persist_appium_processes_snapshot(db, host, health_data)
-            await _ingest_appium_restart_events(db, host, health_data)
+            await _ingest_appium_restart_events(db, host, health_data, publisher=publisher)
         return
 
     if guard_active:
@@ -563,30 +606,33 @@ async def _apply_host_ping_result(
         host.hostname,
         host.ip,
         count,
-        settings_service.get("general.max_missed_heartbeats"),
+        settings.get("general.max_missed_heartbeats"),
     )
 
-    if count >= settings_service.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
+    if count >= settings.get("general.max_missed_heartbeats") and host.status != HostStatus.offline:
         logger.error("Host %s marked offline after %d missed heartbeats", host.hostname, count)
-        queue_event_for_session(
-            db,
-            "host.status_changed",
-            {
-                "host_id": str(host.id),
-                "hostname": host.hostname,
-                "old_status": host.status.value,
-                "new_status": "offline",
-            },
-        )
-        queue_event_for_session(
-            db,
-            "host.heartbeat_lost",
-            {
-                "host_id": str(host.id),
-                "hostname": host.hostname,
-                "missed_count": count,
-            },
-        )
+        if publisher is not None:
+            queue_event_for_session(
+                db,
+                "host.status_changed",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "old_status": host.status.value,
+                    "new_status": "offline",
+                },
+                publisher=publisher,
+            )
+            queue_event_for_session(
+                db,
+                "host.heartbeat_lost",
+                {
+                    "host_id": str(host.id),
+                    "hostname": host.hostname,
+                    "missed_count": count,
+                },
+                publisher=publisher,
+            )
         host.status = HostStatus.offline
         # Mark all devices on this host as offline. lock_devices
         # acquires SELECT FOR UPDATE on each row in id order so
@@ -605,111 +651,140 @@ async def _apply_host_ping_result(
                 device,
                 healthy=False,
                 summary=f"Host {host.hostname} offline",
+                publisher=publisher,
             )
             await set_operational_state(
                 device,
                 DeviceOperationalState.offline,
                 reason=f"Host {host.hostname} offline",
                 severity="warning",
+                publisher=publisher,
             )
 
 
-async def _check_hosts(db: AsyncSession) -> None:
-    """Ping all non-pending hosts in parallel.
+class HeartbeatLoop:
+    def __init__(self, *, services: AppiumNodeServices) -> None:
+        self._services = services
+        self._loop_iteration = 0
+        self._last_cycle_monotonic: float | None = None
+        self._parallelism = 8
 
-    ``db`` is used only to fetch the host id list; per-host work runs in fresh
-    sessions opened via ``async_session`` and commits independently.
-    """
-    iteration = _next_loop_iteration()
-    leader_id = str(control_plane_leader.holder_id)
+    def _next_loop_iteration(self) -> int:
+        self._loop_iteration += 1
+        return self._loop_iteration
 
-    interval = float(settings_service.get("general.heartbeat_interval_sec"))
-    max_missed = int(settings_service.get("general.max_missed_heartbeats"))
-    global _LAST_CYCLE_MONOTONIC
-    now_mono = time.monotonic()
-    prev_mono = _LAST_CYCLE_MONOTONIC
-    guard_active = _resume_guard_active(
-        last_cycle_monotonic=prev_mono,
-        now_monotonic=now_mono,
-        interval_sec=interval,
-        max_missed=max_missed,
-    )
-    _LAST_CYCLE_MONOTONIC = now_mono
-    guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
-    guard_threshold_sec = interval * max_missed
+    async def _check_hosts(
+        self,
+        db: AsyncSession,
+        *,
+        settings: SettingsReader,
+        pool: AgentHttpPool | None = None,
+        circuit_breaker: CircuitBreakerProtocol,
+    ) -> None:
+        """Ping all non-pending hosts in parallel.
 
-    stmt = select(Host.id).where(Host.status != HostStatus.pending)
-    host_ids = list((await db.execute(stmt)).scalars().all())
+        ``db`` is used only to fetch the host id list; per-host work runs in fresh
+        sessions opened via ``async_session`` and commits independently.
+        """
+        iteration = self._next_loop_iteration()
+        leader_id = str(control_plane_leader.holder_id)
 
-    semaphore = asyncio.Semaphore(_HEARTBEAT_PARALLELISM)
+        interval = float(settings.get("general.heartbeat_interval_sec"))
+        max_missed = int(settings.get("general.max_missed_heartbeats"))
+        now_mono = time.monotonic()
+        prev_mono = self._last_cycle_monotonic
+        guard_active = _resume_guard_active(
+            last_cycle_monotonic=prev_mono,
+            now_monotonic=now_mono,
+            interval_sec=interval,
+            max_missed=max_missed,
+        )
+        self._last_cycle_monotonic = now_mono
+        guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
+        guard_threshold_sec = interval * max_missed
 
-    async def guarded(host_id: uuid.UUID) -> None:
-        async with semaphore:
+        stmt = select(Host.id).where(Host.status != HostStatus.pending)
+        host_ids = list((await db.execute(stmt)).scalars().all())
+
+        semaphore = asyncio.Semaphore(self._parallelism)
+
+        async def guarded(host_id: uuid.UUID) -> None:
+            async with semaphore:
+                try:
+                    async with self._services.session_factory() as host_db:
+                        host = await host_db.get(Host, host_id)
+                        if host is None:
+                            return
+                        ping_result = await _ping_agent(
+                            host.ip, host.agent_port, settings=settings, pool=pool, circuit_breaker=circuit_breaker
+                        )
+                        _emit_heartbeat_log(
+                            host_id=str(host.id),
+                            host_ip=host.ip,
+                            agent_port=host.agent_port,
+                            result=ping_result,
+                            leader_id=leader_id,
+                            loop_iteration=iteration,
+                        )
+                        record_heartbeat_ping(
+                            host_id=str(host.id),
+                            outcome=ping_result.outcome.value,
+                            client_mode=ping_result.client_mode.value,
+                            duration_seconds=ping_result.duration_ms / 1000.0,
+                        )
+                        # Fence: drop any writes from a stale leader that lost the advisory lock
+                        # while we were awaiting _ping_agent. assert_current_leader raises
+                        # LeadershipLost when another backend now owns the heartbeat row.
+                        await assert_current_leader(host_db, settings=settings)
+                        await _apply_host_ping_result(
+                            host_db,
+                            host,
+                            ping_result,
+                            guard_active=guard_active,
+                            guard_gap_sec=guard_gap_sec,
+                            guard_threshold_sec=guard_threshold_sec,
+                            publisher=self._services.publisher,
+                            settings=settings,
+                            circuit_breaker=circuit_breaker,
+                            session_factory=self._services.session_factory,
+                        )
+                        await host_db.commit()
+                except LeadershipLost:
+                    raise
+                except Exception:
+                    logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
+
+        await asyncio.gather(*(guarded(hid) for hid in host_ids))
+
+    async def run(self) -> None:
+        """Background loop that pings all host agents."""
+        while True:
+            interval = float(self._services.settings.get("general.heartbeat_interval_sec"))
+            cycle_start = time.monotonic()
             try:
-                async with async_session() as host_db:
-                    host = await host_db.get(Host, host_id)
-                    if host is None:
-                        return
-                    ping_result = await _ping_agent(host.ip, host.agent_port)
-                    _emit_heartbeat_log(
-                        host_id=str(host.id),
-                        host_ip=host.ip,
-                        agent_port=host.agent_port,
-                        result=ping_result,
-                        leader_id=leader_id,
-                        loop_iteration=iteration,
+                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
+                    await self._check_hosts(
+                        db,
+                        settings=self._services.settings,
+                        pool=self._services.pool,
+                        circuit_breaker=self._services.circuit_breaker,
                     )
-                    record_heartbeat_ping(
-                        host_id=str(host.id),
-                        outcome=ping_result.outcome.value,
-                        client_mode=ping_result.client_mode.value,
-                        duration_seconds=ping_result.duration_ms / 1000.0,
-                    )
-                    # Fence: drop any writes from a stale leader that lost the advisory lock
-                    # while we were awaiting _ping_agent. assert_current_leader raises
-                    # LeadershipLost when another backend now owns the heartbeat row.
-                    await assert_current_leader(host_db)
-                    await _apply_host_ping_result(
-                        host_db,
-                        host,
-                        ping_result,
-                        guard_active=guard_active,
-                        guard_gap_sec=guard_gap_sec,
-                        guard_threshold_sec=guard_threshold_sec,
-                    )
-                    await host_db.commit()
-            except LeadershipLost:
-                raise
+            except LeadershipLost as exc:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+                logger.error(
+                    "heartbeat_loop_leadership_lost",
+                    reason=str(exc),
+                    action="exiting_process_to_prevent_split_brain",
+                )
+                os._exit(70)
             except Exception:
-                logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
-
-    await asyncio.gather(*(guarded(hid) for hid in host_ids))
-
-
-async def heartbeat_loop() -> None:
-    """Background loop that pings all host agents."""
-    while True:
-        interval = float(settings_service.get("general.heartbeat_interval_sec"))
-        cycle_start = time.monotonic()
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), async_session() as db:
-                await _check_hosts(db)
-        except LeadershipLost as exc:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-            logger.error(
-                "heartbeat_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Heartbeat check failed")
-        finally:
-            record_heartbeat_cycle(
-                time.monotonic() - cycle_start,
-                interval_seconds=interval,
-            )
-        await asyncio.sleep(interval)
+                logger.exception("Heartbeat check failed")
+            finally:
+                record_heartbeat_cycle(
+                    time.monotonic() - cycle_start,
+                    interval_seconds=interval,
+                )
+            await asyncio.sleep(interval)

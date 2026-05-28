@@ -3,28 +3,33 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
+from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     import contextlib
     from collections.abc import AsyncGenerator
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _hb_services(db: AsyncSession) -> Mock:
+    m = Mock()
+    factory = AsyncMock()
+    factory.__aenter__ = AsyncMock(return_value=db)
+    factory.__aexit__ = AsyncMock(return_value=None)
+    m.session_factory = lambda: factory
+    return m
 
 
 @pytest.fixture(autouse=True)
-async def _skip_leader_fencing(
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[None]:
-    """No-op the leader fence and redirect per-host sessions to the test engine."""
-    with (
-        patch("app.appium_nodes.services.heartbeat.assert_current_leader"),
-        patch("app.appium_nodes.services.heartbeat.async_session", db_session_maker),
-    ):
+async def _skip_leader_fencing() -> AsyncGenerator[None]:
+    """No-op the leader fence."""
+    with patch("app.appium_nodes.services.heartbeat.assert_current_leader"):
         yield
 
 
@@ -56,16 +61,18 @@ async def test_four_slow_hosts_run_in_parallel(
 ) -> None:
     """4 slow hosts each take 0.5s; sequential >= 2s, parallel (concurrency>=4) ~ 0.5s.
     Bound: < 1.8s leaves CI slack while still proving parallelism."""
-    from app.appium_nodes.services.heartbeat import _check_hosts
+    from app.appium_nodes.services.heartbeat import HeartbeatLoop
 
-    async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
         await asyncio.sleep(0.5)
         return _slow_timeout()
 
     with patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)):
         started = time.monotonic()
         async with populated_hosts_4_slow as db:
-            await _check_hosts(db)
+            await HeartbeatLoop(services=_hb_services(db))._check_hosts(
+                db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
         elapsed = time.monotonic() - started
     assert elapsed < 1.8, f"Expected parallelization to bring runtime under 1.8s, got {elapsed:.1f}s"
 
@@ -77,9 +84,9 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
     """Verify the fast host's heartbeat_ping log appears BEFORE the slow host's log."""
     import structlog
 
-    from app.appium_nodes.services.heartbeat import _check_hosts
+    from app.appium_nodes.services.heartbeat import HeartbeatLoop
 
-    async def fake_ping(ip: str, port: int) -> HeartbeatPingResult:
+    async def fake_ping(ip: str, port: int, *, settings: FakeSettingsReader, **_extra: object) -> HeartbeatPingResult:
         if ip == "1.1.1.1":
             await asyncio.sleep(0.5)
             return _slow_timeout()
@@ -90,7 +97,9 @@ async def test_one_slow_host_does_not_delay_fast_host_log(
         patch("app.appium_nodes.services.heartbeat._ping_agent", new=AsyncMock(side_effect=fake_ping)),
     ):
         async with populated_hosts_one_slow_one_fast as db:
-            await _check_hosts(db)
+            await HeartbeatLoop(services=_hb_services(db))._check_hosts(
+                db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            )
 
     # Look for heartbeat_ping events; assert fast host's event index < slow host's index.
     events = [e for e in cap if e.get("event") == "heartbeat_ping"]

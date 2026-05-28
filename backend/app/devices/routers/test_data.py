@@ -8,6 +8,7 @@ from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
 from app.devices.routers.helpers import get_device_for_update_or_404, get_device_or_404
 from app.devices.schemas.test_data import TestDataAuditEntryRead, TestDataPayload, TestDataRead
 from app.devices.services import test_data as test_data_service
+from app.events.dependencies import EventServicesDep
 
 router = APIRouter(tags=["devices-test-data"], responses={**RESPONSES_400, **RESPONSES_401, **RESPONSES_404})
 
@@ -23,9 +24,10 @@ async def replace_test_data(
     device_id: uuid.UUID,
     payload: TestDataPayload,
     db: DbDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
-    return await test_data_service.replace_device_test_data(db, device, payload.root)
+    return await test_data_service.replace_device_test_data(db, device, payload.root, publisher=events.publisher)
 
 
 @router.patch("/{device_id}/test_data", response_model=TestDataRead)
@@ -33,9 +35,10 @@ async def merge_test_data(
     device_id: uuid.UUID,
     payload: TestDataPayload,
     db: DbDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
-    return await test_data_service.merge_device_test_data(db, device, payload.root)
+    return await test_data_service.merge_device_test_data(db, device, payload.root, publisher=events.publisher)
 
 
 @router.get("/{device_id}/test_data/history", response_model=list[TestDataAuditEntryRead])
