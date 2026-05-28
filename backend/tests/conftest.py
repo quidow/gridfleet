@@ -246,6 +246,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
         setup_database, class_=AsyncSession, expire_on_commit=False
     )
     test_event_bus.configure(session_factory=session_factory, engine=setup_database)
+    test_circuit_breaker._session_factory = session_factory
     settings_service.configure_store_refresh(session_factory)
     test_event_bus.register_handler(settings_service.handle_system_event)
     test_event_bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))

@@ -112,9 +112,10 @@ class AgentCircuitBreaker:
 
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
+            assert self._session_factory is not None
             payload: dict[str, Any] = {
                 "host": host,
-                **(await _resolve_host_identity(host, session_factory=self._session_factory)),  # type: ignore[arg-type]
+                **(await _resolve_host_identity(host, session_factory=self._session_factory)),
             }
             await self._publisher.publish(
                 "host.circuit_breaker.closed",
@@ -158,12 +159,13 @@ class AgentCircuitBreaker:
                 cooldown_seconds=cooldown,
                 error=error,
             )
+            assert self._session_factory is not None
             payload: dict[str, Any] = {
                 "host": host,
                 "consecutive_failures": failure_count,
                 "cooldown_seconds": cooldown,
                 "last_error": error,
-                **(await _resolve_host_identity(host, session_factory=self._session_factory)),  # type: ignore[arg-type]
+                **(await _resolve_host_identity(host, session_factory=self._session_factory)),
             }
             await self._publisher.publish(
                 "host.circuit_breaker.opened",
