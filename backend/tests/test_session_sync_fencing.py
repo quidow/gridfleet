@@ -22,8 +22,21 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
+def _make_fake_grid(grid_data: dict | None = None) -> object:
+    from unittest.mock import Mock
+
+    from app.grid.service import GridService
+
+    data = grid_data if grid_data is not None else {"value": {"ready": True, "nodes": []}}
+    fake = AsyncMock()
+    fake.get_status = AsyncMock(return_value=data)
+    fake.terminate_session = AsyncMock(return_value=True)
+    fake.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
+    return fake
+
+
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=event_bus)
+    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=_make_fake_grid())
 
 
 @pytest.mark.db
@@ -31,22 +44,21 @@ async def _sync_sessions(db: AsyncSession) -> None:
 async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
     db_session: AsyncSession,
 ) -> None:
-    fake_grid = {"value": {"ready": True, "nodes": []}}
     initial_count = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
 
     with (
-        patch(
-            "app.sessions.service_sync.grid_service.get_grid_status",
-            new_callable=AsyncMock,
-            return_value=fake_grid,
-        ),
         patch(
             "app.sessions.service_sync.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _sync_sessions(db_session)
+        await _sync_sessions_impl(
+            db_session,
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+        )
 
     final_count = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
     assert final_count == initial_count
@@ -92,21 +104,19 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
     db_session.add(session)
     await db_session.commit()
 
-    fake_grid = {"value": {"ready": True, "nodes": []}}
-
     with (
-        patch(
-            "app.sessions.service_sync.grid_service.get_grid_status",
-            new_callable=AsyncMock,
-            return_value=fake_grid,
-        ),
         patch(
             "app.sessions.service_sync.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _sync_sessions(db_session)
+        await _sync_sessions_impl(
+            db_session,
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            grid=_make_fake_grid({"value": {"ready": True, "nodes": []}}),
+        )
 
     await db_session.refresh(session, attribute_names=["status", "ended_at"])
     assert session.status == SessionStatus.running

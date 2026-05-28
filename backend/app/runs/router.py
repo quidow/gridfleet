@@ -15,6 +15,7 @@ from app.core.pagination import CursorPaginationError
 from app.devices.models import Device
 from app.events.dependencies import EventServicesDep
 from app.runs import service as run_service
+from app.runs.dependencies import RunServicesDep
 from app.runs.models import RunState
 from app.runs.schemas import (
     HeartbeatResponse,
@@ -298,10 +299,16 @@ async def heartbeat(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
 
 @router.post("/{run_id}/complete", response_model=RunRead)
 async def complete_run(
-    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    run_id: uuid.UUID,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.complete_run(db, run_id, publisher=events.publisher, settings=settings_services.service)
+        run = await run_service.complete_run(
+            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -310,10 +317,16 @@ async def complete_run(
 
 @router.post("/{run_id}/cancel", response_model=RunRead)
 async def cancel_run(
-    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    run_id: uuid.UUID,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.cancel_run(db, run_id, publisher=events.publisher, settings=settings_services.service)
+        run = await run_service.cancel_run(
+            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -322,11 +335,15 @@ async def cancel_run(
 
 @router.post("/{run_id}/force-release", response_model=RunRead)
 async def force_release(
-    run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    run_id: uuid.UUID,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    run_services: RunServicesDep,
 ) -> RunRead:
     try:
         run = await run_service.force_release(
-            db, run_id, publisher=events.publisher, settings=settings_services.service
+            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

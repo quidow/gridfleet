@@ -39,7 +39,6 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.events import queue_event_for_session
-from app.grid import service as grid_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -316,6 +316,7 @@ async def _check_nodes(
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    grid: GridServiceProtocol,
 ) -> None:
     stmt = (
         select(AppiumNode)
@@ -355,7 +356,7 @@ async def _check_nodes(
             for request in requests
         ]
     )
-    grid_device_ids = grid_service.available_node_device_ids(await grid_service.get_grid_status(settings=settings))
+    grid_device_ids = grid.available_node_device_ids(await grid.get_status())
 
     # Fence: probes (asyncio.gather above) and Grid /status are slow external
     # calls. If another backend took leadership while we awaited them, drop
@@ -404,6 +405,7 @@ class NodeHealthLoop:
                         pool=self._services.pool,
                         circuit_breaker=self._services.circuit_breaker,
                         publisher=self._services.publisher,
+                        grid=self._services.grid,
                     )
             except LeadershipLost as exc:
                 logger.error(

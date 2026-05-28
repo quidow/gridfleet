@@ -56,6 +56,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
+            grid=Mock(),
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -81,6 +82,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
+            grid=Mock(),
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -103,6 +105,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
             pool=Mock(),
             circuit_breaker=Mock(),
             publisher=Mock(),
+            grid=Mock(),
             session_factory=_fake_session,
         )
     )
@@ -127,14 +130,17 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
     monkeypatch.setattr(node_health, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
-    monkeypatch.setattr(node_health.grid_service, "get_grid_status", AsyncMock(return_value={}))
-    monkeypatch.setattr(node_health.grid_service, "available_node_device_ids", Mock(return_value=set()))
     monkeypatch.setattr(node_health, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(node_health.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     from tests.fakes import FakeSettingsReader
 
-    await node_health._check_nodes(db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus)
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={})
+    fake_grid.available_node_device_ids = Mock(return_value=set())
+    await node_health._check_nodes(
+        db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus, grid=fake_grid
+    )
 
     db.commit.assert_awaited_once()
 
@@ -153,6 +159,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
+            grid=Mock(),
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -173,6 +180,7 @@ async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pyt
         services=RunServices(
             publisher=event_bus,
             settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+            grid=Mock(),
             session_factory=_fake_session,
         )
     )
@@ -197,6 +205,7 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
         services=RunServices(
             publisher=event_bus,
             settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+            grid=Mock(),
             session_factory=_fake_session,
         )
     )
@@ -218,6 +227,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
+            grid=Mock(),
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )

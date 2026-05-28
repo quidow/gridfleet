@@ -126,6 +126,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}),
+            grid=Mock(),
             session_factory=AsyncMock(),
             circuit_breaker=Mock(),
         )

@@ -85,16 +85,13 @@ async def test_sweep_stale_stop_pending_handles_deleted_rows(monkeypatch: pytest
 async def test_sync_sessions_unreachable_grid_still_sweeps(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.commit = AsyncMock()
-    monkeypatch.setattr(
-        session_sync.grid_service,
-        "get_grid_status",
-        AsyncMock(return_value={"value": {"ready": False}, "error": "down"}),
-    )
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"value": {"ready": False}, "error": "down"})
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     sweep = AsyncMock()
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", sweep)
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     sweep.assert_awaited_once_with(db, publisher=event_bus)
     db.commit.assert_awaited_once()
@@ -125,9 +122,9 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
         SimpleNamespace(first=lambda: None),
     ]
     db.execute = AsyncMock(side_effect=execute_results)
-    monkeypatch.setattr(
-        session_sync.grid_service, "get_grid_status", AsyncMock(return_value={"value": {"ready": True, "nodes": []}})
-    )
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"value": {"ready": True, "nodes": []}})
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(
         session_sync.lifecycle_policy,
@@ -146,7 +143,7 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     machine.transition.assert_awaited_once()
     assert machine.transition.await_args.args[1] is session_sync.TransitionEvent.AUTO_STOP_EXECUTED
@@ -206,58 +203,56 @@ async def test_sync_sessions_new_session_race_and_invalid_capability_branches(
             _ExecuteResult(scalar_one_or_none=uuid.uuid4()),
         ]
     )
-    monkeypatch.setattr(
-        session_sync.grid_service,
-        "get_grid_status",
-        AsyncMock(
-            return_value={
-                "value": {
-                    "ready": True,
-                    "nodes": [
-                        {
-                            "slots": [
-                                {"session": {"sessionId": "missing-target", "capabilities": {}}},
-                                {
-                                    "session": {
-                                        "sessionId": "bad-device-id",
-                                        "capabilities": {
-                                            "appium:udid": "bad-target",
-                                            "gridfleet:deviceId": "not-a-uuid",
-                                        },
-                                    }
-                                },
-                                {
-                                    "session": {
-                                        "sessionId": "concurrent",
-                                        "capabilities": {
-                                            "appium:udid": "concurrent-target",
-                                            "gridfleet:deviceId": str(valid_id),
-                                        },
-                                    }
-                                },
-                                {
-                                    "session": {
-                                        "sessionId": "vanished",
-                                        "capabilities": {
-                                            "appium:udid": "vanished-target",
-                                            "gridfleet:deviceId": str(valid_id),
-                                        },
-                                    }
-                                },
-                            ]
-                        }
-                    ],
-                }
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(
+        return_value={
+            "value": {
+                "ready": True,
+                "nodes": [
+                    {
+                        "slots": [
+                            {"session": {"sessionId": "missing-target", "capabilities": {}}},
+                            {
+                                "session": {
+                                    "sessionId": "bad-device-id",
+                                    "capabilities": {
+                                        "appium:udid": "bad-target",
+                                        "gridfleet:deviceId": "not-a-uuid",
+                                    },
+                                }
+                            },
+                            {
+                                "session": {
+                                    "sessionId": "concurrent",
+                                    "capabilities": {
+                                        "appium:udid": "concurrent-target",
+                                        "gridfleet:deviceId": str(valid_id),
+                                    },
+                                }
+                            },
+                            {
+                                "session": {
+                                    "sessionId": "vanished",
+                                    "capabilities": {
+                                        "appium:udid": "vanished-target",
+                                        "gridfleet:deviceId": str(valid_id),
+                                    },
+                                }
+                            },
+                        ]
+                    }
+                ],
             }
-        ),
+        }
     )
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(
         session_sync.run_service, "get_device_reservation_with_entry", AsyncMock(return_value=(None, None))
     )
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     assert db.get.await_count == 1
     db.commit.assert_awaited_once()
@@ -308,11 +303,9 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
             ),
         ]
     )
-    monkeypatch.setattr(
-        session_sync.grid_service,
-        "get_grid_status",
-        AsyncMock(return_value={"value": {"ready": True, "nodes": []}}),
-    )
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"value": {"ready": True, "nodes": []}})
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
@@ -335,7 +328,7 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
     )
     monkeypatch.setattr(session_sync, "_sweep_stale_stop_pending", AsyncMock())
 
-    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus)
+    await session_sync._sync_sessions(db, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     assert session_sync.lifecycle_policy.handle_session_finished.await_count == 4
     session_sync.device_locking.lock_device.assert_awaited_once()

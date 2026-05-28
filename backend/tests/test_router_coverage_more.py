@@ -187,13 +187,19 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db, events=_events
         )
     with pytest.raises(HTTPException):
-        await runs.complete_run(run.id, db=db, events=_events, settings_services=mock_ss)
+        await runs.complete_run(
+            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
     with pytest.raises(HTTPException):
-        await runs.cancel_run(run.id, db=db, events=_events, settings_services=mock_ss)
+        await runs.cancel_run(
+            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
 
     monkeypatch.setattr(runs.run_service, "force_release", AsyncMock(side_effect=ValueError("missing")))
     with pytest.raises(HTTPException) as force_error:
-        await runs.force_release(run.id, db=db, events=_events, settings_services=mock_ss)
+        await runs.force_release(
+            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
     assert force_error.value.status_code == 404
 
     monkeypatch.setattr(runs.run_service, "heartbeat", AsyncMock(side_effect=ValueError("missing")))
@@ -310,11 +316,19 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
         )
     ).state == RunState.active
     assert (
-        await runs.complete_run(active.id, db=db, events=_events, settings_services=grid_ss)
+        await runs.complete_run(
+            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
     ).state == RunState.active
-    assert (await runs.cancel_run(active.id, db=db, events=_events, settings_services=grid_ss)).state == RunState.active
     assert (
-        await runs.force_release(active.id, db=db, events=_events, settings_services=grid_ss)
+        await runs.cancel_run(
+            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
+    ).state == RunState.active
+    assert (
+        await runs.force_release(
+            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
+        )
     ).state == RunState.active
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
@@ -65,7 +66,9 @@ async def test_cancel_run_revokes_health_failure_reservation_intent(db_session: 
         source=f"health_failure:reservation:{device.id}",
     )
 
-    await run_service.cancel_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.cancel_run(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
+    )
 
     assert not await _intent_exists(
         db_session,
@@ -79,7 +82,9 @@ async def test_complete_run_revokes_health_failure_reservation_intent(db_session
     run = await create_reserved_run(db_session, name="complete-release-run", devices=[device])
     await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
 
-    await run_service.complete_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.complete_run(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
+    )
 
     assert not await _intent_exists(
         db_session,
@@ -94,7 +99,7 @@ async def test_expire_run_revokes_health_failure_reservation_intent(db_session: 
     await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
 
     await run_service.expire_run(
-        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader()
+        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
     )
 
     assert not await _intent_exists(

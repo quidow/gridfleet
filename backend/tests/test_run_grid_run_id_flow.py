@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -114,7 +114,9 @@ async def test_complete_run_clears_desired_grid_run_id(
     run_id = await _create_run(db_session)
 
     await run_service.signal_ready(db_session, run_id, publisher=event_bus)
-    await run_service.complete_run(db_session, run_id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.complete_run(
+        db_session, run_id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
+    )
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None

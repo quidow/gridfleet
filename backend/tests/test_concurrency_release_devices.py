@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -73,7 +73,9 @@ async def test_release_devices_does_not_stomp_offline_writer(
             run_obj.completed_at = datetime.now(UTC)
             started.set()
             await proceed.wait()
-            await run_service._release_devices(session, run_obj, settings=FakeSettingsReader(), publisher=Mock())
+            await run_service._release_devices(
+                session, run_obj, settings=FakeSettingsReader(), grid=AsyncMock(), publisher=Mock()
+            )
 
     async def stomper() -> None:
         await started.wait()
@@ -175,7 +177,9 @@ async def test_release_devices_serializes_with_concurrent_writer(
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
             with patch("app.devices.services.state.is_ready_for_use_async", racing_is_ready):
-                await run_service._release_devices(session, run_obj, settings=FakeSettingsReader(), publisher=Mock())
+                await run_service._release_devices(
+                    session, run_obj, settings=FakeSettingsReader(), grid=AsyncMock(), publisher=Mock()
+                )
 
     async def stomper() -> None:
         await stomper_can_go.wait()

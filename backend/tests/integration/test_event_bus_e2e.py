@@ -71,8 +71,14 @@ async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.M
     # Point subscriber at the real hub XPUB (subscribers READ from here).
     monkeypatch.setattr(grid_settings, "event_bus_subscribe_url", f"tcp://{HUB_HOST}:{HUB_XPUB_PORT}")
 
+    from app.grid.service import GridService
+
     loop = event_bus_loop.GridEventBusSubscriberLoop(
-        services=GridServices(settings=FakeSettingsReader({}), session_factory=_fake_session_factory)
+        services=GridServices(
+            grid=GridService(settings=FakeSettingsReader({})),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session_factory,
+        )
     )
     task = asyncio.create_task(loop.run())
     try:

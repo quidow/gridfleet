@@ -1,6 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -423,15 +423,15 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
         )
     await db_session.commit()
 
-    with patch(
-        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
-        new=AsyncMock(return_value=_grid_status(active_sessions=3, queued_requests=2)),
-    ):
-        snapshot = await collect_capacity_snapshot_once(
-            db_session,
-            captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
-            settings=FakeSettingsReader(),
-        )
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value=_grid_status(active_sessions=3, queued_requests=2))
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
+    snapshot = await collect_capacity_snapshot_once(
+        db_session,
+        captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
+        settings=FakeSettingsReader(),
+        grid=fake_grid,
+    )
 
     assert snapshot is not None
     assert snapshot.total_capacity_slots == 2
@@ -472,11 +472,10 @@ async def test_count_schedulable_capacity_uses_pid_not_state(
 
 
 async def test_capacity_snapshot_collector_skips_unreachable_grid(db_session: AsyncSession) -> None:
-    with patch(
-        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
-        new=AsyncMock(return_value={"ready": False, "error": "connect failed"}),
-    ):
-        snapshot = await collect_capacity_snapshot_once(db_session, settings=FakeSettingsReader())
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"ready": False, "error": "connect failed"})
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
+    snapshot = await collect_capacity_snapshot_once(db_session, settings=FakeSettingsReader(), grid=fake_grid)
 
     assert snapshot is None
     assert (await db_session.execute(select(AnalyticsCapacitySnapshot))).scalars().all() == []
@@ -538,15 +537,15 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
         ).scalar_one()
     )
 
-    with patch(
-        "app.devices.services.fleet_capacity.grid_service.get_grid_status",
-        new=AsyncMock(return_value=_grid_status(active_sessions=0, queued_requests=0)),
-    ):
-        snapshot = await collect_capacity_snapshot_once(
-            db_session,
-            captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC),
-            settings=FakeSettingsReader(),
-        )
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value=_grid_status(active_sessions=0, queued_requests=0))
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
+    snapshot = await collect_capacity_snapshot_once(
+        db_session,
+        captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC),
+        settings=FakeSettingsReader(),
+        grid=fake_grid,
+    )
 
     assert snapshot is not None
     assert snapshot.hosts_total == hosts_total

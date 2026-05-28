@@ -82,6 +82,8 @@ def compose_app(
         circuit_breaker=circuit_breaker,
     )
 
+    grid_svc = GridService(settings=settings_svc)
+
     return AppServices(
         events=event_services,
         settings=settings_services,
@@ -89,6 +91,7 @@ def compose_app(
         devices=DeviceServices(
             publisher=bus,
             settings=settings_svc,
+            grid=grid_svc,
             session_factory=session_factory,
             circuit_breaker=circuit_breaker,
         ),
@@ -99,10 +102,10 @@ def compose_app(
             circuit_breaker=circuit_breaker,
             session_factory=session_factory,
         ),
-        sessions=SessionServices(settings=settings_svc, session_factory=session_factory, publisher=bus),
-        runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
+        sessions=SessionServices(settings=settings_svc, grid=grid_svc, session_factory=session_factory, publisher=bus),
+        runs=RunServices(publisher=bus, settings=settings_svc, grid=grid_svc, session_factory=session_factory),
         grid=GridServices(
-            grid=GridService(settings=settings_svc),
+            grid=grid_svc,
             settings=settings_svc,
             session_factory=session_factory,
         ),
@@ -112,6 +115,7 @@ def compose_app(
             pool=http_pool,
             circuit_breaker=circuit_breaker,
             publisher=bus,
+            grid=grid_svc,
             session_factory=session_factory,
         ),
         jobs=DurableJobWorkerLoop(

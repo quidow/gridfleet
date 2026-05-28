@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
-from app.grid import service as grid_service
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
@@ -73,12 +72,14 @@ async def test_force_release_clears_stop_pending(
     )
     assert result == "deferred"
 
-    async def _fake_terminate(_session_id: str, *, settings: object = None) -> bool:
-        return True
+    from unittest.mock import AsyncMock
 
-    monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
+    fake_grid = AsyncMock()
+    fake_grid.terminate_session = AsyncMock(return_value=True)
 
-    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}))
+    await run_service.force_release(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid
+    )
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -165,8 +166,10 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         call_log.append("helper")
         return await real_helper(*args, **kwargs)
 
-    async def _fake_terminate(_session_id: str, *, settings: object = None) -> bool:
-        return True
+    from unittest.mock import AsyncMock
+
+    fake_grid = AsyncMock()
+    fake_grid.terminate_session = AsyncMock(return_value=True)
 
     monkeypatch.setattr("app.runs.service_lifecycle._release_devices", _spy_release)
     monkeypatch.setattr(
@@ -174,9 +177,10 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         "complete_deferred_stop_if_session_ended",
         _spy_helper,
     )
-    monkeypatch.setattr(grid_service, "terminate_grid_session", _fake_terminate)
 
-    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}))
+    await run_service.force_release(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid
+    )
 
     # _release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could

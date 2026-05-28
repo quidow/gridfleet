@@ -10,6 +10,12 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
+def _fake_grid() -> AsyncMock:
+    fake = AsyncMock()
+    fake.terminate_session = AsyncMock(return_value=True)
+    return fake
+
+
 def _run(state: RunState = RunState.preparing) -> SimpleNamespace:
     return SimpleNamespace(
         id=__import__("uuid").uuid4(),
@@ -72,51 +78,67 @@ async def test_run_terminal_transitions_success_and_guard_paths(monkeypatch: pyt
     active.started_at = datetime.now(UTC)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=active))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=active))
-    completed = await run_service.complete_run(db, active.id, publisher=event_bus, settings=FakeSettingsReader())
+    completed = await run_service.complete_run(
+        db, active.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
     assert completed.state == RunState.completed
     assert completed.completed_at is not None
 
     for fn in (run_service.complete_run, run_service.cancel_run):
         monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
         with pytest.raises(ValueError, match="Run not found"):
-            await fn(db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+            await fn(
+                db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+            )
         monkeypatch.setattr(
             "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.completed))
         )
         with pytest.raises(ValueError, match="terminal state"):
-            await fn(db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader())
+            await fn(
+                db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+            )
 
     cancellable = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=cancellable))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=cancellable))
-    cancelled = await run_service.cancel_run(db, cancellable.id, publisher=event_bus, settings=FakeSettingsReader())
+    cancelled = await run_service.cancel_run(
+        db, cancellable.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
     assert cancelled.state == RunState.cancelled
 
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Run not found"):
         await run_service.force_release(
-            db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader()
+            db, __import__("uuid").uuid4(), publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
         )
 
     releasable = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=releasable))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=releasable))
-    forced = await run_service.force_release(db, releasable.id, publisher=event_bus, settings=FakeSettingsReader())
+    forced = await run_service.force_release(
+        db, releasable.id, publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
     assert forced.state == RunState.cancelled
     assert forced.error == "Force released by admin"
 
     missing = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-    await run_service.expire_run(db, missing, "timeout", publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.expire_run(
+        db, missing, "timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
 
     terminal = _run(RunState.completed)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=terminal))
-    await run_service.expire_run(db, terminal, "timeout", publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.expire_run(
+        db, terminal, "timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
     assert terminal.state == RunState.completed
 
     expiring = _run(RunState.active)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=expiring))
-    await run_service.expire_run(db, expiring, "timeout", publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.expire_run(
+        db, expiring, "timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=_fake_grid()
+    )
     assert expiring.state == RunState.expired
     assert expiring.error == "timeout"
 

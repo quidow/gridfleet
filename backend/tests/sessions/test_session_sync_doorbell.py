@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from unittest.mock import Mock
 
 import pytest
 
@@ -36,7 +37,9 @@ def _reset_doorbell() -> None:
 async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) -> None:
     invocations = 0
 
-    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader, publisher: object | None = None) -> None:
+    async def fake_sync_sessions(
+        db: object, *, settings: FakeSettingsReader, publisher: object | None = None, **_kwargs: object
+    ) -> None:
         nonlocal invocations
         invocations += 1
 
@@ -51,6 +54,7 @@ async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) ->
 
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        grid=Mock(),
         session_factory=lambda: _NullCtx(),
         publisher=event_bus,
     )
@@ -72,7 +76,9 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
     sync_started = asyncio.Event()
     release_sync = asyncio.Event()
 
-    async def fake_sync_sessions(db: object, *, settings: FakeSettingsReader, publisher: object | None = None) -> None:
+    async def fake_sync_sessions(
+        db: object, *, settings: FakeSettingsReader, publisher: object | None = None, **_kwargs: object
+    ) -> None:
         nonlocal invocations
         invocations += 1
         sync_started.set()
@@ -89,6 +95,7 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
 
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
+        grid=Mock(),
         session_factory=lambda: _NullCtx(),
         publisher=event_bus,
     )

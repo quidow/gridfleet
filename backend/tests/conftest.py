@@ -324,6 +324,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         return DeviceServices(
             publisher=test_event_bus,
             settings=settings_service,
+            grid=GridService(settings=settings_service),
             session_factory=sf,
             circuit_breaker=Mock(),
         )
@@ -346,14 +347,24 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return SessionServices(publisher=test_event_bus, settings=settings_service, session_factory=sf)
+        return SessionServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            grid=GridService(settings=settings_service),
+            session_factory=sf,
+        )
 
     def override_get_run_services() -> RunServices:
         assert db_session.bind is not None
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return RunServices(publisher=test_event_bus, settings=settings_service, session_factory=sf)
+        return RunServices(
+            publisher=test_event_bus,
+            settings=settings_service,
+            grid=GridService(settings=settings_service),
+            session_factory=sf,
+        )
 
     def override_get_grid_services() -> GridServices:
         assert db_session.bind is not None

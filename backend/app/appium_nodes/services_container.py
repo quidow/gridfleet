@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,4 +21,5 @@ class AppiumNodeServices:
     pool: AgentHttpPool
     circuit_breaker: CircuitBreakerProtocol
     publisher: EventPublisher
+    grid: GridServiceProtocol
     session_factory: async_sessionmaker[AsyncSession]

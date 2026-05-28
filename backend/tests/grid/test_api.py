@@ -77,7 +77,9 @@ async def test_grid_status_hub_unreachable(client: AsyncClient, db_session: Asyn
     )
 
     with patch(
-        "app.grid.service.GridService.get_status", new_callable=AsyncMock, return_value={"ready": False, "error": "grid_unreachable"}
+        "app.grid.service.GridService.get_status",
+        new_callable=AsyncMock,
+        return_value={"ready": False, "error": "grid_unreachable"},
     ):
         resp = await client.get("/api/grid/status")
 

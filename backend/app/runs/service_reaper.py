@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
     from app.runs.services_container import RunServices
 
 logger = get_logger(__name__)
@@ -36,7 +37,9 @@ class RunReaperLoop:
         # On startup, immediately check for stale runs (e.g. manager was restarted)
         try:
             async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                await _reap_stale_runs(db, publisher=self._services.publisher, settings=self._services.settings)
+                await _reap_stale_runs(
+                    db, publisher=self._services.publisher, settings=self._services.settings, grid=self._services.grid
+                )
         except LeadershipLost as exc:
             logger.error(
                 "run_reaper_loop_leadership_lost",
@@ -51,7 +54,12 @@ class RunReaperLoop:
             await asyncio.sleep(interval)
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _reap_stale_runs(db, publisher=self._services.publisher, settings=self._services.settings)
+                    await _reap_stale_runs(
+                        db,
+                        publisher=self._services.publisher,
+                        settings=self._services.settings,
+                        grid=self._services.grid,
+                    )
             except LeadershipLost as exc:
                 logger.error(
                     "run_reaper_loop_leadership_lost",
@@ -75,7 +83,9 @@ def _ttl_stale(run: TestRun, now: datetime) -> bool:
     return now > run.created_at + timedelta(minutes=run.ttl_minutes)
 
 
-async def _reap_stale_runs(db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader) -> None:
+async def _reap_stale_runs(
+    db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader, grid: GridServiceProtocol
+) -> None:
     now = datetime.now(UTC)
 
     # Postgres make_interval(years, months, weeks, days, hours, mins, secs).
@@ -132,7 +142,9 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventPublisher, setti
                 locked.last_heartbeat,
                 locked.heartbeat_timeout_sec,
             )
-            await run_service.expire_run(db, locked, "Heartbeat timeout", publisher=publisher, settings=settings)
+            await run_service.expire_run(
+                db, locked, "Heartbeat timeout", publisher=publisher, settings=settings, grid=grid
+            )
         else:
             logger.warning(
                 "Expiring run %s (%s): TTL exceeded (%d minutes)",
@@ -141,5 +153,10 @@ async def _reap_stale_runs(db: AsyncSession, *, publisher: EventPublisher, setti
                 locked.ttl_minutes,
             )
             await run_service.expire_run(
-                db, locked, f"TTL exceeded ({locked.ttl_minutes} minutes)", publisher=publisher, settings=settings
+                db,
+                locked,
+                f"TTL exceeded ({locked.ttl_minutes} minutes)",
+                publisher=publisher,
+                settings=settings,
+                grid=grid,
             )

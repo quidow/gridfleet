@@ -13,7 +13,9 @@ router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
 @router.get("/status", response_model=GridStatusRead)
-async def grid_status(db: DbDep, grid_services: GridServicesDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+async def grid_status(
+    db: DbDep, grid_services: GridServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     grid_data = await grid_services.grid.get_status()
     devices = await device_service.list_devices(db, settings=settings_services.service)
 

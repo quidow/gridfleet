@@ -272,6 +272,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
         services=DeviceServices(
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.device_check_interval_sec": 1}),
+            grid=Mock(),
             session_factory=fake_session,
             circuit_breaker=Mock(),
         )
