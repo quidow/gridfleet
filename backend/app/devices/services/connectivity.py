@@ -253,7 +253,7 @@ async def _apply_ip_ping_hysteresis(
     return counter < threshold
 
 
-async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None) -> None:
+async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> None:
     locked_device = await device_locking.lock_device(db, device.id)
     if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
         return None
@@ -279,7 +279,7 @@ async def _check_connectivity(
     *,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     ip_ping_threshold = int(settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
     ip_ping_timeout = float(settings.get("device_checks.ip_ping.timeout_sec"))

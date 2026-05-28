@@ -163,7 +163,7 @@ async def _process_node_health(
     observed_port: int | None = None,
     observed_pid: int | None = None,
     observed_active_connection_target: str | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     settings: SettingsReader,
 ) -> None:
     locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
@@ -315,7 +315,7 @@ async def _check_nodes(
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     stmt = (
         select(AppiumNode)

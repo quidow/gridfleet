@@ -108,10 +108,8 @@ def queue_session_started_event(
     *,
     device: Device | None,
     run_id: str | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
-    if publisher is None:
-        return
     queue_event_for_session(
         db,
         "session.started",
@@ -125,10 +123,8 @@ def queue_session_ended_event(
     session: Session,
     *,
     device: Device | None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
-    if publisher is None:
-        return
     queue_event_for_session(
         db,
         "session.ended",
@@ -383,6 +379,7 @@ async def register_session(
     requested_capabilities: dict[str, Any] | None = None,
     error_type: str | None = None,
     error_message: str | None = None,
+    publisher: EventPublisher,
 ) -> Session:
     existing = await get_session(db, session_id)
     if existing is not None:
@@ -454,12 +451,15 @@ async def register_session(
         session = await db.get(Session, inserted_id)
         assert session is not None
         if device is not None:
-            await set_operational_state(device, DeviceOperationalState.busy, publish_event=False, severity="info")
+            await set_operational_state(
+                device, DeviceOperationalState.busy, publish_event=False, severity="info", publisher=publisher
+            )
         queue_session_started_event(
             db,
             session,
             device=device,
             run_id=str(reservation_run_id) if reservation_run_id is not None else None,
+            publisher=publisher,
         )
         await db.commit()
         await db.refresh(session)
@@ -487,12 +487,12 @@ async def register_session(
         run_id=reservation_run_id,
     )
     db.add(session)
-    queue_session_started_event(db, session, device=device, run_id=None)
-    queue_session_ended_event(db, session, device=device)
+    queue_session_started_event(db, session, device=device, run_id=None, publisher=publisher)
+    queue_session_ended_event(db, session, device=device, publisher=publisher)
     await db.commit()
     await db.refresh(session)
     if device is not None:
-        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=publisher)
     return session
 
 
@@ -517,7 +517,7 @@ async def get_device_session_outcome_heatmap_rows(
     return [(row.started_at, row.status) for row in result.all()]
 
 
-async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | None:
+async def mark_session_finished(db: AsyncSession, session_id: str, *, publisher: EventPublisher) -> Session | None:
     """Stamp ``ended_at`` (if null) and run lifecycle bookkeeping.
 
     Idempotent: a row that already has ``ended_at`` set returns unchanged
@@ -565,7 +565,7 @@ async def mark_session_finished(db: AsyncSession, session_id: str) -> Session | 
             await db.commit()
             return session
 
-        await lifecycle_policy.handle_session_finished(db, device)
+        await lifecycle_policy.handle_session_finished(db, device, publisher=publisher)
 
     # mark_session_finished owns persistence of ended_at. handle_session_finished
     # commits only on its terminal branches (CLEARED_RECOVERED, AUTO_STOPPED);
@@ -581,7 +581,7 @@ async def update_session_status(
     db: AsyncSession,
     session_id: str,
     status: SessionStatus,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> Session | None:
     session = await get_session(db, session_id)
     if session is None:
@@ -661,9 +661,9 @@ async def update_session_status(
             deferred_stop_target = locked_device
 
     if should_publish_ended:
-        queue_session_ended_event(db, session, device=event_device)
+        queue_session_ended_event(db, session, device=event_device, publisher=publisher)
     await db.commit()
     if deferred_stop_target is not None:
-        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, deferred_stop_target)
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, deferred_stop_target, publisher=publisher)
     await db.refresh(session)
     return session

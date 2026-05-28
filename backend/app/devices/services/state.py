@@ -49,7 +49,7 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
     assert not publish_event or publisher is not None, (
         "publisher is required when publish_event=True; pass publish_event=False to suppress event emission"
@@ -85,7 +85,7 @@ async def set_hold(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
     assert not publish_event or publisher is not None, (
         "publisher is required when publish_event=True; pass publish_event=False to suppress event emission"

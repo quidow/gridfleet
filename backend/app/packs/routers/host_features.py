@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.agent_comm.dependencies import AgentCommServicesDep
 from app.auth.dependencies import AdminDep
 from app.core.dependencies import DbDep
+from app.events.dependencies import EventServicesDep
 from app.packs.services.feature_dispatch import dispatch_feature_action
 
 router = APIRouter(prefix="/api/hosts", tags=["driver-pack-feature-actions"])
@@ -53,6 +54,7 @@ async def invoke_feature_action(
     _username: AdminDep,
     session: DbDep,
     agent_comm: AgentCommServicesDep,
+    events: EventServicesDep,
 ) -> dict[str, Any]:
     """Dispatch a feature action to the agent owning ``host_id``.
 
@@ -68,6 +70,7 @@ async def invoke_feature_action(
         args=body.args,
         circuit_breaker=agent_comm.circuit_breaker,
         agent_auth=agent_comm.http_pool.auth,
+        publisher=events.publisher,
     )
     await session.commit()
     return {"ok": result.ok, "detail": result.detail, "data": result.data}

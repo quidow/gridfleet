@@ -118,7 +118,7 @@ async def complete_run(
         publisher=publisher,
     )
     await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    await _complete_deferred_stops_post_commit(db, cleanup_ids, publisher=publisher)
     run = await get_run(db, run_id)
     assert run is not None
     return run
@@ -151,7 +151,7 @@ async def cancel_run(
         publisher=publisher,
     )
     await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    await _complete_deferred_stops_post_commit(db, cleanup_ids, publisher=publisher)
     run = await get_run(db, run_id)
     assert run is not None
     return run
@@ -183,7 +183,7 @@ async def force_release(
         publisher=publisher,
     )
     await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    await _complete_deferred_stops_post_commit(db, cleanup_ids, publisher=publisher)
     run = await get_run(db, run_id)
     assert run is not None
     return run
@@ -241,4 +241,4 @@ async def expire_run(
         publisher=publisher,
     )
     await db.commit()
-    await _complete_deferred_stops_post_commit(db, cleanup_ids)
+    await _complete_deferred_stops_post_commit(db, cleanup_ids, publisher=publisher)

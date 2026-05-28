@@ -56,10 +56,8 @@ def _maybe_emit_health_changed(
     device: Device,
     previous: dict[str, Any],
     *,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
-    if publisher is None:
-        return
     nxt = build_public_summary(device)
     if previous.get("healthy") == nxt.get("healthy"):
         return
@@ -80,7 +78,7 @@ async def _mark_offline_for_failed_signal(
     *,
     failed: bool,
     reason: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     if not failed:
         return
@@ -98,7 +96,7 @@ async def _mark_offline_for_failed_signal(
 async def _restore_available_for_healthy_signal(
     db: AsyncSession,
     locked: Device,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     if locked.operational_state != DeviceOperationalState.offline:
         return
@@ -124,7 +122,7 @@ async def update_device_checks(
     *,
     healthy: bool,
     summary: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -144,7 +142,7 @@ async def update_session_viability(
     *,
     status: str | None,
     error: str | None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:
@@ -171,7 +169,7 @@ async def apply_node_state_transition(
     health_state: str | None = None,
     mark_offline: bool = True,
     reason: str | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     locked = await _lock(db, device)
     if locked is None:

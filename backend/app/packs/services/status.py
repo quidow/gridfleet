@@ -20,6 +20,8 @@ from app.packs.services.host_compatibility import manifest_supports_host_os
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.protocols import EventPublisher
+
 
 async def persist_doctor_results(
     session: AsyncSession,
@@ -45,7 +47,7 @@ async def persist_doctor_results(
         )
 
 
-async def apply_status(session: AsyncSession, payload: dict[str, Any]) -> None:
+async def apply_status(session: AsyncSession, payload: dict[str, Any], *, publisher: EventPublisher) -> None:
     host_id = uuid.UUID(payload["host_id"])
 
     for rt in payload.get("runtimes", []):
@@ -142,6 +144,7 @@ async def apply_status(session: AsyncSession, payload: dict[str, Any]) -> None:
             feature_id=sidecar["feature_id"],
             ok=bool(sidecar["ok"]),
             detail=str(sidecar.get("detail") or sidecar.get("last_error") or sidecar.get("state") or ""),
+            publisher=publisher,
         )
 
 

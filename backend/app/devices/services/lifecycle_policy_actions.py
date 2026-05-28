@@ -244,7 +244,7 @@ async def handle_node_crash(
     *,
     source: str,
     reason: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     """Record a node crash and stop the underlying Appium node.
 
@@ -414,7 +414,7 @@ async def complete_auto_stop(
     reason: str,
     source: str,
     detail: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> tuple[TestRun | None, DeviceReservation | None]:
     device = await _lock_for_state_write(db, device)
     run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)

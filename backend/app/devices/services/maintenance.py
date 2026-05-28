@@ -83,7 +83,7 @@ async def enter_maintenance(
     commit: bool = True,
     allow_reserved: bool = False,
     maintenance_reason: str = "Operator entered maintenance",
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> Device:
     if not allow_reserved and device.hold == DeviceHold.reserved:
         raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
@@ -115,7 +115,7 @@ async def exit_maintenance(
     device: Device,
     *,
     commit: bool = True,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> Device:
     if device.hold != DeviceHold.maintenance:
         raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")

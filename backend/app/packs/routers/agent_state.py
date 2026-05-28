@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Query
 from fastapi.responses import Response
 
 from app.core.dependencies import DbDep
+from app.events.dependencies import EventServicesDep
 from app.packs.services.desired_state import compute_desired
 from app.packs.services.status import apply_status
 
@@ -22,8 +23,9 @@ async def desired(
 @router.post("/status", status_code=204)
 async def status(
     db: DbDep,
+    events: EventServicesDep,
     payload: dict[str, Any] = Body(...),
 ) -> Response:
-    await apply_status(db, payload)
+    await apply_status(db, payload, publisher=events.publisher)
     await db.commit()
     return Response(status_code=204)
