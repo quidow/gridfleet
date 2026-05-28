@@ -261,4 +261,4 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
     assert payload is not None
-    assert captured["kwargs"].get("auth") is None  # type: ignore[union-attr]
+    assert "auth" not in captured["kwargs"]  # type: ignore[union-attr]

@@ -99,13 +99,12 @@ async def request(
     circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     request_headers = build_agent_headers(headers)
-    effective_auth = auth
     request_kwargs = _request_kwargs(
         method.lower(),
         headers=request_headers,
         params=params,
         timeout=timeout,
-        auth=effective_auth,
+        auth=auth,
         json_body=json_body,
     )
     started = perf_counter()
