@@ -320,7 +320,7 @@ async def test_poll_hardware_telemetry_commits_samples_and_rolls_back_failures()
         ),
     ):
         await hardware_telemetry.poll_hardware_telemetry_once(
-            db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
         )
 
     assert db.committed is True

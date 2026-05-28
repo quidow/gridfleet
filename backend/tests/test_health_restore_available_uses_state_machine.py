@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -99,7 +100,7 @@ async def test_healthy_signal_on_offline_emits_connectivity_restored(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, publisher=Mock())
     await db_session.commit()
 
     rows = (

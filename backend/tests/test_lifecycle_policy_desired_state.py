@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -78,7 +78,12 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         ),
     ):
         await lifecycle_policy.attempt_auto_recovery(
-            db_session, device, source="health_recovery", reason="test", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="health_recovery",
+            reason="test",
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     intent = (

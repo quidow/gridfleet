@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -269,7 +269,9 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
     with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_started(db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}))
+        await node_agent.mark_node_started(
+            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
+        )
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -324,7 +326,9 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
         patch.object(event_bus, "publish", publish_spy),
         pytest.raises(NodeManagerError, match="no longer exists"),
     ):
-        await node_agent.mark_node_started(db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}))
+        await node_agent.mark_node_started(
+            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
+        )
 
     publish_spy.assert_not_awaited()
 
@@ -377,7 +381,7 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     real = node_service._hold_device_row_lock
     spy = AsyncMock(side_effect=real)
     with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_stopped(db_session, loaded)
+        await node_agent.mark_node_stopped(db_session, loaded, publisher=Mock())
 
     spy.assert_awaited_once()
     assert spy.await_args.args[1] == loaded.id
@@ -775,7 +779,9 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
     loaded = await device_service.get_device(db_session, device.id)
     assert loaded is not None
 
-    await node_agent.mark_node_started(db_session, loaded, port=4725, pid=999, settings=FakeSettingsReader({}))
+    await node_agent.mark_node_started(
+        db_session, loaded, port=4725, pid=999, settings=FakeSettingsReader({}), publisher=Mock()
+    )
 
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None

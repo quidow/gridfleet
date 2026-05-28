@@ -257,7 +257,7 @@ async def bulk_enter_maintenance(
     for device_id in ordered_ids:
         try:
             device = await device_locking.lock_device(db, device_id)
-            await enter_maintenance(db, device, commit=False)
+            await enter_maintenance(db, device, commit=False, publisher=publisher)
         except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk enter_maintenance must continue past one failure
             errors[str(device_id)] = str(e)
     succeeded = len(ordered_ids) - len(errors)
@@ -373,7 +373,7 @@ async def bulk_exit_maintenance(
     successful: list[uuid.UUID] = []
     for device in devices:
         try:
-            await exit_maintenance(db, device, commit=False)
+            await exit_maintenance(db, device, commit=False, publisher=publisher)
             successful.append(device.id)
         except ValueError as e:
             errors[str(device.id)] = str(e)

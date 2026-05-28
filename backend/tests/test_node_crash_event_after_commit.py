@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
@@ -136,6 +137,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
                 "appium_reconciler.restart_window_sec": 30,
             }
         ),
+        publisher=Mock(),
     )
     await db_session.commit()
     await settle_after_commit_tasks()

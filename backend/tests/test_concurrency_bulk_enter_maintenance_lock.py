@@ -58,6 +58,7 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
         *,
         commit: bool = True,
         allow_reserved: bool = False,
+        publisher: object = None,
     ) -> Device:
         nonlocal first_enter
         _ = allow_reserved

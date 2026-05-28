@@ -286,6 +286,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         probe_session_fn=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=Mock(),
     )
 
     converge_mock.assert_awaited_once()

@@ -397,6 +397,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=Mock(),
         )
 
     await db_session.refresh(node)
@@ -460,6 +461,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=Mock(),
         )
 
     await db_session.refresh(node)
@@ -523,6 +525,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=Mock(),
         )
 
     await db_session.refresh(node)

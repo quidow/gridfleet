@@ -92,6 +92,7 @@ async def test_health_failure_intent_payload_shape(
         device,
         source="device_checks",
         reason="ADB not responsive",
+        publisher=Mock(),
     )
     assert result == "stopped"
 

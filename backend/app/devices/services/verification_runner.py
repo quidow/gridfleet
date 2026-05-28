@@ -85,6 +85,7 @@ async def run_persisted_verification_job(
                 probe_session_fn=lambda caps, timeout, grid_url=None: _probe_session_via_gridfleet_marker(
                     caps, timeout, settings=settings, grid_url=grid_url
                 ),
+                publisher=publisher,
                 settings=settings,
                 circuit_breaker=circuit_breaker,
             )

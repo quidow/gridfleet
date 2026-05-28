@@ -176,7 +176,7 @@ async def mark_node_started(
     active_connection_target: str | None = None,
     allocated_caps: dict[str, Any] | None = None,
     clear_transition: bool = False,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     settings: SettingsReader,
 ) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
@@ -206,6 +206,7 @@ async def mark_node_started(
         db,
         device,
         mark_offline=False,
+        publisher=publisher,
     )
     reset_reconciler_start_failure_state(device)
     if clear_transition:
@@ -256,7 +257,7 @@ async def mark_node_started(
     return node
 
 
-async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None) -> AppiumNode:
+async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> AppiumNode:
     device = await _hold_device_row_lock(db, device.id)
     node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
     assert node is not None
@@ -284,6 +285,7 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
         db,
         device,
         mark_offline=False,
+        publisher=publisher,
     )
     if publisher is not None:
         queue_event_for_session(

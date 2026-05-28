@@ -166,6 +166,7 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         ],
         [active, backed_off],
         {backed_off.device_id: datetime.now(UTC) + timedelta(minutes=10)},
+        publisher=Mock(),
         health_by_host={host_id: observed_payload},
         require_leader=False,
         settings=FakeSettingsReader({}),

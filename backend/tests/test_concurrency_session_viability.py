@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -99,7 +100,7 @@ async def test_session_viability_restore_handles_external_reservation(
             )
             device_obj = (await session.execute(stmt)).scalar_one()
             await session_viability.run_session_viability_probe(
-                session, device_obj, checked_by="manual", settings=FakeSettingsReader({})
+                session, device_obj, checked_by="manual", settings=FakeSettingsReader({}), publisher=Mock()
             )
 
     async def reserve_externally() -> None:

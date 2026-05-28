@@ -240,7 +240,7 @@ async def apply_telemetry_sample(
     device: Device,
     sample: dict[str, Any],
     *,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     settings: SettingsReader,
 ) -> HardwareHealthStatus:
     device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))
@@ -303,7 +303,7 @@ async def _get_device_telemetry(
 
 
 async def poll_hardware_telemetry_once(
-    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
 ) -> None:
     stmt = (
         select(Device)
@@ -323,7 +323,7 @@ async def poll_hardware_telemetry_once(
             telemetry = await _get_device_telemetry(device, settings=settings, circuit_breaker=circuit_breaker)
             if telemetry is None:
                 continue
-            await apply_telemetry_sample(db, device, telemetry, settings=settings)
+            await apply_telemetry_sample(db, device, telemetry, publisher=publisher, settings=settings)
             await db.commit()
         except Exception:
             await db.rollback()
@@ -340,7 +340,10 @@ class HardwareTelemetryLoop:
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
                     await poll_hardware_telemetry_once(
-                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
+                        db,
+                        publisher=self._services.publisher,
+                        settings=self._services.settings,
+                        circuit_breaker=self._services.circuit_breaker,
                     )
             except Exception:
                 logger.exception("Hardware telemetry loop failed")

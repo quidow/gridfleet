@@ -671,6 +671,7 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
                 db=object(),
                 settings_services=SimpleNamespace(reader=object()),
                 agent_comm=_cooldown_ac,
+                events=SimpleNamespace(publisher=Mock()),
             )
     assert caught.value.status_code == 404
 
@@ -687,6 +688,7 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
                 db=object(),
                 settings_services=SimpleNamespace(reader=object()),
                 agent_comm=_cooldown_ac,
+                events=SimpleNamespace(publisher=Mock()),
             )
     assert caught.value.status_code == 422
 
@@ -1328,15 +1330,18 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
     serialized = {"id": str(device_id)}
 
     _dev_ctrl_ss = _mock_settings_svc(FakeSettingsReader({}))
+    _dev_ctrl_events = SimpleNamespace(publisher=Mock())
     for call, service_name in (
         (
             lambda: devices_control.enter_device_maintenance(
-                device_id, object(), db=object(), settings_services=_dev_ctrl_ss
+                device_id, object(), db=object(), events=_dev_ctrl_events, settings_services=_dev_ctrl_ss
             ),
             "enter_maintenance",
         ),
         (
-            lambda: devices_control.exit_device_maintenance(device_id, db=object(), settings_services=_dev_ctrl_ss),
+            lambda: devices_control.exit_device_maintenance(
+                device_id, db=object(), events=_dev_ctrl_events, settings_services=_dev_ctrl_ss
+            ),
             "exit_maintenance",
         ),
     ):
@@ -1887,6 +1892,7 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
+                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
@@ -1973,6 +1979,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=object(),
+                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
@@ -1995,6 +2002,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
+                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
@@ -2468,6 +2476,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
                 device_id,
                 RunPreparationFailureReport(message="failed"),
                 db=object(),
+                events=SimpleNamespace(publisher=Mock()),
             )
     assert exc.value.status_code == 409
 
@@ -2481,6 +2490,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
                 db=object(),
                 settings_services=SimpleNamespace(reader=object()),
                 agent_comm=_state_ac,
+                events=SimpleNamespace(publisher=Mock()),
             )
     assert exc.value.status_code == 404
 
@@ -2495,6 +2505,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             db=object(),
             settings_services=SimpleNamespace(reader=object()),
             agent_comm=_state_ac,
+            events=SimpleNamespace(publisher=Mock()),
         )
     assert cooldown.status == "cooldown_set"
 
@@ -2862,5 +2873,6 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
                     db=object(),
                     settings_services=SimpleNamespace(reader=object()),
                     agent_comm=_cursor_ac,
+                    events=SimpleNamespace(publisher=Mock()),
                 )
         assert exc.value.status_code == status_code

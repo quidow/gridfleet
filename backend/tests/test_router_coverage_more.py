@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -184,7 +184,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         await runs.signal_active(run.id, db=db, events=_events)
     with pytest.raises(HTTPException):
         await runs.report_preparation_failed(
-            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db
+            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db, events=_events
         )
     with pytest.raises(HTTPException):
         await runs.complete_run(run.id, db=db, events=_events, settings_services=mock_ss)
@@ -212,6 +212,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
             agent_comm=_agent_comm,
+            events=SimpleNamespace(publisher=Mock()),
         )
     assert not_found.value.status_code == 404
 
@@ -226,6 +227,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
             agent_comm=_agent_comm,
+            events=SimpleNamespace(publisher=Mock()),
         )
     assert invalid_ttl.value.status_code == 422
 
@@ -237,6 +239,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         db=db,
         settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
         agent_comm=_agent_comm,
+        events=SimpleNamespace(publisher=Mock()),
     )
     assert escalated.status == "maintenance_escalated"
 
@@ -249,6 +252,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             db=db,
             settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
             agent_comm=_agent_comm,
+            events=SimpleNamespace(publisher=Mock()),
         )
     assert no_expiry.value.status_code == 500
 
@@ -302,6 +306,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
             uuid.uuid4(),
             runs.RunPreparationFailureReport(message="bad"),
             db=db,
+            events=_events,
         )
     ).state == RunState.active
     assert (

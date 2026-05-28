@@ -97,7 +97,7 @@ async def test_build_public_summary_unknown_when_no_signals(db_with_device: tupl
 @pytest.mark.asyncio
 async def test_update_device_checks_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    await svc.update_device_checks(db, device, healthy=False, summary="boom")
+    await svc.update_device_checks(db, device, healthy=False, summary="boom", publisher=event_bus)
     await db.commit()
     await db.refresh(device)
     assert device.device_checks_healthy is False
@@ -109,7 +109,7 @@ async def test_update_device_checks_persists_columns(db_with_device: tuple[Async
 @pytest.mark.asyncio
 async def test_update_session_viability_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    await svc.update_session_viability(db, device, status="failed", error="timeout")
+    await svc.update_session_viability(db, device, status="failed", error="timeout", publisher=event_bus)
     await db.commit()
     await db.refresh(device)
     assert device.session_viability_status == "failed"
@@ -123,7 +123,7 @@ async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSes
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=False, summary="lost")
+    await svc.update_device_checks(db, device, healthy=False, summary="lost", publisher=event_bus)
     await db.commit()
     await db.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -136,7 +136,7 @@ async def test_healthy_signal_does_not_restore_busy_device(db_with_device: tuple
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.busy
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=True, summary="ok")
+    await svc.update_device_checks(db, device, healthy=True, summary="ok", publisher=event_bus)
     await db.commit()
     await db.refresh(device)
     assert device.operational_state == DeviceOperationalState.busy

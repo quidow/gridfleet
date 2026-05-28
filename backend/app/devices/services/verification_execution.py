@@ -251,6 +251,7 @@ async def run_probe(
     device: Device,
     *,
     probe_session_fn: ProbeSessionFn,
+    publisher: EventPublisher | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[AppiumNode | None, str | None]:
@@ -269,10 +270,13 @@ async def run_probe(
         # Drive an immediate convergence pass so verification does not have to wait up
         # to appium_reconciler.interval_sec for the leader loop to start the node.
         # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
-        try:
-            await converge_device_now(device.id, db=db, settings=settings, circuit_breaker=circuit_breaker)
-        except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
-            logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
+        if publisher is not None:
+            try:
+                await converge_device_now(
+                    device.id, publisher=publisher, db=db, settings=settings, circuit_breaker=circuit_breaker
+                )
+            except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
+                logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
         timeout = int(settings.get("appium.startup_timeout_sec"))
         started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
@@ -449,12 +453,13 @@ async def _finalize_success(
     await _revoke_verification_node_intent(db, locked)
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:
-        await set_operational_state(locked, next_state, reason="verification", severity="info")
+        await set_operational_state(locked, next_state, reason="verification", severity="info", publisher=publisher)
     await session_viability.record_session_viability_result(
         db,
         locked,
         status="passed",
         checked_by=SessionViabilityCheckedBy.verification,
+        publisher=publisher,
     )
     await db.commit()
     detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"
@@ -555,6 +560,7 @@ async def execute_verification_context(
             db,
             device,
             probe_session_fn=probe_session_fn,
+            publisher=publisher,
             settings=settings,
             circuit_breaker=circuit_breaker,
         )

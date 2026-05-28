@@ -13,6 +13,7 @@ from app.devices.models import Device, DeviceHold
 from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
 from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
+from app.events.dependencies import EventServicesDep
 from app.runs import service as run_service
 from app.settings.dependencies import SettingsServicesDep
 
@@ -80,7 +81,11 @@ async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
 
 @router.post("/{device_id}/node/restart", response_model=AppiumNodeRead)
 async def restart_node(
-    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+    device_id: uuid.UUID,
+    db: DbDep,
+    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
@@ -92,7 +97,11 @@ async def restart_node(
     node = await node_manager.restart_node(db, device, caller="operator_restart", settings=settings_services.reader)
     try:
         converged_node = await converge_device_now(
-            device.id, db=db, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+            device.id,
+            publisher=events.publisher,
+            db=db,
+            settings=settings_services.reader,
+            circuit_breaker=agent_comm.circuit_breaker,
         )
         if converged_node is not None:
             node = converged_node

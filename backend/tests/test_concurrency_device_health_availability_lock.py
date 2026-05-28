@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -44,6 +45,7 @@ async def test_health_failure_offline_write_serializes_with_reservation(
                 loaded,
                 healthy=False,
                 summary="Disconnected",
+                publisher=Mock(),
             )
             await session.commit()
 
@@ -105,6 +107,7 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
+                publisher=Mock(),
             )
             await session.commit()
 

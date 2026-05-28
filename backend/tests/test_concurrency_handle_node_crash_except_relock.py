@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -77,6 +78,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
             target,
             source="test",
             reason="simulated failure",
+            publisher=Mock(),
         )
 
     assert device_lock_count >= 1

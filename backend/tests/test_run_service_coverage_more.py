@@ -480,6 +480,7 @@ async def test_release_devices_branches_and_session_counts(
         commit=False,
         terminate_grid_sessions=True,
         settings=FakeSettingsReader(),
+        publisher=Mock(),
     )
     assert pending_ids == [device.id]
     assert run.device_reservations[0].released_at is not None
@@ -666,6 +667,7 @@ async def test_release_devices_unusual_restore_branches(
         commit=False,
         terminate_grid_sessions=True,
         settings=FakeSettingsReader(),
+        publisher=Mock(),
     )
 
     assert set(pending) == {maintenance.id, busy.id, odd.id}

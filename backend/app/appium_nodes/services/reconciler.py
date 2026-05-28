@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from app.agent_comm.snapshot import RunningAppiumNode
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 
@@ -271,6 +272,7 @@ class AppiumReconcilerLoop:
                         hosts,
                         desired,
                         backoff,
+                        publisher=self._services.publisher,
                         health_by_host=health_by_host,
                         settings=self._services.settings,
                         pool=self._services.pool,
@@ -488,6 +490,7 @@ async def _drive_convergence(
     desired: list[DesiredRow],
     backoff_until_by_device: dict[uuid.UUID, datetime],
     *,
+    publisher: EventPublisher,
     health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
     require_leader: bool = True,
     settings: SettingsReader,
@@ -561,7 +564,10 @@ async def _drive_convergence(
                         host_ip, agent_port, settings=settings, circuit_breaker=circuit_breaker
                     ),
                     write_observed=_write_observed_factory(
-                        require_leader=require_leader, session_scope=session_factory, settings=settings
+                        publisher=publisher,
+                        require_leader=require_leader,
+                        session_scope=session_factory,
+                        settings=settings,
                     ),
                     clear_token=_clear_token_factory(
                         require_leader=require_leader, session_scope=session_factory, settings=settings
@@ -592,6 +598,7 @@ def _session_scope(db: AsyncSession | None) -> SessionScope:
 async def converge_device_now(
     device_id: uuid.UUID,
     *,
+    publisher: EventPublisher,
     db: AsyncSession | None = None,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
@@ -639,7 +646,9 @@ async def converge_device_now(
             require_leader=False, session_scope=session_scope, settings=settings, circuit_breaker=circuit_breaker
         ),
         stop_agent=_make_stop_agent(host.ip, host.agent_port, settings=settings, circuit_breaker=circuit_breaker),
-        write_observed=_write_observed_factory(require_leader=False, session_scope=session_scope, settings=settings),
+        write_observed=_write_observed_factory(
+            publisher=publisher, require_leader=False, session_scope=session_scope, settings=settings
+        ),
         clear_token=_clear_token_factory(require_leader=False, session_scope=session_scope, settings=settings),
         reset_start_failure=_make_reset_start_failure(
             require_leader=False, session_scope=session_scope, settings=settings
@@ -733,6 +742,7 @@ def _make_stop_agent(
 
 def _write_observed_factory(
     *,
+    publisher: EventPublisher,
     require_leader: bool = True,
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
@@ -765,6 +775,7 @@ def _write_observed_factory(
                     active_connection_target=active_connection_target,
                     allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
                     clear_transition=clear_transition,
+                    publisher=publisher,
                     settings=settings,
                 )
                 if clear_desired_port:
@@ -783,7 +794,7 @@ def _write_observed_factory(
                     await db.commit()
                 return
             else:
-                await mark_node_stopped(db, device)
+                await mark_node_stopped(db, device, publisher=publisher)
             if clear_desired_port or clear_transition:
                 device = await _lock_device_for_reconciler(db, row.device_id)
                 if device is None or device.appium_node is None:

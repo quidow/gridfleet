@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -61,6 +61,7 @@ async def test_handle_node_crash_locks_appium_node(
                     target,
                     source="test",
                     reason="test",
+                    publisher=Mock(),
                 )
 
     async def stomper() -> None:

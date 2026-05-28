@@ -169,6 +169,7 @@ async def _write_session_viability(
     attempted_at: str,
     error: str | None,
     checked_by: SessionViabilityCheckedBy,
+    publisher: EventPublisher | None = None,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}
     previous_failures = int(previous.get("consecutive_failures") or 0)
@@ -183,7 +184,7 @@ async def _write_session_viability(
         "error_category": _classify_session_error(error) if status != "passed" else None,
     }
     await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id), state)
-    await device_health.update_session_viability(db, device, status=status, error=error)
+    await device_health.update_session_viability(db, device, status=status, error=error, publisher=publisher)
     return state
 
 
@@ -194,6 +195,7 @@ async def record_session_viability_result(
     status: str,
     error: str | None = None,
     checked_by: SessionViabilityCheckedBy,
+    publisher: EventPublisher | None = None,
 ) -> dict[str, Any]:
     config_changed = _clear_session_viability_from_config(device)
     state = await _write_session_viability(
@@ -203,6 +205,7 @@ async def record_session_viability_result(
         attempted_at=_now_iso(),
         error=error,
         checked_by=checked_by,
+        publisher=publisher,
     )
     if config_changed:
         await db.flush()
@@ -424,6 +427,7 @@ async def run_session_viability_probe(
                 attempted_at=attempted_at,
                 error="Appium node is not running",
                 checked_by=checked_by,
+                publisher=publisher,
             )
             if config_changed:
                 await db.commit()
@@ -485,6 +489,7 @@ async def run_session_viability_probe(
             attempted_at=attempted_at,
             error=error,
             checked_by=checked_by,
+            publisher=publisher,
         )
 
         relocked = await device_locking.lock_device(db, device.id)

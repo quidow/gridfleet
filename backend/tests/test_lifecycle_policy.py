@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -88,7 +88,9 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
     db_session.add(device)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+    )
 
     await db_session.refresh(device)
     assert result == "stopped"
@@ -230,12 +232,14 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     db_session.add_all([run, session])
     await db_session.commit()
 
-    await handle_health_failure(db_session, device, source="device_checks", reason="Health probe failed")
+    await handle_health_failure(
+        db_session, device, source="device_checks", reason="Health probe failed", publisher=Mock()
+    )
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
     await db_session.commit()
 
-    stopped = await handle_session_finished(db_session, device)
+    stopped = await handle_session_finished(db_session, device, publisher=Mock())
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
@@ -341,7 +345,12 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
         ),
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     await db_session.refresh(run, ["device_reservations"])
@@ -710,7 +719,12 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
         ),
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     await db_session.refresh(run, ["device_reservations"])
@@ -810,7 +824,9 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+    )
     assert result == "deferred"
 
     await db_session.refresh(device)
@@ -823,7 +839,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded)
+    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
 
     await db_session.refresh(reloaded)
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
@@ -882,7 +898,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     ):
         recovery_started_at = datetime.now(UTC)
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=settings
+            db_session, device, source="device_checks", reason="Healthy again", settings=settings, publisher=Mock()
         )
 
     assert recovered is False
@@ -1202,7 +1218,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded)
+    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
     await db_session.commit()
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 
@@ -1255,12 +1271,12 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
         )
     db_session.add(node)
     await db_session.commit()
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=Mock())
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded)
+    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
     await db_session.commit()
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 

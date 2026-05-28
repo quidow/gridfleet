@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 
 async def _enter_maintenance(
@@ -45,6 +46,7 @@ async def _enter_maintenance(
     device: Device,
     *,
     maintenance_reason: str = "Operator entered maintenance",
+    publisher: EventPublisher | None = None,
 ) -> Device:
     from app.devices.services.maintenance import enter_maintenance  # noqa: PLC0415
 
@@ -54,6 +56,7 @@ async def _enter_maintenance(
         commit=False,
         allow_reserved=True,
         maintenance_reason=maintenance_reason,
+        publisher=publisher,
     )
 
 
@@ -113,6 +116,7 @@ async def report_preparation_failure(
     *,
     message: str,
     source: str = "ci_preparation",
+    publisher: EventPublisher | None = None,
 ) -> TestRun:
     run = await get_run(db, run_id)
     if run is None:
@@ -143,8 +147,8 @@ async def report_preparation_failure(
         source=source,
     )
 
-    await _enter_maintenance(db, device, maintenance_reason="CI preparation failure")
-    await device_health.update_device_checks(db, device, healthy=False, summary=reason)
+    await _enter_maintenance(db, device, maintenance_reason="CI preparation failure", publisher=publisher)
+    await device_health.update_device_checks(db, device, healthy=False, summary=reason, publisher=publisher)
 
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
@@ -176,6 +180,7 @@ async def cooldown_device(
     ttl_seconds: int,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> tuple[datetime | None, int, bool, int]:
     """Apply a run-scoped cooldown to a reserved device.
 
@@ -301,7 +306,7 @@ async def cooldown_device(
         source="testkit",
     )
 
-    await _enter_maintenance(db, device, maintenance_reason="Cooldown escalation")
+    await _enter_maintenance(db, device, maintenance_reason="Cooldown escalation", publisher=publisher)
     await lifecycle_incident_service.record_lifecycle_incident(
         db,
         device,

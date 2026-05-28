@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +56,7 @@ class TestHookOrdering:
         device = await _seed(db_session, db_host, "ord1")
         log: list[str] = []
         machine = DeviceStateMachine(hooks=[_RecordingHook("A", log), _RecordingHook("B", log)])
-        await machine.transition(device, TransitionEvent.SESSION_STARTED)
+        await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert log == [
             "A:session_started:available/None->busy/None",
             "B:session_started:available/None->busy/None",
@@ -76,7 +78,7 @@ class TestEventLogHook:
     async def test_session_started_records_event(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed(db_session, db_host, "evt1")
         machine = DeviceStateMachine(hooks=[EventLogHook()])
-        await machine.transition(device, TransitionEvent.SESSION_STARTED, reason="run start")
+        await machine.transition(device, TransitionEvent.SESSION_STARTED, reason="run start", publisher=Mock())
         await db_session.flush()
 
         rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()

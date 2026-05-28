@@ -2,6 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -239,6 +240,7 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
         device,
         healthy=False,
         summary="Node: error",
+        publisher=Mock(),
     )
     await db_session.commit()
 
@@ -1065,7 +1067,7 @@ async def test_sessions_straddle_active_signal_boundary(
     )
     assert prep_session.run_id is None
 
-    await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed)
+    await session_service.update_session_status(db_session, "sess-prep", SessionStatus.passed, publisher=Mock())
 
     await run_service.signal_active(db_session, run.id, publisher=event_bus)
     await db_session.refresh(run)

@@ -43,7 +43,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=None))
     assert (
         await appium_reconciler.converge_device_now(
-            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
         )
         is None
     )
@@ -53,7 +53,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     db.get = AsyncMock(return_value=None)
     assert (
         await appium_reconciler.converge_device_now(
-            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
         )
         is None
     )
@@ -63,7 +63,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(appium_reconciler, "agent_health", AsyncMock(return_value={"status": "ok"}))
     assert (
         await appium_reconciler.converge_device_now(
-            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
         )
         is None
     )
@@ -85,7 +85,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
 
     assert (
         await appium_reconciler.converge_device_now(
-            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            device_id, db=db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
         )
         is node
     )
@@ -132,7 +132,7 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
     monkeypatch.setattr(appium_reconciler, "write_desired_state", write)
 
     observed = appium_reconciler._write_observed_factory(
-        require_leader=False, session_scope=lambda: db, settings=FakeSettingsReader({})
+        require_leader=False, session_scope=lambda: db, settings=FakeSettingsReader({}), publisher=Mock()
     )
     await observed(
         row=row,
@@ -189,7 +189,7 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
     monkeypatch.setattr(appium_reconciler, "mark_node_started", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", AsyncMock())
     observed = appium_reconciler._write_observed_factory(
-        require_leader=False, session_scope=lambda: db, settings=FakeSettingsReader({})
+        require_leader=False, session_scope=lambda: db, settings=FakeSettingsReader({}), publisher=Mock()
     )
     await observed(row=row, state="running", port=4723, pid=1, active_connection_target="dev")
 
@@ -315,6 +315,7 @@ async def test_drive_convergence_return_paths_and_cycle_helper(monkeypatch: pyte
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         session_factory=_mock_session_factory,
+        publisher=Mock(),
     )
     converge.assert_not_awaited()
 

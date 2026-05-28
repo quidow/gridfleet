@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(db, settings=FakeSettingsReader({}))
+    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=AsyncMock())
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +28,28 @@ def _skip_leader_fencing() -> Iterator[None]:
     """No-op assert_current_leader so unit tests don't need a real leader row."""
     with patch("app.sessions.service_sync.assert_current_leader"):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _inject_publisher_into_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject publisher=AsyncMock() into state machine when missing."""
+    from app.devices.services.lifecycle_state_machine import set_hold, set_operational_state
+
+    _orig_set_op = set_operational_state
+    _orig_set_hold = set_hold
+
+    async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = AsyncMock()
+        return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
+
+    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
+        if kwargs.get("publisher") is None:
+            kwargs["publisher"] = AsyncMock()
+        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
+    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 def _grid_response(sessions_per_node: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -1158,7 +1180,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
 
     # Old session leaves the Grid (not in active map), triggering ended-session processing.
     with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
-        await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
+        await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=Mock())
 
     await db_session.refresh(device)
     # The race-prone restore would have moved the device to ``available``.
@@ -1342,7 +1364,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
 
     monkeypatch.setattr(grid_service, "get_grid_status", _fake_grid_status)
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=Mock())
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -1408,7 +1430,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
 
     monkeypatch.setattr(grid_service, "get_grid_status", _grid_unreachable)
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=Mock())
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None

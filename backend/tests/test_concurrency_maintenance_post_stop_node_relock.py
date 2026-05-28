@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +42,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     device_id = device.id
 
     target = await device_locking.lock_device(db_session, device_id)
-    await maintenance_service.enter_maintenance(db_session, target)
+    await maintenance_service.enter_maintenance(db_session, target, publisher=Mock())
 
     final_status = (
         await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))

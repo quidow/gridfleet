@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -206,7 +207,7 @@ async def test_device_hold_satisfied_when_value_matches(db_session: AsyncSession
     from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 
     device = await create_device(db_session, host_id=db_host.id, name="prec-hold-match")
-    await DeviceStateMachine().transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="test")
+    await DeviceStateMachine().transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="test", publisher=Mock())
     await db_session.commit()
     intent = DeviceIntent(
         device_id=device.id,

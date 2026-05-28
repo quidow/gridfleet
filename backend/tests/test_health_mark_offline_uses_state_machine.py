@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -75,7 +76,7 @@ async def test_failed_signal_on_available_emits_connectivity_lost(
     loaded = await db_session.get(Device, device.id)
     assert loaded is not None
 
-    await _mark_offline_for_failed_signal(loaded, failed=True, reason="ADB lost")
+    await _mark_offline_for_failed_signal(loaded, failed=True, reason="ADB lost", publisher=Mock())
     await db_session.commit()
 
     rows = (

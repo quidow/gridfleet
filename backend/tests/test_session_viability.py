@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
@@ -50,7 +50,7 @@ async def run_session_viability_probe(
     settings: FakeSettingsReader | None = None,
 ) -> dict[str, Any]:
     return await _run_session_viability_probe_impl(
-        db, device, checked_by=checked_by, settings=settings or FakeSettingsReader({})
+        db, device, checked_by=checked_by, settings=settings or FakeSettingsReader({}), publisher=Mock()
     )
 
 
@@ -67,7 +67,7 @@ async def probe_session_via_grid(
 
 
 async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader | None = None) -> None:
-    await _check_due_devices_impl(db, settings=settings or FakeSettingsReader({}))
+    await _check_due_devices_impl(db, settings=settings or FakeSettingsReader({}), publisher=Mock())
 
 
 async def test_session_viability_state_is_not_persisted_in_device_config(
@@ -646,13 +646,16 @@ async def test_record_session_viability_result_preserves_previous_success_and_cl
     db_session.add(device)
     await db_session.commit()
 
-    passed = await record_session_viability_result(db_session, device, status="passed", checked_by="manual")
+    passed = await record_session_viability_result(
+        db_session, device, status="passed", checked_by="manual", publisher=Mock()
+    )
     failed = await record_session_viability_result(
         db_session,
         device,
         status="failed",
         error="probe failed",
         checked_by="scheduled",
+        publisher=Mock(),
     )
 
     assert passed["last_succeeded_at"] is not None

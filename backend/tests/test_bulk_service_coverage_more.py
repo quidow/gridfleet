@@ -166,9 +166,10 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure.id)] == "not in maintenance"
 
-    async def fake_enter(_db: object, device: object, *, commit: bool) -> None:
+    async def fake_enter(_db: object, device: object, *, commit: bool, **kwargs: object) -> object:
         if device is failure:
             raise RuntimeError("enter failed")
+        return device
 
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
     monkeypatch.setattr(bulk_service.device_locking, "lock_device", AsyncMock(side_effect=[success, failure]))

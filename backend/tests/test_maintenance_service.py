@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,7 @@ async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    result = await enter_maintenance(db_session, locked, allow_reserved=True)
+    result = await enter_maintenance(db_session, locked, allow_reserved=True, publisher=Mock())
 
     assert result.hold == DeviceHold.maintenance
 
@@ -66,7 +66,7 @@ async def test_enter_maintenance_succeeds_for_available_device(
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    result = await enter_maintenance(db_session, locked)
+    result = await enter_maintenance(db_session, locked, publisher=Mock())
 
     assert result.hold == DeviceHold.maintenance
 
@@ -103,7 +103,7 @@ async def test_exit_maintenance_clears_maintenance_recovery_suppression(
     )
     await db_session.commit()
 
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
     await db_session.refresh(device)
 
     assert device.hold is None
@@ -145,7 +145,7 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     )
     await db_session.commit()
 
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
     await db_session.refresh(device)
 
     assert device.hold is None
@@ -169,14 +169,14 @@ async def test_enter_and_exit_maintenance_commit_false_branches(
     )
     await db_session.commit()
 
-    result = await enter_maintenance(db_session, device, commit=False)
+    result = await enter_maintenance(db_session, device, commit=False, publisher=Mock())
     assert result.hold == DeviceHold.maintenance
 
-    result = await exit_maintenance(db_session, device, commit=False)
+    result = await exit_maintenance(db_session, device, commit=False, publisher=Mock())
     assert result.hold is None
 
     with pytest.raises(ValueError, match="not in maintenance"):
-        await exit_maintenance(db_session, device, commit=False)
+        await exit_maintenance(db_session, device, commit=False, publisher=Mock())
 
 
 async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
@@ -194,14 +194,14 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
 
     schedule = AsyncMock()
     monkeypatch.setattr(maintenance_service, "schedule_device_recovery", schedule)
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
     schedule.assert_awaited_once_with(db_session, device.id)
 
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
     await db_session.commit()
     schedule.side_effect = RuntimeError("queue down")
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
 
 
 async def test_enter_maintenance_stores_maintenance_reason(
@@ -217,7 +217,7 @@ async def test_enter_maintenance_stores_maintenance_reason(
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await enter_maintenance(db_session, locked, maintenance_reason="Cooldown escalation")
+    await enter_maintenance(db_session, locked, maintenance_reason="Cooldown escalation", publisher=Mock())
 
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
@@ -249,7 +249,7 @@ async def test_exit_maintenance_clears_maintenance_reason(
     )
     await db_session.commit()
 
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
     await db_session.refresh(device)
 
     assert device.lifecycle_policy_state is not None

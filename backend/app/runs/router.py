@@ -213,6 +213,7 @@ async def report_preparation_failed(
     device_id: uuid.UUID,
     payload: RunPreparationFailureReport,
     db: DbDep,
+    events: EventServicesDep,
 ) -> RunRead:
     try:
         run = await run_service.report_preparation_failure(
@@ -221,6 +222,7 @@ async def report_preparation_failed(
             device_id,
             message=payload.message,
             source=payload.source,
+            publisher=events.publisher,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -236,6 +238,7 @@ async def cooldown_device_endpoint(
     db: DbDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    events: EventServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
         excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
@@ -246,6 +249,7 @@ async def cooldown_device_endpoint(
             ttl_seconds=payload.ttl_seconds,
             settings=settings_services.reader,
             circuit_breaker=agent_comm.circuit_breaker,
+            publisher=events.publisher,
         )
     except ValueError as e:
         msg = str(e)

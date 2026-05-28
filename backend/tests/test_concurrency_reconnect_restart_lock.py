@@ -85,7 +85,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await maintenance_service.enter_maintenance(session, locked)
+            await maintenance_service.enter_maintenance(session, locked, publisher=Mock())
         allow_restart.set()
 
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())

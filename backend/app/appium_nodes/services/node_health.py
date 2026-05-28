@@ -205,6 +205,7 @@ async def _process_node_health(
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
+                publisher=publisher,
             )
             return
         healthy = False
@@ -271,6 +272,7 @@ async def _process_node_health(
             health_running=None,
             health_state=None,
             mark_offline=False,
+            publisher=publisher,
         )
         return
 
@@ -283,6 +285,7 @@ async def _process_node_health(
         health_running=False,
         health_state="error",
         mark_offline=count >= max_failures,
+        publisher=publisher,
     )
     logger.warning(
         "Node health check failed for device %s (port %d): %d/%d",

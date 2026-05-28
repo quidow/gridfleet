@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
+        publisher=Mock(),
         settings=FakeSettingsReader({}),
     )
     await db_session.commit()
@@ -71,6 +73,7 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
+        publisher=Mock(),
         settings=_hw_settings,
     )
     await db_session.commit()

@@ -496,4 +496,5 @@ async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -
             settings=resolved_settings,
             circuit_breaker=Mock(),
             session_factory=appium_reconciler.async_session,
+            publisher=test_event_bus,
         )

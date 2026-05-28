@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,30 +33,33 @@ async def test_full_lifecycle_via_state_machine(db_session: AsyncSession, db_hos
     await db_session.flush()
 
     machine = DeviceStateMachine()
+    publisher = Mock()
 
-    await machine.transition(device, TransitionEvent.SESSION_STARTED, reason="run start")
+    await machine.transition(device, TransitionEvent.SESSION_STARTED, reason="run start", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.busy
 
-    await machine.transition(device, TransitionEvent.SESSION_ENDED, reason="run end")
+    await machine.transition(device, TransitionEvent.SESSION_ENDED, reason="run end", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.available
 
-    await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, reason="cable yanked")
+    await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, reason="cable yanked", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.offline
     assert device.hold is None
 
-    await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator")
+    await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.offline
     assert device.hold == DeviceHold.maintenance
 
     # Re-assert is a no-op (idempotent)
-    changed = await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator")
+    changed = await machine.transition(
+        device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=publisher
+    )
     assert changed is False
 
-    await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, reason="operator")
+    await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, reason="operator", publisher=publisher)
     assert device.hold is None
     assert device.operational_state == DeviceOperationalState.offline
 
-    await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, reason="recovered")
+    await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, reason="recovered", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.available
 
 
@@ -79,11 +84,12 @@ async def test_reserved_hold_survives_session_lifecycle(db_session: AsyncSession
     await db_session.flush()
 
     machine = DeviceStateMachine()
-    await machine.transition(device, TransitionEvent.SESSION_STARTED)
+    publisher = Mock()
+    await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=publisher)
     assert device.operational_state == DeviceOperationalState.busy
     assert device.hold == DeviceHold.reserved
 
-    await machine.transition(device, TransitionEvent.SESSION_ENDED)
+    await machine.transition(device, TransitionEvent.SESSION_ENDED, publisher=publisher)
     assert device.operational_state == DeviceOperationalState.available
     assert device.hold == DeviceHold.reserved
 
@@ -111,6 +117,6 @@ async def test_offline_reserved_to_busy_via_session_started(db_session: AsyncSes
     await db_session.flush()
 
     machine = DeviceStateMachine()
-    await machine.transition(device, TransitionEvent.SESSION_STARTED)
+    await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
     assert device.operational_state == DeviceOperationalState.busy
     assert device.hold == DeviceHold.reserved

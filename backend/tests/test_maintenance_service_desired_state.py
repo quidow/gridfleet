@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -47,7 +47,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     from app.devices.services import maintenance as maintenance_service
 
     monkeypatch.setattr(maintenance_service, "schedule_device_recovery", AsyncMock())
-    await maintenance_service.exit_maintenance(db_session, device)
+    await maintenance_service.exit_maintenance(db_session, device, publisher=Mock())
 
     events = (
         (
@@ -88,7 +88,7 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
 
     from app.devices.services import maintenance as maintenance_service
 
-    await maintenance_service.enter_maintenance(db_session, device)
+    await maintenance_service.enter_maintenance(db_session, device, publisher=Mock())
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped

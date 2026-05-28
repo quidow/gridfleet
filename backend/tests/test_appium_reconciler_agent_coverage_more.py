@@ -102,6 +102,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
             pid=123,
             allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
             settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+            publisher=Mock(),
         )
 
 
@@ -790,6 +791,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
         pid=123,
         allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"},
         settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        publisher=Mock(),
     )
 
     assert node is device.appium_node
@@ -850,6 +852,7 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         port=4723,  # new port after restart
         pid=999,
         settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        publisher=Mock(),
     )
 
     staged = (
@@ -894,6 +897,7 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
         port=4723,
         pid=111,
         settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        publisher=Mock(),
     )
 
     staged = (
@@ -932,6 +936,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         port=4723,
         pid=123,
         settings=FakeSettingsReader({"grid.hub_url": "http://grid"}),
+        publisher=Mock(),
     )
 
     reloaded = await db_session.get(Device, device.id)

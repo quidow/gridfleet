@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -107,7 +107,7 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await exit_maintenance(db_session, device)
+    await exit_maintenance(db_session, device, publisher=Mock())
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -127,7 +127,7 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await enter_maintenance(db_session, device)
+    await enter_maintenance(db_session, device, publisher=Mock())
     await db_session.refresh(device)
     assert device.review_required is True
 
@@ -252,7 +252,9 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     ):
         # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
         # which is below the threshold of 2, so no promotion yet.
-        first = await attempt_auto_recovery(db_session, device, source="device_checks", reason="r1", settings=settings)
+        first = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="r1", settings=settings, publisher=Mock()
+        )
         await db_session.refresh(device)
         assert first is False
         assert device.review_required is False
@@ -270,7 +272,9 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         await db_session.commit()
 
         # Attempt #2 — counter crosses threshold, device gets shelved.
-        second = await attempt_auto_recovery(db_session, device, source="device_checks", reason="r2", settings=settings)
+        second = await attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="r2", settings=settings, publisher=Mock()
+        )
         await db_session.refresh(device)
         assert second is False
         assert device.review_required is True

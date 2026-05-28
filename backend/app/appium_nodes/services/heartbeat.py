@@ -470,6 +470,7 @@ async def _ingest_appium_restart_events(
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
+                publisher=publisher,
             )
             continue
 
@@ -519,6 +520,7 @@ async def _ingest_appium_restart_events(
             health_state=degraded_state,
             mark_offline=False,
             reason=error_message,
+            publisher=publisher,
         )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
@@ -649,12 +651,14 @@ async def _apply_host_ping_result(
                 device,
                 healthy=False,
                 summary=f"Host {host.hostname} offline",
+                publisher=publisher,
             )
             await set_operational_state(
                 device,
                 DeviceOperationalState.offline,
                 reason=f"Host {host.hostname} offline",
                 severity="warning",
+                publisher=publisher,
             )
 
 

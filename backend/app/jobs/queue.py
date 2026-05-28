@@ -177,6 +177,7 @@ async def run_pending_jobs_once(
             str(row.id),
             row.payload,
             session_factory=session_factory,
+            publisher=publisher,
             settings=settings,
         )
         return True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -139,7 +140,9 @@ async def test_exclude_device_clears_only_that_device(
     )
     run_id = await _create_run(db_session, count=2)
 
-    await run_service.report_preparation_failure(db_session, run_id, device_id, message="install failed")
+    await run_service.report_preparation_failure(
+        db_session, run_id, device_id, message="install failed", publisher=Mock()
+    )
 
     rows = (
         await db_session.execute(

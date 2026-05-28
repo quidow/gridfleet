@@ -5,7 +5,7 @@ side effects; the previous direct write skipped them.
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -90,6 +90,7 @@ async def test_probe_running_busy_mark_writes_device_event_row(
             loaded_device,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
             settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
     assert result["status"] == "passed"

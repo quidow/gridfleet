@@ -245,7 +245,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     with state_write_guard.bypass():
         device = Device(id=uuid.uuid4(), name="d", hold=DeviceHold.maintenance)
     monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
-    assert await device_state.set_hold(device, DeviceHold.maintenance) is False
+    assert await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False) is False
 
     assert event_catalog.normalize_public_event_names("bad") == []
     assert event_catalog.normalize_public_event_names(["bad", 1, "device.hold_changed", "device.hold_changed"]) == [
@@ -792,6 +792,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
         session_factory=RecoveryCtx,
+        publisher=Mock(),
         settings=FakeSettingsReader({}),
     )
 

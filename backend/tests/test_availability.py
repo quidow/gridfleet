@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 from httpx import AsyncClient
@@ -124,6 +125,7 @@ async def test_availability_excludes_unhealthy_devices(
         unhealthy,
         healthy=False,
         summary="ADB not responsive",
+        publisher=Mock(),
     )
     await db_session.commit()
 
@@ -184,18 +186,20 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
         health_running=False,
         health_state="error",
         mark_offline=True,
+        publisher=Mock(),
     )
     await db_session.commit()
     assert device.operational_state == DeviceOperationalState.offline
 
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
-    await device_health.update_session_viability(db_session, device, status="passed", error=None)
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=Mock())
+    await device_health.update_session_viability(db_session, device, status="passed", error=None, publisher=Mock())
     await device_health.apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
+        publisher=Mock(),
     )
     await db_session.commit()
 

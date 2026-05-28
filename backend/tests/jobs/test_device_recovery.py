@@ -139,7 +139,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.
     locked = await device_locking.lock_device(db_session, device.id)
-    await maintenance_service.exit_maintenance(db_session, locked)
+    await maintenance_service.exit_maintenance(db_session, locked, publisher=AsyncMock())
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.

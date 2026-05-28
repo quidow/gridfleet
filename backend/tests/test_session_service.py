@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -58,7 +59,9 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
     device.verified_at = datetime.now(UTC)
     await db_session.commit()
 
-    updated = await session_service.update_session_status(db_session, "android-sess-1", SessionStatus.passed)
+    updated = await session_service.update_session_status(
+        db_session, "android-sess-1", SessionStatus.passed, publisher=Mock()
+    )
 
     assert updated is not None
     assert updated.status == SessionStatus.passed
@@ -121,7 +124,9 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     db_session.add(session)
     await db_session.commit()
 
-    updated = await session_service.update_session_status(db_session, "reserved-sess", SessionStatus.error)
+    updated = await session_service.update_session_status(
+        db_session, "reserved-sess", SessionStatus.error, publisher=Mock()
+    )
 
     assert updated is not None
     await db_session.refresh(device)
@@ -132,6 +137,7 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     assert stored.ended_at is not None
 
 
+@pytest.mark.usefixtures("inject_publisher_into_state_machine")
 async def test_update_session_status_clears_stop_pending(
     db_session: AsyncSession,
     db_host: Host,
@@ -161,13 +167,17 @@ async def test_update_session_status_clears_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+    )
     assert result == "deferred"
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state["stop_pending"] is True
 
-    updated = await session_service.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
+    updated = await session_service.update_session_status(
+        db_session, "sess-stuck-stop-1", SessionStatus.passed, publisher=Mock()
+    )
     assert updated is not None
     assert updated.ended_at is not None
 
@@ -244,6 +254,7 @@ async def test_register_session_attaches_run_id_when_run_is_active(
     assert run.state == RunState.active
 
 
+@pytest.mark.usefixtures("inject_publisher_into_state_machine")
 async def test_register_session_with_terminal_status_clears_stop_pending(
     db_session: AsyncSession,
     db_host: Host,
@@ -273,7 +284,9 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     db_session.add(running)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+    )
     assert result == "deferred"
 
     # Simulate the running session being closed out-of-band, then a fresh terminal-status
@@ -298,6 +311,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     assert reloaded.lifecycle_policy_state["stop_pending"] is False
 
 
+@pytest.mark.usefixtures("inject_publisher_into_state_machine")
 async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     db_session: AsyncSession,
     db_host: Host,
@@ -336,7 +350,9 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB hung")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB hung", publisher=Mock()
+    )
     assert result == "deferred"
 
     # Simulate an operator (or another loop) flipping the device into
@@ -346,7 +362,9 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
         device.hold = DeviceHold.maintenance
     await db_session.commit()
 
-    updated = await session_service.update_session_status(db_session, "sess-stuck-stop-non-busy", SessionStatus.passed)
+    updated = await session_service.update_session_status(
+        db_session, "sess-stuck-stop-non-busy", SessionStatus.passed, publisher=Mock()
+    )
     assert updated is not None
 
     reloaded = await db_session.get(Device, device.id)

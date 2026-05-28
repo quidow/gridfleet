@@ -70,7 +70,7 @@ async def test_session_ended_queues_after_status_update(
     )
     event_bus_capture.clear()
 
-    await update_session_status(db_session, "ssn-end-1", SessionStatus.passed)
+    await update_session_status(db_session, "ssn-end-1", SessionStatus.passed, publisher=event_bus)
     await settle_after_commit_tasks()
 
     ended = [p for n, p in event_bus_capture if n == "session.ended"]
