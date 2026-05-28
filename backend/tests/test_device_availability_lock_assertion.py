@@ -5,6 +5,7 @@ import pytest
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.state import set_operational_state
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,4 +37,5 @@ async def test_set_operational_state_rejects_transient_device() -> None:
             device,
             DeviceOperationalState.offline,
             publish_event=False,
+            publisher=event_bus,
         )

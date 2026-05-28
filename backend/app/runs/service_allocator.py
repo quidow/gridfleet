@@ -218,7 +218,7 @@ async def _attempt_create_run(
     *,
     ttl_minutes: int,
     heartbeat_timeout_sec: int,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
     now = datetime.now(UTC)
     all_matched: list[Device] = []

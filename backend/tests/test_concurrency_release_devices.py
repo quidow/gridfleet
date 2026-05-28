@@ -14,6 +14,7 @@ from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.asyncio
 
@@ -83,6 +84,7 @@ async def test_release_devices_does_not_stomp_offline_writer(
                 device_obj,
                 DeviceOperationalState.offline,
                 publish_event=False,
+                publisher=event_bus,
             )
             await session.commit()
             proceed.set()
@@ -183,6 +185,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
                 device_obj,
                 DeviceOperationalState.offline,
                 publish_event=False,
+                publisher=event_bus,
             )
             await session.commit()
 

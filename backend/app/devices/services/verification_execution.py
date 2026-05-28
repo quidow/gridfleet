@@ -251,7 +251,7 @@ async def run_probe(
     device: Device,
     *,
     probe_session_fn: ProbeSessionFn,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> tuple[AppiumNode | None, str | None]:
@@ -392,7 +392,7 @@ async def _finalize_success(
     *,
     job: dict[str, Any],
     node: AppiumNode | None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")
@@ -475,7 +475,7 @@ async def _finalize_failure(
     job: dict[str, Any],
     node: AppiumNode | None = None,
     original_fields: dict[str, Any] | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
@@ -513,7 +513,7 @@ async def execute_verification_context(
     probe_session_fn: ProbeSessionFn,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> VerificationExecutionOutcome:
     device = context.transient_device
     node: AppiumNode | None = None

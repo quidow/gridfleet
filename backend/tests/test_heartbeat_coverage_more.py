@@ -12,6 +12,7 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,6 +88,7 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             session_factory=MagicMock(),
+            publisher=event_bus,
         )
 
     with pytest.MonkeyPatch.context() as mp:
@@ -138,6 +140,7 @@ async def test_restart_event_ingest_filters_and_stale_nodes(monkeypatch: pytest.
                 ]
             }
         },
+        publisher=event_bus,
     )
     set_value.assert_awaited_once()
     assert set_value.await_args.args[3] == 3
@@ -167,6 +170,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         MagicMock(),
         host,
         {"appium_processes": {"recent_restart_events": [{"sequence": 5, "port": 4723, "kind": "crash_detected"}]}},
+        publisher=event_bus,
     )
     set_value.assert_not_awaited()
 

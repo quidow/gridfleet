@@ -201,11 +201,13 @@ async def test_agent_driver_pack_router_delegates_and_commits() -> None:
 
     status_payload: dict[str, object] = {"host_id": str(host_id), "packs": []}
     with patch.object(agent_driver_packs, "apply_status", new=AsyncMock()) as apply_status:
-        response = await agent_driver_packs.status(payload=status_payload, db=db)
+        response = await agent_driver_packs.status(
+            payload=status_payload, db=db, events=SimpleNamespace(publisher=event_bus)
+        )
 
     assert response.status_code == 204
     assert db.committed is True
-    apply_status.assert_awaited_once_with(db, status_payload)
+    apply_status.assert_awaited_once_with(db, status_payload, publisher=event_bus)
 
 
 async def test_analytics_router_non_csv_and_capacity_defaults() -> None:
@@ -1009,30 +1011,34 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         error_type=None,
         error_message=None,
     )
+    _session_events = SimpleNamespace(publisher=event_bus)
     with patch(
         "app.sessions.router.session_service.register_session",
         new=AsyncMock(side_effect=ValueError("missing")),
     ):
         with pytest.raises(HTTPException) as exc:
-            await sessions.register_session(create_payload, db=object())  # type: ignore[arg-type]
+            await sessions.register_session(create_payload, db=object(), events=_session_events)  # type: ignore[arg-type]
     assert exc.value.status_code == 404
     with patch("app.sessions.router.session_service.register_session", new=AsyncMock(return_value=session_obj)):
-        assert await sessions.register_session(create_payload, db=object()) is session_obj  # type: ignore[arg-type]
+        assert await sessions.register_session(create_payload, db=object(), events=_session_events) is session_obj  # type: ignore[arg-type]
 
     status_payload = SimpleNamespace(status="passed")
     with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
-            await sessions.update_session_status("missing", status_payload, db=object())  # type: ignore[arg-type]
+            await sessions.update_session_status("missing", status_payload, db=object(), events=_session_events)  # type: ignore[arg-type]
     assert exc.value.status_code == 404
     with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=session_obj)):
-        assert await sessions.update_session_status("s1", status_payload, db=object()) is session_obj  # type: ignore[arg-type]
+        assert (
+            await sessions.update_session_status("s1", status_payload, db=object(), events=_session_events)
+            is session_obj
+        )  # type: ignore[arg-type]
 
     with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
-            await sessions.post_session_finished("missing", db=object())
+            await sessions.post_session_finished("missing", db=object(), events=_session_events)
     assert exc.value.status_code == 404
     with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=session_obj)):
-        assert (await sessions.post_session_finished("s1", db=object())).status_code == 204
+        assert (await sessions.post_session_finished("s1", db=object(), events=_session_events)).status_code == 204
 
 
 async def test_plugins_router_maps_service_conflicts_and_missing_resources() -> None:

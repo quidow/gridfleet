@@ -140,7 +140,7 @@ class DeviceStateMachine:
         reason: str | None = None,
         suppress_events: bool = False,
         skip_hooks: bool = False,
-        publisher: EventPublisher | None = None,
+        publisher: EventPublisher,
     ) -> bool:
         """Apply ``event`` to ``device``. Returns True iff state actually changed.
 

@@ -143,7 +143,7 @@ async def _release_devices(
     commit: bool = True,
     terminate_grid_sessions: bool = False,
     settings: SettingsReader,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> list[uuid.UUID]:
     """Release all active reservations for this run and restore device statuses.
 
@@ -215,7 +215,9 @@ async def _release_devices(
     return devices_pending_lifecycle_cleanup
 
 
-async def _complete_deferred_stops_post_commit(db: AsyncSession, device_ids: list[uuid.UUID]) -> None:
+async def _complete_deferred_stops_post_commit(
+    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher
+) -> None:
     """Run ``complete_deferred_stop_if_session_ended`` for each device after
     the caller's run-state commit landed. Skips devices that vanished in the
     meantime."""
@@ -223,4 +225,4 @@ async def _complete_deferred_stops_post_commit(db: AsyncSession, device_ids: lis
         device = await db.get(Device, device_id)
         if device is None:
             continue
-        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=publisher)

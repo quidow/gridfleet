@@ -20,6 +20,7 @@ from app.devices.services.maintenance import enter_maintenance, exit_maintenance
 from app.devices.services.review import clear_review_required, mark_review_required
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -295,7 +296,12 @@ async def test_review_required_short_circuits_auto_recovery(
     probe = AsyncMock()
     with patch("app.sessions.service_viability.run_session_viability_probe", new=probe):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="ignored", settings=FakeSettingsReader(_settings_stub(5))
+            db_session,
+            device,
+            source="device_checks",
+            reason="ignored",
+            settings=FakeSettingsReader(_settings_stub(5)),
+            publisher=event_bus,
         )
 
     assert recovered is False

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.events.protocols import EventPublisher
 
 
 _DEFAULT_TIMEOUT_SEC: float = 30.0
@@ -59,6 +60,7 @@ async def dispatch_feature_action(
     timeout: float | int = _DEFAULT_TIMEOUT_SEC,
     circuit_breaker: CircuitBreakerProtocol,
     agent_auth: httpx.BasicAuth | None = None,
+    publisher: EventPublisher,
 ) -> FeatureActionResult:
     """Forward a feature-action call to the host agent and persist the result.
 
@@ -122,6 +124,7 @@ async def dispatch_feature_action(
             feature_id=feature_id,
             ok=False,
             detail=exc.detail,
+            publisher=publisher,
         )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail) from exc
 
@@ -132,6 +135,7 @@ async def dispatch_feature_action(
         feature_id=feature_id,
         ok=result.ok,
         detail=result.detail,
+        publisher=publisher,
     )
     return result
 

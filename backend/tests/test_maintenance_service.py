@@ -10,6 +10,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.maintenance import enter_maintenance, exit_maintenance
 from app.hosts.models import Host
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,7 +29,7 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
 
     locked = await device_locking.lock_device(db_session, device.id)
     with pytest.raises(ValueError) as exc:
-        await enter_maintenance(db_session, locked)
+        await enter_maintenance(db_session, locked, publisher=event_bus)
 
     assert "reserved" in str(exc.value).lower()
     await db_session.refresh(device)

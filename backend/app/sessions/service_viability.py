@@ -100,6 +100,7 @@ class HealthFailureHandler(Protocol):
         *,
         source: str,
         reason: str,
+        publisher: EventPublisher,
     ) -> object:
         raise NotImplementedError
 
@@ -169,7 +170,7 @@ async def _write_session_viability(
     attempted_at: str,
     error: str | None,
     checked_by: SessionViabilityCheckedBy,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}
     previous_failures = int(previous.get("consecutive_failures") or 0)
@@ -195,7 +196,7 @@ async def record_session_viability_result(
     status: str,
     error: str | None = None,
     checked_by: SessionViabilityCheckedBy,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     config_changed = _clear_session_viability_from_config(device)
     state = await _write_session_viability(
@@ -387,7 +388,7 @@ async def run_session_viability_probe(
     *,
     checked_by: SessionViabilityCheckedBy,
     settings: SettingsReader,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     device_key = str(device.id)
     previous_state: DeviceOperationalState | None = None
@@ -540,6 +541,7 @@ async def run_session_viability_probe(
                     device,
                     source="session_viability",
                     reason=error or "Appium session viability probe failed",
+                    publisher=publisher,
                 )
             else:
                 logger.info(
@@ -553,7 +555,7 @@ async def run_session_viability_probe(
         if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
             relocked = await device_locking.lock_device(db, device.id)
             if relocked.operational_state == DeviceOperationalState.busy:
-                await set_operational_state(relocked, previous_state, publish_event=False)
+                await set_operational_state(relocked, previous_state, publish_event=False, publisher=publisher)
                 await db.commit()
         raise
     finally:
@@ -561,9 +563,7 @@ async def run_session_viability_probe(
         await db.commit()
 
 
-async def _check_due_devices(
-    db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher | None = None
-) -> None:
+async def _check_due_devices(db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher) -> None:
     interval_sec = settings.get("general.session_viability_interval_sec")
     stmt = (
         select(Device)

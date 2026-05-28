@@ -11,6 +11,7 @@ from app.devices.services import connectivity as device_connectivity
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -67,7 +68,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
                 "app.devices.services.connectivity.register_intents_and_reconcile",
                 fake_register_intents_and_reconcile,
             ):
-                await device_connectivity._stop_disconnected_node(session, target)
+                await device_connectivity._stop_disconnected_node(session, target, publisher=event_bus)
             await session.commit()
 
     async def stomper() -> None:

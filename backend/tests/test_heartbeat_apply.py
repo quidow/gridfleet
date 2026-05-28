@@ -10,6 +10,7 @@ from app.appium_nodes.services.heartbeat import _apply_host_ping_result
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -46,6 +47,7 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         session_factory=lambda: db_session,
+        publisher=event_bus,
     )
     await db_session.commit()
     refreshed = (await db_session.execute(select(Host).where(Host.id == db_host.id))).scalars().one()
@@ -77,6 +79,7 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         session_factory=lambda: db_session,
+        publisher=event_bus,
     )
     await db_session.commit()
     await db_session.refresh(db_host)

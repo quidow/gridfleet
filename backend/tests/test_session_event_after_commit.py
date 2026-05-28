@@ -46,6 +46,7 @@ async def test_session_started_queues_after_commit(
         test_name="contract",
         device_id=device.id,
         status=SessionStatus.running,
+        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -67,6 +68,7 @@ async def test_session_ended_queues_after_status_update(
         test_name="contract",
         device_id=device.id,
         status=SessionStatus.running,
+        publisher=event_bus,
     )
     event_bus_capture.clear()
 

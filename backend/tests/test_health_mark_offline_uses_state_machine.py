@@ -17,6 +17,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.devices.services.health import _mark_offline_for_failed_signal
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,7 +130,7 @@ async def test_failed_signal_on_offline_emits_no_transition(
     loaded = await db_session.get(Device, device.id)
     assert loaded is not None
 
-    await _mark_offline_for_failed_signal(loaded, failed=True, reason="ADB lost")
+    await _mark_offline_for_failed_signal(loaded, failed=True, reason="ADB lost", publisher=event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
@@ -160,7 +161,7 @@ async def test_unfailed_signal_emits_no_transition(
     loaded = await db_session.get(Device, device.id)
     assert loaded is not None
 
-    await _mark_offline_for_failed_signal(loaded, failed=False, reason="all good")
+    await _mark_offline_for_failed_signal(loaded, failed=False, reason="all good", publisher=event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()

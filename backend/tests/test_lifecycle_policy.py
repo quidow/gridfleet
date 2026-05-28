@@ -36,6 +36,7 @@ from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -121,7 +122,9 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
     db_session.add(Session(session_id="sess-policy-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+    )
 
     await db_session.refresh(device)
     assert result == "deferred"
@@ -174,7 +177,9 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
     db_session.add(run)
     await db_session.commit()
 
-    await handle_health_failure(db_session, device, source="device_checks", reason="Health probe failed")
+    await handle_health_failure(
+        db_session, device, source="device_checks", reason="Health probe failed", publisher=event_bus
+    )
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
@@ -278,7 +283,12 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
     await db_session.commit()
 
     recovered = await attempt_auto_recovery(
-        db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+        db_session,
+        device,
+        source="device_checks",
+        reason="Healthy again",
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
     )
 
     assert recovered is False
@@ -423,7 +433,12 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
         },
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     assert recovered is True
@@ -482,7 +497,12 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
         },
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     assert recovered is True
@@ -593,7 +613,12 @@ async def test_recovery_rejoin_publishes_availability_event(
         ),
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     assert recovered is True
@@ -650,7 +675,12 @@ async def test_recovery_reloads_device_before_starting_node(
     register_recovery = AsyncMock()
     with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     assert recovered is False
@@ -790,7 +820,12 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
         ) as mock_probe,
     ):
         recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=FakeSettingsReader({})
+            db_session,
+            device,
+            source="device_checks",
+            reason="Healthy again",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
 
     await db_session.refresh(device)
@@ -1147,13 +1182,14 @@ async def test_handle_session_finished_drops_intent_when_healthy(
         health_running=None,
         health_state=None,
         mark_offline=False,
+        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded)
+    stopped = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     await db_session.commit()
     # CLEARED_RECOVERED: intent dropped, no auto-stop. Callers must use the
     # explicit outcome (not "not AUTO_STOPPED") to decide whether to restore
@@ -1212,8 +1248,11 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
         health_running=False,
         health_state="error",
         mark_offline=False,
+        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=False, summary="Probe failed")
+    await device_health.update_device_checks(
+        db_session, device, healthy=False, summary="Probe failed", publisher=event_bus
+    )
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1311,7 +1350,7 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded)
+    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
 
@@ -1353,7 +1392,7 @@ async def test_handle_session_finished_clears_stale_session_running_suppression(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded)
+    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
     await db_session.refresh(reloaded)
@@ -1440,7 +1479,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     await db_session.commit()
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded)
+    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
     await db_session.refresh(node)
@@ -1495,7 +1534,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded)
+    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     assert outcome is DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
     await db_session.refresh(reloaded)
@@ -1564,13 +1603,14 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         health_running=None,
         health_state=None,
         mark_offline=False,
+        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded)
+    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
     await db_session.commit()
     assert outcome is DeferredStopOutcome.CLEARED_RECOVERED
 
@@ -1613,7 +1653,7 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     suppressed = AsyncMock(return_value="suppressed")
     monkeypatch.setattr(lifecycle_policy_module, "record_recovery_suppressed", suppressed)
 
-    assert await handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
+    assert await handle_health_failure(db, device, source="checks", reason="bad", publisher=event_bus) == "suppressed"
 
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
@@ -1628,7 +1668,9 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         device.hold = None
     device.recovery_allowed = False
     assert (
-        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         == "suppressed"
     )
 
@@ -1636,7 +1678,9 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
     assert (
-        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         == "suppressed"
     )
 
@@ -1644,7 +1688,9 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         device.hold = None
     lifecycle_policy_module.has_running_client_session.return_value = True
     assert (
-        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         == "suppressed"
     )
 
@@ -1652,7 +1698,9 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     with state_write_guard.bypass():
         device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
     assert (
-        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         is False
     )
     db.commit.assert_awaited()
@@ -1711,7 +1759,9 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     )
 
     assert (
-        await attempt_auto_recovery(db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         is True
     )
     lifecycle_policy_module.restore_run_if_needed.assert_awaited_once()
@@ -1720,7 +1770,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         DeviceHold.reserved,
         reason="Rejoined run after checks: reconnected",
         severity="info",
-        publisher=None,
+        publisher=event_bus,
     )
 
     busy = SimpleNamespace(
@@ -1752,7 +1802,9 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     monkeypatch.setattr(lifecycle_policy_module, "_MACHINE", machine)
 
     assert (
-        await attempt_auto_recovery(db, busy, source="checks", reason="reconnected", settings=FakeSettingsReader({}))
+        await attempt_auto_recovery(
+            db, busy, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
+        )
         is True
     )
     machine.transition.assert_awaited()
@@ -1803,6 +1855,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
             source="device_checks",
             reason="reconnected",
             settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
         is False
     )
@@ -1910,6 +1963,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
                     "grid.hub_url": "http://grid:4444",
                 }
             ),
+            publisher=event_bus,
         )
         is True
     )  # type: ignore[arg-type]
@@ -1942,7 +1996,12 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
 
     assert (
         await attempt_auto_recovery(
-            db2, failing, source="device_checks", reason="still bad", settings=FakeSettingsReader({})
+            db2,
+            failing,
+            source="device_checks",
+            reason="still bad",
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
         )
         is False
     )  # type: ignore[arg-type]

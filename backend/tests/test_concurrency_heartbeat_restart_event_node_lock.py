@@ -10,6 +10,7 @@ from app.appium_nodes.services import heartbeat as heartbeat
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -67,7 +68,7 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
         async with db_session_maker() as session:
             host = await session.get(Host, db_host.id)
             with patch("app.appium_nodes.services.heartbeat.record_event", racing_record_event):
-                await heartbeat._ingest_appium_restart_events(session, host, health_payload)
+                await heartbeat._ingest_appium_restart_events(session, host, health_payload, publisher=event_bus)
             await session.commit()
 
     async def stomper() -> None:

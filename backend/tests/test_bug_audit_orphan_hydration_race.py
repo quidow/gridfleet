@@ -22,6 +22,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _hydrate_orphan_session_row
 from tests.helpers import create_device, create_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -71,7 +72,7 @@ async def test_orphan_hydration_writes_device_to_ended_session(
         await side.commit()
 
     info = {"device_id": str(device_id), "connection_target": device.connection_target}
-    await _hydrate_orphan_session_row(db_session, sid, info)
+    await _hydrate_orphan_session_row(db_session, sid, info, publisher=event_bus)
 
     await db_session.commit()
 

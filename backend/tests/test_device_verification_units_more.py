@@ -18,6 +18,7 @@ from app.devices.services.verification_preparation import PreparedVerificationCo
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -172,6 +173,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         probe_session_fn=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert started is None
     assert error == "no node"
@@ -189,6 +191,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         probe_session_fn=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
@@ -217,6 +220,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         probe_session_fn=probe_session,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert started is running_node
     assert error == "probe failed"
@@ -354,6 +358,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         probe_session_fn=fake_probe_session,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert seen_inflight == [True]
     assert probe_inflight.is_probe_inflight(device_key) is False
@@ -413,6 +418,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             probe_session_fn=failing_probe_session,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
     assert probe_inflight.is_probe_inflight(device_key) is False
 
@@ -535,7 +541,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         "app.devices.services.verification_execution.device_service.update_device",
         AsyncMock(return_value=None),
     )
-    failed = await execution._finalize_success(db, context, job=_job(), node=None)
+    failed = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
 
@@ -551,6 +557,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         probe_session_fn=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        publisher=event_bus,
     )
     assert outcome.status == "failed"
     assert outcome.error == "stop failed"
@@ -585,7 +592,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     monkeypatch.setattr("app.devices.services.verification_execution.device_service.delete_device", AsyncMock())
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
 
-    outcome = await execution._finalize_success(db, context, job=_job(), node=None)
+    outcome = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
     assert outcome.status == "failed"
     assert outcome.device_id is None
 
@@ -599,7 +606,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         "app.devices.services.verification_execution.DeviceStateMachine",
         lambda: SimpleNamespace(transition=AsyncMock()),
     )
-    outcome = await execution._finalize_success(db, context, job=_job(), node=None)
+    outcome = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
     assert outcome.status == "failed"
     assert outcome.device_id == str(device_id)
 
@@ -614,7 +621,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         "app.devices.services.verification_execution.session_viability.record_session_viability_result",
         AsyncMock(),
     )
-    outcome = await execution._finalize_success(db, context, job=_job(), node=node)
+    outcome = await execution._finalize_success(db, context, job=_job(), node=node, publisher=event_bus)
     assert outcome.status == "completed"
     execution.set_operational_state.assert_awaited_once()
 
@@ -646,6 +653,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
             probe_session_fn=AsyncMock(),
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert update_device.name == "new"

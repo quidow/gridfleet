@@ -18,6 +18,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.devices.services.health import _restore_available_for_healthy_signal
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,7 +157,7 @@ async def test_healthy_signal_not_offline_emits_no_transition(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
@@ -197,7 +198,7 @@ async def test_healthy_signal_node_not_running_emits_no_transition(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
@@ -227,7 +228,7 @@ async def test_healthy_signal_no_node_emits_no_transition(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
@@ -257,7 +258,7 @@ async def test_healthy_signal_not_ready_emits_no_transition(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()
@@ -288,7 +289,7 @@ async def test_healthy_signal_allocation_not_allowed_emits_no_transition(
     assert loaded is not None
     await db_session.refresh(loaded, attribute_names=["appium_node"])
 
-    await _restore_available_for_healthy_signal(db_session, loaded)
+    await _restore_available_for_healthy_signal(db_session, loaded, event_bus)
     await db_session.commit()
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == loaded.id))).scalars().all()

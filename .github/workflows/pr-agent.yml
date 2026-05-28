@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     # Hard kill so a hung LiteLLM/Ollama Cloud call cannot burn 30 min of CI when
     # `config.ai_timeout` fails to fire (observed on the streaming /api/chat path).
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - name: PR Agent action
         # Pinned 2026-05-19 (release 0.35.0). Bump after observing upstream main for breaking changes.

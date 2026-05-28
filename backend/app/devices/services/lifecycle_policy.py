@@ -198,7 +198,7 @@ async def _run_recovery_probe(
     device: Device,
     *,
     settings: SettingsReader,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> dict[str, Any]:
     last_result: dict[str, Any] = {}
     try:
@@ -229,7 +229,7 @@ async def handle_health_failure(
     *,
     source: str,
     reason: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> str:
     device = await _reload_device(db, device)
     current_state = policy_state(device)
@@ -282,7 +282,7 @@ async def handle_health_failure(
 
 
 async def handle_session_finished(
-    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
+    db: AsyncSession, device: Device, *, publisher: EventPublisher
 ) -> DeferredStopOutcome:
     device = await _reload_device(db, device)
     # Re-run intent reconciliation now that the session has ended. A previous
@@ -363,7 +363,7 @@ async def handle_session_finished(
 
 
 async def complete_deferred_stop_if_session_ended(
-    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
+    db: AsyncSession, device: Device, *, publisher: EventPublisher
 ) -> DeferredStopOutcome:
     """Idempotent session-end helper. Authoritative state checks live in
     ``handle_session_finished``, which re-reads under the device row lock —
@@ -408,7 +408,7 @@ async def attempt_auto_recovery(
     source: str,
     reason: str,
     settings: SettingsReader,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
     device = await _reload_device(db, device)
     current_state = policy_state(device)

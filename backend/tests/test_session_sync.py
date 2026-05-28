@@ -15,6 +15,7 @@ from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -1035,7 +1036,9 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     db_session.add_all([run, session])
     await db_session.commit()
 
-    await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+    )
 
     with patch("app.sessions.service_sync.grid_service.get_grid_status", return_value=_grid_response([])):
         await _sync_sessions(db_session)
@@ -1093,7 +1096,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     await db_session.commit()
 
     # Defer a stop (simulates an earlier transient failure during this session).
-    await handle_health_failure(db_session, device, source="node_health", reason="Probe failed")
+    await handle_health_failure(db_session, device, source="node_health", reason="Probe failed", publisher=event_bus)
 
     # Health later recovers - seed derived health to healthy. Recovery wiring
     # would normally clear stop_pending here, but this test exercises the
@@ -1104,8 +1107,9 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
         health_running=None,
         health_state=None,
         mark_offline=False,
+        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
     await db_session.commit()
 
     # Session ends — Grid no longer reports it.
@@ -1161,12 +1165,12 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
 
     real_handle = session_sync.lifecycle_policy.handle_session_finished
 
-    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device) -> object:
+    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device, **kwargs: object) -> object:
         # Simulate: between the outer running-set probe and the restore guard,
         # a fresh client session is inserted (e.g. a new POST /api/sessions
         # arriving on a different worker). The new session is committed so
         # the locked recheck inside the restore guard observes it.
-        outcome = await real_handle(db, dev)
+        outcome = await real_handle(db, dev, **kwargs)
         new_session = Session(session_id="sess-new-fresh", device_id=dev.id, status=SessionStatus.running)
         db.add(new_session)
         await db.commit()
@@ -1348,7 +1352,9 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+    )
     assert result == "deferred"
 
     # Simulate the historical bug: a session ended directly in the DB without the helper.
@@ -1412,7 +1418,9 @@ async def test_sweep_runs_when_grid_is_unreachable(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB hung")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB hung", publisher=event_bus
+    )
     assert result == "deferred"
 
     session.status = SessionStatus.passed

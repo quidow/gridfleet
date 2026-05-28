@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +29,7 @@ async def test_recovery_probe_stops_on_first_success() -> None:
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
         result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
         )
 
     assert probe_mock.await_count == 1
@@ -49,7 +50,7 @@ async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pyte
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
         result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
         )
 
     assert probe_mock.await_count == lifecycle_policy.RECOVERY_PROBE_ATTEMPTS
@@ -75,7 +76,7 @@ async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatc
         patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
     ):
         result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({})
+            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
         )
 
     assert probe_mock.await_count == 3

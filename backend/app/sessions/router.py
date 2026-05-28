@@ -11,6 +11,7 @@ from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.pagination import CursorPaginationError
 from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
+from app.events.dependencies import EventServicesDep
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 
@@ -125,6 +126,7 @@ async def get_session(session_id: str, db: DbDep) -> SessionDetail:
 async def register_session(
     data: SessionCreate,
     db: DbDep,
+    events: EventServicesDep,
 ) -> Session:
     try:
         return await session_service.register_session(
@@ -141,6 +143,7 @@ async def register_session(
             requested_capabilities=data.requested_capabilities,
             error_type=data.error_type,
             error_message=data.error_message,
+            publisher=events.publisher,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -151,8 +154,9 @@ async def update_session_status(
     session_id: str,
     data: SessionStatusUpdate,
     db: DbDep,
+    events: EventServicesDep,
 ) -> Session:
-    session = await session_service.update_session_status(db, session_id, data.status)
+    session = await session_service.update_session_status(db, session_id, data.status, events.publisher)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
@@ -162,8 +166,9 @@ async def update_session_status(
 async def post_session_finished(
     session_id: str,
     db: DbDep,
+    events: EventServicesDep,
 ) -> Response:
-    result = await session_service.mark_session_finished(db, session_id)
+    result = await session_service.mark_session_finished(db, session_id, publisher=events.publisher)
     if result is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return Response(status_code=204)

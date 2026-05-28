@@ -9,6 +9,7 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 def _device(**overrides: object) -> SimpleNamespace:
@@ -83,7 +84,9 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     monkeypatch.setattr(execution.device_service, "delete_device", AsyncMock())
 
     create_context = SimpleNamespace(mode="create", save_device_id=uuid.uuid4(), transient_device=transient)
-    outcome = await execution._finalize_failure(db, create_context, error="bad", job=job, node=node)
+    outcome = await execution._finalize_failure(
+        db, create_context, error="bad", job=job, node=node, publisher=event_bus
+    )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
 
@@ -102,6 +105,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         error="bad",
         job=job,
         original_fields={"name": "original"},
+        publisher=event_bus,
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -123,6 +127,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             probe_session_fn=AsyncMock(),
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     context = SimpleNamespace(
@@ -144,6 +149,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
             probe_session_fn=AsyncMock(),
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
     finalize.assert_awaited_once()
 
@@ -203,7 +209,11 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke)
 
     outcome = await execution._finalize_success(
-        db, context, job={"stages": []}, node=SimpleNamespace(port=4723, pid=22)
+        db,
+        context,
+        job={"stages": []},
+        node=SimpleNamespace(port=4723, pid=22),
+        publisher=event_bus,
     )
 
     assert outcome.status == "completed"

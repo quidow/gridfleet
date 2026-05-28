@@ -19,6 +19,7 @@ from app.sessions import service_sync
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.services_container import SessionServices
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +52,7 @@ async def test_doorbell_set_wakes_loop_early(monkeypatch: pytest.MonkeyPatch) ->
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         session_factory=lambda: _NullCtx(),
+        publisher=event_bus,
     )
     task = asyncio.create_task(SessionSyncLoop(services=services).run())
     try:
@@ -88,6 +90,7 @@ async def test_doorbell_burst_coalesces_into_single_sync(monkeypatch: pytest.Mon
     services = SessionServices(
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         session_factory=lambda: _NullCtx(),
+        publisher=event_bus,
     )
     task = asyncio.create_task(SessionSyncLoop(services=services).run())
     try:

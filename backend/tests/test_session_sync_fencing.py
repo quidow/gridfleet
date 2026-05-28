@@ -16,13 +16,14 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(db, settings=FakeSettingsReader({}))
+    await _sync_sessions_impl(db, settings=FakeSettingsReader({}), publisher=event_bus)
 
 
 @pytest.mark.db

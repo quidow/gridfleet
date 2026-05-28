@@ -13,6 +13,7 @@ from app.sessions.models import Session
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -71,7 +72,7 @@ async def test_session_sync_does_not_persist_probe_sessions(
 
     monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus)
 
     sessions = (
         (await db_session.execute(select(Session).where(Session.session_id == "probe-session-1"))).scalars().all()
@@ -119,7 +120,7 @@ async def test_session_sync_does_persist_real_session(
 
     monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}))
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus)
 
     sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()
     assert len(sessions) == 1

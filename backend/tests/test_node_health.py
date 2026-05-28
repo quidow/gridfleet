@@ -21,6 +21,7 @@ from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -86,6 +87,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -139,6 +141,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -201,6 +204,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -264,6 +268,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -339,6 +344,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -588,6 +594,7 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     status_mock.assert_awaited_once()
@@ -644,6 +651,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     status_mock.assert_awaited_once()
@@ -700,6 +708,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     status_mock.assert_awaited_once()
@@ -756,6 +765,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     status_mock.assert_awaited_once()
@@ -848,6 +858,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                     }
                 ),
                 circuit_breaker=Mock(),
+                publisher=event_bus,
             )
         )
         await asyncio.wait_for(both_started.wait(), timeout=1)
@@ -1061,6 +1072,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
         health_running=None,
         health_state=None,
         mark_offline=False,
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -1080,6 +1092,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     # Counter unchanged (still absent)
@@ -1160,6 +1173,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
@@ -1234,6 +1248,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
@@ -1294,6 +1309,7 @@ async def test_node_health_recovery_clears_pending_stop(
         health_running=False,
         health_state="error",
         mark_offline=False,
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -1311,6 +1327,7 @@ async def test_node_health_recovery_clears_pending_stop(
                 }
             ),
             circuit_breaker=Mock(),
+            publisher=event_bus,
         )
 
     reloaded = await db_session.get(Device, device.id)
@@ -1365,6 +1382,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         result=ProbeResult(status="ack"),
         grid_device_ids=None,
         settings=FakeSettingsReader({"general.node_max_failures": 3, "appium.startup_timeout_sec": 30}),
+        publisher=event_bus,
     )
 
     with state_write_guard.bypass():
@@ -1386,6 +1404,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         observed_pid=1,
         observed_active_connection_target="old",
         settings=FakeSettingsReader({"general.node_max_failures": 3, "appium.startup_timeout_sec": 30}),
+        publisher=event_bus,
     )
 
     with state_write_guard.bypass():
@@ -1397,6 +1416,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         result=ProbeResult(status="ack"),
         grid_device_ids=None,
         settings=FakeSettingsReader({"general.node_max_failures": 3, "appium.startup_timeout_sec": 30}),
+        publisher=event_bus,
     )
 
     with state_write_guard.bypass():
@@ -1408,6 +1428,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         result=ProbeResult(status="indeterminate"),
         grid_device_ids=None,
         settings=FakeSettingsReader({"general.node_max_failures": 3, "appium.startup_timeout_sec": 30}),
+        publisher=event_bus,
     )
 
 

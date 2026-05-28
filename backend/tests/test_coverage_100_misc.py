@@ -245,7 +245,9 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     with state_write_guard.bypass():
         device = Device(id=uuid.uuid4(), name="d", hold=DeviceHold.maintenance)
     monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
-    assert await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False) is False
+    assert (
+        await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False, publisher=event_bus) is False
+    )
 
     assert event_catalog.normalize_public_event_names("bad") == []
     assert event_catalog.normalize_public_event_names(["bad", 1, "device.hold_changed", "device.hold_changed"]) == [
@@ -372,6 +374,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             Device(id=uuid.uuid4(), name="d"),
             source="test",
             reason="boom",
+            publisher=event_bus,
         )
 
     leader = control_plane_leader_module.ControlPlaneLeader()
@@ -551,6 +554,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             feature_id="camera",
             ok=True,
             detail="ok",
+            publisher=event_bus,
         )
         is False
     )
@@ -653,6 +657,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
             feature_id="camera",
             ok=True,
             detail="still ok",
+            publisher=event_bus,
         )
         is False
     )

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.hosts.models import HostPluginRuntimeStatus
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services import status as pack_status_service
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
                 {"pack_id": "appium-xcuitest", "check_id": "ignored", "ok": False, "message": "ignored"},
             ],
         },
+        publisher=event_bus,
     )
     await db_session.commit()
 

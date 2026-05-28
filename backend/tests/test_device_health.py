@@ -254,6 +254,7 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
         health_state="error",
         mark_offline=False,
         reason="below threshold",
+        publisher=event_bus,
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -321,6 +322,7 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
         health_running=False,
         health_state="relay_restart_exhausted",
         mark_offline=False,
+        publisher=event_bus,
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -336,9 +338,9 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     assert await svc._lock(db, device) is None  # type: ignore[arg-type]
-    await svc.update_device_checks(db, device, healthy=True, summary="ok")  # type: ignore[arg-type]
-    await svc.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]
-    await svc.apply_node_state_transition(db, device)  # type: ignore[arg-type]
+    await svc.update_device_checks(db, device, healthy=True, summary="ok", publisher=event_bus)  # type: ignore[arg-type]
+    await svc.update_session_viability(db, device, status="failed", error="bad", publisher=event_bus)  # type: ignore[arg-type]
+    await svc.apply_node_state_transition(db, device, publisher=event_bus)  # type: ignore[arg-type]
     await svc.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]
 
     locked = SimpleNamespace(
@@ -349,6 +351,6 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
     transition = AsyncMock(return_value=False)
     monkeypatch.setattr(svc._MACHINE, "transition", transition)
 
-    await svc._restore_available_for_healthy_signal(db, locked)  # type: ignore[arg-type]
+    await svc._restore_available_for_healthy_signal(db, locked, event_bus)  # type: ignore[arg-type]
 
     transition.assert_not_awaited()

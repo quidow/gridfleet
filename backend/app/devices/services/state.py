@@ -49,17 +49,14 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
-    assert not publish_event or publisher is not None, (
-        "publisher is required when publish_event=True; pass publish_event=False to suppress event emission"
-    )
     session = _persistent_session(device)
     old = device.operational_state
     if old == new_state:
         return False
     device.operational_state = new_state
-    if publish_event and publisher is not None:
+    if publish_event:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -85,17 +82,14 @@ async def set_hold(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
-    assert not publish_event or publisher is not None, (
-        "publisher is required when publish_event=True; pass publish_event=False to suppress event emission"
-    )
     session = _persistent_session(device)
     old = device.hold
     if old == new_hold:
         return False
     device.hold = new_hold
-    if publish_event and publisher is not None:
+    if publish_event:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,

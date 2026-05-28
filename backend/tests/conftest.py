@@ -345,7 +345,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return SessionServices(settings=settings_service, session_factory=sf)
+        return SessionServices(publisher=test_event_bus, settings=settings_service, session_factory=sf)
 
     def override_get_run_services() -> RunServices:
         assert db_session.bind is not None

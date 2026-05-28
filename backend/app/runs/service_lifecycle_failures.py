@@ -46,7 +46,7 @@ async def _enter_maintenance(
     device: Device,
     *,
     maintenance_reason: str = "Operator entered maintenance",
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> Device:
     from app.devices.services.maintenance import enter_maintenance  # noqa: PLC0415
 
@@ -116,7 +116,7 @@ async def report_preparation_failure(
     *,
     message: str,
     source: str = "ci_preparation",
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> TestRun:
     run = await get_run(db, run_id)
     if run is None:
@@ -180,7 +180,7 @@ async def cooldown_device(
     ttl_seconds: int,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> tuple[datetime | None, int, bool, int]:
     """Apply a run-scoped cooldown to a reserved device.
 

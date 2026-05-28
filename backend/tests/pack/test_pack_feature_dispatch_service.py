@@ -26,6 +26,7 @@ from sqlalchemy import select
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -166,6 +167,7 @@ async def test_dispatch_calls_agent_and_records_ok_status(
         args={"with_logs": True},
         http_client_factory=_factory(client),
         circuit_breaker=_noop_breaker(),
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -219,6 +221,7 @@ async def test_dispatch_passes_agent_auth_to_agent_request(
         http_client_factory=_factory(client),
         circuit_breaker=_noop_breaker(),
         agent_auth=sentinel,
+        publisher=event_bus,
     )
 
     assert client.post_calls
@@ -254,6 +257,7 @@ async def test_dispatch_omits_auth_when_no_agent_auth_supplied(
         http_client_factory=_factory(client),
         circuit_breaker=_noop_breaker(),
         agent_auth=None,
+        publisher=event_bus,
     )
 
     assert client.post_calls
@@ -287,6 +291,7 @@ async def test_dispatch_records_failure_when_agent_returns_not_ok(
         args={},
         http_client_factory=_factory(client),
         circuit_breaker=_noop_breaker(),
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -326,6 +331,7 @@ async def test_dispatch_404_when_host_missing(
             args={},
             http_client_factory=_factory(client),
             circuit_breaker=_noop_breaker(),
+            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []  # never reached the agent
@@ -348,6 +354,7 @@ async def test_dispatch_404_when_pack_missing(
             args={},
             http_client_factory=_factory(client),
             circuit_breaker=_noop_breaker(),
+            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -372,6 +379,7 @@ async def test_dispatch_404_when_feature_id_not_in_release(
             args={},
             http_client_factory=_factory(client),
             circuit_breaker=_noop_breaker(),
+            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -405,6 +413,7 @@ async def test_dispatch_502_on_agent_5xx(
             args={},
             http_client_factory=_factory(client),
             circuit_breaker=_noop_breaker(),
+            publisher=event_bus,
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()
@@ -443,6 +452,7 @@ async def test_dispatch_502_on_transport_error_records_degraded(
             args={},
             http_client_factory=_factory(client),
             circuit_breaker=_noop_breaker(),
+            publisher=event_bus,
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()

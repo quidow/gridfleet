@@ -116,7 +116,7 @@ def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str
     return sessions
 
 
-async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
+async def _sweep_stale_stop_pending(db: AsyncSession, *, publisher: EventPublisher) -> None:
     """Backstop sweep: clear stop_pending on devices that have no running sessions.
 
     Protects against any session-end path that bypassed
@@ -135,7 +135,7 @@ async def _sweep_stale_stop_pending(db: AsyncSession) -> None:
         device = await db.get(Device, device_id)
         if device is None:
             continue
-        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device)
+        await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=publisher)
 
 
 async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) -> Device | None:
@@ -171,7 +171,7 @@ async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) 
 
 
 async def _hydrate_orphan_session_row(
-    db: AsyncSession, sid: str, info: dict[str, Any], *, publisher: EventPublisher | None = None
+    db: AsyncSession, sid: str, info: dict[str, Any], *, publisher: EventPublisher
 ) -> None:
     """Bind a device-less ``Session`` row to its Device and fire the busy
     transition.
@@ -280,13 +280,12 @@ async def _hydrate_orphan_session_row(
         session,
         device=locked_device,
         run_id=str(reservation_run_id) if reservation_run_id is not None else None,
+        publisher=publisher,
     )
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
 
-async def _sync_sessions(
-    db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher | None = None
-) -> None:
+async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher) -> None:
     """Sync Grid sessions with the Session table."""
     grid_data = await grid_service.get_grid_status(settings=settings)
 
@@ -299,7 +298,7 @@ async def _sync_sessions(
     # so it must heal historical rows even during Grid outages.
     if not grid_data.get("value", {}).get("ready", False) and "error" in grid_data:
         logger.debug("Grid unreachable, skipping Grid session sync (sweep still runs)")
-        await _sweep_stale_stop_pending(db)
+        await _sweep_stale_stop_pending(db, publisher=publisher)
         await db.commit()
         return
 
@@ -424,6 +423,7 @@ async def _sync_sessions(
             session,
             device=device,
             run_id=str(reservation_run_id) if reservation_run_id is not None else None,
+            publisher=publisher,
         )
         logger.info("Tracked new session %s on device %s (%s)", sid, device.name, connection_target)
 
@@ -459,7 +459,7 @@ async def _sync_sessions(
                 ended_session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
             else:
                 ended_session.status = SessionStatus.passed  # default; pytest helper can override
-            session_service.queue_session_ended_event(db, ended_session, device=ended_device)
+            session_service.queue_session_ended_event(db, ended_session, device=ended_device, publisher=publisher)
             if ended_session.device_id is not None:
                 await revoke_intents_and_reconcile(
                     db,
@@ -488,7 +488,7 @@ async def _sync_sessions(
         device = dev_result.scalar_one_or_none()
         if device is None:
             continue
-        outcome = await lifecycle_policy.handle_session_finished(db, device)
+        outcome = await lifecycle_policy.handle_session_finished(db, device, publisher=publisher)
         if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
             continue
         if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
@@ -533,7 +533,7 @@ async def _sync_sessions(
                     publisher=publisher,
                 )
 
-    await _sweep_stale_stop_pending(db)
+    await _sweep_stale_stop_pending(db, publisher=publisher)
     await db.commit()
 
 

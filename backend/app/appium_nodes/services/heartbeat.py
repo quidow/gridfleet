@@ -334,7 +334,7 @@ async def _persist_appium_processes_snapshot(db: AsyncSession, host: Host, healt
 
 
 async def _ingest_appium_restart_events(
-    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher | None = None
+    db: AsyncSession, host: Host, health_data: dict[str, Any], *, publisher: EventPublisher
 ) -> None:
     process_payload = health_data.get("appium_processes")
     if not isinstance(process_payload, dict):
@@ -534,7 +534,7 @@ async def _apply_host_ping_result(
     guard_active: bool,
     guard_gap_sec: float | None = None,
     guard_threshold_sec: float | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol | None,
     session_factory: async_sessionmaker[AsyncSession],

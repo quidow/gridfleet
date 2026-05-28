@@ -16,4 +16,4 @@ if TYPE_CHECKING:
 class SessionServices:
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
-    publisher: EventPublisher | None = None
+    publisher: EventPublisher

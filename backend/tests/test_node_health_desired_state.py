@@ -14,6 +14,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent
 from app.devices.services import state_write_guard
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         result=ProbeResult(status="refused", detail="test"),
         grid_device_ids={str(device.id)},
         settings=FakeSettingsReader({}),
+        publisher=event_bus,
     )
     await db_session.commit()
 

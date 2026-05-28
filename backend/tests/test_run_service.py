@@ -68,7 +68,9 @@ async def test_force_release_clears_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(db_session, device, source="device_checks", reason="ADB not responsive")
+    result = await handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+    )
     assert result == "deferred"
 
     async def _fake_terminate(_session_id: str, *, settings: object = None) -> bool:

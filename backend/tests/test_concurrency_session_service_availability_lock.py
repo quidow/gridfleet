@@ -13,6 +13,7 @@ from app.devices.services import maintenance as maintenance_service
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -78,6 +79,7 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
                 test_name=None,
                 device_id=device_id,
                 status=SessionStatus.running,
+                publisher=event_bus,
             )
 
     await asyncio.gather(

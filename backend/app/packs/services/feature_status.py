@@ -40,7 +40,7 @@ async def record_feature_status(
     feature_id: str,
     ok: bool,
     detail: str,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
     """Upsert the (host, pack, feature) status row and emit a webhook on transition.
 
