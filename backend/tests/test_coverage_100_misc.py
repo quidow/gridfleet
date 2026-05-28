@@ -108,6 +108,7 @@ from app.runs.schemas import DeviceRequirement
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
+from app.settings.service_config import SettingsConfigService
 from app.webhooks.schemas import WebhookUpdate
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -201,8 +202,6 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     assert config_service._deep_merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
     audit_rows = [object()]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: audit_rows)))
-    from app.settings.service_config import SettingsConfigService
-
     assert await SettingsConfigService(publisher=Mock()).get_config_history(db, uuid.uuid4(), limit=1) == audit_rows
 
     with pytest.raises(ValueError, match="desired_port"):
