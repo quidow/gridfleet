@@ -15,6 +15,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostResourceSample, HostStatus, OSType
 from app.hosts.router import _auto_discover, _auto_prepare_host_diagnostics
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
+from app.plugins.service import PluginService
 from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -615,12 +616,12 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
     sync = AsyncMock()
     with (
         patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
-        patch("app.hosts.router.plugin_service.list_plugins", new=AsyncMock(return_value=[])),
-        patch("app.hosts.router.plugin_service.auto_sync_host_plugins", sync),
+        patch.object(PluginService, "list_plugins", new=AsyncMock(return_value=[])),
+        patch.object(PluginService, "auto_sync_host_plugins", sync),
     ):
         await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
-    sync.assert_awaited_once_with(host, [], settings=ANY, circuit_breaker=ANY)
+    sync.assert_awaited_once_with(host, [])
 
 
 @pytest.mark.asyncio
