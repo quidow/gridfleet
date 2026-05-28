@@ -1772,12 +1772,12 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     }
 
     _grid_ss = _mock_settings_svc(FakeSettingsReader({}))
-    with (
-        patch("app.grid.router.grid_service.get_grid_status", new=AsyncMock(return_value=grid_data)),
-        patch("app.grid.router.device_service.list_devices", new=AsyncMock(return_value=devices)),
-    ):
-        status = await grid.grid_status(db=object(), settings_services=_grid_ss)
-        queue = await grid.grid_queue(settings_services=_grid_ss)
+    fake_grid_svc = AsyncMock()
+    fake_grid_svc.get_status = AsyncMock(return_value=grid_data)
+    fake_grid_services = SimpleNamespace(grid=fake_grid_svc)
+    with patch("app.grid.router.device_service.list_devices", new=AsyncMock(return_value=devices)):
+        status = await grid.grid_status(db=object(), grid_services=fake_grid_services, settings_services=_grid_ss)
+        queue = await grid.grid_queue(grid_services=fake_grid_services)
 
     assert status["registry"]["device_count"] == 2
     assert status["registry"]["devices"][0]["node_state"] == "running"
@@ -2457,10 +2457,13 @@ async def test_runs_router_state_transition_endpoints() -> None:
         service_name: str,
         *args: object,
         settings: object | None = None,
+        needs_run_services: bool = False,
     ) -> None:
         kwargs: dict[str, object] = {"db": object(), "events": SimpleNamespace(publisher=event_bus)}
         if settings is not None:
             kwargs["settings_services"] = settings
+        if needs_run_services:
+            kwargs["run_services"] = SimpleNamespace(grid=AsyncMock())
         with patch(f"app.runs.router.run_service.{service_name}", new=AsyncMock(side_effect=ValueError("bad state"))):
             with pytest.raises(HTTPException) as exc:
                 await call(*args, **kwargs)
@@ -2477,7 +2480,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
         (runs.cancel_run, "cancel_run"),
         (runs.force_release, "force_release"),
     ):
-        await assert_conflict(call, service_name, run_id, settings=_run_ss)
+        await assert_conflict(call, service_name, run_id, settings=_run_ss, needs_run_services=True)
 
     with (
         patch("app.runs.router.run_service.report_preparation_failure", new=AsyncMock(side_effect=ValueError("bad"))),
@@ -2530,7 +2533,12 @@ async def test_runs_router_state_transition_endpoints() -> None:
         (
             runs.complete_run,
             "complete_run",
-            {"db": object(), "events": SimpleNamespace(publisher=event_bus), "settings_services": _run_ss},
+            {
+                "db": object(),
+                "events": SimpleNamespace(publisher=event_bus),
+                "settings_services": _run_ss,
+                "run_services": SimpleNamespace(grid=AsyncMock()),
+            },
         ),
     ):
         with (

@@ -25,6 +25,7 @@ from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
+from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobWorkerLoop
@@ -81,6 +82,8 @@ def compose_app(
         circuit_breaker=circuit_breaker,
     )
 
+    grid_svc = GridService(settings=settings_svc)
+
     return AppServices(
         events=event_services,
         settings=settings_services,
@@ -88,6 +91,7 @@ def compose_app(
         devices=DeviceServices(
             publisher=bus,
             settings=settings_svc,
+            grid=grid_svc,
             session_factory=session_factory,
             circuit_breaker=circuit_breaker,
         ),
@@ -98,15 +102,20 @@ def compose_app(
             circuit_breaker=circuit_breaker,
             session_factory=session_factory,
         ),
-        sessions=SessionServices(settings=settings_svc, session_factory=session_factory, publisher=bus),
-        runs=RunServices(publisher=bus, settings=settings_svc, session_factory=session_factory),
-        grid=GridServices(settings=settings_svc, session_factory=session_factory),
+        sessions=SessionServices(settings=settings_svc, grid=grid_svc, session_factory=session_factory, publisher=bus),
+        runs=RunServices(publisher=bus, settings=settings_svc, grid=grid_svc, session_factory=session_factory),
+        grid=GridServices(
+            grid=grid_svc,
+            settings=settings_svc,
+            session_factory=session_factory,
+        ),
         packs=PackServices(session_factory=session_factory),
         appium_nodes=AppiumNodeServices(
             settings=settings_svc,
             pool=http_pool,
             circuit_breaker=circuit_breaker,
             publisher=bus,
+            grid=grid_svc,
             session_factory=session_factory,
         ),
         jobs=DurableJobWorkerLoop(

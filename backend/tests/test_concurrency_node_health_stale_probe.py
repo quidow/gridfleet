@@ -66,15 +66,17 @@ async def _run_node_health_with_gate(
         await asyncio.wait_for(allow_processing.wait(), timeout=2.0)
         return ProbeResult(status="refused")
 
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={})
+    fake_grid.available_node_device_ids = Mock(return_value=set())
+
     with (
         patch("app.appium_nodes.services.node_health._check_node_health", side_effect=unhealthy_probe),
-        patch("app.appium_nodes.services.node_health.grid_service.get_grid_status", new=AsyncMock(return_value={})),
-        patch("app.appium_nodes.services.node_health.grid_service.available_node_device_ids", return_value=set()),
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
             await node_health._check_nodes(
-                session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
+                session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus, grid=fake_grid
             )
 
 

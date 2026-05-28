@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -87,7 +88,12 @@ async def heartbeat(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
 
 
 async def complete_run(
-    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    grid: GridServiceProtocol,
 ) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -100,7 +106,7 @@ async def complete_run(
     run.state = RunState.completed
     run.completed_at = now
     cleanup_ids = await _release_devices(
-        db, run, commit=False, terminate_grid_sessions=False, settings=settings, publisher=publisher
+        db, run, commit=False, terminate_grid_sessions=False, settings=settings, publisher=publisher, grid=grid
     )
 
     duration = None
@@ -125,7 +131,12 @@ async def complete_run(
 
 
 async def cancel_run(
-    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    grid: GridServiceProtocol,
 ) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -137,7 +148,7 @@ async def cancel_run(
     run.state = RunState.cancelled
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(
-        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher, grid=grid
     )
     queue_event_for_session(
         db,
@@ -158,7 +169,12 @@ async def cancel_run(
 
 
 async def force_release(
-    db: AsyncSession, run_id: uuid.UUID, *, publisher: EventPublisher, settings: SettingsReader
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    grid: GridServiceProtocol,
 ) -> TestRun:
     run = await _get_run_for_update(db, run_id)
     if run is None:
@@ -169,7 +185,7 @@ async def force_release(
     run.error = "Force released by admin"
     run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(
-        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+        db, run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher, grid=grid
     )
     queue_event_for_session(
         db,
@@ -190,7 +206,13 @@ async def force_release(
 
 
 async def expire_run(
-    db: AsyncSession, run: TestRun, reason: str, *, publisher: EventPublisher, settings: SettingsReader
+    db: AsyncSession,
+    run: TestRun,
+    reason: str,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    grid: GridServiceProtocol,
 ) -> None:
     """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
 
@@ -213,7 +235,7 @@ async def expire_run(
     locked_run.error = effective_reason
     locked_run.completed_at = datetime.now(UTC)
     cleanup_ids = await _release_devices(
-        db, locked_run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher
+        db, locked_run, commit=False, terminate_grid_sessions=True, settings=settings, publisher=publisher, grid=grid
     )
 
     if expired_from_preparing:

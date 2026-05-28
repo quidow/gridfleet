@@ -21,7 +21,7 @@ from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
-from app.grid import service as grid_service
+from app.grid.service import GridService as _GridService
 from app.runs import service_reaper as run_reaper
 from app.runs.services_container import RunServices
 from tests.fakes import FakeSettingsReader
@@ -195,6 +195,7 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
             services=RunServices(
                 publisher=event_bus,
                 settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+                grid=Mock(),
                 session_factory=fake_session,
             )
         )
@@ -253,9 +254,9 @@ def test_error_detail_and_transport_helpers() -> None:
 
 
 def test_grid_status_device_ids_ignore_malformed_nodes() -> None:
-    assert grid_service.available_node_device_ids({"value": None}) is None
-    assert grid_service.available_node_device_ids({"value": {"nodes": None}}) is None
-    assert grid_service.available_node_device_ids(
+    assert _GridService.available_node_device_ids({"value": None}) is None
+    assert _GridService.available_node_device_ids({"value": {"nodes": None}}) is None
+    assert _GridService.available_node_device_ids(
         {
             "value": {
                 "nodes": [
@@ -288,13 +289,16 @@ async def test_grid_service_reuses_and_closes_shared_client(monkeypatch: MonkeyP
         created.append(client)
         return client
 
-    await grid_service.close()
+    from tests.fakes import FakeSettingsReader
+
+    grid_svc = _GridService(settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444"}))
+    await grid_svc.close()
     monkeypatch.setattr("app.grid.service.httpx.AsyncClient", fake_client_factory)
 
-    first = grid_service._get_client()
-    second = grid_service._get_client()
+    first = grid_svc._get_client()
+    second = grid_svc._get_client()
     assert first is second
-    await grid_service.close()
+    await grid_svc.close()
     assert created == [first]
     assert first.closed is True
 

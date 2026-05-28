@@ -48,7 +48,6 @@ from app.devices.services import state_write_guard
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import router as grid
-from app.grid import service as grid_service
 from app.grid.event_bus_loop import GridEventBusSubscriberLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
@@ -261,7 +260,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await control_plane_leader.release()
         await bus.shutdown()
         await pool.close()
-        await grid_service.close()
+        await app_services.grid.grid.close()
         await close_session_viability_client()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)

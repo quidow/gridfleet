@@ -17,7 +17,6 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
-from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
@@ -494,11 +493,11 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
 
     deleted: list[str] = []
 
-    async def fake_terminate(session_id: str, **_kwargs: object) -> bool:
+    async def fake_terminate(_self: object, session_id: str) -> bool:
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -539,10 +538,10 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     db_session.add(session)
     await db_session.commit()
 
-    async def fake_terminate(_session_id: str, **_kwargs: object) -> bool:
+    async def fake_terminate(_self: object, _session_id: str) -> bool:
         return False
 
-    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -656,10 +655,10 @@ async def test_force_release_restores_busy_run_devices(
         device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
-    async def fake_terminate(_session_id: str, **_kwargs: object) -> bool:
+    async def fake_terminate(_self: object, _session_id: str) -> bool:
         return True
 
-    monkeypatch.setattr(run_lifecycle_release.grid_service, "terminate_grid_session", fake_terminate)
+    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200

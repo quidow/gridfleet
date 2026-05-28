@@ -25,7 +25,6 @@ from app.devices.services import (
     lifecycle_state_machine_types,
 )
 from app.devices.services import state as device_state
-from app.grid import service as grid_service
 from app.grid.slot_parser import list_slot_sessions
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
     from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
@@ -285,9 +285,11 @@ async def _hydrate_orphan_session_row(
     logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
 
 
-async def _sync_sessions(db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher) -> None:
+async def _sync_sessions(
+    db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher, grid: GridServiceProtocol
+) -> None:
     """Sync Grid sessions with the Session table."""
-    grid_data = await grid_service.get_grid_status(settings=settings)
+    grid_data = await grid.get_status()
 
     # Fence: Grid /status is a slow external call. If another backend took
     # leadership while we awaited it, drop all writes from this cycle.
@@ -555,7 +557,12 @@ class SessionSyncLoop:
             interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _sync_sessions(db, settings=self._services.settings, publisher=self._services.publisher)
+                    await _sync_sessions(
+                        db,
+                        settings=self._services.settings,
+                        publisher=self._services.publisher,
+                        grid=self._services.grid,
+                    )
             except LeadershipLost as exc:
                 logger.error(
                     "session_sync_loop_leadership_lost",

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
     from app.runs.models import TestRun
 
 import app.devices.services.lifecycle_policy as lifecycle_policy
@@ -26,7 +27,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.state import ready_operational_state, set_hold, set_operational_state
-from app.grid import service as grid_service
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ async def _mark_running_sessions_released(
     *,
     terminate_grid_sessions: bool,
     settings: SettingsReader,
+    grid: GridServiceProtocol,
 ) -> None:
     if not terminate_grid_sessions:
         # complete_run path: session lifecycle is owned by the testkit/operator.
@@ -58,7 +59,7 @@ async def _mark_running_sessions_released(
 
     error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
     for session in sessions:
-        if not await grid_service.terminate_grid_session(session.session_id, settings=settings):
+        if not await grid.terminate_session(session.session_id):
             logger.warning(
                 "Leaving session %s running because Grid deletion failed during run %s release",
                 session.session_id,
@@ -144,6 +145,7 @@ async def _release_devices(
     terminate_grid_sessions: bool = False,
     settings: SettingsReader,
     publisher: EventPublisher,
+    grid: GridServiceProtocol,
 ) -> list[uuid.UUID]:
     """Release all active reservations for this run and restore device statuses.
 
@@ -164,6 +166,7 @@ async def _release_devices(
         released_at,
         terminate_grid_sessions=terminate_grid_sessions,
         settings=settings,
+        grid=grid,
     )
 
     if not active_reservations:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -65,7 +65,7 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
         patch("app.runs.service_reaper.assert_current_leader"),
         patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader())
+        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock())
 
     # Re-read the run on a fresh session so we observe the persisted state,
     # not the in-memory ORM cache.

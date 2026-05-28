@@ -10,10 +10,12 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
 class SessionServices:
     settings: SettingsReader
+    grid: GridServiceProtocol
     session_factory: async_sessionmaker[AsyncSession]
     publisher: EventPublisher

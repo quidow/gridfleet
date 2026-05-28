@@ -67,12 +67,15 @@ async def test_session_sync_does_not_persist_probe_sessions(
         }
     }
 
-    async def fake_status_fetch(*, settings: FakeSettingsReader) -> dict[str, object]:
-        return fake_status
+    from unittest.mock import AsyncMock, Mock
 
-    monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
+    from app.grid.service import GridService
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus)
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value=fake_status)
+    fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
+
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     sessions = (
         (await db_session.execute(select(Session).where(Session.session_id == "probe-session-1"))).scalars().all()
@@ -115,12 +118,15 @@ async def test_session_sync_does_persist_real_session(
         }
     }
 
-    async def fake_status_fetch(*, settings: FakeSettingsReader) -> dict[str, object]:
-        return fake_status
+    from unittest.mock import AsyncMock, Mock
 
-    monkeypatch.setattr(session_sync.grid_service, "get_grid_status", fake_status_fetch)
+    from app.grid.service import GridService
 
-    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus)
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value=fake_status)
+    fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
+
+    await session_sync._sync_sessions(db_session, settings=FakeSettingsReader({}), publisher=event_bus, grid=fake_grid)
 
     sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()
     assert len(sessions) == 1

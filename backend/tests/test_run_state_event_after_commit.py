@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -98,7 +98,9 @@ async def test_complete_run_queues_run_completed(
     await run_service.signal_active(db_session, run.id, publisher=event_bus)
     event_bus_capture.clear()
 
-    await run_service.complete_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.complete_run(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
+    )
     await settle_after_commit_tasks()
 
     completed = [p for n, p in event_bus_capture if n == "run.completed"]
@@ -117,7 +119,9 @@ async def test_cancel_run_queues_run_cancelled(
     )
     event_bus_capture.clear()
 
-    await run_service.cancel_run(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.cancel_run(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
+    )
     await settle_after_commit_tasks()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
@@ -136,7 +140,9 @@ async def test_force_release_queues_admin_cancelled(
     )
     event_bus_capture.clear()
 
-    await run_service.force_release(db_session, run.id, publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.force_release(
+        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
+    )
     await settle_after_commit_tasks()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
@@ -156,7 +162,9 @@ async def test_expire_run_queues_run_expired(
     await run_service.signal_active(db_session, run.id, publisher=event_bus)
     event_bus_capture.clear()
 
-    await run_service.expire_run(db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.expire_run(
+        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
+    )
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
@@ -177,7 +185,9 @@ async def test_expire_run_from_preparing_queues_never_activated_and_expired(
     )
     event_bus_capture.clear()
 
-    await run_service.expire_run(db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader())
+    await run_service.expire_run(
+        db_session, run, "ttl", publisher=event_bus, settings=FakeSettingsReader(), grid=make_fake_grid()
+    )
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]

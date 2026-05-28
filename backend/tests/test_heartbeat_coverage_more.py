@@ -200,6 +200,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         pool=Mock(),
         circuit_breaker=Mock(),
         publisher=Mock(),
+        grid=Mock(),
         session_factory=lambda: Session(),
     )
 

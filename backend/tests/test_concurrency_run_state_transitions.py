@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -45,7 +46,9 @@ async def test_signal_active_serializes_with_concurrent_cancel(
         await asyncio.sleep(0.15)
         assert not active_task.done()
 
-        await run_service.cancel_run(cancel_db, run_id, publisher=event_bus, settings=FakeSettingsReader())
+        await run_service.cancel_run(
+            cancel_db, run_id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
+        )
         active_result = await asyncio.wait_for(active_task, timeout=5.0)
 
     assert "Cannot signal active from state 'cancelled'" in active_result

@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest_asyncio
 from httpx import AsyncClient
@@ -49,7 +49,7 @@ async def test_grid_status(client: AsyncClient, db_session: AsyncSession, defaul
         os_version=DEVICE_PAYLOAD["os_version"],
     )
 
-    with patch("app.grid.router.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
+    with patch("app.grid.service.GridService.get_status", new_callable=AsyncMock, return_value=MOCK_GRID_STATUS):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200
@@ -77,7 +77,9 @@ async def test_grid_status_hub_unreachable(client: AsyncClient, db_session: Asyn
     )
 
     with patch(
-        "app.grid.router.grid_service.get_grid_status", return_value={"ready": False, "error": "grid_unreachable"}
+        "app.grid.service.GridService.get_status",
+        new_callable=AsyncMock,
+        return_value={"ready": False, "error": "grid_unreachable"},
     ):
         resp = await client.get("/api/grid/status")
 
@@ -119,7 +121,7 @@ async def test_grid_status_with_running_node(
         )
     await db_session.commit()
 
-    with patch("app.grid.router.grid_service.get_grid_status", return_value=MOCK_GRID_STATUS):
+    with patch("app.grid.service.GridService.get_status", new_callable=AsyncMock, return_value=MOCK_GRID_STATUS):
         resp = await client.get("/api/grid/status")
 
     assert resp.status_code == 200
