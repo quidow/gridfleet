@@ -13,7 +13,8 @@ from app.devices.services.lifecycle_policy import handle_health_failure
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service_sync import _sync_sessions as _sync_sessions_impl
+from app.sessions.protocols import SessionSyncProtocol
+from app.sessions.service_sync import SessionSyncService
 from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
@@ -22,10 +23,32 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 _GRID_UP_EMPTY: dict[str, Any] = {"value": {"ready": True, "nodes": []}}
 
 
-async def _sync_sessions(db: AsyncSession) -> None:
-    await _sync_sessions_impl(
-        db, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_GRID_UP_EMPTY)
+def _make_sync_service(grid_data: dict[str, Any] | None = None) -> SessionSyncService:
+    return SessionSyncService(
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        grid=make_fake_grid(grid_data if grid_data is not None else _GRID_UP_EMPTY),
     )
+
+
+async def _sync_sessions(db: AsyncSession) -> None:
+    await _make_sync_service().sync(db)
+
+
+# Backward-compat alias used by test bodies that call _sync_sessions_impl directly
+async def _sync_sessions_impl(
+    db: AsyncSession,
+    *,
+    settings: object = None,
+    publisher: object = None,
+    grid: object = None,
+) -> None:
+    svc = SessionSyncService(
+        publisher=publisher if publisher is not None else AsyncMock(),
+        settings=settings if settings is not None else FakeSettingsReader({}),
+        grid=grid if grid is not None else make_fake_grid(_GRID_UP_EMPTY),
+    )
+    await svc.sync(db)
 
 
 @pytest.fixture(autouse=True)
@@ -1474,3 +1497,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
     assert reloaded.lifecycle_policy_state["stop_pending"] is False, (
         "sweep must heal stale stop_pending rows even when Grid is unreachable"
     )
+
+
+def test_session_sync_service_satisfies_protocol() -> None:
+    assert issubclass(SessionSyncService, SessionSyncProtocol)

@@ -22,7 +22,6 @@ from app.grid.event_bus import (
     HubEventBusSubscriber,
     SubscriberMetrics,
 )
-from app.sessions.service_sync import wake_session_sync
 
 if TYPE_CHECKING:
     from app.grid.services_container import GridServices
@@ -80,5 +79,5 @@ async def _refresh_last_event_age(metrics: SubscriberMetrics) -> None:
 def _handle_event(event: DecodedEvent) -> None:
     # Subscriber only forwards session-created / session-closed.
     # Either one means session_sync_loop should look at the hub now.
-    wake_session_sync()
+    # TODO(Task 4): wire SessionSyncProtocol.wake() via GridServices
     logger.debug("grid_event_bus_event", type=event.type)
