@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 class GridService:
+    # A single httpx.AsyncClient is reused across all calls (leader loops poll the
+    # hub every few seconds — ``session_sync_loop``, ``node_health_loop``,
+    # ``fleet_capacity_collector_loop``). Instantiating per call leaks ~0.8 MB of
+    # native state on macOS that aclose() does not release.
+
     def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings
         self._client: httpx.AsyncClient | None = None
@@ -22,11 +27,13 @@ class GridService:
         return self._client
 
     async def close(self) -> None:
+        """Close the shared client. Call from app shutdown."""
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
 
     async def get_status(self) -> dict[str, Any]:
+        """Fetch Selenium Grid /status and return parsed JSON."""
         url = f"{self._settings.get('grid.hub_url')}/status"
         try:
             resp = await self._get_client().get(url, timeout=5)
@@ -38,6 +45,11 @@ class GridService:
             return {"ready": False, "error": "grid_unreachable"}
 
     async def terminate_session(self, session_id: str) -> bool:
+        """Delete a WebDriver session through the Selenium Grid hub.
+
+        Selenium Grid exposes the normal WebDriver endpoint at DELETE /session/{id}.
+        A 404 means the session is already gone and is safe to treat as success.
+        """
         url = f"{self._settings.get('grid.hub_url')}/session/{session_id}"
         try:
             resp = await self._get_client().delete(url, timeout=10)
@@ -51,6 +63,7 @@ class GridService:
 
     @staticmethod
     def available_node_device_ids(grid_data: dict[str, Any]) -> set[str] | None:
+        """Return device IDs advertised by UP Grid nodes, or None when Grid status is unavailable."""
         value = grid_data.get("value")
         if not isinstance(value, dict):
             return None

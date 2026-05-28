@@ -36,6 +36,10 @@ async def grid_status(
         }
         registry_devices.append(entry)
 
+    # Exclude probe sessions so this counter matches the Sessions table
+    # (which never persists probes as real sessions) and the device state
+    # machine (which never transitions devices to busy for probes). The
+    # parser also drops reserved-sentinel slots and malformed entries.
     active_sessions = sum(1 for parsed in list_slot_sessions(grid_data) if not parsed.is_probe)
     value = grid_data.get("value", {})
     queue_size = len(value.get("sessionQueueRequests", [])) if isinstance(value, dict) else 0
