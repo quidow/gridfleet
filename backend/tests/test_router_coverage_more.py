@@ -63,7 +63,7 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(service=mock_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
     _events = SimpleNamespace(publisher=event_bus)
 
     monkeypatch.setattr(
@@ -176,7 +176,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
 
     _events = SimpleNamespace(publisher=event_bus)
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(service=mock_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
     with pytest.raises(HTTPException) as ready_error:
         await runs.signal_ready(run.id, db=db, events=_events)
     assert ready_error.value.status_code == 409
@@ -279,7 +279,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
     grid_svc = MagicMock()
     grid_svc.get = MagicMock(return_value="http://grid")
-    grid_ss = SettingsServices(service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    grid_ss = SettingsServices(service=grid_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     _events = SimpleNamespace(publisher=event_bus)

@@ -14,6 +14,7 @@ from app.events.services_container import EventServices
 from app.hosts.models import Host
 from app.main import app
 from app.settings.dependencies import get_settings_services
+from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service
 from tests.helpers import create_device
@@ -45,7 +46,11 @@ async def test_start_node_locks_device_before_reservation_check(
             yield session
 
     def override_get_settings_services() -> SettingsServices:
-        return SettingsServices(service=settings_service, session_factory=db_session_maker)
+        return SettingsServices(
+            service=settings_service,
+            config=SettingsConfigService(publisher=event_bus),
+            session_factory=db_session_maker,
+        )
 
     def _override_event_services() -> EventServices:
         return EventServices(  # type: ignore[arg-type]

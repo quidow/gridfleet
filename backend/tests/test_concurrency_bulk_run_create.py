@@ -13,6 +13,7 @@ from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.main import app
 from app.settings.dependencies import get_settings_services
+from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service
 from tests.helpers import create_device
@@ -75,7 +76,11 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 yield session
 
         def override_get_settings_services() -> SettingsServices:
-            return SettingsServices(service=settings_service, session_factory=db_session_maker)
+            return SettingsServices(
+                service=settings_service,
+                config=SettingsConfigService(publisher=event_bus),
+                session_factory=db_session_maker,
+            )
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_settings_services] = override_get_settings_services

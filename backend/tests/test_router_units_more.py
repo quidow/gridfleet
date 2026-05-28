@@ -126,7 +126,7 @@ class MutatingSession(DummySession):
 def _mock_settings_svc(service: object | None = None) -> SettingsServices:
     """Build a SettingsServices with a mock or real service for unit-test route calls."""
     svc = service if service is not None else settings_service
-    return SettingsServices(service=svc, session_factory=object())  # type: ignore[arg-type]
+    return SettingsServices(service=svc, config=Mock(), session_factory=object())  # type: ignore[arg-type]
 
 
 async def test_settings_router_error_paths() -> None:
@@ -1397,17 +1397,16 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
             assert await call() == serialized
 
     config = {"env": {"A": "B"}}
+    config_ss = _mock_settings_svc(FakeSettingsReader({}))
+    config_ss.config.merge_device_config = AsyncMock(return_value=config)
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.config_service.get_device_config", new=AsyncMock(return_value=config)),
-        patch("app.devices.routers.control.config_service.merge_device_config", new=AsyncMock(return_value=config)),
     ):
         assert await devices_control.get_device_config(device_id, keys=" env , other ", db=object()) == config
         assert (
-            await devices_control.merge_device_config(
-                device_id, {"env": {}}, db=object(), events=SimpleNamespace(publisher=event_bus)
-            )
+            await devices_control.merge_device_config(device_id, {"env": {}}, db=object(), settings_services=config_ss)
             == config
         )
 
@@ -1418,11 +1417,10 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         changed_by="admin",
         changed_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
-    with (
-        patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.devices.routers.control.config_service.get_config_history", new=AsyncMock(return_value=[audit_log])),
-    ):
-        history = await devices_control.get_config_history(device_id, db=object())
+    history_ss = _mock_settings_svc(FakeSettingsReader({}))
+    history_ss.config.get_config_history = AsyncMock(return_value=[audit_log])
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)):
+        history = await devices_control.get_config_history(device_id, db=object(), settings_services=history_ss)
     assert history[0]["changed_at"] == "2026-05-01T00:00:00+00:00"
 
     with (

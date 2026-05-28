@@ -34,6 +34,7 @@ from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
 from app.sessions.services_container import SessionServices
+from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from app.webhooks.dispatcher import WebhookDeliveryLoop
 
@@ -77,6 +78,7 @@ def compose_app(
     )
     settings_services = SettingsServices(
         service=settings_svc,
+        config=SettingsConfigService(publisher=bus),
         session_factory=session_factory,
     )
     agent_comm_services = AgentCommServices(

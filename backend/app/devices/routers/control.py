@@ -93,20 +93,21 @@ async def merge_device_config(
     device_id: uuid.UUID,
     body: dict[str, Any],
     db: DbDep,
-    events: EventServicesDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
-    return await config_service.merge_device_config(db, device, body, publisher=events.publisher)
+    return await settings_services.config.merge_device_config(db, device, body)
 
 
 @router.get("/{device_id}/config/history", response_model=list[ConfigAuditEntryRead])
 async def get_config_history(
     device_id: uuid.UUID,
     db: DbDep,
+    settings_services: SettingsServicesDep,
     limit: int = Query(50, le=200),
 ) -> list[dict[str, Any]]:
     await get_device_or_404(device_id, db)
-    logs = await config_service.get_config_history(db, device_id, limit=limit)
+    logs = await settings_services.config.get_config_history(db, device_id, limit=limit)
     return [
         {
             "id": str(log.id),
