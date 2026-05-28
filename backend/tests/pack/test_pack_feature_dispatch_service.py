@@ -192,17 +192,49 @@ async def test_dispatch_calls_agent_and_records_ok_status(
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_configured_agent_auth(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_dispatch_passes_agent_auth_to_agent_request(
     db_session: AsyncSession,
     sample_host: Host,
 ) -> None:
-    from app.agent_comm import client as agent_client
-
+    """dispatch_feature_action must forward the supplied agent_auth to agent_request."""
     await _seed_pack_with_feature(db_session, pack_id=PACK_ID, feature_id=FEATURE_ID)
     await db_session.commit()
-    monkeypatch.setattr(agent_client._settings, "agent_auth_username", "ops")
-    monkeypatch.setattr(agent_client._settings, "agent_auth_password", "secret")
+
+    sentinel = httpx.BasicAuth("ops", "secret")
+    client = StrictAgentClient(
+        post_response=_response(
+            "POST",
+            "http://x/agent/pack/features/x/actions/y",
+            payload={"ok": True, "detail": "done", "data": {}},
+        )
+    )
+
+    await pack_feature_dispatch_service.dispatch_feature_action(
+        db_session,
+        host_id=sample_host.id,
+        pack_id=PACK_ID,
+        feature_id=FEATURE_ID,
+        action_id=ACTION_ID,
+        args={},
+        http_client_factory=_factory(client),
+        circuit_breaker=_noop_breaker(),
+        agent_auth=sentinel,
+    )
+
+    assert client.post_calls
+    _url, kwargs = client.post_calls[0]
+    assert isinstance(kwargs["auth"], httpx.BasicAuth)
+    assert kwargs["auth"] is sentinel
+
+
+@pytest.mark.asyncio
+async def test_dispatch_omits_auth_when_no_agent_auth_supplied(
+    db_session: AsyncSession,
+    sample_host: Host,
+) -> None:
+    """When dispatch_feature_action is called with agent_auth=None, agent_request receives auth=None."""
+    await _seed_pack_with_feature(db_session, pack_id=PACK_ID, feature_id=FEATURE_ID)
+    await db_session.commit()
 
     client = StrictAgentClient(
         post_response=_response(
@@ -221,11 +253,12 @@ async def test_dispatch_uses_configured_agent_auth(
         args={},
         http_client_factory=_factory(client),
         circuit_breaker=_noop_breaker(),
+        agent_auth=None,
     )
 
     assert client.post_calls
-    _, kwargs = client.post_calls[0]
-    assert isinstance(kwargs["auth"], httpx.BasicAuth)
+    _url, kwargs = client.post_calls[0]
+    assert kwargs.get("auth") is None
 
 
 @pytest.mark.asyncio

@@ -63,7 +63,7 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     _events = SimpleNamespace(publisher=event_bus)
 
     monkeypatch.setattr(
@@ -176,7 +176,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
 
     _events = SimpleNamespace(publisher=event_bus)
     mock_svc = MagicMock()
-    mock_ss = SettingsServices(reader=mock_svc, service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    mock_ss = SettingsServices(service=mock_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     with pytest.raises(HTTPException) as ready_error:
         await runs.signal_ready(run.id, db=db, events=_events)
     assert ready_error.value.status_code == 409
@@ -210,7 +210,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             uuid.uuid4(),
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
-            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
             agent_comm=_agent_comm,
             events=SimpleNamespace(publisher=Mock()),
         )
@@ -225,7 +225,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             uuid.uuid4(),
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
-            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
             agent_comm=_agent_comm,
             events=SimpleNamespace(publisher=Mock()),
         )
@@ -237,7 +237,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
         uuid.uuid4(),
         RunCooldownRequest(reason="bad", ttl_seconds=1),
         db=db,
-        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+        settings_services=SimpleNamespace(service=FakeSettingsReader({})),
         agent_comm=_agent_comm,
         events=SimpleNamespace(publisher=Mock()),
     )
@@ -250,7 +250,7 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
             uuid.uuid4(),
             RunCooldownRequest(reason="bad", ttl_seconds=1),
             db=db,
-            settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
             agent_comm=_agent_comm,
             events=SimpleNamespace(publisher=Mock()),
         )
@@ -273,7 +273,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
     grid_svc = MagicMock()
     grid_svc.get = MagicMock(return_value="http://grid")
-    grid_ss = SettingsServices(reader=grid_svc, service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
+    grid_ss = SettingsServices(service=grid_svc, session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     _events = SimpleNamespace(publisher=event_bus)
@@ -322,7 +322,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     db = MagicMock()
     group_id = uuid.uuid4()
     device_id = uuid.uuid4()
-    _settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
+    _settings_services = SimpleNamespace(service=FakeSettingsReader({}))
     monkeypatch.setattr(device_groups.device_group_service, "get_group_device_ids", AsyncMock(return_value=[]))
     with pytest.raises(HTTPException):
         await device_groups._group_device_ids_or_404(db, group_id, settings=FakeSettingsReader({}))
@@ -449,7 +449,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert filters.tags == {"pool": "smoke"}
 
-    _dev_ss = SimpleNamespace(reader=FakeSettingsReader({}))
+    _dev_ss = SimpleNamespace(service=FakeSettingsReader({}))
     monkeypatch.setattr(devices_core.device_service, "list_devices_paginated", AsyncMock(return_value=([device], 1)))
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
     monkeypatch.setattr(devices_core.device_health, "build_public_summary", lambda device: {"healthy": True})

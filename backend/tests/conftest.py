@@ -246,6 +246,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
         setup_database, class_=AsyncSession, expire_on_commit=False
     )
     test_event_bus.configure(session_factory=session_factory, engine=setup_database)
+    test_circuit_breaker._session_factory = session_factory
     settings_service.configure_store_refresh(session_factory)
     test_event_bus.register_handler(settings_service.handle_system_event)
     test_event_bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))
@@ -309,7 +310,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return SettingsServices(reader=settings_service, service=settings_service, session_factory=sf)
+        return SettingsServices(service=settings_service, session_factory=sf)
 
     def override_get_agent_comm_services() -> AgentCommServices:
         return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)

@@ -14,11 +14,14 @@ if TYPE_CHECKING:
 
     from app.agent_comm.circuit_breaker import AgentCircuitBreaker
     from app.agent_comm.http_pool import AgentHttpPool
+    from app.core.leader.advisory import ControlPlaneLeader
     from app.events.event_bus import EventBus
     from app.settings.service import SettingsService
 
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services_container import AppiumNodeServices
+from app.core.leader.keepalive import LeaderKeepaliveLoop
+from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
@@ -47,6 +50,8 @@ class AppServices:
     jobs: DurableJobWorkerLoop
     webhooks: WebhookDeliveryLoop
     background_loop_flush: BackgroundLoopFlushLoop
+    leader_keepalive: LeaderKeepaliveLoop
+    leader_watcher: LeaderWatcherLoop
 
 
 def compose_app(
@@ -57,6 +62,7 @@ def compose_app(
     settings_svc: SettingsService,
     http_pool: AgentHttpPool,
     circuit_breaker: AgentCircuitBreaker,
+    control_plane_leader: ControlPlaneLeader,
 ) -> AppServices:
     """Wire the full dependency graph. Called once at startup."""
     event_services = EventServices(
@@ -67,7 +73,6 @@ def compose_app(
         engine=engine,
     )
     settings_services = SettingsServices(
-        reader=settings_svc,
         service=settings_svc,
         session_factory=session_factory,
     )
@@ -112,4 +117,6 @@ def compose_app(
         ),
         webhooks=WebhookDeliveryLoop(session_factory=session_factory),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
+        leader_keepalive=LeaderKeepaliveLoop(settings=settings_svc),
+        leader_watcher=LeaderWatcherLoop(settings=settings_svc, leader=control_plane_leader, engine=engine),
     )

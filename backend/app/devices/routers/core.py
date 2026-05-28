@@ -109,10 +109,10 @@ async def list_devices(
     if limit is not None:
         effective_offset = offset if offset is not None else 0
         devices, total = await device_service.list_devices_paginated(
-            db, filters, limit, effective_offset, settings=settings_services.reader
+            db, filters, limit, effective_offset, settings=settings_services.service
         )
     else:
-        devices = await device_service.list_devices_by_filters(db, filters, settings=settings_services.reader)
+        devices = await device_service.list_devices_by_filters(db, filters, settings=settings_services.service)
         total = None
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
@@ -127,7 +127,7 @@ async def list_devices(
         payload = await device_presenter.serialize_device(
             db,
             device,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             reservation_context=reservation_context,
             health_summary=health_summary_map.get(str(device.id)),
             platform_label=label_map.get((device.pack_id, device.platform_id)),
@@ -159,7 +159,7 @@ async def get_device_by_connection_target(
         platform_id=result.platform_id,
     )
     return await device_presenter.serialize_device(
-        db, result, settings=settings_services.reader, platform_label=platform_label
+        db, result, settings=settings_services.service, platform_label=platform_label
     )
 
 
@@ -174,7 +174,7 @@ async def get_device(device_id: uuid.UUID, db: DbDep, settings_services: Setting
     return await device_presenter.serialize_device_detail(
         db,
         device,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         health_summary=device_health.build_public_summary(device),
         platform_label=platform_label,
     )
@@ -198,7 +198,7 @@ async def update_device(
         raise HTTPException(status_code=422, detail=str(e)) from e
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
 
 
 @router.delete("/{device_id}", status_code=204)

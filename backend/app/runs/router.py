@@ -76,7 +76,7 @@ async def create_run(
 
     try:
         run, device_infos = await run_service.create_run(
-            db, data, publisher=events.publisher, settings=settings_services.reader
+            db, data, publisher=events.publisher, settings=settings_services.service
         )
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
@@ -247,7 +247,7 @@ async def cooldown_device_endpoint(
             device_id,
             reason=payload.reason,
             ttl_seconds=payload.ttl_seconds,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
             publisher=events.publisher,
         )
@@ -301,7 +301,7 @@ async def complete_run(
     run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> RunRead:
     try:
-        run = await run_service.complete_run(db, run_id, publisher=events.publisher, settings=settings_services.reader)
+        run = await run_service.complete_run(db, run_id, publisher=events.publisher, settings=settings_services.service)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -313,7 +313,7 @@ async def cancel_run(
     run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> RunRead:
     try:
-        run = await run_service.cancel_run(db, run_id, publisher=events.publisher, settings=settings_services.reader)
+        run = await run_service.cancel_run(db, run_id, publisher=events.publisher, settings=settings_services.service)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])
@@ -325,7 +325,9 @@ async def force_release(
     run_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> RunRead:
     try:
-        run = await run_service.force_release(db, run_id, publisher=events.publisher, settings=settings_services.reader)
+        run = await run_service.force_release(
+            db, run_id, publisher=events.publisher, settings=settings_services.service
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     counts_map = await run_service.fetch_session_counts(db, [run.id])

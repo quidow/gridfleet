@@ -45,7 +45,9 @@ async def test_breaker_opens_then_recovers() -> None:
 
     _threshold = 5  # default agent.circuit_breaker_failure_threshold
     _cooldown = 30  # default agent.circuit_breaker_cooldown_seconds
-    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown))
+    breaker = AgentCircuitBreaker(
+        publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown), session_factory=AsyncMock()
+    )
     with (
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch.object(breaker._publisher, "publish", new=publish_mock),
@@ -83,7 +85,9 @@ async def test_agent_request_short_circuits_when_circuit_is_open() -> None:
 
     _threshold = 5
     _cooldown = 30
-    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown))
+    breaker = AgentCircuitBreaker(
+        publisher=AsyncMock(), settings=_FakeSettings(_threshold, _cooldown), session_factory=AsyncMock()
+    )
     with (
         patch("app.agent_comm.circuit_breaker.monotonic", side_effect=fake_monotonic),
         patch.object(breaker._publisher, "publish", new=AsyncMock()),

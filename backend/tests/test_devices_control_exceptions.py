@@ -53,7 +53,7 @@ _RESOLVED = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
 
 
 def _settings_services() -> SimpleNamespace:
-    return SimpleNamespace(reader=FakeSettingsReader({}))
+    return SimpleNamespace(service=FakeSettingsReader({}))
 
 
 @pytest.mark.db

@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.agent_comm import operations as agent_operations
+from app.agent_comm.http_pool import AgentHttpPool
 from tests.fakes import FakeSettingsReader
 
 _VALID_HEALTH_PAYLOAD: dict[str, object] = {
@@ -46,12 +47,8 @@ def _make_capturing_factory() -> tuple[type, list[str | None]]:
 
 
 @pytest.mark.asyncio
-async def test_backend_sends_basic_auth_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        agent_operations,
-        "_agent_basic_auth",
-        lambda: httpx.BasicAuth("ops", "secret"),
-    )
+async def test_backend_sends_basic_auth_when_configured() -> None:
+    pool = AgentHttpPool(agent_auth=httpx.BasicAuth("ops", "secret"))
     factory, captured = _make_capturing_factory()
 
     payload = await agent_operations.agent_health(
@@ -59,6 +56,7 @@ async def test_backend_sends_basic_auth_when_configured(monkeypatch: pytest.Monk
         agent_port=5100,
         http_client_factory=factory,
         settings=FakeSettingsReader(),
+        pool=pool,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
 
@@ -69,8 +67,7 @@ async def test_backend_sends_basic_auth_when_configured(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_backend_omits_authorization_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
+async def test_backend_omits_authorization_when_unconfigured() -> None:
     factory, captured = _make_capturing_factory()
 
     payload = await agent_operations.agent_health(

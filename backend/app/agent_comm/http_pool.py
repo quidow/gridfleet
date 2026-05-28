@@ -1,9 +1,9 @@
 """Per-host httpx.AsyncClient pool.
 
 Reduces TCP/TLS handshake cost across the leader loops and host calls. Pool
-key is (host_ip, agent_port). Auth is intentionally not part of the key today;
-backend->agent does not pass httpx.Auth. When machine credentials are added,
-extend the key in that PR.
+key is (host_ip, agent_port). Auth is not part of the cache key (one pool
+entry serves all credentials for a host); the BasicAuth carried by the pool
+is read by callers per request.
 
 Pool tuning settings (max_keepalive_connections, keepalive_expiry) and the
 largest request timeout served by a pooled client are tracked per entry. When
@@ -32,10 +32,14 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
 
 from app.core.observability import get_logger
+
+if TYPE_CHECKING:
+    from app.agent_comm.config import AgentCommConfig
 
 logger = get_logger(__name__)
 
@@ -79,11 +83,16 @@ def _timeout_seconds(timeout: float | int) -> float:
 
 
 class AgentHttpPool:
-    def __init__(self) -> None:
+    def __init__(self, *, agent_auth: httpx.BasicAuth | None = None) -> None:
         self._entries: dict[tuple[str, int], _PooledEntry] = {}
         self._deferred: list[_DeferredEntry] = []
         self._lock = asyncio.Lock()
         self._closed: bool = False
+        self._auth = agent_auth
+
+    @property
+    def auth(self) -> httpx.BasicAuth | None:
+        return self._auth
 
     def size(self) -> int:
         return len(self._entries)
@@ -220,3 +229,10 @@ class AgentHttpPool:
                 await stale.aclose()
             except Exception:
                 logger.exception("agent_http_pool_deferred_close_failed")
+
+
+def build_agent_basic_auth(settings: AgentCommConfig) -> httpx.BasicAuth | None:
+    """Construct an httpx.BasicAuth from agent-comm settings, or None when creds are absent."""
+    if settings.agent_auth_username and settings.agent_auth_password:
+        return httpx.BasicAuth(settings.agent_auth_username, settings.agent_auth_password)
+    return None

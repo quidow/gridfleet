@@ -11,7 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
-from app.agent_comm.http_pool import AgentHttpPool
+from app.agent_comm.config import agent_settings
+from app.agent_comm.http_pool import AgentHttpPool, build_agent_basic_auth
 from app.analytics import router as analytics
 from app.appium_nodes import exception_handlers as appium_node_exception_handlers
 from app.appium_nodes import routers as appium_node_routers
@@ -31,8 +32,6 @@ from app.core.dependencies import DbDep
 from app.core.errors import register_exception_handlers
 from app.core.health import check_liveness, check_readiness
 from app.core.leader.advisory import control_plane_leader
-from app.core.leader.keepalive import LeaderKeepaliveLoop
-from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.metrics import CONTENT_TYPE_LATEST, refresh_system_gauges, render_metrics
 from app.core.middleware import RequestContextMiddleware
 from app.core.observability import (
@@ -150,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bus = EventBus()
     register_events_gauge_refresher(bus)
     svc = SettingsService()
-    pool = AgentHttpPool()
+    pool = AgentHttpPool(agent_auth=build_agent_basic_auth(agent_settings))
     breaker = AgentCircuitBreaker(publisher=bus, settings=svc, session_factory=session_factory)
 
     app_services = compose_app(
@@ -160,6 +159,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings_svc=svc,
         http_pool=pool,
         circuit_breaker=breaker,
+        control_plane_leader=control_plane_leader,
     )
     app.state.services = app_services
 
@@ -192,7 +192,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             loop.add_signal_handler(signum, _begin_shutdown)
             registered_signals.append(signum)
 
-    leader_watcher = LeaderWatcherLoop(settings=svc, leader=control_plane_leader, engine=engine)
     watcher_task: asyncio.Task[None] | None = None
 
     if await control_plane_leader.try_acquire(engine):
@@ -215,10 +214,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         job_worker = app_services.jobs
         webhook_delivery = app_services.webhooks
         background_loop_flush = app_services.background_loop_flush
-        leader_keepalive = LeaderKeepaliveLoop(settings=svc)
 
         _leader_loops: list[tuple[Any, str]] = [
-            (leader_keepalive.run(), "control_plane_leader_keepalive"),
+            (app_services.leader_keepalive.run(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
             (session_sync.run(), "session_sync_loop"),
             (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
@@ -240,7 +238,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ]
         tasks = [asyncio.create_task(coro, name=name) for coro, name in _leader_loops]
     watcher_task = asyncio.create_task(
-        leader_watcher.run(),
+        app_services.leader_watcher.run(),
         name="control_plane_leader_watcher",
     )
     try:
@@ -339,13 +337,13 @@ async def live_health() -> dict[str, str]:
 
 @app.get("/health/ready", response_model=HealthStatusRead)
 async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.reader)
+    payload, status_code = await check_readiness(db, settings=settings_services.service)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
 async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.reader)
+    payload, status_code = await check_readiness(db, settings=settings_services.service)
     return JSONResponse(content=payload, status_code=status_code)
 
 
@@ -363,7 +361,7 @@ async def check_availability(
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     available_devices = await device_service.list_devices(
-        db, settings=settings_services.reader, platform_id=platform_id, status="available"
+        db, settings=settings_services.service, platform_id=platform_id, status="available"
     )
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(

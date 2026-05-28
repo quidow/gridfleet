@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Protocol, Self, cast
 import httpx
 from httpx._types import HeaderTypes, QueryParamTypes
 
-from app.agent_comm import agent_settings as _settings
 from app.core.errors import AgentUnreachableError, CircuitOpenError, classify_httpx_transport
 from app.core.metrics_recorders import record_agent_call
 from app.core.observability import REQUEST_ID_HEADER, get_request_id
@@ -75,14 +74,6 @@ def _request_kwargs(
     return kwargs
 
 
-def _agent_basic_auth() -> httpx.BasicAuth | None:
-    username = _settings.agent_auth_username
-    password = _settings.agent_auth_password
-    if not username or not password:
-        return None
-    return httpx.BasicAuth(username, password)
-
-
 def build_agent_headers(headers: dict[str, str] | None = None) -> dict[str, str]:
     merged = dict(headers or {})
     request_id = get_request_id()
@@ -108,13 +99,12 @@ async def request(
     circuit_breaker: CircuitBreakerProtocol,
 ) -> httpx.Response:
     request_headers = build_agent_headers(headers)
-    effective_auth = auth if auth is not None else _agent_basic_auth()
     request_kwargs = _request_kwargs(
         method.lower(),
         headers=request_headers,
         params=params,
         timeout=timeout,
-        auth=effective_auth,
+        auth=auth,
         json_body=json_body,
     )
     started = perf_counter()

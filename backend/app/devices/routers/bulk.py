@@ -25,7 +25,7 @@ async def bulk_start_nodes(
     body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     return await bulk_service.bulk_start_nodes(
-        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+        db, body.device_ids, publisher=events.publisher, settings=settings_services.service
     )
 
 
@@ -39,7 +39,7 @@ async def bulk_restart_nodes(
     body: BulkDeviceIds, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     return await bulk_service.bulk_restart_nodes(
-        db, body.device_ids, publisher=events.publisher, settings=settings_services.reader
+        db, body.device_ids, publisher=events.publisher, settings=settings_services.service
     )
 
 
@@ -75,6 +75,6 @@ async def bulk_reconnect(
         db,
         body.device_ids,
         publisher=events.publisher,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )

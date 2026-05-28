@@ -61,7 +61,7 @@ async def start_node(device_id: uuid.UUID, db: DbDep, settings_services: Setting
     if device.host_id is None:
         raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
     try:
-        return await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.reader)
+        return await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.service)
     except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -94,13 +94,13 @@ async def restart_node(
     node: AppiumNode | None = device.appium_node
     if node is None or node.desired_state != AppiumDesiredState.running:
         return await start_node(device_id, db, settings_services)
-    node = await node_manager.restart_node(db, device, caller="operator_restart", settings=settings_services.reader)
+    node = await node_manager.restart_node(db, device, caller="operator_restart", settings=settings_services.service)
     try:
         converged_node = await converge_device_now(
             device.id,
             publisher=events.publisher,
             db=db,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
         )
         if converged_node is not None:

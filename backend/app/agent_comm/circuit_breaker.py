@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
-from app.core.database import async_session
 from app.core.observability import get_logger
 from app.hosts.models.host import Host
 
@@ -22,7 +21,7 @@ logger = get_logger(__name__)
 
 
 async def _resolve_host_identity(
-    host_addr: str, *, session_factory: async_sessionmaker[AsyncSession] | None = None
+    host_addr: str, *, session_factory: async_sessionmaker[AsyncSession]
 ) -> dict[str, str]:
     """Resolve an IP or hostname to ``{"host_id": ..., "hostname": ...}``.
 
@@ -30,9 +29,8 @@ async def _resolve_host_identity(
     breaker must keep emitting even without a resolvable Host row so that
     pre-registration failures still surface in the global event stream.
     """
-    scope = session_factory or async_session
     try:
-        async with scope() as db:
+        async with session_factory() as db:
             stmt = select(Host.id, Host.hostname).where(or_(Host.ip == host_addr, Host.hostname == host_addr)).limit(1)
             row = (await db.execute(stmt)).first()
             if row is None:
@@ -114,6 +112,7 @@ class AgentCircuitBreaker:
 
         if publish_closed:
             logger.info("Agent circuit breaker closed", host=host)
+            assert self._session_factory is not None
             payload: dict[str, Any] = {
                 "host": host,
                 **(await _resolve_host_identity(host, session_factory=self._session_factory)),
@@ -160,6 +159,7 @@ class AgentCircuitBreaker:
                 cooldown_seconds=cooldown,
                 error=error,
             )
+            assert self._session_factory is not None
             payload: dict[str, Any] = {
                 "host": host,
                 "consecutive_failures": failure_count,

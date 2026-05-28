@@ -77,7 +77,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
             await devices_control.reconnect_device(
                 device_id,
                 db=session,
-                settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+                settings_services=SimpleNamespace(service=FakeSettingsReader({})),
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
 

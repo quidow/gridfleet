@@ -23,7 +23,9 @@ async def test_breaker_uses_runtime_settings_threshold(monkeypatch: pytest.Monke
         "agent.circuit_breaker_failure_threshold": 2,
         "agent.circuit_breaker_cooldown_seconds": 7,
     }
-    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=FakeSettingsReader(overrides))
+    breaker = AgentCircuitBreaker(
+        publisher=AsyncMock(), settings=FakeSettingsReader(overrides), session_factory=AsyncMock()
+    )
 
     await breaker.record_failure("h1", error="boom")
     await breaker.record_failure("h1", error="boom")  # threshold=2 → opens here
@@ -38,7 +40,7 @@ async def test_breaker_picks_up_changed_threshold_between_calls(monkeypatch: pyt
         "agent.circuit_breaker_cooldown_seconds": 30,
     }
     settings = FakeSettingsReader(overrides)
-    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=settings)
+    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=settings, session_factory=AsyncMock())
     await breaker.record_failure("h1", error="boom")
     overrides["agent.circuit_breaker_failure_threshold"] = 1  # tighten mid-flight
     await breaker.record_failure("h1", error="boom")
@@ -52,7 +54,9 @@ async def test_breaker_half_open_probe_and_reopen_paths(monkeypatch: pytest.Monk
         "agent.circuit_breaker_failure_threshold": 3,
         "agent.circuit_breaker_cooldown_seconds": 7,
     }
-    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=FakeSettingsReader(overrides))
+    breaker = AgentCircuitBreaker(
+        publisher=AsyncMock(), settings=FakeSettingsReader(overrides), session_factory=AsyncMock()
+    )
 
     breaker._states["h1"] = CircuitState(status="half_open", probe_in_flight=False)
     assert await breaker.before_request("h1") is None

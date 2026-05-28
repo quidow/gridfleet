@@ -58,6 +58,7 @@ async def dispatch_feature_action(
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _DEFAULT_TIMEOUT_SEC,
     circuit_breaker: CircuitBreakerProtocol,
+    agent_auth: httpx.BasicAuth | None = None,
 ) -> FeatureActionResult:
     """Forward a feature-action call to the host agent and persist the result.
 
@@ -109,6 +110,7 @@ async def dispatch_feature_action(
             http_client_factory=http_client_factory,
             timeout=timeout,
             circuit_breaker=circuit_breaker,
+            agent_auth=agent_auth,
         )
     except _AgentDispatchError as exc:
         # Record the degraded state so webhook subscribers learn about the
@@ -150,6 +152,7 @@ async def _call_agent(
     http_client_factory: AgentClientFactory,
     timeout: float | int,
     circuit_breaker: CircuitBreakerProtocol,
+    agent_auth: httpx.BasicAuth | None = None,
 ) -> FeatureActionResult:
     """POST the action body to the agent and parse the response.
 
@@ -172,6 +175,7 @@ async def _call_agent(
                 json_body=body,
                 timeout=timeout,
                 circuit_breaker=circuit_breaker,
+                auth=agent_auth,
             )
     except AgentCallError as exc:
         raise _AgentDispatchError(f"Agent unreachable: {exc.message}") from exc

@@ -45,23 +45,23 @@ async def create_group(
     data: DeviceGroupCreate, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     group = await device_group_service.create_group(db, data, publisher=events.publisher)
-    return await device_group_service.get_group(db, group.id, settings=settings_services.reader) or {}
+    return await device_group_service.get_group(db, group.id, settings=settings_services.service) or {}
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)
 async def list_groups(db: DbDep, settings_services: SettingsServicesDep) -> list[dict[str, Any]]:
-    return await device_group_service.list_groups(db, settings=settings_services.reader)
+    return await device_group_service.list_groups(db, settings=settings_services.service)
 
 
 @router.get("/{group_id}", response_model=DeviceGroupDetail, response_model_exclude_none=True)
 async def get_group(group_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    group = await device_group_service.get_group(db, group_id, settings=settings_services.reader)
+    group = await device_group_service.get_group(db, group_id, settings=settings_services.service)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
 
     payload = dict(group)
     payload["devices"] = [
-        await device_presenter.serialize_device(db, device, settings=settings_services.reader)
+        await device_presenter.serialize_device(db, device, settings=settings_services.service)
         for device in group.get("devices", [])
     ]
     return payload
@@ -78,7 +78,7 @@ async def update_group(
     group = await device_group_service.update_group(db, group_id, data, publisher=events.publisher)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
-    return await device_group_service.get_group(db, group.id, settings=settings_services.reader) or {}
+    return await device_group_service.get_group(db, group.id, settings=settings_services.service) or {}
 
 
 @router.delete("/{group_id}", status_code=204)
@@ -96,7 +96,7 @@ async def add_members(
     events: EventServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, int]:
-    group = await device_group_service.get_group(db, group_id, settings=settings_services.reader)
+    group = await device_group_service.get_group(db, group_id, settings=settings_services.service)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     if group["group_type"] == "dynamic":
@@ -113,7 +113,7 @@ async def remove_members(
     events: EventServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, int]:
-    group = await device_group_service.get_group(db, group_id, settings=settings_services.reader)
+    group = await device_group_service.get_group(db, group_id, settings=settings_services.service)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     if group["group_type"] == "dynamic":
@@ -126,9 +126,9 @@ async def remove_members(
 async def group_bulk_start(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_start_nodes(
-        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.reader
+        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.service
     )
 
 
@@ -136,7 +136,7 @@ async def group_bulk_start(
 async def group_bulk_stop(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_stop_nodes(db, device_ids, caller="group", publisher=events.publisher)
 
 
@@ -144,9 +144,9 @@ async def group_bulk_stop(
 async def group_bulk_restart(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_restart_nodes(
-        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.reader
+        db, device_ids, caller="group", publisher=events.publisher, settings=settings_services.service
     )
 
 
@@ -158,7 +158,7 @@ async def group_bulk_enter_maintenance(
     events: EventServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_enter_maintenance(db, device_ids, publisher=events.publisher)
 
 
@@ -166,7 +166,7 @@ async def group_bulk_enter_maintenance(
 async def group_bulk_exit_maintenance(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_exit_maintenance(db, device_ids, publisher=events.publisher)
 
 
@@ -178,12 +178,12 @@ async def group_bulk_reconnect(
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_reconnect(
         db,
         device_ids,
         publisher=events.publisher,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
@@ -196,7 +196,7 @@ async def group_bulk_update_tags(
     events: EventServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_update_tags(db, device_ids, body.tags, body.merge, publisher=events.publisher)
 
 
@@ -204,5 +204,5 @@ async def group_bulk_update_tags(
 async def group_bulk_delete(
     group_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
-    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.reader)
+    device_ids = await _group_device_ids_or_404(db, group_id, settings=settings_services.service)
     return await bulk_service.bulk_delete(db, device_ids, publisher=events.publisher)

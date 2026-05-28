@@ -97,9 +97,9 @@ def _fire_and_forget(task_fn: AsyncTaskFactory, *args: object, **kwargs: object)
 
 
 def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    min_version = settings_services.reader.get("agent.min_version")
+    min_version = settings_services.service.get("agent.min_version")
     required_version = host_versioning.normalize_agent_version_setting(min_version)
-    rec_version = settings_services.reader.get("agent.recommended_version")
+    rec_version = settings_services.service.get("agent.recommended_version")
     recommended_version = host_versioning.normalize_agent_version_setting(rec_version)
     payload = HostRead.model_validate(host).model_dump()
     payload["required_agent_version"] = required_version
@@ -172,21 +172,21 @@ async def register_host(
 ) -> dict[str, Any]:
     try:
         host, is_new = await host_service.register_host(
-            db, data, publisher=event_services.publisher, settings=settings_services.reader
+            db, data, publisher=event_services.publisher, settings=settings_services.service
         )
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
     if is_new:
         response.status_code = 201
-        if settings_services.reader.get("agent.auto_accept_hosts"):
+        if settings_services.service.get("agent.auto_accept_hosts"):
             _fire_and_forget(
-                _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+                _auto_discover, host.id, event_services.publisher, settings_services.service, agent_comm.circuit_breaker
             )
             _fire_and_forget(
                 _auto_prepare_host_diagnostics,
                 host.id,
-                settings=settings_services.reader,
+                settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
             )
 
@@ -205,12 +205,12 @@ async def approve_host(
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
     _fire_and_forget(
-        _auto_discover, host.id, event_services.publisher, settings_services.reader, agent_comm.circuit_breaker
+        _auto_discover, host.id, event_services.publisher, settings_services.service, agent_comm.circuit_breaker
     )
     _fire_and_forget(
         _auto_prepare_host_diagnostics,
         host.id,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
     return _serialize_host(host, settings_services)
@@ -226,7 +226,7 @@ async def reject_host(host_id: uuid.UUID, db: DbDep) -> None:
 @router.post("", response_model=HostRead, status_code=201)
 async def create_host(data: HostCreate, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
     try:
-        host = await host_service.create_host(db, data, settings=settings_services.reader)
+        host = await host_service.create_host(db, data, settings=settings_services.service)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
     return _serialize_host(host, settings_services)
@@ -252,7 +252,7 @@ async def get_host(host_id: uuid.UUID, db: DbDep, settings_services: SettingsSer
         await device_presenter.serialize_device(
             db,
             device,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             platform_label=label_map.get((device.pack_id, device.platform_id)),
         )
         for device in host.devices
@@ -339,7 +339,11 @@ async def trigger_driver_doctor(
         raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
 
     checks = await agent_operations.pack_doctor(
-        host.ip, host.agent_port, pack_id, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+        host.ip,
+        host.agent_port,
+        pack_id,
+        settings=settings_services.service,
+        circuit_breaker=agent_comm.circuit_breaker,
     )
 
     await persist_doctor_results(db, host_id, pack_id, checks)
@@ -374,7 +378,7 @@ async def get_host_resource_telemetry(
     bucket_minutes: int = Query(5, ge=1, le=1440),
 ) -> HostResourceTelemetryResponse:
     window_end = until or datetime.now(UTC)
-    default_window_minutes = int(settings_services.reader.get("general.host_resource_telemetry_window_minutes"))
+    default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:
         payload = await host_resource_telemetry.fetch_host_resource_telemetry(
@@ -383,7 +387,7 @@ async def get_host_resource_telemetry(
             since=window_start,
             until=window_end,
             bucket_minutes=bucket_minutes,
-            settings=settings_services.reader,
+            settings=settings_services.service,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -404,7 +408,7 @@ async def get_host_tool_status(
     return await get_agent_tool_status(
         host.ip,
         host.agent_port,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
@@ -430,7 +434,7 @@ async def discover_devices(
         db,
         host,
         agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
@@ -446,7 +450,7 @@ async def intake_candidates(
         db,
         host,
         agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
@@ -467,7 +471,7 @@ async def confirm_discovery(
         db,
         host,
         agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
     try:
@@ -477,7 +481,7 @@ async def confirm_discovery(
             data.add_identity_values,
             data.remove_identity_values,
             result,
-            settings=settings_services.reader,
+            settings=settings_services.service,
         )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

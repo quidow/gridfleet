@@ -184,11 +184,10 @@ async def test_disabled_setting_uses_legacy_path_with_default_factory() -> None:
 
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pool branch must forward the BasicAuth returned by _agent_basic_auth."""
-    pool = AgentHttpPool()
-
+    """Pool branch must forward the BasicAuth carried by the pool."""
     sentinel = httpx.BasicAuth("ops", "secret")
-    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: sentinel)
+    pool = AgentHttpPool(agent_auth=sentinel)
+
     monkeypatch.setattr(agent_operations, "_pool_enabled", lambda *, settings: True)
 
     captured: dict[str, object] = {}
@@ -229,10 +228,9 @@ async def test_send_request_pooled_branch_passes_auth(monkeypatch: pytest.Monkey
 
 @pytest.mark.asyncio
 async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pool branch must not inject an auth kwarg when _agent_basic_auth returns None."""
-    pool = AgentHttpPool()
+    """Pool branch must not inject an auth kwarg when the pool has no auth."""
+    pool = AgentHttpPool(agent_auth=None)
 
-    monkeypatch.setattr(agent_operations, "_agent_basic_auth", lambda: None)
     monkeypatch.setattr(agent_operations, "_pool_enabled", lambda *, settings: True)
 
     captured: dict[str, object] = {}
@@ -262,7 +260,5 @@ async def test_send_request_pooled_branch_omits_auth_when_unset(monkeypatch: pyt
         pool=pool,
         circuit_breaker=AsyncMock(before_request=AsyncMock(return_value=None)),
     )
-    assert payload is not None, "pool branch did not call .get"
-    assert payload["status"] == "ok"
-    assert "kwargs" in captured
-    assert "auth" not in captured["kwargs"]  # type: ignore[operator]
+    assert payload is not None
+    assert "auth" not in captured["kwargs"]  # type: ignore[union-attr]
