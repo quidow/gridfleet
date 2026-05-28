@@ -1,13 +1,15 @@
-import uuid
+from __future__ import annotations
+
 from typing import Any
+from uuid import UUID  # noqa: TC003 - FastAPI inspects UUID parameter type at runtime.
 
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from app.core.dependencies import DbDep
+from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.hosts import service as host_service
-from app.plugins.dependencies import PluginServicesDep
-from app.plugins.models import AppiumPlugin
+from app.plugins.dependencies import PluginServicesDep  # noqa: TC001
+from app.plugins.models import AppiumPlugin  # noqa: TC001 - used in return type annotations
 from app.plugins.schemas import (
     FleetPluginSyncResult,
     HostPluginStatus,
@@ -35,7 +37,7 @@ async def create_plugin(data: PluginCreate, db: DbDep, plugin_services: PluginSe
 
 @router.patch("/plugins/{plugin_id}", response_model=PluginRead)
 async def update_plugin(
-    plugin_id: uuid.UUID,
+    plugin_id: UUID,
     data: PluginUpdate,
     db: DbDep,
     plugin_services: PluginServicesDep,
@@ -47,7 +49,7 @@ async def update_plugin(
 
 
 @router.delete("/plugins/{plugin_id}", status_code=204)
-async def delete_plugin(plugin_id: uuid.UUID, db: DbDep, plugin_services: PluginServicesDep) -> None:
+async def delete_plugin(plugin_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> None:
     deleted = await plugin_services.plugin.delete_plugin(db, plugin_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Plugin not found")
@@ -59,7 +61,7 @@ async def sync_all_plugins(db: DbDep, plugin_services: PluginServicesDep) -> dic
 
 
 @router.get("/hosts/{host_id}/plugins", response_model=list[HostPluginStatus])
-async def host_plugins(host_id: uuid.UUID, db: DbDep, plugin_services: PluginServicesDep) -> list[dict[str, Any]]:
+async def host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> list[dict[str, Any]]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
@@ -68,7 +70,7 @@ async def host_plugins(host_id: uuid.UUID, db: DbDep, plugin_services: PluginSer
 
 
 @router.post("/hosts/{host_id}/plugins/sync", response_model=PluginSyncResult)
-async def sync_host_plugins(host_id: uuid.UUID, db: DbDep, plugin_services: PluginServicesDep) -> dict[str, Any]:
+async def sync_host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> dict[str, Any]:
     host = await host_service.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
