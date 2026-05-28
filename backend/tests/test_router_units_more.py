@@ -912,10 +912,8 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         "status": "running",
     }
 
-    with (
-        patch("app.sessions.router.session_service.list_sessions", new=AsyncMock(return_value=([session_obj], 1))),
-        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
-    ):
+    with patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])):
+        crud = SimpleNamespace(list_sessions=AsyncMock(return_value=([session_obj], 1)))
         listed = await sessions.list_sessions(
             request,
             device_id=None,
@@ -932,40 +930,37 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             sort_by="started_at",
             sort_dir="desc",
             db=object(),
+            session_services=SimpleNamespace(crud=crud),  # type: ignore[arg-type]
         )
     assert listed["total"] == 1
     assert listed["items"][0]["session_id"] == "s1"
 
     cursor_request = SimpleNamespace(query_params={"cursor": "bad"})
-    with patch(
-        "app.sessions.router.session_service.list_sessions_cursor",
-        new=AsyncMock(side_effect=CursorPaginationError("bad cursor")),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await sessions.list_sessions(
-                cursor_request,
-                device_id=None,
-                status=None,
-                pack_id=None,
-                platform_id=None,
-                started_after=None,
-                started_before=None,
-                run_id=None,
-                limit=50,
-                cursor="bad",
-                direction="older",
-                offset=0,
-                sort_by="started_at",
-                sort_dir="desc",
-                db=object(),
-            )
+    crud_err = SimpleNamespace(list_sessions_cursor=AsyncMock(side_effect=CursorPaginationError("bad cursor")))
+    with pytest.raises(HTTPException) as exc:
+        await sessions.list_sessions(
+            cursor_request,
+            device_id=None,
+            status=None,
+            pack_id=None,
+            platform_id=None,
+            started_after=None,
+            started_before=None,
+            run_id=None,
+            limit=50,
+            cursor="bad",
+            direction="older",
+            offset=0,
+            sort_by="started_at",
+            sort_dir="desc",
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_err),  # type: ignore[arg-type]
+        )
     assert exc.value.status_code == 422
 
     page = CursorPage(items=[session_obj], limit=50, next_cursor="next", prev_cursor="prev")
-    with (
-        patch("app.sessions.router.session_service.list_sessions_cursor", new=AsyncMock(return_value=page)),
-        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
-    ):
+    with patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])):
+        crud_page = SimpleNamespace(list_sessions_cursor=AsyncMock(return_value=page))
         listed = await sessions.list_sessions(
             cursor_request,
             device_id=None,
@@ -982,20 +977,21 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             sort_by="started_at",
             sort_dir="desc",
             db=object(),
+            session_services=SimpleNamespace(crud=crud_page),  # type: ignore[arg-type]
         )
     assert listed["next_cursor"] == "next"
     assert listed["prev_cursor"] == "prev"
 
-    with patch("app.sessions.router.session_service.get_session", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await sessions.get_session("missing", db=object())
+    crud_none = SimpleNamespace(get_session=AsyncMock(return_value=None))
+    with pytest.raises(HTTPException) as exc:
+        await sessions.get_session("missing", db=object(), session_services=SimpleNamespace(crud=crud_none))  # type: ignore[arg-type]
     assert exc.value.status_code == 404
 
-    with (
-        patch("app.sessions.router.session_service.get_session", new=AsyncMock(return_value=session_obj)),
-        patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])),
-    ):
-        assert (await sessions.get_session("s1", db=object()))["session_id"] == "s1"
+    with patch("app.sessions.router._session_details_with_labels", new=AsyncMock(return_value=[detail])):
+        crud_found = SimpleNamespace(get_session=AsyncMock(return_value=session_obj))
+        assert (
+            await sessions.get_session("s1", db=object(), session_services=SimpleNamespace(crud=crud_found))  # type: ignore[arg-type]
+        )["session_id"] == "s1"
 
     create_payload = SimpleNamespace(
         session_id="s1",
@@ -1011,34 +1007,61 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         error_type=None,
         error_message=None,
     )
-    _session_events = SimpleNamespace(publisher=event_bus)
-    with patch(
-        "app.sessions.router.session_service.register_session",
-        new=AsyncMock(side_effect=ValueError("missing")),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await sessions.register_session(create_payload, db=object(), events=_session_events)  # type: ignore[arg-type]
+    crud_reg_err = SimpleNamespace(register_session=AsyncMock(side_effect=ValueError("missing")))
+    with pytest.raises(HTTPException) as exc:
+        await sessions.register_session(
+            create_payload,
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_reg_err),  # type: ignore[arg-type]
+        )
     assert exc.value.status_code == 404
-    with patch("app.sessions.router.session_service.register_session", new=AsyncMock(return_value=session_obj)):
-        assert await sessions.register_session(create_payload, db=object(), events=_session_events) is session_obj  # type: ignore[arg-type]
+    crud_reg_ok = SimpleNamespace(register_session=AsyncMock(return_value=session_obj))
+    assert (
+        await sessions.register_session(
+            create_payload,
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_reg_ok),  # type: ignore[arg-type]
+        )
+        is session_obj
+    )
 
     status_payload = SimpleNamespace(status="passed")
-    with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await sessions.update_session_status("missing", status_payload, db=object(), events=_session_events)  # type: ignore[arg-type]
+    crud_upd_none = SimpleNamespace(update_session_status=AsyncMock(return_value=None))
+    with pytest.raises(HTTPException) as exc:
+        await sessions.update_session_status(
+            "missing",
+            status_payload,
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_upd_none),  # type: ignore[arg-type]
+        )
     assert exc.value.status_code == 404
-    with patch("app.sessions.router.session_service.update_session_status", new=AsyncMock(return_value=session_obj)):
-        assert (
-            await sessions.update_session_status("s1", status_payload, db=object(), events=_session_events)
-            is session_obj
-        )  # type: ignore[arg-type]
+    crud_upd_ok = SimpleNamespace(update_session_status=AsyncMock(return_value=session_obj))
+    assert (
+        await sessions.update_session_status(
+            "s1",
+            status_payload,
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_upd_ok),  # type: ignore[arg-type]
+        )
+        is session_obj
+    )
 
-    with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await sessions.post_session_finished("missing", db=object(), events=_session_events)
+    crud_fin_none = SimpleNamespace(mark_session_finished=AsyncMock(return_value=None))
+    with pytest.raises(HTTPException) as exc:
+        await sessions.post_session_finished(
+            "missing",
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_fin_none),  # type: ignore[arg-type]
+        )
     assert exc.value.status_code == 404
-    with patch("app.sessions.router.session_service.mark_session_finished", new=AsyncMock(return_value=session_obj)):
-        assert (await sessions.post_session_finished("s1", db=object(), events=_session_events)).status_code == 204
+    crud_fin_ok = SimpleNamespace(mark_session_finished=AsyncMock(return_value=session_obj))
+    assert (
+        await sessions.post_session_finished(
+            "s1",
+            db=object(),
+            session_services=SimpleNamespace(crud=crud_fin_ok),  # type: ignore[arg-type]
+        )
+    ).status_code == 204
 
 
 async def test_plugins_router_maps_service_conflicts_and_missing_resources() -> None:

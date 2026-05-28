@@ -530,12 +530,15 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         devices_core.capability_service, "get_device_capabilities", AsyncMock(return_value={"caps": True})
     )
     assert await devices_core.device_capabilities(device_id, db=db) == {"caps": True}
-    monkeypatch.setattr(
-        devices_core.session_service,
-        "get_device_session_outcome_heatmap_rows",
-        AsyncMock(return_value=[(datetime.now(UTC), "passed")]),
+    crud = SimpleNamespace(
+        get_device_session_outcome_heatmap_rows=AsyncMock(return_value=[(datetime.now(UTC), "passed")])
     )
-    heatmap = await devices_core.device_session_outcome_heatmap(device_id, days=1, db=db)
+    heatmap = await devices_core.device_session_outcome_heatmap(
+        device_id,
+        days=1,
+        db=db,
+        session_services=SimpleNamespace(crud=crud),  # type: ignore[arg-type]
+    )
     assert heatmap[0].status == "passed"
 
 

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,7 @@ from app.devices.services import service as device_service
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
+from app.sessions.service import SessionCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -63,7 +64,8 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     db_session.add_all(sessions)
     await db_session.commit()
 
-    listed, total = await session_service.list_sessions(
+    crud = SessionCrudService(publisher=Mock())
+    listed, total = await crud.list_sessions(
         db_session,
         status=SessionStatus.error,
         pack_id="appium-uiautomator2",
@@ -77,9 +79,9 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     assert total == 1
     assert [session.session_id for session in listed] == ["sess-new"]
 
-    first_page = await session_service.list_sessions_cursor(db_session, limit=1)
+    first_page = await crud.list_sessions_cursor(db_session, limit=1)
     assert first_page.next_cursor is not None
-    newer_page = await session_service.list_sessions_cursor(
+    newer_page = await crud.list_sessions_cursor(
         db_session,
         cursor=encode_cursor(sessions[0].started_at, sessions[0].id),
         direction="newer",
@@ -87,7 +89,7 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     )
     assert newer_page.items
 
-    filtered_page = await session_service.list_sessions_cursor(
+    filtered_page = await crud.list_sessions_cursor(
         db_session,
         device_id=device.id,
         status=SessionStatus.passed,
@@ -98,10 +100,10 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
         limit=10,
     )
     assert [session.session_id for session in filtered_page.items] == ["sess-old"]
-    heatmap_rows = await session_service.get_device_session_outcome_heatmap_rows(db_session, device.id, days=1)
+    heatmap_rows = await crud.get_device_session_outcome_heatmap_rows(db_session, device.id, days=1)
     assert heatmap_rows == [(sessions[0].started_at, SessionStatus.passed)]
 
-    empty_page = await session_service.list_sessions_cursor(
+    empty_page = await crud.list_sessions_cursor(
         db_session,
         cursor=encode_cursor(now - timedelta(days=1), sessions[0].id),
     )
@@ -129,30 +131,29 @@ async def test_register_and_finish_session_guard_paths(
         operational_state=DeviceOperationalState.available,
     )
 
+    crud = SessionCrudService(publisher=event_bus)
+
     with pytest.raises(ValueError, match="No matching device"):
-        await session_service.register_session(
+        await crud.register_session(
             db_session,
             session_id="missing-target",
             test_name="missing",
             connection_target="unknown-target",
-            publisher=event_bus,
         )
 
-    running = await session_service.register_session(
+    running = await crud.register_session(
         db_session,
         session_id="running-no-target",
         test_name="running",
-        publisher=event_bus,
     )
-    same = await session_service.register_session(
+    same = await crud.register_session(
         db_session,
         session_id="running-no-target",
         test_name="ignored",
-        publisher=event_bus,
     )
     assert same.id == running.id
 
-    terminal = await session_service.register_session(
+    terminal = await crud.register_session(
         db_session,
         session_id="terminal-session",
         test_name="terminal",
@@ -160,12 +161,11 @@ async def test_register_and_finish_session_guard_paths(
         status=SessionStatus.failed,
         error_type="setup",
         error_message="bad caps",
-        publisher=event_bus,
     )
     assert terminal.ended_at is not None
 
-    assert await session_service.mark_session_finished(db_session, "does-not-exist", publisher=event_bus) is None
-    already = await session_service.mark_session_finished(db_session, "terminal-session", publisher=event_bus)
+    assert await crud.mark_session_finished(db_session, "does-not-exist") is None
+    already = await crud.mark_session_finished(db_session, "terminal-session")
     assert already is not None
     assert already.id == terminal.id
 
@@ -176,7 +176,7 @@ async def test_register_and_finish_session_guard_paths(
         "app.sessions.service.lifecycle_policy.handle_session_finished",
         AsyncMock(),
     )
-    finished = await session_service.mark_session_finished(db_session, "finish-device", publisher=event_bus)
+    finished = await crud.mark_session_finished(db_session, "finish-device")
     assert finished is not None
     assert finished.ended_at is not None
 
@@ -195,23 +195,17 @@ async def test_register_and_finish_session_guard_paths(
         "app.sessions.service.run_service.reservation_entry_is_excluded",
         lambda _entry: False,
     )
-    terminal_with_run = await session_service.register_session(
+    terminal_with_run = await crud.register_session(
         db_session,
         session_id="terminal-reserved-session",
         test_name="terminal reserved",
         device_id=device.id,
         status=SessionStatus.failed,
-        publisher=event_bus,
     )
     assert terminal_with_run.run_id is not None
 
-    assert (
-        await session_service.update_session_status(db_session, "missing-status", SessionStatus.passed, event_bus)
-        is None
-    )
-    unchanged = await session_service.update_session_status(
-        db_session, "running-no-target", SessionStatus.running, event_bus
-    )
+    assert await crud.update_session_status(db_session, "missing-status", SessionStatus.passed) is None
+    unchanged = await crud.update_session_status(db_session, "running-no-target", SessionStatus.running)
     assert unchanged is not None
     assert unchanged.ended_at is None
 
@@ -222,10 +216,12 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     db.get = AsyncMock(return_value=None)
     db.flush = AsyncMock()
     db.commit = AsyncMock()
-    monkeypatch.setattr(session_service, "get_session", AsyncMock(return_value=session))
     monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
 
-    result = await session_service.mark_session_finished(db, "vanished-device", publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus)
+    monkeypatch.setattr(crud, "get_session", AsyncMock(return_value=session))
+
+    result = await crud.mark_session_finished(db, "vanished-device")
 
     assert result is session
     db.commit.assert_awaited_once()
@@ -234,14 +230,16 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
 async def test_session_service_missing_and_insert_conflict_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
-    monkeypatch.setattr(session_service, "get_session", AsyncMock(side_effect=[None, None, None, None]))
     monkeypatch.setattr(session_service, "_lock_resolved_device_for_session", AsyncMock(return_value=None))
 
-    with pytest.raises(ValueError, match="Session insert conflicted"):
-        await session_service.register_session(db, session_id="conflict", test_name="conflict", publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus)
+    monkeypatch.setattr(crud, "get_session", AsyncMock(side_effect=[None, None, None, None]))
 
-    assert await session_service.mark_session_finished(db, "missing", publisher=event_bus) is None
-    assert await session_service.update_session_status(db, "missing", SessionStatus.passed, event_bus) is None
+    with pytest.raises(ValueError, match="Session insert conflicted"):
+        await crud.register_session(db, session_id="conflict", test_name="conflict")
+
+    assert await crud.mark_session_finished(db, "missing") is None
+    assert await crud.update_session_status(db, "missing", SessionStatus.passed) is None
 
 
 async def test_register_terminal_session_with_device_runs_deferred_stop_completion(
@@ -264,13 +262,13 @@ async def test_register_terminal_session_with_device_runs_deferred_stop_completi
     complete = AsyncMock()
     monkeypatch.setattr(session_service.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
 
-    session = await session_service.register_session(
+    crud = SessionCrudService(publisher=event_bus)
+    session = await crud.register_session(
         db_session,
         session_id="terminal-device-session-id",
         test_name="terminal device",
         device_id=device.id,
         status=SessionStatus.failed,
-        publisher=event_bus,
     )
 
     assert session.device_id == device.id

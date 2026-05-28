@@ -41,6 +41,7 @@ from app.packs.services_container import PackServices
 from app.runs.dependencies import get_run_services
 from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
+from app.sessions.service import SessionCrudService
 from app.sessions.services_container import SessionServices
 from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
@@ -348,6 +349,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return SessionServices(
+            crud=SessionCrudService(publisher=test_event_bus),
             publisher=test_event_bus,
             settings=settings_service,
             grid=GridService(settings=settings_service),

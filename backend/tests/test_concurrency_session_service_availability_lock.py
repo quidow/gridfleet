@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
+from app.sessions.service import SessionCrudService
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -73,13 +74,13 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
-            await session_service.register_session(
+            crud = SessionCrudService(publisher=event_bus)
+            await crud.register_session(
                 session,
                 session_id="register-race-session",
                 test_name=None,
                 device_id=device_id,
                 status=SessionStatus.running,
-                publisher=event_bus,
             )
 
     await asyncio.gather(
@@ -135,9 +136,8 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
 
     async def finish_session() -> None:
         async with db_session_maker() as session:
-            await session_service.update_session_status(
-                session, "finish-race-session", SessionStatus.passed, publisher=Mock()
-            )
+            crud = SessionCrudService(publisher=Mock())
+            await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     await asyncio.gather(
         finish_session(),

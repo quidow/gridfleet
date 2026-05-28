@@ -1,0 +1,83 @@
+"""Session domain Protocol definitions."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    import uuid
+    from datetime import datetime
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.pagination import CursorPage
+    from app.devices.models import ConnectionType, DeviceType
+    from app.sessions.models import Session, SessionStatus
+
+
+@runtime_checkable
+class SessionCrudProtocol(Protocol):
+    # --- reads ---
+    async def list_sessions(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID | None = None,
+        status: SessionStatus | None = None,
+        pack_id: str | None = None,
+        platform_id: str | None = None,
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        run_id: uuid.UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: str = "started_at",
+        sort_dir: str = "desc",
+        include_probes: bool = False,
+    ) -> tuple[list[Session], int]: ...
+
+    async def list_sessions_cursor(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID | None = None,
+        status: SessionStatus | None = None,
+        pack_id: str | None = None,
+        platform_id: str | None = None,
+        started_after: datetime | None = None,
+        started_before: datetime | None = None,
+        run_id: uuid.UUID | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+        direction: str = "older",
+        include_probes: bool = False,
+    ) -> CursorPage[Session]: ...
+
+    async def get_session(self, db: AsyncSession, session_id: str) -> Session | None: ...
+
+    async def get_device_session_outcome_heatmap_rows(
+        self, db: AsyncSession, device_id: uuid.UUID, *, days: int
+    ) -> list[tuple[datetime, SessionStatus]]: ...
+
+    # --- writes ---
+    async def register_session(
+        self,
+        db: AsyncSession,
+        *,
+        session_id: str,
+        test_name: str | None,
+        device_id: uuid.UUID | None = None,
+        connection_target: str | None = None,
+        status: SessionStatus = ...,
+        requested_pack_id: str | None = None,
+        requested_platform_id: str | None = None,
+        requested_device_type: DeviceType | None = None,
+        requested_connection_type: ConnectionType | None = None,
+        requested_capabilities: dict[str, Any] | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+    ) -> Session: ...
+
+    async def mark_session_finished(self, db: AsyncSession, session_id: str) -> Session | None: ...
+
+    async def update_session_status(
+        self, db: AsyncSession, session_id: str, status: SessionStatus
+    ) -> Session | None: ...

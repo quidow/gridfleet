@@ -36,7 +36,7 @@ from app.devices.services import (
     service as device_service,
 )
 from app.runs import service as run_service
-from app.sessions import service as session_service
+from app.sessions.dependencies import SessionServicesDep
 from app.settings.dependencies import SettingsServicesDep
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
@@ -212,8 +212,9 @@ async def delete_device(device_id: uuid.UUID, db: DbDep) -> None:
 async def device_session_outcome_heatmap(
     device_id: uuid.UUID,
     db: DbDep,
+    session_services: SessionServicesDep,
     days: int = Query(90, ge=1, le=90),
 ) -> list[SessionOutcomeHeatmapRow]:
     await get_device_or_404(device_id, db)
-    rows = await session_service.get_device_session_outcome_heatmap_rows(db, device_id, days=days)
+    rows = await session_services.crud.get_device_session_outcome_heatmap_rows(db, device_id, days=days)
     return [SessionOutcomeHeatmapRow(timestamp=timestamp, status=status) for timestamp, status in rows]
