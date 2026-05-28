@@ -55,7 +55,7 @@ async def sync_all_plugins(
     db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
 ) -> dict[str, Any]:
     return await plugin_service.sync_all_host_plugins(
-        db, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+        db, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
     )
 
 
@@ -68,7 +68,7 @@ async def host_plugins(
         raise HTTPException(status_code=404, detail="Host not found")
     all_plugins = await plugin_service.list_plugins(db)
     return await plugin_service.get_host_plugin_statuses(
-        host, all_plugins, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+        host, all_plugins, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
     )
 
 
@@ -81,5 +81,5 @@ async def sync_host_plugins(
         raise HTTPException(status_code=404, detail="Host not found")
     all_plugins = await plugin_service.list_plugins(db)
     return await plugin_service.sync_host_plugins(
-        host, all_plugins, settings=settings_services.reader, circuit_breaker=agent_comm.circuit_breaker
+        host, all_plugins, settings=settings_services.service, circuit_breaker=agent_comm.circuit_breaker
     )

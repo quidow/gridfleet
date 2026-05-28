@@ -62,7 +62,7 @@ async def enter_device_maintenance(
         device = await maintenance_service.enter_maintenance(db, device, publisher=events.publisher)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
@@ -74,7 +74,7 @@ async def exit_device_maintenance(
         device = await maintenance_service.exit_maintenance(db, device, publisher=events.publisher)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device, settings=settings_services.reader)
+    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
 
 
 @router.get("/{device_id}/config", response_model=DeviceConfigRead)
@@ -145,7 +145,7 @@ async def device_health(
                 host.agent_port,
                 node.port,
                 http_client_factory=httpx.AsyncClient,
-                settings=settings_services.reader,
+                settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
             )
             node_running = node_payload is not None and node_payload.get("running", False) is True
@@ -174,7 +174,7 @@ async def device_health(
             connection_type=device.connection_type.value if device.connection_type else None,
             ip_address=device.ip_address,
             http_client_factory=httpx.AsyncClient,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
         )
     except AgentCallError as e:
@@ -201,7 +201,7 @@ async def device_session_test(
     device = await get_device_for_update_or_404(device_id, db)
     try:
         return await session_viability.run_session_viability_probe(
-            db, device, checked_by=SessionViabilityCheckedBy.manual, settings=settings_services.reader
+            db, device, checked_by=SessionViabilityCheckedBy.manual, settings=settings_services.service
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -246,7 +246,7 @@ async def reconnect_device(
         action="reconnect",
         args={"ip_address": device.ip_address, "port": 5555},
         http_client_factory=httpx.AsyncClient,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
@@ -283,10 +283,10 @@ async def reconnect_device(
             if node is None or not node.observed_running:
                 if device.host_id is None:
                     raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-                await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.reader)
+                await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.service)
             else:
                 await node_manager.restart_node(
-                    db, device, caller="operator_restart", settings=settings_services.reader
+                    db, device, caller="operator_restart", settings=settings_services.service
                 )
         except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
@@ -336,7 +336,7 @@ async def device_lifecycle_action(
         action=action,
         args=body or {},
         http_client_factory=httpx.AsyncClient,
-        settings=settings_services.reader,
+        settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
     )
     if action == "state" and isinstance(result.get("state"), str):
@@ -367,7 +367,7 @@ async def device_logs(
             node.port,
             lines=lines,
             http_client_factory=httpx.AsyncClient,
-            settings=settings_services.reader,
+            settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
         )
     except httpx.HTTPError as e:

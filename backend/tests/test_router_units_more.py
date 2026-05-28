@@ -126,7 +126,7 @@ class MutatingSession(DummySession):
 def _mock_settings_svc(service: object | None = None) -> SettingsServices:
     """Build a SettingsServices with a mock or real service for unit-test route calls."""
     svc = service if service is not None else settings_service
-    return SettingsServices(reader=svc, service=svc, session_factory=object())  # type: ignore[arg-type]
+    return SettingsServices(service=svc, session_factory=object())  # type: ignore[arg-type]
 
 
 async def test_settings_router_error_paths() -> None:
@@ -669,7 +669,7 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
                 uuid.uuid4(),
                 RunCooldownRequest(reason="bad", ttl_seconds=1),
                 db=object(),
-                settings_services=SimpleNamespace(reader=object()),
+                settings_services=SimpleNamespace(service=object()),
                 agent_comm=_cooldown_ac,
                 events=SimpleNamespace(publisher=Mock()),
             )
@@ -686,7 +686,7 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
                 uuid.uuid4(),
                 RunCooldownRequest(reason="bad", ttl_seconds=1),
                 db=object(),
-                settings_services=SimpleNamespace(reader=object()),
+                settings_services=SimpleNamespace(service=object()),
                 agent_comm=_cooldown_ac,
                 events=SimpleNamespace(publisher=Mock()),
             )
@@ -845,7 +845,7 @@ async def test_bulk_router_delegates_all_operations() -> None:
         ):
             kwargs = {"db": object(), "events": SimpleNamespace(publisher=event_bus)}
             if service_name in {"bulk_start_nodes", "bulk_restart_nodes", "bulk_reconnect"}:
-                kwargs["settings_services"] = SimpleNamespace(reader=FakeSettingsReader({}))
+                kwargs["settings_services"] = SimpleNamespace(service=FakeSettingsReader({}))
             if service_name == "bulk_reconnect":
                 kwargs["agent_comm"] = SimpleNamespace(circuit_breaker=Mock())
             assert await call(payload, **kwargs) == {"ok": service_name}
@@ -2488,7 +2488,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
                 device_id,
                 RunCooldownRequest(reason="flaky", ttl_seconds=30),
                 db=object(),
-                settings_services=SimpleNamespace(reader=object()),
+                settings_services=SimpleNamespace(service=object()),
                 agent_comm=_state_ac,
                 events=SimpleNamespace(publisher=Mock()),
             )
@@ -2503,7 +2503,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             device_id,
             RunCooldownRequest(reason="flaky", ttl_seconds=30),
             db=object(),
-            settings_services=SimpleNamespace(reader=object()),
+            settings_services=SimpleNamespace(service=object()),
             agent_comm=_state_ac,
             events=SimpleNamespace(publisher=Mock()),
         )
@@ -2871,7 +2871,7 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
                     uuid.uuid4(),
                     RunCooldownRequest(reason="bad", ttl_seconds=10),
                     db=object(),
-                    settings_services=SimpleNamespace(reader=object()),
+                    settings_services=SimpleNamespace(service=object()),
                     agent_comm=_cursor_ac,
                     events=SimpleNamespace(publisher=Mock()),
                 )

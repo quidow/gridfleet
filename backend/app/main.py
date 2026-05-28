@@ -339,13 +339,13 @@ async def live_health() -> dict[str, str]:
 
 @app.get("/health/ready", response_model=HealthStatusRead)
 async def ready_health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.reader)
+    payload, status_code = await check_readiness(db, settings=settings_services.service)
     return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/api/health", response_model=HealthStatusRead)
 async def health(db: DbDep, settings_services: SettingsServicesDep) -> JSONResponse:
-    payload, status_code = await check_readiness(db, settings=settings_services.reader)
+    payload, status_code = await check_readiness(db, settings=settings_services.service)
     return JSONResponse(content=payload, status_code=status_code)
 
 
@@ -363,7 +363,7 @@ async def check_availability(
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
     available_devices = await device_service.list_devices(
-        db, settings=settings_services.reader, platform_id=platform_id, status="available"
+        db, settings=settings_services.service, platform_id=platform_id, status="available"
     )
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(

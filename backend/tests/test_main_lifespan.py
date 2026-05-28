@@ -387,7 +387,7 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert await main.live_health() == {"status": "ok"}
 
     monkeypatch.setattr(main, "check_readiness", AsyncMock(return_value=({"status": "ready"}, 202)))
-    fake_settings_services = SimpleNamespace(reader=FakeSettingsReader({}))
+    fake_settings_services = SimpleNamespace(service=FakeSettingsReader({}))
     ready = await main.ready_health(db=AsyncMock(), settings_services=fake_settings_services)
     health = await main.health(db=AsyncMock(), settings_services=fake_settings_services)
     assert isinstance(ready, JSONResponse)
@@ -424,7 +424,7 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
         platform_id="android_mobile",
         count=2,
         db=AsyncMock(),
-        settings_services=SimpleNamespace(reader=FakeSettingsReader({})),
+        settings_services=SimpleNamespace(service=FakeSettingsReader({})),
     )
 
     assert availability == {

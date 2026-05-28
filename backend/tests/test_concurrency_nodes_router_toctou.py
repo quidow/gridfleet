@@ -45,7 +45,7 @@ async def test_start_node_locks_device_before_reservation_check(
             yield session
 
     def override_get_settings_services() -> SettingsServices:
-        return SettingsServices(reader=settings_service, service=settings_service, session_factory=db_session_maker)
+        return SettingsServices(service=settings_service, session_factory=db_session_maker)
 
     def _override_event_services() -> EventServices:
         return EventServices(  # type: ignore[arg-type]

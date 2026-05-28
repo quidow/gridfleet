@@ -75,7 +75,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 yield session
 
         def override_get_settings_services() -> SettingsServices:
-            return SettingsServices(reader=settings_service, service=settings_service, session_factory=db_session_maker)
+            return SettingsServices(service=settings_service, session_factory=db_session_maker)
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_settings_services] = override_get_settings_services

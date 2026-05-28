@@ -14,8 +14,8 @@ router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 @router.get("/status", response_model=GridStatusRead)
 async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    grid_data = await grid_service.get_grid_status(settings=settings_services.reader)
-    devices = await device_service.list_devices(db, settings=settings_services.reader)
+    grid_data = await grid_service.get_grid_status(settings=settings_services.service)
+    devices = await device_service.list_devices(db, settings=settings_services.service)
 
     registry_devices = []
     for device in devices:
@@ -55,7 +55,7 @@ async def grid_status(db: DbDep, settings_services: SettingsServicesDep) -> dict
 
 @router.get("/queue", response_model=GridQueueRead)
 async def grid_queue(settings_services: SettingsServicesDep) -> dict[str, Any]:
-    grid_data = await grid_service.get_grid_status(settings=settings_services.reader)
+    grid_data = await grid_service.get_grid_status(settings=settings_services.service)
     value = grid_data.get("value", {})
     requests = value.get("sessionQueueRequests", []) if isinstance(value, dict) else []
     return {
