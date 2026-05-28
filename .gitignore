@@ -50,3 +50,8 @@ frontend/test-results
 # Superpowers working docs
 .superpowers/
 docs/superpowers/
+
+# Local tooling
+.claude/
+.repowise/
+.mcp.json
