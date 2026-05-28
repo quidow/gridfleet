@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -755,7 +755,7 @@ async def test_grid_queue(client: AsyncClient) -> None:
         }
     }
 
-    with patch("app.grid.service.get_grid_status", return_value=mock_data):
+    with patch("app.grid.service.GridService.get_status", new_callable=AsyncMock, return_value=mock_data):
         resp = await client.get("/api/grid/queue")
 
     assert resp.status_code == 200
