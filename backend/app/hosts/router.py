@@ -153,6 +153,7 @@ async def _auto_prepare_host_diagnostics(
             host = await host_service.get_host(db, host_id)
             if host is None:
                 return
+            # transitional: local construction until hosts converts to DI (Plan 7)
             svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
             plugins = await svc.list_plugins(db)
             await svc.auto_sync_host_plugins(host, plugins)

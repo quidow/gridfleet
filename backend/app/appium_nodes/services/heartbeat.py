@@ -74,6 +74,7 @@ async def _auto_sync_plugins_on_recovery(
             host = await db.get(Host, host_id)
             if host is None:
                 return
+            # transitional: local construction until appium_nodes converts to DI (Plan 10)
             svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
             plugins = await svc.list_plugins(db)
             await svc.auto_sync_host_plugins(host, plugins)
