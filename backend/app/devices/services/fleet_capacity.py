@@ -403,7 +403,7 @@ class FleetCapacityLoop:
             interval = float(self._services.settings.get("general.fleet_capacity_snapshot_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await collect_capacity_snapshot_once(db, settings=self._services.settings, grid=self._services.grid)
+                    await self._services.fleet_capacity.collect_capacity_snapshot_once(db)
             except Exception:
                 logger.exception("Fleet capacity collector failed")
             await asyncio.sleep(interval)

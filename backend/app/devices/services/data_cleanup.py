@@ -259,6 +259,6 @@ class DataCleanupLoop:
                     observe_background_loop(LOOP_NAME, interval_seconds).cycle(),
                     self._services.session_factory() as db,
                 ):
-                    await _cleanup_old_data(db, publisher=self._services.publisher, settings=self._services.settings)
+                    await self._services.data_cleanup.cleanup_old_data(db)
             except Exception:
                 logger.exception("Data cleanup failed")
