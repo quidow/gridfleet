@@ -26,6 +26,7 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -128,6 +129,7 @@ def compose_app(
         settings=settings_services,
         agent_comm=agent_comm_services,
         devices=DeviceServices(
+            state=DeviceStateService(publisher=bus),
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
