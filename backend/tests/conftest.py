@@ -25,6 +25,8 @@ from app.core.leader import models as _leader_models  # noqa: F401  # Ensure lea
 from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
@@ -358,11 +360,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
+        _grid_svc = GridService(settings=settings_service)
         return DeviceServices(
             state=DeviceStateService(publisher=test_event_bus),
+            fleet_capacity=FleetCapacityService(settings=settings_service, grid=_grid_svc),
+            data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             publisher=test_event_bus,
             settings=settings_service,
-            grid=GridService(settings=settings_service),
+            grid=_grid_svc,
             session_factory=sf,
             circuit_breaker=Mock(),
         )

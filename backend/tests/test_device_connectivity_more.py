@@ -20,6 +20,8 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
@@ -269,12 +271,17 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     async def fake_session() -> AsyncMock:
         yield AsyncMock()
 
+    _fake_grid = Mock()
+    _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
+    _fake_publisher = AsyncMock()
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({"general.device_check_interval_sec": 1}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_fake_publisher),
+            fleet_capacity=FleetCapacityService(settings=_fake_settings, grid=_fake_grid),
+            data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
+            publisher=_fake_publisher,
+            settings=_fake_settings,
+            grid=_fake_grid,
             session_factory=fake_session,
             circuit_breaker=Mock(),
         )

@@ -26,6 +26,8 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
@@ -119,6 +121,8 @@ def compose_app(
     pack_status = PackStatusService(feature=pack_feature)
 
     device_state_svc = DeviceStateService(publisher=bus)
+    fleet_capacity_svc = FleetCapacityService(settings=settings_svc, grid=grid_svc)
+    data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
 
     run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
@@ -132,6 +136,8 @@ def compose_app(
         agent_comm=agent_comm_services,
         devices=DeviceServices(
             state=device_state_svc,
+            fleet_capacity=fleet_capacity_svc,
+            data_cleanup=data_cleanup_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
