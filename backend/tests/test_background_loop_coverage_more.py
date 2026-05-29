@@ -22,6 +22,7 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
 from tests.fakes import FakeSettingsReader
@@ -53,6 +54,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
 
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
             grid=Mock(),
@@ -79,6 +81,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
             grid=Mock(),
@@ -167,6 +170,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             grid=Mock(),
@@ -237,6 +241,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
 
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             grid=Mock(),

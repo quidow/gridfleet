@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.devices.services.state import DeviceStateService
 from app.sessions import service as session_module
 from app.sessions.models import SessionStatus
 from app.sessions.service import SessionCrudService
@@ -40,7 +41,7 @@ async def test_session_started_queues_after_commit(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="session-start-1")
     event_bus_capture.clear()
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     await crud.register_session(
         db_session,
         session_id="ssn-start-1",
@@ -62,7 +63,7 @@ async def test_session_ended_queues_after_status_update(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="session-end-1")
     event_bus_capture.clear()
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     await crud.register_session(
         db_session,
         session_id="ssn-end-1",

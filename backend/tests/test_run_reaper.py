@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
@@ -17,7 +18,9 @@ from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
-_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_release_svc = RunReleaseService(
+    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+)
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
 
@@ -210,7 +213,9 @@ async def test_expire_run_deletes_active_grid_session(
     fake_grid = AsyncMock()
     fake_grid.terminate_session = fake_terminate
 
-    release = RunReleaseService(publisher=event_bus, settings=_settings, grid=fake_grid)
+    release = RunReleaseService(
+        publisher=event_bus, settings=_settings, grid=fake_grid, device_state=DeviceStateService(publisher=event_bus)
+    )
     lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=release)
     await lifecycle.expire_run(db_session, run, "Heartbeat timeout")
 

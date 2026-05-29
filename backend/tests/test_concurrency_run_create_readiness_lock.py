@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.services.state import DeviceStateService
 from app.runs.schemas import RunCreate
 from app.runs.service_allocator import RunAllocatorService, _readiness_for_match
 from tests.fakes import FakeSettingsReader
@@ -13,7 +14,9 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
-_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
+_allocator_svc = RunAllocatorService(
+    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

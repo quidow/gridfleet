@@ -20,6 +20,7 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -270,6 +271,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
 
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.device_check_interval_sec": 1}),
             grid=Mock(),

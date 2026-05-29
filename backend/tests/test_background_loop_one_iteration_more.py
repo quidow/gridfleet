@@ -11,6 +11,7 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.service import HostCrudService
@@ -158,6 +159,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             grid=Mock(),

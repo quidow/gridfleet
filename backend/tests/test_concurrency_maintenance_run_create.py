@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services.state import DeviceStateService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -87,11 +88,20 @@ async def test_run_create_and_maintenance_cannot_overlap(
 
         def _override_run_services() -> RunServices:
             grid = GridService(settings=settings_service)
-            run_release = RunReleaseService(publisher=event_bus, settings=settings_service, grid=grid)
+            run_release = RunReleaseService(
+                publisher=event_bus,
+                settings=settings_service,
+                grid=grid,
+                device_state=DeviceStateService(publisher=event_bus),
+            )
             run_lifecycle = RunLifecycleService(
                 publisher=event_bus, settings=settings_service, grid=grid, release=run_release
             )
-            run_allocator = RunAllocatorService(publisher=event_bus, settings=settings_service)
+            run_allocator = RunAllocatorService(
+                publisher=event_bus,
+                settings=settings_service,
+                device_state=DeviceStateService(publisher=event_bus),
+            )
             run_failure = RunFailureService(
                 publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
             )

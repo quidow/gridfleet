@@ -10,12 +10,14 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import DeviceStateWriter
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
 class DeviceServices:
+    state: DeviceStateWriter
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

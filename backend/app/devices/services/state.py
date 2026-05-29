@@ -149,3 +149,52 @@ def legacy_label_for_audit(device: Device) -> str:
     if device.hold is not None:
         return device.hold.value
     return device.operational_state.value
+
+
+class DeviceStateService:
+    """Injectable facade over the sanctioned device-state writers.
+
+    Delegates to the module-level ``set_operational_state`` / ``set_hold``
+    (which remain the real implementation while the state machine and still-free
+    devices modules call them bare). Injecting ``publisher`` lets already-
+    converted callers drop per-call ``publisher=`` threading.
+    """
+
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def set_operational_state(
+        self,
+        device: Device,
+        new_state: DeviceOperationalState,
+        *,
+        reason: str | None = None,
+        publish_event: bool = True,
+        severity: EventSeverity | None = None,
+    ) -> bool:
+        return await set_operational_state(
+            device,
+            new_state,
+            reason=reason,
+            publish_event=publish_event,
+            severity=severity,
+            publisher=self._publisher,
+        )
+
+    async def set_hold(
+        self,
+        device: Device,
+        new_hold: DeviceHold | None,
+        *,
+        reason: str | None = None,
+        publish_event: bool = True,
+        severity: EventSeverity | None = None,
+    ) -> bool:
+        return await set_hold(
+            device,
+            new_hold,
+            reason=reason,
+            publish_event=publish_event,
+            severity=severity,
+            publisher=self._publisher,
+        )

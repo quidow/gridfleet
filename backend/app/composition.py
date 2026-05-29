@@ -26,6 +26,7 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -117,9 +118,11 @@ def compose_app(
     pack_release = PackReleaseService(storage=pack_storage)
     pack_status = PackStatusService(feature=pack_feature)
 
-    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc)
+    device_state_svc = DeviceStateService(publisher=bus)
+
+    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
-    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc)
+    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
     run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
     run_query = RunQueryService()
 
@@ -128,6 +131,7 @@ def compose_app(
         settings=settings_services,
         agent_comm=agent_comm_services,
         devices=DeviceServices(
+            state=device_state_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -148,7 +152,7 @@ def compose_app(
             session_factory=session_factory,
         ),
         sessions=SessionServices(
-            crud=SessionCrudService(publisher=bus),
+            crud=SessionCrudService(publisher=bus, device_state=device_state_svc),
             sync=SessionSyncService(publisher=bus, settings=settings_svc, grid=grid_svc),
             settings=settings_svc,
             grid=grid_svc,
