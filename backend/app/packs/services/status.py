@@ -33,24 +33,24 @@ class PackStatusService:
     """Service class for pack status reporting and desired-state computation."""
 
     def __init__(self, *, publisher: EventPublisher, feature: FeatureStatusRecorder) -> None:
-        self._publisher = publisher
+        self._publisher = publisher  # held for direct pack-level event emission; wired in Task 7 composition
         self._feature = feature
 
     async def persist_doctor_results(
         self,
-        session: AsyncSession,
+        db: AsyncSession,
         host_id: uuid.UUID,
         pack_id: str,
         checks: list[dict[str, Any]],
     ) -> None:
-        await session.execute(
+        await db.execute(
             delete(HostPackDoctorResult).where(
                 HostPackDoctorResult.host_id == host_id,
                 HostPackDoctorResult.pack_id == pack_id,
             )
         )
         for d in checks:
-            session.add(
+            db.add(
                 HostPackDoctorResult(
                     host_id=host_id,
                     pack_id=pack_id,
@@ -60,12 +60,12 @@ class PackStatusService:
                 )
             )
 
-    async def apply_status(self, session: AsyncSession, payload: dict[str, Any]) -> None:
+    async def apply_status(self, db: AsyncSession, payload: dict[str, Any]) -> None:
         host_id = uuid.UUID(payload["host_id"])
 
         for rt in payload.get("runtimes", []):
             existing = (
-                await session.execute(
+                await db.execute(
                     select(HostRuntimeInstallation).where(
                         HostRuntimeInstallation.host_id == host_id,
                         HostRuntimeInstallation.runtime_id == rt["runtime_id"],
@@ -73,7 +73,7 @@ class PackStatusService:
                 )
             ).scalar_one_or_none()
             if existing is None:
-                session.add(
+                db.add(
                     HostRuntimeInstallation(
                         host_id=host_id,
                         runtime_id=rt["runtime_id"],
@@ -97,7 +97,7 @@ class PackStatusService:
 
             for plugin in rt.get("appium_plugins", []):
                 await self.upsert_plugin_status(
-                    session,
+                    db,
                     host_id=host_id,
                     runtime_id=rt["runtime_id"],
                     plugin_name=plugin["name"],
@@ -108,7 +108,7 @@ class PackStatusService:
 
         for pack in payload.get("packs", []):
             existing_pack = (
-                await session.execute(
+                await db.execute(
                     select(HostPackInstallation).where(
                         HostPackInstallation.host_id == host_id,
                         HostPackInstallation.pack_id == pack["pack_id"],
@@ -116,7 +116,7 @@ class PackStatusService:
                 )
             ).scalar_one_or_none()
             if existing_pack is None:
-                session.add(
+                db.add(
                     HostPackInstallation(
                         host_id=host_id,
                         pack_id=pack["pack_id"],
@@ -147,11 +147,11 @@ class PackStatusService:
             if d["pack_id"] in doctor_scope_pack_ids:
                 doctor_by_pack.setdefault(d["pack_id"], []).append(d)
         for scope_pack_id in doctor_scope_pack_ids:
-            await self.persist_doctor_results(session, host_id, scope_pack_id, doctor_by_pack.get(scope_pack_id, []))
+            await self.persist_doctor_results(db, host_id, scope_pack_id, doctor_by_pack.get(scope_pack_id, []))
 
         for sidecar in payload.get("sidecars", []):
             await self._feature.record_feature_status(
-                session,
+                db,
                 host_id=host_id,
                 pack_id=sidecar["pack_id"],
                 feature_id=sidecar["feature_id"],
@@ -159,11 +159,11 @@ class PackStatusService:
                 detail=str(sidecar.get("detail") or sidecar.get("last_error") or sidecar.get("state") or ""),
             )
 
-    async def get_host_driver_pack_status(self, session: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
-        host = await session.get(Host, host_id)
+    async def get_host_driver_pack_status(self, db: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
+        host = await db.get(Host, host_id)
         packs = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostPackInstallation)
                     .where(HostPackInstallation.host_id == host_id)
                     .order_by(HostPackInstallation.pack_id)
@@ -177,7 +177,7 @@ class PackStatusService:
         if packs:
             pack_ids = {row.pack_id for row in packs}
             releases = (
-                (await session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id.in_(pack_ids))))
+                (await db.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id.in_(pack_ids))))
                 .scalars()
                 .all()
             )
@@ -187,7 +187,7 @@ class PackStatusService:
         compatible_pack_ids = {row.pack_id for row in packs}
         runtimes = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostRuntimeInstallation)
                     .where(HostRuntimeInstallation.host_id == host_id)
                     .order_by(HostRuntimeInstallation.runtime_id)
@@ -199,7 +199,7 @@ class PackStatusService:
         runtime_map = {runtime.runtime_id: runtime for runtime in runtimes}
         doctor = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostPackDoctorResult)
                     .where(HostPackDoctorResult.host_id == host_id)
                     .order_by(HostPackDoctorResult.pack_id, HostPackDoctorResult.check_id)
@@ -214,7 +214,7 @@ class PackStatusService:
             ]
         plugin_rows = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostPluginRuntimeStatus)
                     .where(HostPluginRuntimeStatus.host_id == host_id)
                     .order_by(HostPluginRuntimeStatus.runtime_id, HostPluginRuntimeStatus.plugin_name)
@@ -225,7 +225,7 @@ class PackStatusService:
         )
         feature_rows = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostPackFeatureStatus)
                     .where(HostPackFeatureStatus.host_id == host_id)
                     .order_by(HostPackFeatureStatus.pack_id, HostPackFeatureStatus.feature_id)
@@ -303,9 +303,9 @@ class PackStatusService:
             ],
         }
 
-    async def get_driver_pack_host_status(self, session: AsyncSession, pack_id: str) -> dict[str, Any]:
+    async def get_driver_pack_host_status(self, db: AsyncSession, pack_id: str) -> dict[str, Any]:
         rows = (
-            await session.execute(
+            await db.execute(
                 select(HostPackInstallation, Host)
                 .join(Host, Host.id == HostPackInstallation.host_id)
                 .where(HostPackInstallation.pack_id == pack_id)
@@ -313,9 +313,7 @@ class PackStatusService:
             )
         ).all()
         releases = (
-            (await session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == pack_id)))
-            .scalars()
-            .all()
+            (await db.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == pack_id))).scalars().all()
         )
         pack_release_map = {(release.pack_id, release.release): release for release in releases}
 
@@ -329,7 +327,7 @@ class PackStatusService:
         if runtime_ids:
             runtimes = (
                 (
-                    await session.execute(
+                    await db.execute(
                         select(HostRuntimeInstallation).where(
                             HostRuntimeInstallation.host_id.in_(host_ids),
                             HostRuntimeInstallation.runtime_id.in_(runtime_ids),
@@ -343,7 +341,7 @@ class PackStatusService:
 
         doctor_rows = (
             (
-                await session.execute(
+                await db.execute(
                     select(HostPackDoctorResult)
                     .where(HostPackDoctorResult.pack_id == pack_id)
                     .order_by(HostPackDoctorResult.check_id)
@@ -395,7 +393,7 @@ class PackStatusService:
 
     async def upsert_plugin_status(
         self,
-        session: AsyncSession,
+        db: AsyncSession,
         *,
         host_id: uuid.UUID,
         runtime_id: str,
@@ -409,7 +407,7 @@ class PackStatusService:
         Inserts a new row if none exists; otherwise updates version, status, and updated_at.
         """
         existing = (
-            await session.execute(
+            await db.execute(
                 select(HostPluginRuntimeStatus).where(
                     HostPluginRuntimeStatus.host_id == host_id,
                     HostPluginRuntimeStatus.runtime_id == runtime_id,
@@ -419,7 +417,7 @@ class PackStatusService:
         ).scalar_one_or_none()
 
         if existing is None:
-            session.add(
+            db.add(
                 HostPluginRuntimeStatus(
                     host_id=host_id,
                     runtime_id=runtime_id,
@@ -434,11 +432,11 @@ class PackStatusService:
             existing.status = status
             existing.blocked_reason = blocked_reason
 
-    async def compute_desired(self, session: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
-        host = await session.get(Host, host_id)
+    async def compute_desired(self, db: AsyncSession, host_id: uuid.UUID) -> dict[str, Any]:
+        host = await db.get(Host, host_id)
         rows = (
             (
-                await session.execute(
+                await db.execute(
                     select(DriverPack)
                     .options(selectinload(DriverPack.releases))
                     .where(DriverPack.state == PackState.enabled)
@@ -450,11 +448,7 @@ class PackStatusService:
         )
 
         plugin_rows = (
-            (
-                await session.execute(
-                    select(AppiumPlugin).where(AppiumPlugin.enabled.is_(True)).order_by(AppiumPlugin.name)
-                )
-            )
+            (await db.execute(select(AppiumPlugin).where(AppiumPlugin.enabled.is_(True)).order_by(AppiumPlugin.name)))
             .scalars()
             .all()
         )
