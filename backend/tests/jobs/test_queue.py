@@ -11,12 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
+from app.jobs.protocols import DurableJobProtocol
+from app.jobs.queue import DurableJobService
 from tests.fakes import FakeSettingsReader
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     assert db_session.bind is not None
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+def _make_service(db_session: AsyncSession) -> DurableJobService:
+    return DurableJobService(
+        session_factory=_session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
+    )
 
 
 async def test_create_and_delete_jobs_by_kind(db_session: AsyncSession) -> None:
@@ -56,6 +67,7 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
     db_session.add_all([verification, recovery])
     await db_session.commit()
 
+    service = _make_service(db_session)
     with patch(
         "app.jobs.queue.utcnow",
         return_value=datetime.now(UTC),
@@ -64,12 +76,10 @@ async def test_reset_stale_running_jobs_handles_verification_and_other_kinds(db_
             "app.jobs.queue.reset_snapshot_for_retry",
             return_value={"status": job_queue.JOB_STATUS_PENDING, "retried": True},
         ):
-            count_verification = await job_queue.reset_stale_running_jobs(
-                _session_factory(db_session),
+            count_verification = await service.reset_stale_running_jobs(
                 kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
             )
-        count_recovery = await job_queue.reset_stale_running_jobs(
-            _session_factory(db_session),
+        count_recovery = await service.reset_stale_running_jobs(
             kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
         )
 
@@ -103,12 +113,13 @@ async def test_claim_next_job_respects_kind_and_schedule(db_session: AsyncSessio
     db_session.add_all([future, ready])
     await db_session.commit()
 
-    job = await job_queue.claim_next_job(_session_factory(db_session), kind=job_queue.JOB_KIND_DEVICE_RECOVERY)
+    service = _make_service(db_session)
+    job = await service.claim_next_job(kind=job_queue.JOB_KIND_DEVICE_RECOVERY)
 
     assert job is not None
     assert job.id == ready.id
     assert job.status == job_queue.JOB_STATUS_RUNNING
-    assert await job_queue.claim_next_job(_session_factory(db_session), kind="missing") is None
+    assert await service.claim_next_job(kind="missing") is None
 
 
 async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: AsyncSession) -> None:
@@ -131,36 +142,19 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     db_session.add_all([verification, recovery])
     await db_session.commit()
 
+    service = _make_service(db_session)
     with patch(
         "app.jobs.queue.run_persisted_verification_job",
         new=AsyncMock(),
     ) as verification_runner:
-        assert (
-            await job_queue.run_pending_jobs_once(
-                _session_factory(db_session),
-                publisher=AsyncMock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=AsyncMock(),
-                kind=job_queue.JOB_KIND_DEVICE_VERIFICATION,
-            )
-            is True
-        )
+        assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
     verification_runner.assert_awaited_once()
 
     with patch(
         "app.jobs.queue.run_device_recovery_job",
         new=AsyncMock(),
     ) as recovery_runner:
-        assert (
-            await job_queue.run_pending_jobs_once(
-                _session_factory(db_session),
-                publisher=AsyncMock(),
-                settings=FakeSettingsReader({}),
-                circuit_breaker=AsyncMock(),
-                kind=job_queue.JOB_KIND_DEVICE_RECOVERY,
-            )
-            is True
-        )
+        assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_RECOVERY) is True
     recovery_runner.assert_awaited_once()
 
 
@@ -176,12 +170,8 @@ async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: As
     db_session.add(unsupported)
     await db_session.commit()
 
-    result = await job_queue.run_pending_jobs_once(
-        _session_factory(db_session),
-        publisher=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=AsyncMock(),
-    )
+    service = _make_service(db_session)
+    result = await service.run_pending_once()
     assert result is True
     await db_session.refresh(unsupported)
     assert unsupported.status == job_queue.JOB_STATUS_FAILED
@@ -189,40 +179,32 @@ async def test_run_pending_jobs_once_marks_unsupported_job_failed(db_session: As
 
 
 async def test_run_pending_jobs_once_returns_false_when_no_jobs(db_session: AsyncSession) -> None:
-    result = await job_queue.run_pending_jobs_once(
-        _session_factory(db_session),
-        publisher=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=AsyncMock(),
-    )
+    service = _make_service(db_session)
+    result = await service.run_pending_once()
     assert result is False
 
 
 async def test_durable_job_worker_loop_handles_idle_and_error_cycles() -> None:
-    session_factory = AsyncMock()
-
     class _Observation:
         @asynccontextmanager
         async def cycle(self) -> AsyncMock:
-            yield session_factory
+            yield AsyncMock()
+
+    mock_service = AsyncMock(spec=DurableJobService)
+    mock_service.reset_stale_running_jobs = AsyncMock(return_value=0)
+    mock_service.run_pending_once = AsyncMock(side_effect=[False, RuntimeError("boom"), asyncio.CancelledError()])
 
     with (
         patch("app.jobs.queue.observe_background_loop", return_value=_Observation()),
-        patch("app.jobs.queue.reset_stale_running_jobs", new=AsyncMock()) as reset_jobs,
-        patch(
-            "app.jobs.queue.run_pending_jobs_once",
-            new=AsyncMock(side_effect=[False, RuntimeError("boom"), asyncio.CancelledError()]),
-        ),
         patch("app.jobs.queue.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
-        loop = job_queue.DurableJobWorkerLoop(
-            session_factory=session_factory,
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=AsyncMock(),
-        )
+        loop = job_queue.DurableJobWorkerLoop(service=mock_service)
         await loop.run()
 
-    assert reset_jobs.await_count == 2
+    assert mock_service.reset_stale_running_jobs.await_count == 2
     sleep.assert_awaited()
+
+
+def test_durable_job_service_satisfies_protocol() -> None:
+    assert issubclass(DurableJobService, DurableJobProtocol)

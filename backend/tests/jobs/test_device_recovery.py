@@ -16,6 +16,7 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
+from app.jobs.queue import DurableJobService
 from tests.conftest import settings_service
 from tests.helpers import create_device, create_reserved_run
 
@@ -76,9 +77,12 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
         "app.devices.services.lifecycle_policy.attempt_auto_recovery",
         new=AsyncMock(return_value=True),
     ) as recover:
-        worked = await job_queue.run_pending_jobs_once(
-            _session_factory(db_session), publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
-        )
+        worked = await DurableJobService(
+            session_factory=_session_factory(db_session),
+            publisher=AsyncMock(),
+            settings=settings_service,
+            circuit_breaker=AsyncMock(),
+        ).run_pending_once()
 
     assert worked is True
     recover.assert_awaited_once()
@@ -160,9 +164,12 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
             },
         ),
     ):
-        worked = await job_queue.run_pending_jobs_once(
-            _session_factory(db_session), publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
-        )
+        worked = await DurableJobService(
+            session_factory=_session_factory(db_session),
+            publisher=AsyncMock(),
+            settings=settings_service,
+            circuit_breaker=AsyncMock(),
+        ).run_pending_once()
 
     assert worked is True
 
@@ -197,9 +204,12 @@ async def test_device_recovery_job_completed_when_device_missing(
         max_attempts=1,
     )
 
-    worked = await job_queue.run_pending_jobs_once(
-        _session_factory(db_session), publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
-    )
+    worked = await DurableJobService(
+        session_factory=_session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=settings_service,
+        circuit_breaker=AsyncMock(),
+    ).run_pending_once()
 
     assert worked is True
 
