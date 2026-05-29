@@ -11,12 +11,20 @@ from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
+from app.grid.service import GridService
 from app.hosts.models import Host
 from app.main import app
+from app.runs.dependencies import get_run_services
+from app.runs.service_allocator import RunAllocatorService
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_failures import RunFailureService
+from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_query import RunQueryService
+from app.runs.services_container import RunServices
 from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
-from tests.conftest import settings_service
+from tests.conftest import settings_service, test_circuit_breaker
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -61,9 +69,31 @@ async def test_start_node_locks_device_before_reservation_check(
             engine=db_session_maker.kw["bind"],
         )
 
+    def _override_run_services() -> RunServices:
+        grid = GridService(settings=settings_service)
+        run_release = RunReleaseService(publisher=event_bus, settings=settings_service, grid=grid)
+        run_lifecycle = RunLifecycleService(
+            publisher=event_bus, settings=settings_service, grid=grid, release=run_release
+        )
+        run_allocator = RunAllocatorService(publisher=event_bus, settings=settings_service)
+        run_failure = RunFailureService(
+            publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+        )
+        run_query = RunQueryService()
+        return RunServices(
+            allocator=run_allocator,
+            lifecycle=run_lifecycle,
+            release=run_release,
+            failure=run_failure,
+            query=run_query,
+            settings=settings_service,
+            session_factory=db_session_maker,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_services] = override_get_settings_services
     app.dependency_overrides[get_event_services] = _override_event_services
+    app.dependency_overrides[get_run_services] = _override_run_services
 
     inside_start = asyncio.Event()
     proceed_start = asyncio.Event()
@@ -119,6 +149,7 @@ async def test_start_node_locks_device_before_reservation_check(
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_settings_services, None)
         app.dependency_overrides.pop(get_event_services, None)
+        app.dependency_overrides.pop(get_run_services, None)
 
     async with db_session_maker() as verify:
         reservations = (
