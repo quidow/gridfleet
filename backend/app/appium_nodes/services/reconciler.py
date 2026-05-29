@@ -971,3 +971,407 @@ def _make_reset_start_failure(
         await _reset_start_failure(row, require_leader=require_leader, session_scope=session_scope, settings=settings)
 
     return _reset
+
+
+class ReconcilerService:
+    """Injectable service wrapping the Appium reconciler loop body.
+
+    Satisfies :class:`~app.appium_nodes.protocols.ReconcilerProtocol`.
+    The caller opens the initial DB session and passes it to :meth:`run_cycle`;
+    agent IO and convergence passes open their own sessions via the stored
+    session factory.
+    """
+
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        pool: AgentHttpPool | None,
+        circuit_breaker: CircuitBreakerProtocol,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._pool = pool
+        self._circuit_breaker = circuit_breaker
+        self._session_factory = session_factory
+
+    async def run_cycle(self, db: AsyncSession) -> None:
+        """Execute one reconciler cycle using the provided DB session for reads.
+
+        Agent IO and convergence passes open their own sessions internally.
+        """
+        await assert_current_leader(db, settings=self._settings)
+        hosts = await _fetch_online_hosts(db)
+        rows = await _fetch_node_rows(db)
+        desired = await _fetch_desired_rows(db)
+        backoff = await _fetch_backoff_until(db)
+        # Agent IO and stops happen outside the DB session — no point holding it open.
+        health_by_host = await self._reconcile_all(hosts, rows)
+        if reconciler_convergence_enabled():
+            await self._drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)
+
+    async def _reconcile_all(
+        self,
+        hosts: list[dict[str, object]],
+        rows: list[dict[str, object]],
+    ) -> dict[uuid.UUID, dict[str, object]]:
+        health_by_host: dict[uuid.UUID, dict[str, object]] = {}
+
+        async def _reconcile(
+            *,
+            host_id: uuid.UUID,
+            host_ip: str,
+            agent_port: int,
+            db_running_rows: Sequence[dict[str, object]],
+        ) -> list[OrphanAppiumNode]:
+            async def _fetch_health(*, host: str, agent_port: int) -> dict[str, object]:
+                payload = await agent_health(
+                    host,
+                    agent_port,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=self._settings,
+                    pool=self._pool,
+                    circuit_breaker=self._circuit_breaker,
+                )
+                health = payload or {}
+                health_by_host[host_id] = health
+                return health
+
+            async def _stop(*, host: str, agent_port: int, port: int) -> None:
+                response = await appium_stop(
+                    agent_base_url(host, agent_port),
+                    host=host,
+                    agent_port=agent_port,
+                    port=port,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=self._settings,
+                    pool=self._pool,
+                    circuit_breaker=self._circuit_breaker,
+                )
+                response.raise_for_status()
+
+            return await reconcile_host_orphans(
+                host_id=host_id,
+                host_ip=host_ip,
+                agent_port=agent_port,
+                db_running_rows=db_running_rows,
+                fetch_health=_fetch_health,
+                appium_stop=_stop,
+            )
+
+        async def _list_hosts() -> list[dict[str, object]]:
+            return hosts
+
+        async def _list_rows() -> list[dict[str, object]]:
+            return rows
+
+        await appium_reconciler_loop_tick(
+            list_online_hosts=_list_hosts,
+            list_db_running_rows=_list_rows,
+            reconcile_host=_reconcile,
+        )
+        return health_by_host
+
+    async def _drive_convergence(
+        self,
+        hosts: list[dict[str, object]],
+        desired: list[DesiredRow],
+        backoff_until_by_device: dict[uuid.UUID, datetime],
+        *,
+        health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
+        require_leader: bool = True,
+    ) -> None:
+        semaphore = asyncio.Semaphore(int(self._settings.get("appium_reconciler.host_parallelism")))
+        now = datetime.now(UTC)
+        rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
+        active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
+        for row in desired:
+            rows_by_host.setdefault(row.host_id, []).append(row)
+            backoff_until = backoff_until_by_device.get(row.device_id)
+            if backoff_until is not None and backoff_until > now:
+                continue
+            active_rows_by_host.setdefault(row.host_id, []).append(row)
+
+        async def _reconcile_host(host: dict[str, object]) -> None:
+            host_id = host.get("id")
+            host_ip = host.get("ip")
+            agent_port = host.get("agent_port")
+            if not isinstance(host_id, uuid.UUID) or not isinstance(host_ip, str) or not isinstance(agent_port, int):
+                return
+            rows = rows_by_host.get(host_id, [])
+            if not rows:
+                return
+            async with semaphore:
+                cycle_start = time.monotonic()
+                try:
+                    async with self._session_factory() as db:
+                        if require_leader:
+                            await assert_current_leader(db, settings=self._settings)
+                    payload = (health_by_host or {}).get(host_id)
+                    if payload is None:
+                        payload = (
+                            await agent_health(
+                                host_ip,
+                                agent_port,
+                                http_client_factory=httpx.AsyncClient,
+                                settings=self._settings,
+                                pool=self._pool,
+                                circuit_breaker=self._circuit_breaker,
+                            )
+                            or {}
+                        )
+                    appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+                    if not isinstance(appium_processes, dict):
+                        return
+                    running = parse_running_nodes(appium_processes)
+                    observed = [
+                        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+                        for entry in running
+                    ]
+                    await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
+                    active_rows = active_rows_by_host.get(host_id, [])
+                    if not active_rows:
+                        return
+                    await self.converge_host_rows(
+                        None,
+                        active_rows,
+                        observed,
+                        host_id=host_id,
+                        host_ip=host_ip,
+                        agent_port=agent_port,
+                        require_leader=require_leader,
+                    )
+                finally:
+                    APPIUM_RECONCILER_HOST_CYCLE_SECONDS.labels(host_id=str(host_id)).observe(
+                        time.monotonic() - cycle_start
+                    )
+
+        await asyncio.gather(*(_reconcile_host(host) for host in hosts))
+
+    async def converge_host_rows(
+        self,
+        db: AsyncSession | None,
+        desired_rows: list[DesiredRow],
+        observed: list[ObservedEntry],
+        *,
+        host_id: uuid.UUID,
+        host_ip: str,
+        agent_port: int,
+        require_leader: bool = True,
+    ) -> None:
+        """Drive convergence for one host (body from :func:`converge_host_rows`)."""
+        session_scope = _session_scope(db)
+        await converge_host_rows(
+            host_id=host_id,
+            rows=desired_rows,
+            agent_running=observed,
+            now=datetime.now(UTC),
+            start_agent=self._make_start_agent(
+                require_leader=require_leader,
+                session_scope=session_scope,
+            ),
+            stop_agent=self._make_stop_agent(host_ip, agent_port),
+            write_observed=self._write_observed_factory(
+                require_leader=require_leader,
+                session_scope=session_scope,
+            ),
+            clear_token=self._clear_token_factory(
+                require_leader=require_leader,
+                session_scope=session_scope,
+            ),
+            reset_start_failure=self._make_reset_start_failure(
+                require_leader=require_leader,
+                session_scope=session_scope,
+            ),
+        )
+
+    def _make_start_agent(
+        self,
+        *,
+        require_leader: bool = True,
+        session_scope: SessionScope | None = None,
+    ) -> Callable[..., Awaitable[dict[str, Any]]]:
+        resolved_session_scope = session_scope or self._session_factory
+
+        async def _start(*, row: DesiredRow, port: int | None) -> dict[str, Any]:
+            async with resolved_session_scope() as db:
+                if require_leader:
+                    await assert_current_leader(db, settings=self._settings)
+                device = await _load_device_for_reconciler(db, row.device_id)
+                if device is None:
+                    raise RuntimeError(f"Device {row.device_id} no longer exists")
+                try:
+                    node = device.appium_node
+                    if node is None:
+                        raise RuntimeError(f"Device {row.device_id} has no AppiumNode row to converge")
+                    handle = await _start_for_node(
+                        db,
+                        device,
+                        node=node,
+                        preferred_port=port,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                    )
+                    if handle.port <= 0:
+                        raise RuntimeError(
+                            f"Agent returned invalid Appium port {handle.port} for device {row.device_id}"
+                        )
+                except Exception as exc:
+                    reason = _classify_start_failure(exc)
+                    APPIUM_RECONCILER_START_FAILURES.labels(reason=reason).inc()
+                    await _record_start_failure(
+                        row,
+                        reason=reason,
+                        require_leader=require_leader,
+                        session_scope=resolved_session_scope,
+                        settings=self._settings,
+                    )
+                    raise
+                await _reset_start_failure(
+                    row,
+                    require_leader=require_leader,
+                    session_scope=resolved_session_scope,
+                    settings=self._settings,
+                )
+                return {
+                    "port": handle.port,
+                    "pid": handle.pid,
+                    "active_connection_target": handle.active_connection_target,
+                    "allocated_caps": await appium_node_resource_service.get_capabilities(db, node_id=node.id),
+                }
+
+        return _start
+
+    def _make_stop_agent(
+        self,
+        host_ip: str,
+        agent_port: int,
+    ) -> Callable[..., Awaitable[None]]:
+        async def _stop(*, row: DesiredRow, port: int | None) -> None:
+            if port is None or port <= 0:
+                return
+            try:
+                stopped = await stop_remote_node(
+                    port=port,
+                    agent_base=agent_base_url(host_ip, agent_port),
+                    host=host_ip,
+                    agent_port=agent_port,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=self._settings,
+                    circuit_breaker=self._circuit_breaker,
+                )
+            except Exception:
+                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="exception").inc()
+                raise
+            if not stopped:
+                APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
+                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
+
+        return _stop
+
+    def _write_observed_factory(
+        self,
+        *,
+        require_leader: bool = True,
+        session_scope: SessionScope | None = None,
+    ) -> Callable[..., Awaitable[None]]:
+        resolved_session_scope = session_scope or self._session_factory
+
+        async def _write(
+            *,
+            row: DesiredRow,
+            state: str,
+            port: int | None,
+            pid: int | None,
+            active_connection_target: str | None,
+            clear_desired_port: bool = False,
+            clear_transition: bool = False,
+            allocated_caps: object = None,
+        ) -> None:
+            async with resolved_session_scope() as db:
+                if require_leader:
+                    await assert_current_leader(db, settings=self._settings)
+                device = await _load_device_for_reconciler(db, row.device_id)
+                if device is None:
+                    return
+                if state == "running":
+                    await mark_node_started(
+                        db,
+                        device,
+                        port=port or row.port or 0,
+                        pid=pid,
+                        active_connection_target=active_connection_target,
+                        allocated_caps=allocated_caps if isinstance(allocated_caps, dict) else None,
+                        clear_transition=clear_transition,
+                        publisher=self._publisher,
+                        settings=self._settings,
+                    )
+                    if clear_desired_port:
+                        device = await _lock_device_for_reconciler(db, row.device_id)
+                        if device is None or device.appium_node is None:
+                            return
+                        node = device.appium_node
+                        await write_desired_state(
+                            db,
+                            node=node,
+                            target=node.desired_state,
+                            caller="appium_reconciler",
+                            transition_token=node.transition_token,
+                            transition_deadline=node.transition_deadline,
+                        )
+                        await db.commit()
+                    return
+                else:
+                    await mark_node_stopped(db, device, publisher=self._publisher)
+                if clear_desired_port or clear_transition:
+                    device = await _lock_device_for_reconciler(db, row.device_id)
+                    if device is None or device.appium_node is None:
+                        return
+                    node = device.appium_node
+                    target = node.desired_state
+                    desired_port = None if clear_desired_port else node.desired_port
+                    transition_token = None if clear_transition else node.transition_token
+                    transition_deadline = None if clear_transition else node.transition_deadline
+                    await write_desired_state(
+                        db,
+                        node=node,
+                        target=target,
+                        caller="appium_reconciler",
+                        desired_port=desired_port,
+                        transition_token=transition_token,
+                        transition_deadline=transition_deadline,
+                    )
+                    await db.commit()
+
+        return _write
+
+    def _clear_token_factory(
+        self,
+        *,
+        require_leader: bool = True,
+        session_scope: SessionScope | None = None,
+    ) -> Callable[..., Awaitable[None]]:
+        resolved_session_scope = session_scope or self._session_factory
+
+        async def _clear(*, row: DesiredRow, reason: str) -> None:
+            async with resolved_session_scope() as db:
+                if require_leader:
+                    await assert_current_leader(db, settings=self._settings)
+                await _clear_transition_token(db, row)
+
+        return _clear
+
+    def _make_reset_start_failure(
+        self,
+        *,
+        require_leader: bool = True,
+        session_scope: SessionScope | None = None,
+    ) -> Callable[..., Awaitable[None]]:
+        async def _reset(*, row: DesiredRow) -> None:
+            await _reset_start_failure(
+                row, require_leader=require_leader, session_scope=session_scope, settings=self._settings
+            )
+
+        return _reset
