@@ -11,8 +11,32 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.pagination import CursorPage
-    from app.devices.models import ConnectionType, DeviceType
+    from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+    from app.events.catalog import EventSeverity
     from app.sessions.models import Session, SessionStatus
+
+
+@runtime_checkable
+class DeviceStateWriter(Protocol):
+    async def set_operational_state(
+        self,
+        device: Device,
+        new_state: DeviceOperationalState,
+        *,
+        reason: str | None = ...,
+        publish_event: bool = ...,
+        severity: EventSeverity | None = ...,
+    ) -> bool: ...
+
+    async def set_hold(
+        self,
+        device: Device,
+        new_hold: DeviceHold | None,
+        *,
+        reason: str | None = ...,
+        publish_event: bool = ...,
+        severity: EventSeverity | None = ...,
+    ) -> bool: ...
 
 
 @runtime_checkable

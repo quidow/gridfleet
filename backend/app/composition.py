@@ -124,12 +124,14 @@ def compose_app(
     run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
     run_query = RunQueryService()
 
+    device_state_svc = DeviceStateService(publisher=bus)
+
     return AppServices(
         events=event_services,
         settings=settings_services,
         agent_comm=agent_comm_services,
         devices=DeviceServices(
-            state=DeviceStateService(publisher=bus),
+            state=device_state_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -150,7 +152,7 @@ def compose_app(
             session_factory=session_factory,
         ),
         sessions=SessionServices(
-            crud=SessionCrudService(publisher=bus),
+            crud=SessionCrudService(publisher=bus, device_state=device_state_svc),
             sync=SessionSyncService(publisher=bus, settings=settings_svc, grid=grid_svc),
             settings=settings_svc,
             grid=grid_svc,

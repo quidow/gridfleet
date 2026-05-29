@@ -32,9 +32,9 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
+    from app.sessions.protocols import DeviceStateWriter
 
 ready_operational_state = device_state.ready_operational_state
-set_operational_state = device_state.set_operational_state
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
@@ -224,8 +224,9 @@ async def _lock_resolved_device_for_session(
 
 
 class SessionCrudService:
-    def __init__(self, *, publisher: EventPublisher) -> None:
+    def __init__(self, *, publisher: EventPublisher, device_state: DeviceStateWriter) -> None:
         self._publisher = publisher
+        self._device_state = device_state
 
     async def list_sessions(
         self,
@@ -479,8 +480,8 @@ class SessionCrudService:
             session = await db.get(Session, inserted_id)
             assert session is not None
             if device is not None:
-                await set_operational_state(
-                    device, DeviceOperationalState.busy, publish_event=False, severity="info", publisher=self._publisher
+                await self._device_state.set_operational_state(
+                    device, DeviceOperationalState.busy, publish_event=False, severity="info"
                 )
             queue_session_started_event(
                 db,
