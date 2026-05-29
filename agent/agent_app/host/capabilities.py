@@ -22,97 +22,85 @@ _DEFAULT_CAPABILITIES: dict[str, Any] = {
     "missing_prerequisites": [],
     "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
 }
-_capabilities_snapshot: dict[str, Any] | None = None
-_capabilities_snapshot_at: float | None = None
-_capabilities_lock = asyncio.Lock()
-_adapter_registry: AdapterRegistry | None = None
 
 
-def set_adapter_registry(registry: AdapterRegistry | None) -> None:
-    global _adapter_registry
-    _adapter_registry = registry
+def default_capabilities() -> dict[str, Any]:
+    """Capabilities payload used before the cache has run any detection."""
+    return deepcopy(_DEFAULT_CAPABILITIES)
 
 
-async def _collect_adapter_tool_versions() -> dict[str, str]:
-    """Gather tool versions from all loaded adapters."""
-    if _adapter_registry is None:
-        return {}
-    tools: dict[str, str] = {}
-    for pack_id in _adapter_registry.pack_ids():
-        adapter = _adapter_registry.get_current(pack_id)
-        if adapter is not None and hasattr(adapter, "tool_versions"):
-            result = adapter.tool_versions()
-            if inspect.isawaitable(result):
-                result = await result
-            for name, version in result.items():
-                if version is not None and name not in tools:
-                    tools[name] = version
-    return tools
+class CapabilitiesCache:
+    """Owns the cached host-capabilities snapshot and the adapter registry it reads from."""
 
+    def __init__(self, *, adapter_registry: AdapterRegistry | None) -> None:
+        self._adapter_registry = adapter_registry
+        self._snapshot: dict[str, Any] | None = None
+        self._snapshot_at: float | None = None
+        self._lock = asyncio.Lock()
 
-async def detect_capabilities() -> dict[str, Any]:
-    """Detect installed tools and infer supported platforms."""
-    tools = await _collect_adapter_tool_versions()
-    platforms: list[str] = []
-    missing_prerequisites: list[str] = []
+    async def _collect_adapter_tool_versions(self) -> dict[str, str]:
+        """Gather tool versions from all loaded adapters."""
+        if self._adapter_registry is None:
+            return {}
+        tools: dict[str, str] = {}
+        for pack_id in self._adapter_registry.pack_ids():
+            adapter = self._adapter_registry.get_current(pack_id)
+            if adapter is not None and hasattr(adapter, "tool_versions"):
+                result = adapter.tool_versions()
+                if inspect.isawaitable(result):
+                    result = await result
+                for name, version in result.items():
+                    if version is not None and name not in tools:
+                        tools[name] = version
+        return tools
 
-    return {
-        "platforms": platforms,
-        "tools": tools,
-        "missing_prerequisites": missing_prerequisites,
-        "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
-    }
+    async def detect(self) -> dict[str, Any]:
+        """Detect installed tools and infer supported platforms."""
+        tools = await self._collect_adapter_tool_versions()
+        return {
+            "platforms": [],
+            "tools": tools,
+            "missing_prerequisites": [],
+            "orchestration_contract_version": ORCHESTRATION_CONTRACT_VERSION,
+        }
 
-
-def get_capabilities_snapshot() -> dict[str, Any]:
-    """Return the last detected capabilities without running probes."""
-    snapshot = deepcopy(_capabilities_snapshot or _DEFAULT_CAPABILITIES)
-    snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
-    return snapshot
-
-
-def clear_capabilities_snapshot() -> None:
-    """Clear the cached capabilities snapshot."""
-    global _capabilities_snapshot, _capabilities_snapshot_at
-    _capabilities_snapshot = None
-    _capabilities_snapshot_at = None
-
-
-def _snapshot_is_stale() -> bool:
-    if _capabilities_snapshot_at is None:
-        return True
-    return time.monotonic() - _capabilities_snapshot_at >= _CAPABILITIES_REFRESH_INTERVAL_SEC
-
-
-async def refresh_capabilities_snapshot() -> dict[str, Any]:
-    """Refresh and return the cached capabilities snapshot."""
-    global _capabilities_snapshot, _capabilities_snapshot_at
-    async with _capabilities_lock:
-        snapshot = await detect_capabilities()
+    def get(self) -> dict[str, Any]:
+        """Return the last detected capabilities without running probes."""
+        snapshot = deepcopy(self._snapshot or _DEFAULT_CAPABILITIES)
         snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
-        _capabilities_snapshot = deepcopy(snapshot)
-        _capabilities_snapshot_at = time.monotonic()
-        return deepcopy(snapshot)
+        return snapshot
 
+    def _is_stale(self) -> bool:
+        if self._snapshot_at is None:
+            return True
+        return time.monotonic() - self._snapshot_at >= _CAPABILITIES_REFRESH_INTERVAL_SEC
 
-async def get_or_refresh_capabilities_snapshot(*, force: bool = False) -> dict[str, Any]:
-    """Return cached capabilities, refreshing only when missing/stale or forced."""
-    if force or _capabilities_snapshot is None or _snapshot_is_stale():
-        return await refresh_capabilities_snapshot()
-    return get_capabilities_snapshot()
+    async def refresh(self) -> dict[str, Any]:
+        """Refresh and return the cached capabilities snapshot."""
+        async with self._lock:
+            snapshot = await self.detect()
+            self._snapshot = deepcopy(snapshot)
+            self._snapshot_at = time.monotonic()
+            return deepcopy(snapshot)
 
+    async def get_or_refresh(self, *, force: bool = False) -> dict[str, Any]:
+        """Return cached capabilities, refreshing only when missing/stale or forced."""
+        if force or self._snapshot is None or self._is_stale():
+            return await self.refresh()
+        return self.get()
 
-async def capabilities_refresh_loop(
-    interval_sec: int = _CAPABILITIES_REFRESH_INTERVAL_SEC,
-    *,
-    refresh_immediately: bool = True,
-) -> None:
-    """Periodically refresh the capability snapshot outside the health request path."""
-    if not refresh_immediately:
-        await asyncio.sleep(interval_sec)
-    while True:
-        try:
-            await refresh_capabilities_snapshot()
-        except Exception:
-            logger.exception("Capability snapshot refresh failed")
-        await asyncio.sleep(interval_sec)
+    async def run_refresh_loop(
+        self,
+        interval_sec: int = _CAPABILITIES_REFRESH_INTERVAL_SEC,
+        *,
+        refresh_immediately: bool = True,
+    ) -> None:
+        """Periodically refresh the capability snapshot outside the health request path."""
+        if not refresh_immediately:
+            await asyncio.sleep(interval_sec)
+        while True:
+            try:
+                await self.refresh()
+            except Exception:
+                logger.exception("Capability snapshot refresh failed")
+            await asyncio.sleep(interval_sec)

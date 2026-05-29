@@ -12,8 +12,10 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import agent_settings
 from agent_app.main import app
+from agent_app.registration import RegistrationService
 
 if TYPE_CHECKING:
     import pytest
@@ -22,9 +24,9 @@ if TYPE_CHECKING:
 def _mock_lifespan_deps() -> list[AbstractContextManager[object]]:
     """Return context managers that mock out network/subprocess calls in lifespan."""
     return [
-        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
-        patch("agent_app.lifespan.capabilities_refresh_loop", new_callable=AsyncMock),
-        patch("agent_app.registration.register_with_manager", new_callable=AsyncMock, return_value=None),
+        patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "run_refresh_loop", new_callable=AsyncMock),
+        patch.object(RegistrationService, "register_once", new_callable=AsyncMock, return_value=None),
     ]
 
 
