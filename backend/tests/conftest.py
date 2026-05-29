@@ -34,6 +34,10 @@ from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
+from app.hosts.service import HostCrudService
+from app.hosts.service_diagnostics import HostDiagnosticsService
+from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
@@ -345,6 +349,17 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return HostServices(
+            crud=HostCrudService(publisher=test_event_bus, settings=settings_service),
+            hardware_telemetry=HardwareTelemetryService(
+                publisher=test_event_bus,
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+            ),
+            resource_telemetry=HostResourceTelemetryService(
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+            ),
+            diagnostics=HostDiagnosticsService(circuit_breaker=test_circuit_breaker),
             publisher=test_event_bus,
             settings=settings_service,
             pool=test_http_pool,

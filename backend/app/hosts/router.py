@@ -21,10 +21,10 @@ from app.devices.services import presenter as device_presenter
 from app.events.dependencies import EventServicesDep
 from app.events.protocols import EventPublisher
 from app.hosts import service as host_service
-from app.hosts import service_diagnostics as host_diagnostics
-from app.hosts import service_resource_telemetry as host_resource_telemetry
 from app.hosts import service_versioning as host_versioning
+from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
+from app.hosts.protocols import HostCrudProtocol
 from app.hosts.schemas import (
     AgentLogPage,
     DiscoveryConfirm,
@@ -118,11 +118,12 @@ async def _auto_discover(
     publisher: EventPublisher,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    crud: HostCrudProtocol,
 ) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
     try:
         async with async_session() as db:
-            host = await host_service.get_host(db, host_id)
+            host = await crud.get_host(db, host_id)
             if host is None:
                 return
             result = await pack_discovery_service.discover_devices(
@@ -146,14 +147,13 @@ async def _auto_discover(
 
 
 async def _auto_prepare_host_diagnostics(
-    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol, crud: HostCrudProtocol
 ) -> None:
     try:
         async with async_session() as db:
-            host = await host_service.get_host(db, host_id)
+            host = await crud.get_host(db, host_id)
             if host is None:
                 return
-            # transitional: local construction until hosts converts to DI (Plan 7)
             svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
             plugins = await svc.list_plugins(db)
             await svc.auto_sync_host_plugins(host, plugins)
@@ -166,14 +166,13 @@ async def register_host(
     data: HostRegister,
     response: Response,
     db: DbDep,
+    host_services: HostServicesDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
     try:
-        host, is_new = await host_service.register_host(
-            db, data, publisher=event_services.publisher, settings=settings_services.service
-        )
+        host, is_new = await host_services.crud.register_host(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host registration conflict") from None
 
@@ -181,13 +180,19 @@ async def register_host(
         response.status_code = 201
         if settings_services.service.get("agent.auto_accept_hosts"):
             _fire_and_forget(
-                _auto_discover, host.id, event_services.publisher, settings_services.service, agent_comm.circuit_breaker
+                _auto_discover,
+                host.id,
+                event_services.publisher,
+                settings_services.service,
+                agent_comm.circuit_breaker,
+                host_services.crud,
             )
             _fire_and_forget(
                 _auto_prepare_host_diagnostics,
                 host.id,
                 settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
+                crud=host_services.crud,
             )
 
     return _serialize_host(host, settings_services)
@@ -197,49 +202,62 @@ async def register_host(
 async def approve_host(
     host_id: uuid.UUID,
     db: DbDep,
+    host_services: HostServicesDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    host = await host_service.approve_host(db, host_id, publisher=event_services.publisher)
+    host = await host_services.crud.approve_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
     _fire_and_forget(
-        _auto_discover, host.id, event_services.publisher, settings_services.service, agent_comm.circuit_breaker
+        _auto_discover,
+        host.id,
+        event_services.publisher,
+        settings_services.service,
+        agent_comm.circuit_breaker,
+        host_services.crud,
     )
     _fire_and_forget(
         _auto_prepare_host_diagnostics,
         host.id,
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
+        crud=host_services.crud,
     )
     return _serialize_host(host, settings_services)
 
 
 @router.post("/{host_id}/reject", status_code=204)
-async def reject_host(host_id: uuid.UUID, db: DbDep) -> None:
-    rejected = await host_service.reject_host(db, host_id)
+async def reject_host(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> None:
+    rejected = await host_services.crud.reject_host(db, host_id)
     if not rejected:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
 
 
 @router.post("", response_model=HostRead, status_code=201)
-async def create_host(data: HostCreate, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+async def create_host(
+    data: HostCreate, db: DbDep, host_services: HostServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
     try:
-        host = await host_service.create_host(db, data, settings=settings_services.service)
+        host = await host_services.crud.create_host(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
     return _serialize_host(host, settings_services)
 
 
 @router.get("", response_model=list[HostRead])
-async def list_hosts(db: DbDep, settings_services: SettingsServicesDep) -> list[dict[str, Any]]:
-    return [_serialize_host(host, settings_services) for host in await host_service.list_hosts(db)]
+async def list_hosts(
+    db: DbDep, host_services: HostServicesDep, settings_services: SettingsServicesDep
+) -> list[dict[str, Any]]:
+    return [_serialize_host(host, settings_services) for host in await host_services.crud.list_hosts(db)]
 
 
 @router.get("/{host_id}", response_model=HostDetail)
-async def get_host(host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
+async def get_host(
+    host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep, settings_services: SettingsServicesDep
+) -> dict[str, Any]:
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
 
@@ -361,9 +379,8 @@ async def trigger_driver_doctor(
 
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
-async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, agent_comm: AgentCommServicesDep) -> HostDiagnosticsRead:
-    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=agent_comm.circuit_breaker)
-    payload = await svc.get_host_diagnostics(db, host_id)
+async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> HostDiagnosticsRead:
+    payload = await host_services.diagnostics.get_host_diagnostics(db, host_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return payload
@@ -373,6 +390,7 @@ async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, agent_comm: AgentC
 async def get_host_resource_telemetry(
     host_id: uuid.UUID,
     db: DbDep,
+    host_services: HostServicesDep,
     settings_services: SettingsServicesDep,
     since: datetime | None = None,
     until: datetime | None = None,
@@ -382,13 +400,12 @@ async def get_host_resource_telemetry(
     default_window_minutes = int(settings_services.service.get("general.host_resource_telemetry_window_minutes"))
     window_start = since or (window_end - timedelta(minutes=default_window_minutes))
     try:
-        payload = await host_resource_telemetry.fetch_host_resource_telemetry(
+        payload = await host_services.resource_telemetry.fetch_host_resource_telemetry(
             db,
             host_id,
             since=window_start,
             until=window_end,
             bucket_minutes=bucket_minutes,
-            settings=settings_services.service,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -399,9 +416,13 @@ async def get_host_resource_telemetry(
 
 @router.get("/{host_id}/tools/status", response_model=HostToolStatusRead)
 async def get_host_tool_status(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+    host_id: uuid.UUID,
+    db: DbDep,
+    host_services: HostServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     if host.status.value != "online":
@@ -415,9 +436,9 @@ async def get_host_tool_status(
 
 
 @router.delete("/{host_id}", status_code=204)
-async def delete_host(host_id: uuid.UUID, db: DbDep) -> None:
+async def delete_host(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> None:
     try:
-        deleted = await host_service.delete_host(db, host_id)
+        deleted = await host_services.crud.delete_host(db, host_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     if not deleted:
@@ -426,9 +447,13 @@ async def delete_host(host_id: uuid.UUID, db: DbDep) -> None:
 
 @router.post("/{host_id}/discover", response_model=DiscoveryResult)
 async def discover_devices(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+    host_id: uuid.UUID,
+    db: DbDep,
+    host_services: HostServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> DiscoveryResult:
-    host = await host_service.get_host(db, host_id)
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return await pack_discovery_service.discover_devices(
@@ -442,9 +467,13 @@ async def discover_devices(
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
 async def intake_candidates(
-    host_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+    host_id: uuid.UUID,
+    db: DbDep,
+    host_services: HostServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> list[IntakeCandidateRead]:
-    host = await host_service.get_host(db, host_id)
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return await pack_discovery_service.list_intake_candidates(
@@ -461,10 +490,11 @@ async def confirm_discovery(
     host_id: uuid.UUID,
     data: DiscoveryConfirm,
     db: DbDep,
+    host_services: HostServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> DiscoveryConfirmResult:
-    host = await host_service.get_host(db, host_id)
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     # Re-run discovery to get fresh data for validation
@@ -494,8 +524,8 @@ async def confirm_discovery(
     status_code=200,
     summary="Get per-host tool environment variables",
 )
-async def get_host_tool_env(host_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
+async def get_host_tool_env(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> dict[str, Any]:
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return {"env": host.tool_env or {}}
@@ -511,8 +541,9 @@ async def put_host_tool_env(
     host_id: uuid.UUID,
     body: HostToolEnvUpdate,
     db: DbDep,
+    host_services: HostServicesDep,
 ) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     host.tool_env = body.env if body.env else None
