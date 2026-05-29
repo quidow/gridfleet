@@ -24,15 +24,13 @@ from app.plugins.models import AppiumPlugin
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.events.protocols import EventPublisher
     from app.packs.protocols import FeatureStatusRecorder
 
 
 class PackStatusService:
     """Service class for pack status reporting and desired-state computation."""
 
-    def __init__(self, *, publisher: EventPublisher, feature: FeatureStatusRecorder) -> None:
-        self._publisher = publisher  # held for direct pack-level event emission; wired in Task 7 composition
+    def __init__(self, *, feature: FeatureStatusRecorder) -> None:
         self._feature = feature
 
     async def persist_doctor_results(

@@ -428,11 +428,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         storage = PackStorageService(root=pack_storage_root)
         feature = FeatureService(publisher=test_event_bus, circuit_breaker=test_circuit_breaker)
+        lifecycle = PackLifecycleService()
         return PackServices(
-            catalog=PackCatalogService(),
+            catalog=PackCatalogService(lifecycle=lifecycle),
             release=PackReleaseService(storage=storage),
-            status=PackStatusService(publisher=test_event_bus, feature=feature),
-            lifecycle=PackLifecycleService(),
+            status=PackStatusService(feature=feature),
+            lifecycle=lifecycle,
             feature=feature,
             storage=storage,
             publisher=test_event_bus,

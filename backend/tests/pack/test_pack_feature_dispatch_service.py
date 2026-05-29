@@ -479,11 +479,10 @@ async def test_call_agent_rejects_bad_agent_responses(
     monkeypatch.setattr(pack_feature_dispatch_service, "agent_request", AsyncMock(return_value=response))
 
     with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match=message):
-        await pack_feature_dispatch_service._call_agent(
+        await _feature_svc(_noop_breaker())._call_agent(
             host="10.0.0.1",
             url="http://10.0.0.1:5100/agent/pack/features/f/actions/a",
             body={"pack_id": PACK_ID, "args": {}},
             http_client_factory=_factory(StrictAgentClient()),
             timeout=5,
-            circuit_breaker=_noop_breaker(),
         )

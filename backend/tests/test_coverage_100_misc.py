@@ -524,7 +524,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         AsyncMock(return_value={"active_runs": 1, "live_sessions": 0}),
     )
     with pytest.raises(RuntimeError, match="active run"):
-        await PackCatalogService().delete_pack(delete_db, "pack")
+        await PackCatalogService(lifecycle=PackLifecycleService()).delete_pack(delete_db, "pack")
 
 
 async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -615,13 +615,12 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         AsyncMock(side_effect=pack_feature_dispatch_service.AgentCallError("host", "bad")),
     )
     with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match="Agent unreachable"):
-        await pack_feature_dispatch_service._call_agent(
+        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock())._call_agent(
             host="127.0.0.1",
             url="http://agent/pack-feature",
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
-            circuit_breaker=Mock(),
         )
     monkeypatch.setattr(
         pack_feature_dispatch_service,
@@ -629,13 +628,12 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         AsyncMock(side_effect=pack_feature_dispatch_service.httpx.ConnectError("boom")),
     )
     with pytest.raises(pack_feature_dispatch_service._AgentDispatchError, match="Agent transport error"):
-        await pack_feature_dispatch_service._call_agent(
+        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock())._call_agent(
             host="127.0.0.1",
             url="http://agent/pack-feature",
             body={"feature_id": "camera"},
             http_client_factory=lambda **_kwargs: ClientManager(),
             timeout=1,
-            circuit_breaker=Mock(),
         )
 
     feature_db = AsyncMock()
@@ -845,9 +843,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
         ]
     )
-    assert (await _PackStatusService(publisher=AsyncMock(), feature=Mock()).compute_desired(desired_db, uuid.uuid4()))[
-        "packs"
-    ] == []
+    assert (await _PackStatusService(feature=Mock()).compute_desired(desired_db, uuid.uuid4()))["packs"] == []
 
     assert (
         pack_status_service._installed_driver_version(

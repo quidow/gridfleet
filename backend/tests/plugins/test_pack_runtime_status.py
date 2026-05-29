@@ -21,9 +21,7 @@ from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 
-_status_svc = PackStatusService(
-    publisher=event_bus, feature=FeatureService(publisher=event_bus, circuit_breaker=Mock())
-)
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 
 @pytest.mark.asyncio

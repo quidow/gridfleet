@@ -104,10 +104,10 @@ def compose_app(
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
     pack_feature = FeatureService(publisher=bus, circuit_breaker=circuit_breaker)
-    pack_catalog = PackCatalogService()
-    pack_release = PackReleaseService(storage=pack_storage)
-    pack_status = PackStatusService(publisher=bus, feature=pack_feature)
     pack_lifecycle = PackLifecycleService()
+    pack_catalog = PackCatalogService(lifecycle=pack_lifecycle)
+    pack_release = PackReleaseService(storage=pack_storage)
+    pack_status = PackStatusService(feature=pack_feature)
 
     return AppServices(
         events=event_services,

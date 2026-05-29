@@ -12,7 +12,7 @@ from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 
 _feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(publisher=event_bus, feature=_feature_svc)
+_status_svc = PackStatusService(feature=_feature_svc)
 
 
 def test_host_pack_status_includes_driver_version_fields() -> None:

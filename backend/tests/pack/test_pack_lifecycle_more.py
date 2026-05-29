@@ -15,12 +15,13 @@ from app.packs.models import (
     HostPackInstallation,
 )
 from app.packs.schemas import RuntimePolicy
+from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.release import PackReleaseService
 from app.packs.services.service import PackCatalogService
 from tests.helpers import create_device_record
 
 _release_svc = PackReleaseService(storage=Mock())
-_catalog_svc = PackCatalogService()
+_catalog_svc = PackCatalogService(lifecycle=PackLifecycleService())
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.packs.models import DriverPack, PackState
 from app.packs.services import drain as pack_drain
 from app.packs.services.drain import PackDrainLoop
+from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services_container import PackServices
 
 pytestmark = pytest.mark.asyncio
@@ -31,7 +32,7 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
             catalog=Mock(),
             release=Mock(),
             status=Mock(),
-            lifecycle=Mock(),
+            lifecycle=PackLifecycleService(),
             feature=Mock(),
             storage=Mock(),
             publisher=Mock(),

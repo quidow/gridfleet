@@ -18,9 +18,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-_status_svc = PackStatusService(
-    publisher=event_bus, feature=FeatureService(publisher=event_bus, circuit_breaker=Mock())
-)
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 pytestmark = pytest.mark.asyncio
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 _feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_status_svc = PackStatusService(publisher=event_bus, feature=_feature_svc)
+_status_svc = PackStatusService(feature=_feature_svc)
 
 
 @pytest.mark.asyncio

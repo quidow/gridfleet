@@ -15,9 +15,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-_status_svc = PackStatusService(
-    publisher=event_bus, feature=FeatureService(publisher=event_bus, circuit_breaker=Mock())
-)
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 

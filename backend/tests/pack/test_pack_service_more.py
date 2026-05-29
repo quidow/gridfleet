@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services import service as pack_service
+from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
 
 
@@ -172,7 +173,7 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
     runtime = SimpleNamespace(appium_server_version="2.0.0", driver_specs=[{"version": "3.1.0"}])
     session = ExecuteSession(SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]))
 
-    svc = PackCatalogService()
+    svc = PackCatalogService(lifecycle=PackLifecycleService())
     summaries = await svc._runtime_summaries_by_pack(session, ["local/pack"])  # type: ignore[arg-type]
 
     summary = summaries["local/pack"]
@@ -188,8 +189,6 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     pack = _pack(PackState.draining)
     session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
 
-    from app.packs.services.lifecycle import PackLifecycleService
-
     with (
         patch.object(PackLifecycleService, "try_complete_drain", new=AsyncMock()) as complete_drain,
         patch.object(
@@ -198,17 +197,19 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
             new=AsyncMock(return_value={"active_runs": 2, "live_sessions": 1}),
         ),
     ):
-        catalog = await PackCatalogService().list_catalog(session)  # type: ignore[arg-type]
+        catalog = await PackCatalogService(lifecycle=PackLifecycleService()).list_catalog(session)  # type: ignore[arg-type]
 
     assert session.committed is True
     complete_drain.assert_awaited_once()
     assert catalog.packs[0].active_runs == 2
     assert catalog.packs[0].live_sessions == 1
 
-    missing = await PackCatalogService().get_pack_detail(ExecuteSession(ScalarRowsResult([])), "missing")  # type: ignore[arg-type]
+    missing = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(
+        ExecuteSession(ScalarRowsResult([])), "missing"
+    )  # type: ignore[arg-type]
     assert missing is None
 
     detail_session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
-    detail = await PackCatalogService().get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
+    detail = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
     assert detail is not None
     assert detail.id == "local/pack"

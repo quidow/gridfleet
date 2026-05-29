@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from app.core.observability import get_logger, observe_background_loop
 from app.packs.models import DriverPack, PackState
-from app.packs.services.lifecycle import PackLifecycleService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,10 +43,9 @@ class PackDrainLoop:
             .scalars()
             .all()
         )
-        lifecycle = PackLifecycleService()
         completed: list[str] = []
         for pack_id in pack_ids:
-            pack = await lifecycle.try_complete_drain(db, pack_id)
+            pack = await self._services.lifecycle.try_complete_drain(db, pack_id)
             if pack.state == PackState.disabled:
                 completed.append(pack_id)
         await db.commit()

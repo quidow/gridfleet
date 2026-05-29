@@ -8,6 +8,7 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackInstallation, HostRuntimeInstallation
 from app.packs.services.capability import render_stereotype
 from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
 from app.packs.services.start_shim import build_pack_start_payload
 from app.packs.services.status import PackStatusService
@@ -15,8 +16,8 @@ from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 _feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
-_catalog_svc = PackCatalogService()
-_status_svc = PackStatusService(publisher=event_bus, feature=_feature_svc)
+_catalog_svc = PackCatalogService(lifecycle=PackLifecycleService())
+_status_svc = PackStatusService(feature=_feature_svc)
 
 
 class _FakeDevice:
