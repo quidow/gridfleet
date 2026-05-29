@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.devices.services.property_refresh import PropertyRefreshLoop, _refresh_all_properties
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -124,6 +125,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
 
     loop = PropertyRefreshLoop(
         services=DeviceServices(
+            state=DeviceStateService(publisher=AsyncMock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}),
             grid=Mock(),

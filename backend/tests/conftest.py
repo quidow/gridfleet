@@ -359,6 +359,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return DeviceServices(
+            state=DeviceStateService(publisher=test_event_bus),
             publisher=test_event_bus,
             settings=settings_service,
             grid=GridService(settings=settings_service),
