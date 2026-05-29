@@ -57,7 +57,19 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
         patch("app.packs.services.drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         pytest.raises(asyncio.CancelledError),
     ):
-        loop = pack_drain.PackDrainLoop(services=PackServices(session_factory=SessionScope))
+        loop = pack_drain.PackDrainLoop(
+            services=PackServices(
+                catalog=Mock(),
+                release=Mock(),
+                status=Mock(),
+                lifecycle=Mock(),
+                feature=Mock(),
+                storage=Mock(),
+                publisher=Mock(),
+                circuit_breaker=Mock(),
+                session_factory=SessionScope,
+            )
+        )
         await loop.run()
 
     info.assert_called_once_with("Completed draining driver packs: %s", "pack-a")

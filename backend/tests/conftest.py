@@ -409,7 +409,17 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return PackServices(session_factory=sf)
+        return PackServices(
+            catalog=Mock(),
+            release=Mock(),
+            status=Mock(),
+            lifecycle=Mock(),
+            feature=Mock(),
+            storage=Mock(),
+            publisher=test_event_bus,
+            circuit_breaker=test_circuit_breaker,
+            session_factory=sf,
+        )
 
     def override_get_plugin_services() -> PluginServices:
         assert db_session.bind is not None
