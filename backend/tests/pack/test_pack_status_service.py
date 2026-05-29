@@ -17,10 +17,15 @@ if TYPE_CHECKING:
 
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
+from app.packs.protocols import PackStatusProtocol
 from app.packs.services import status as pack_status_service
-from app.packs.services.status import apply_status, get_host_driver_pack_status
+from app.packs.services.status import PackStatusService, apply_status, get_host_driver_pack_status
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+
+def test_pack_status_service_satisfies_protocol() -> None:
+    assert isinstance(PackStatusService.__new__(PackStatusService), PackStatusProtocol)
 
 
 @pytest.mark.asyncio

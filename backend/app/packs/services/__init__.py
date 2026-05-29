@@ -3,7 +3,6 @@ from types import ModuleType
 
 __all__ = [
     "capability",
-    "desired_state",
     "discovery",
     "drain",
     "export",

@@ -6,8 +6,7 @@ from fastapi.responses import Response
 
 from app.core.dependencies import DbDep
 from app.events.dependencies import EventServicesDep
-from app.packs.services.desired_state import compute_desired
-from app.packs.services.status import apply_status
+from app.packs.services.status import apply_status, compute_desired
 
 router = APIRouter(prefix="/agent/driver-packs", tags=["agent-driver-packs"])
 

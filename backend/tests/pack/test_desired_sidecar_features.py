@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.packs.models import DriverPack, DriverPackRelease, PackState
-from app.packs.services.desired_state import compute_desired
+from app.packs.services.status import compute_desired
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

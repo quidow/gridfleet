@@ -6,7 +6,7 @@ import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack
-from app.packs.services.desired_state import compute_desired
+from app.packs.services.status import compute_desired
 from app.plugins.models import AppiumPlugin
 
 if TYPE_CHECKING:

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.main import app
 from app.packs.models import DriverPackFeature
 from app.packs.routers.uploads import get_pack_storage
-from app.packs.services.desired_state import compute_desired
+from app.packs.services.status import compute_desired
 from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:

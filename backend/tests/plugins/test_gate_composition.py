@@ -5,10 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackInstallation, HostRuntimeInstallation
 from app.packs.services.capability import render_stereotype
-from app.packs.services.desired_state import compute_desired
 from app.packs.services.service import list_catalog
 from app.packs.services.start_shim import build_pack_start_payload
-from app.packs.services.status import apply_status
+from app.packs.services.status import apply_status, compute_desired
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
