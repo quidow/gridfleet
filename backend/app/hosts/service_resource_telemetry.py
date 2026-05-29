@@ -51,54 +51,6 @@ def _coerce_float(value: object) -> float | None:
     return None
 
 
-async def apply_host_resource_sample(
-    db: AsyncSession,
-    host: Host,
-    sample: dict[str, Any],
-) -> HostResourceSample:
-    recorded_at = parse_timestamp(sample.get("recorded_at")) or _now()
-    row = HostResourceSample(
-        host_id=host.id,
-        recorded_at=recorded_at,
-        cpu_percent=_coerce_float(sample.get("cpu_percent")),
-        memory_used_mb=_coerce_int(sample.get("memory_used_mb")),
-        memory_total_mb=_coerce_int(sample.get("memory_total_mb")),
-        disk_used_gb=_coerce_float(sample.get("disk_used_gb")),
-        disk_total_gb=_coerce_float(sample.get("disk_total_gb")),
-        disk_percent=_coerce_float(sample.get("disk_percent")),
-    )
-    db.add(row)
-    await db.flush()
-    return row
-
-
-async def poll_host_resource_telemetry_once(
-    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
-) -> None:
-    result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
-    hosts = result.scalars().all()
-
-    for host in hosts:
-        try:
-            payload = await agent_host_telemetry(
-                host.ip,
-                host.agent_port,
-                http_client_factory=httpx.AsyncClient,
-                settings=settings,
-                circuit_breaker=circuit_breaker,
-            )
-            if payload is None:
-                continue
-            await apply_host_resource_sample(db, host, payload)
-            await db.commit()
-        except AgentCallError as exc:
-            await db.rollback()
-            logger.warning("Host resource telemetry poll failed for host %s: %s", host.hostname, exc)
-        except Exception:
-            await db.rollback()
-            logger.exception("Unexpected host resource telemetry failure for host %s", host.hostname)
-
-
 def _window_exceeds_retention(*, since: datetime, until: datetime, retention_hours: int) -> bool:
     return until - since > timedelta(hours=retention_hours)
 
@@ -115,71 +67,121 @@ def _sample_from_row(row: Row[tuple[object, object, object, object, object, obje
     )
 
 
-async def fetch_host_resource_telemetry(
-    db: AsyncSession,
-    host_id: UUID,
-    *,
-    since: datetime,
-    until: datetime,
-    bucket_minutes: int,
-    settings: SettingsReader,
-) -> HostResourceTelemetryResponse | None:
-    host_exists = await db.scalar(select(Host.id).where(Host.id == host_id))
-    if host_exists is None:
-        return None
+class HostResourceTelemetryService:
+    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
 
-    retention_hours = int(settings.get("retention.host_resource_telemetry_hours"))
-    if since >= until:
-        raise ValueError("since must be earlier than until")
-    if not 1 <= bucket_minutes <= 1440:
-        raise ValueError("bucket_minutes must be between 1 and 1440")
-    if _window_exceeds_retention(since=since, until=until, retention_hours=retention_hours):
-        raise ValueError("requested window exceeds retention.host_resource_telemetry_hours")
-
-    bucket_query = text(
-        """
-        SELECT
-            date_bin(
-                make_interval(mins => CAST(:bucket_minutes AS integer)),
-                recorded_at,
-                :window_start
-            ) AS bucket_start,
-            AVG(cpu_percent) AS cpu_percent,
-            AVG(memory_used_mb) AS memory_used_mb,
-            AVG(memory_total_mb) AS memory_total_mb,
-            AVG(disk_used_gb) AS disk_used_gb,
-            AVG(disk_total_gb) AS disk_total_gb,
-            AVG(disk_percent) AS disk_percent
-        FROM host_resource_samples
-        WHERE host_id = :host_id
-          AND recorded_at >= :window_start
-          AND recorded_at <= :window_end
-        GROUP BY bucket_start
-        ORDER BY bucket_start ASC
-        """
-    )
-    rows = (
-        await db.execute(
-            bucket_query,
-            {
-                "bucket_minutes": bucket_minutes,
-                "host_id": host_id,
-                "window_start": since,
-                "window_end": until,
-            },
+    async def apply_host_resource_sample(
+        self,
+        db: AsyncSession,
+        host: Host,
+        sample: dict[str, Any],
+    ) -> HostResourceSample:
+        recorded_at = parse_timestamp(sample.get("recorded_at")) or _now()
+        row = HostResourceSample(
+            host_id=host.id,
+            recorded_at=recorded_at,
+            cpu_percent=_coerce_float(sample.get("cpu_percent")),
+            memory_used_mb=_coerce_int(sample.get("memory_used_mb")),
+            memory_total_mb=_coerce_int(sample.get("memory_total_mb")),
+            disk_used_gb=_coerce_float(sample.get("disk_used_gb")),
+            disk_total_gb=_coerce_float(sample.get("disk_total_gb")),
+            disk_percent=_coerce_float(sample.get("disk_percent")),
         )
-    ).all()
-    latest_recorded_at = await db.scalar(
-        select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host_id)
-    )
+        db.add(row)
+        await db.flush()
+        return row
 
-    return HostResourceTelemetryResponse(
-        samples=[_sample_from_row(row) for row in rows],
-        latest_recorded_at=latest_recorded_at,
-        window_start=since,
-        window_end=until,
-        bucket_minutes=bucket_minutes,
-    )
+    async def poll_once(self, db: AsyncSession) -> None:
+        result = await db.execute(select(Host).where(Host.status == HostStatus.online).order_by(Host.hostname))
+        hosts = result.scalars().all()
+
+        for host in hosts:
+            try:
+                payload = await agent_host_telemetry(
+                    host.ip,
+                    host.agent_port,
+                    http_client_factory=httpx.AsyncClient,
+                    settings=self._settings,
+                    circuit_breaker=self._circuit_breaker,
+                )
+                if payload is None:
+                    continue
+                await self.apply_host_resource_sample(db, host, payload)
+                await db.commit()
+            except AgentCallError as exc:
+                await db.rollback()
+                logger.warning("Host resource telemetry poll failed for host %s: %s", host.hostname, exc)
+            except Exception:
+                await db.rollback()
+                logger.exception("Unexpected host resource telemetry failure for host %s", host.hostname)
+
+    async def fetch_host_resource_telemetry(
+        self,
+        db: AsyncSession,
+        host_id: UUID,
+        *,
+        since: datetime,
+        until: datetime,
+        bucket_minutes: int,
+    ) -> HostResourceTelemetryResponse | None:
+        host_exists = await db.scalar(select(Host.id).where(Host.id == host_id))
+        if host_exists is None:
+            return None
+
+        retention_hours = int(self._settings.get("retention.host_resource_telemetry_hours"))
+        if since >= until:
+            raise ValueError("since must be earlier than until")
+        if not 1 <= bucket_minutes <= 1440:
+            raise ValueError("bucket_minutes must be between 1 and 1440")
+        if _window_exceeds_retention(since=since, until=until, retention_hours=retention_hours):
+            raise ValueError("requested window exceeds retention.host_resource_telemetry_hours")
+
+        bucket_query = text(
+            """
+            SELECT
+                date_bin(
+                    make_interval(mins => CAST(:bucket_minutes AS integer)),
+                    recorded_at,
+                    :window_start
+                ) AS bucket_start,
+                AVG(cpu_percent) AS cpu_percent,
+                AVG(memory_used_mb) AS memory_used_mb,
+                AVG(memory_total_mb) AS memory_total_mb,
+                AVG(disk_used_gb) AS disk_used_gb,
+                AVG(disk_total_gb) AS disk_total_gb,
+                AVG(disk_percent) AS disk_percent
+            FROM host_resource_samples
+            WHERE host_id = :host_id
+              AND recorded_at >= :window_start
+              AND recorded_at <= :window_end
+            GROUP BY bucket_start
+            ORDER BY bucket_start ASC
+            """
+        )
+        rows = (
+            await db.execute(
+                bucket_query,
+                {
+                    "bucket_minutes": bucket_minutes,
+                    "host_id": host_id,
+                    "window_start": since,
+                    "window_end": until,
+                },
+            )
+        ).all()
+        latest_recorded_at = await db.scalar(
+            select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host_id)
+        )
+
+        return HostResourceTelemetryResponse(
+            samples=[_sample_from_row(row) for row in rows],
+            latest_recorded_at=latest_recorded_at,
+            window_start=since,
+            window_end=until,
+            bucket_minutes=bucket_minutes,
+        )
 
 
 class HostResourceTelemetryLoop:
@@ -191,9 +193,7 @@ class HostResourceTelemetryLoop:
             interval = float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await poll_host_resource_telemetry_once(
-                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
-                    )
+                    await self._services.resource_telemetry.poll_once(db)
             except Exception:
                 logger.exception("Host resource telemetry loop failed")
             await asyncio.sleep(interval)
