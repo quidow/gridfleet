@@ -120,7 +120,7 @@ def compose_app(
 
     device_state_svc = DeviceStateService(publisher=bus)
 
-    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc)
+    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
     run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
     run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
