@@ -1,27 +1,28 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
 
-from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import HardwareChargingState, HardwareHealthStatus, HardwareTelemetrySupportStatus
 from app.hosts import service_hardware_telemetry as hardware_telemetry
+from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device_record, create_host, drain_handlers
+from tests.helpers import create_device_record, drain_handlers, seed_host_named
 from tests.helpers import test_event_bus as event_bus
 
 
-async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession, client: AsyncClient) -> None:
-    host = await create_host(client)
+async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSession) -> None:
+    host = await seed_host_named(db_session, "pixel-host-healthy")
     device = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="pixel-healthy",
         connection_target="pixel-healthy",
         name="Pixel Healthy",
     )
 
-    await hardware_telemetry.apply_telemetry_sample(
+    svc = HardwareTelemetryService(publisher=Mock(), settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    await svc.apply_telemetry_sample(
         db_session,
         device,
         {
@@ -31,8 +32,6 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
     )
     await db_session.commit()
 
@@ -45,12 +44,11 @@ async def test_apply_telemetry_sample_marks_device_healthy(db_session: AsyncSess
 
 async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
     db_session: AsyncSession,
-    client: AsyncClient,
 ) -> None:
-    host = await create_host(client)
+    host = await seed_host_named(db_session, "pixel-host-warn")
     device = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="pixel-warn",
         connection_target="pixel-warn",
         name="Pixel Warn",
@@ -62,8 +60,10 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
             "general.hardware_temperature_critical_c": 42,
         }
     )
+    svc = HardwareTelemetryService(publisher=Mock(), settings=_hw_settings, circuit_breaker=Mock())
+    svc_bus = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings, circuit_breaker=Mock())
 
-    await hardware_telemetry.apply_telemetry_sample(
+    await svc.apply_telemetry_sample(
         db_session,
         device,
         {
@@ -73,8 +73,6 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
             "support_status": "supported",
             "reported_at": "2026-04-16T10:00:00Z",
         },
-        publisher=Mock(),
-        settings=_hw_settings,
     )
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
@@ -86,15 +84,11 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
         "support_status": "supported",
         "reported_at": "2026-04-16T10:05:00Z",
     }
-    await hardware_telemetry.apply_telemetry_sample(
-        db_session, device, warning_sample, publisher=event_bus, settings=_hw_settings
-    )
+    await svc_bus.apply_telemetry_sample(db_session, device, warning_sample)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.healthy
 
-    await hardware_telemetry.apply_telemetry_sample(
-        db_session, device, warning_sample, publisher=event_bus, settings=_hw_settings
-    )
+    await svc_bus.apply_telemetry_sample(db_session, device, warning_sample)
     await db_session.commit()
     assert device.hardware_health_status == HardwareHealthStatus.warning
 
@@ -107,26 +101,25 @@ async def test_apply_telemetry_sample_requires_consecutive_warning_samples(
 
 async def test_hardware_telemetry_state_distinguishes_unknown_fresh_stale_and_unsupported(
     db_session: AsyncSession,
-    client: AsyncClient,
 ) -> None:
-    host = await create_host(client)
+    host = await seed_host_named(db_session, "pixel-host-states")
     unknown = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="unknown-device",
         connection_target="unknown-device",
         name="Unknown Device",
     )
     supported = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="supported-device",
         connection_target="supported-device",
         name="Supported Device",
     )
     unsupported = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="unsupported-device",
         connection_target="unsupported-device",
         name="Unsupported Device",
@@ -153,12 +146,11 @@ async def test_hardware_telemetry_state_distinguishes_unknown_fresh_stale_and_un
 
 async def test_hardware_telemetry_state_returns_unsupported_for_emulator(
     db_session: AsyncSession,
-    client: AsyncClient,
 ) -> None:
-    host = await create_host(client)
+    host = await seed_host_named(db_session, "pixel-host-emulator")
     emulator = await create_device_record(
         db_session,
-        host_id=host["id"],
+        host_id=host.id,
         identity_value="emulator-5554",
         connection_target="emulator-5554",
         name="Emulator",

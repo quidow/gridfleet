@@ -235,99 +235,105 @@ def _event_payload(
     }
 
 
-async def apply_telemetry_sample(
-    db: AsyncSession,
-    device: Device,
-    sample: dict[str, Any],
-    *,
-    publisher: EventPublisher,
-    settings: SettingsReader,
-) -> HardwareHealthStatus:
-    device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))
-    device.battery_temperature_c = _coerce_float(sample.get("battery_temperature_c"))
-    device.charging_state = _coerce_charging_state(sample.get("charging_state"))
-    device.hardware_telemetry_support_status = _coerce_support_status(sample.get("support_status"))
+class HardwareTelemetryService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
 
-    reported_at = parse_timestamp(sample.get("reported_at"))
-    device.hardware_telemetry_reported_at = reported_at or _now()
+    async def apply_telemetry_sample(
+        self,
+        db: AsyncSession,
+        device: Device,
+        sample: dict[str, Any],
+    ) -> HardwareHealthStatus:
+        device.battery_level_percent = _coerce_int(sample.get("battery_level_percent"))
+        device.battery_temperature_c = _coerce_float(sample.get("battery_temperature_c"))
+        device.charging_state = _coerce_charging_state(sample.get("charging_state"))
+        device.hardware_telemetry_support_status = _coerce_support_status(sample.get("support_status"))
 
-    previous_status = current_hardware_health_status(device)
-    candidate_status = derive_candidate_hardware_health_status(device, settings=settings)
-    next_status = await _resolve_effective_hardware_health_status(db, device, candidate_status, settings=settings)
-    device.hardware_health_status = next_status
-    await db.flush()
+        reported_at = parse_timestamp(sample.get("reported_at"))
+        device.hardware_telemetry_reported_at = reported_at or _now()
 
-    if next_status != previous_status and next_status in WARNING_OR_WORSE:
-        payload = _event_payload(device, old_status=previous_status, new_status=next_status)
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.hardware_health_changed,
-            payload,
+        previous_status = current_hardware_health_status(device)
+        candidate_status = derive_candidate_hardware_health_status(device, settings=self._settings)
+        next_status = await _resolve_effective_hardware_health_status(
+            db, device, candidate_status, settings=self._settings
         )
-        if publisher is not None:
-            queue_event_for_session(
+        device.hardware_health_status = next_status
+        await db.flush()
+
+        if next_status != previous_status and next_status in WARNING_OR_WORSE:
+            payload = _event_payload(device, old_status=previous_status, new_status=next_status)
+            await record_event(
                 db,
-                "device.hardware_health_changed",
+                device.id,
+                DeviceEventType.hardware_health_changed,
                 payload,
-                severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
-                publisher=publisher,
             )
+            if self._publisher is not None:
+                queue_event_for_session(
+                    db,
+                    "device.hardware_health_changed",
+                    payload,
+                    severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+                    publisher=self._publisher,
+                )
 
-    return next_status
+        return next_status
 
+    async def _get_device_telemetry(self, device: Device) -> dict[str, Any] | None:
+        host = device.host
+        if host is None or device.connection_target is None:
+            return None
 
-async def _get_device_telemetry(
-    device: Device, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
-) -> dict[str, Any] | None:
-    host = device.host
-    if host is None or device.connection_target is None:
-        return None
-
-    try:
-        return await fetch_pack_device_telemetry(
-            host.ip,
-            host.agent_port,
-            device.connection_target,
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=device.device_type.value,
-            connection_type=device.connection_type.value if device.connection_type is not None else None,
-            ip_address=device.ip_address,
-            http_client_factory=httpx.AsyncClient,
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
-    except AgentCallError:
-        return None
-
-
-async def poll_hardware_telemetry_once(
-    db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
-) -> None:
-    stmt = (
-        select(Device)
-        .join(Host)
-        .where(
-            Host.status == HostStatus.online,
-            Device.device_type == DeviceType.real_device,
-            Device.operational_state != DeviceOperationalState.offline,
-        )
-        .options(selectinload(Device.host))
-    )
-    result = await db.execute(stmt)
-    devices = result.scalars().all()
-
-    for device in devices:
         try:
-            telemetry = await _get_device_telemetry(device, settings=settings, circuit_breaker=circuit_breaker)
-            if telemetry is None:
-                continue
-            await apply_telemetry_sample(db, device, telemetry, publisher=publisher, settings=settings)
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            logger.exception("Failed to poll hardware telemetry for device %s", device.identity_value)
+            return await fetch_pack_device_telemetry(
+                host.ip,
+                host.agent_port,
+                device.connection_target,
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=device.device_type.value,
+                connection_type=device.connection_type.value if device.connection_type is not None else None,
+                ip_address=device.ip_address,
+                http_client_factory=httpx.AsyncClient,
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+            )
+        except AgentCallError:
+            return None
+
+    async def poll_once(self, db: AsyncSession) -> None:
+        stmt = (
+            select(Device)
+            .join(Host)
+            .where(
+                Host.status == HostStatus.online,
+                Device.device_type == DeviceType.real_device,
+                Device.operational_state != DeviceOperationalState.offline,
+            )
+            .options(selectinload(Device.host))
+        )
+        result = await db.execute(stmt)
+        devices = result.scalars().all()
+
+        for device in devices:
+            try:
+                telemetry = await self._get_device_telemetry(device)
+                if telemetry is None:
+                    continue
+                await self.apply_telemetry_sample(db, device, telemetry)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                logger.exception("Failed to poll hardware telemetry for device %s", device.identity_value)
 
 
 class HardwareTelemetryLoop:
@@ -339,12 +345,7 @@ class HardwareTelemetryLoop:
             interval = float(self._services.settings.get("general.hardware_telemetry_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await poll_hardware_telemetry_once(
-                        db,
-                        publisher=self._services.publisher,
-                        settings=self._services.settings,
-                        circuit_breaker=self._services.circuit_breaker,
-                    )
+                    await self._services.hardware_telemetry.poll_once(db)
             except Exception:
                 logger.exception("Hardware telemetry loop failed")
             await asyncio.sleep(interval)
