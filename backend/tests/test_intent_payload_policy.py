@@ -129,7 +129,8 @@ async def test_cooldown_intent_payload_shape(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.runs.service_lifecycle_failures import cooldown_device
+    from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+    from app.runs.service_lifecycle_failures import RunFailureService
 
     device = await create_device(
         db_session,
@@ -164,16 +165,16 @@ async def test_cooldown_intent_payload_shape(
     # via the ORM relationship cascade — no separate INSERT needed.
     await db_session.commit()
 
+    _test_settings = FakeSettingsReader({})
+    _test_cb = AgentCircuitBreaker(publisher=event_bus, settings=_test_settings)
+    _failure_svc = RunFailureService(publisher=event_bus, settings=_test_settings, circuit_breaker=_test_cb)
     cooldown_reason = "flaky connection detected"
-    _excluded_until, count, escalated, _ = await cooldown_device(
+    _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,
         reason=cooldown_reason,
         ttl_seconds=120,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert not escalated  # non-escalation path registers the intents we want
 

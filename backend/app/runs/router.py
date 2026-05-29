@@ -6,14 +6,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.dependencies import AgentCommServicesDep
 from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedError
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.pagination import CursorPaginationError
 from app.devices.models import Device
-from app.events.dependencies import EventServicesDep
 from app.runs import service as run_service
 from app.runs.dependencies import RunServicesDep
 from app.runs.models import RunState
@@ -57,7 +55,7 @@ async def create_run(
     data: RunCreate,
     db: DbDep,
     settings_services: SettingsServicesDep,
-    events: EventServicesDep,
+    run_services: RunServicesDep,
     include: str | None = Query(
         None, description="Comma-separated: config,test_data (capabilities not supported on reserve)"
     ),
@@ -76,9 +74,7 @@ async def create_run(
         )
 
     try:
-        run, device_infos = await run_service.create_run(
-            db, data, publisher=events.publisher, settings=settings_services.service
-        )
+        run, device_infos = await run_services.allocator.create_run(db, data)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as e:
@@ -107,7 +103,7 @@ async def create_run(
                 )
                 continue
             pairs.append((info, device))
-        await run_service.hydrate_reserved_device_infos(db, pairs, includes=includes)
+        await run_services.query.hydrate_reserved_device_infos(db, pairs, includes=includes)
 
     return {
         "id": run.id,
@@ -125,6 +121,7 @@ async def create_run(
 async def list_runs(
     request: Request,
     db: DbDep,
+    run_services: RunServicesDep,
     state: RunState | None = Query(None),
     created_from: str | None = Query(None),
     created_to: str | None = Query(None),
@@ -143,7 +140,7 @@ async def list_runs(
     cursor_mode = "cursor" in request.query_params or "direction" in request.query_params
     if cursor_mode:
         try:
-            page = await run_service.list_runs_cursor(
+            page = await run_services.query.list_runs_cursor(
                 db,
                 state=state,
                 created_from=parsed_created_from,
@@ -154,7 +151,7 @@ async def list_runs(
             )
         except CursorPaginationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        counts_map = await run_service.fetch_session_counts(db, [r.id for r in page.items])
+        counts_map = await run_services.query.fetch_session_counts(db, [r.id for r in page.items])
         items = [run_service.build_run_read(r, counts_map.get(r.id)) for r in page.items]
         return {
             "items": items,
@@ -162,7 +159,7 @@ async def list_runs(
             "next_cursor": page.next_cursor,
             "prev_cursor": page.prev_cursor,
         }
-    runs, total = await run_service.list_runs(
+    runs, total = await run_services.query.list_runs(
         db,
         state=state,
         created_from=parsed_created_from,
@@ -172,39 +169,39 @@ async def list_runs(
         sort_by=sort_by,
         sort_dir=sort_dir,
     )
-    counts_map = await run_service.fetch_session_counts(db, [r.id for r in runs])
+    counts_map = await run_services.query.fetch_session_counts(db, [r.id for r in runs])
     items = [run_service.build_run_read(r, counts_map.get(r.id)) for r in runs]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{run_id}", response_model=RunDetail)
-async def get_run(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def get_run(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> dict[str, Any]:
     run = await run_service.get_run(db, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     devices = [ReservedDeviceInfo(**d) for d in (run.reserved_devices or [])]
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     base = run_service.build_run_read(run, counts_map.get(run.id))
     return {**base.model_dump(), "devices": devices}
 
 
 @router.post("/{run_id}/ready", response_model=RunRead)
-async def signal_ready(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> RunRead:
+async def signal_ready(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> RunRead:
     try:
-        run = await run_service.signal_ready(db, run_id, publisher=events.publisher)
+        run = await run_services.lifecycle.signal_ready(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
 
 
 @router.post("/{run_id}/active", response_model=RunRead)
-async def signal_active(run_id: uuid.UUID, db: DbDep, events: EventServicesDep) -> RunRead:
+async def signal_active(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> RunRead:
     try:
-        run = await run_service.signal_active(db, run_id, publisher=events.publisher)
+        run = await run_services.lifecycle.signal_active(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
 
 
@@ -214,20 +211,19 @@ async def report_preparation_failed(
     device_id: uuid.UUID,
     payload: RunPreparationFailureReport,
     db: DbDep,
-    events: EventServicesDep,
+    run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.report_preparation_failure(
+        run = await run_services.failure.report_preparation_failure(
             db,
             run_id,
             device_id,
             message=payload.message,
             source=payload.source,
-            publisher=events.publisher,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
 
 
@@ -237,20 +233,15 @@ async def cooldown_device_endpoint(
     device_id: uuid.UUID,
     payload: RunCooldownRequest,
     db: DbDep,
-    settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
-    events: EventServicesDep,
+    run_services: RunServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
-        excluded_until, cooldown_count, escalated, threshold = await run_service.cooldown_device(
+        excluded_until, cooldown_count, escalated, threshold = await run_services.failure.cooldown_device(
             db,
             run_id,
             device_id,
             reason=payload.reason,
             ttl_seconds=payload.ttl_seconds,
-            settings=settings_services.service,
-            circuit_breaker=agent_comm.circuit_breaker,
-            publisher=events.publisher,
         )
     except ValueError as e:
         msg = str(e)
@@ -289,9 +280,9 @@ async def cooldown_device_endpoint(
 
 
 @router.post("/{run_id}/heartbeat", response_model=HeartbeatResponse)
-async def heartbeat(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
+async def heartbeat(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> dict[str, Any]:
     try:
-        run = await run_service.heartbeat(db, run_id)
+        run = await run_services.lifecycle.heartbeat(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return {"state": run.state, "last_heartbeat": run.last_heartbeat}
@@ -301,17 +292,13 @@ async def heartbeat(run_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
 async def complete_run(
     run_id: uuid.UUID,
     db: DbDep,
-    events: EventServicesDep,
-    settings_services: SettingsServicesDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.complete_run(
-            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
-        )
+        run = await run_services.lifecycle.complete_run(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
 
 
@@ -319,17 +306,13 @@ async def complete_run(
 async def cancel_run(
     run_id: uuid.UUID,
     db: DbDep,
-    events: EventServicesDep,
-    settings_services: SettingsServicesDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.cancel_run(
-            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
-        )
+        run = await run_services.lifecycle.cancel_run(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))
 
 
@@ -337,15 +320,11 @@ async def cancel_run(
 async def force_release(
     run_id: uuid.UUID,
     db: DbDep,
-    events: EventServicesDep,
-    settings_services: SettingsServicesDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_service.force_release(
-            db, run_id, publisher=events.publisher, settings=settings_services.service, grid=run_services.grid
-        )
+        run = await run_services.lifecycle.force_release(db, run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    counts_map = await run_service.fetch_session_counts(db, [run.id])
+    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     return run_service.build_run_read(run, counts_map.get(run.id))

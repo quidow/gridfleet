@@ -43,6 +43,11 @@ from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
+from app.runs.service_allocator import RunAllocatorService
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_failures import RunFailureService
+from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_query import RunQueryService
 from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
@@ -109,6 +114,12 @@ def compose_app(
     pack_release = PackReleaseService(storage=pack_storage)
     pack_status = PackStatusService(feature=pack_feature)
 
+    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc)
+    run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
+    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc)
+    run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
+    run_query = RunQueryService()
+
     return AppServices(
         events=event_services,
         settings=settings_services,
@@ -141,7 +152,15 @@ def compose_app(
             session_factory=session_factory,
             publisher=bus,
         ),
-        runs=RunServices(publisher=bus, settings=settings_svc, grid=grid_svc, session_factory=session_factory),
+        runs=RunServices(
+            allocator=run_allocator,
+            lifecycle=run_lifecycle,
+            release=run_release,
+            failure=run_failure,
+            query=run_query,
+            settings=settings_svc,
+            session_factory=session_factory,
+        ),
         grid=GridServices(
             grid=grid_svc,
             settings=settings_svc,

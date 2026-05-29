@@ -12,6 +12,7 @@ snapshot and the lock is silently overridden, killing an active run.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -19,12 +20,20 @@ import pytest
 
 from app.runs import service_reaper as _service_reaper
 from app.runs.models import RunState, TestRun
-from app.runs.service_reaper import _reap_stale_runs
+from app.runs.service_reaper import RunReaperLoop
 from tests.fakes import FakeSettingsReader
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+
+def _make_reaper() -> RunReaperLoop:
+    mock_services = SimpleNamespace(
+        lifecycle=AsyncMock(),
+        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 60}),
+        session_factory=None,
+    )
+    return RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
 
 
 @pytest.mark.db
@@ -61,11 +70,12 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
             await side.commit()
         return await original_lock(db, rid)  # type: ignore[arg-type]
 
+    reaper = _make_reaper()
     with (
         patch("app.runs.service_reaper.assert_current_leader"),
         patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock())
+        await reaper._reap_stale_runs(db_session)
 
     # Re-read the run on a fresh session so we observe the persisted state,
     # not the in-memory ORM cache.

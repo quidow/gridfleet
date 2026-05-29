@@ -15,10 +15,15 @@ from app.devices.models import Device
 from app.runs import service as run_service
 from app.runs.models import TestRun
 from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
-from app.runs.service import _build_device_info
+from app.runs.service_allocator import RunAllocatorService, _build_device_info
+from app.runs.service_query import RunQueryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_query_svc = RunQueryService()
+_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
 
 
 @contextlib.contextmanager
@@ -239,7 +244,7 @@ async def test_hydrate_reserved_device_info_attaches_config(db_session: AsyncSes
         platform_id=device.platform_id,
         os_version=device.os_version,
     )
-    await run_service.hydrate_reserved_device_info(db_session, info, device, includes={"config"})
+    await _query_svc.hydrate_reserved_device_info(db_session, info, device, includes={"config"})
 
     assert info.config is not None
     assert info.config["app_username"] == "alice"
@@ -265,7 +270,7 @@ async def test_hydrate_reserved_device_info_capabilities_uses_capability_service
         platform_id=device.platform_id,
         os_version=device.os_version,
     )
-    await run_service.hydrate_reserved_device_info(db_session, info, device, includes={"capabilities"})
+    await _query_svc.hydrate_reserved_device_info(db_session, info, device, includes={"capabilities"})
 
     assert info.live_capabilities is not None
     assert info.unavailable_includes is None
@@ -304,7 +309,7 @@ async def test_hydrate_reserved_device_infos_batches_lookup(db_session: AsyncSes
     ]
 
     with _capture_statements(db_session) as statements:
-        await run_service.hydrate_reserved_device_infos(db_session, pairs, includes={"config"})
+        await _query_svc.hydrate_reserved_device_infos(db_session, pairs, includes={"config"})
 
     distinct_pairs = {(d.pack_id, d.platform_id) for d in reloaded}
     driver_pack_statements = [s for s in statements if "driver_packs" in s]
@@ -330,17 +335,17 @@ async def test_reserve_include_config_marks_missing_device_unavailable_after_com
     device.device_config = {"credentials_secret": "shh"}
     await db_session.commit()
 
-    original_create_run = run_service.create_run
+    original_create_run = RunAllocatorService.create_run
 
     async def create_run_then_delete_device(
-        db: AsyncSession, data: RunCreate, **kwargs: object
+        self: RunAllocatorService, db: AsyncSession, data: RunCreate
     ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
-        run, infos = await original_create_run(db, data, publisher=event_bus, settings=FakeSettingsReader({}))
+        run, infos = await original_create_run(self, db, data)
         await db.execute(sa_delete(Device).where(Device.id == uuid.UUID(infos[0].device_id)))
         await db.commit()
         return run, infos
 
-    monkeypatch.setattr(run_service, "create_run", create_run_then_delete_device)
+    monkeypatch.setattr(RunAllocatorService, "create_run", create_run_then_delete_device)
 
     response = await client.post(
         "/api/runs?include=config",

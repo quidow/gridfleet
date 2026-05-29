@@ -40,9 +40,9 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
         )
     await db_session.commit()
 
-    from app.runs import service as run_service
+    from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices
 
-    candidates = await run_service._find_matching_devices(
+    candidates = await _run_find_matching_devices(
         db_session,
         DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
     )
@@ -69,9 +69,9 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
         )
     await db_session.commit()
 
-    from app.runs import service as run_service
+    from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices
 
-    candidates = await run_service._find_matching_devices(
+    candidates = await _run_find_matching_devices(
         db_session,
         DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
     )
@@ -98,9 +98,9 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
         )
     await db_session.commit()
 
-    from app.runs import service as run_service
+    from app.runs.service_allocator import _find_matching_devices as _run_find_matching_devices
 
-    candidates = await run_service._find_matching_devices(
+    candidates = await _run_find_matching_devices(
         db_session,
         DeviceRequirement(pack_id=device.pack_id, platform_id=device.platform_id),
     )

@@ -1,16 +1,23 @@
 import asyncio
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import DeviceHold, DeviceReservation
+from app.grid.service import GridService
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_grid = GridService(settings=_settings)
+_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
 
 @pytest.mark.asyncio
@@ -32,7 +39,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
     async def activate() -> str:
         async with db_session_maker() as active_db:
             try:
-                await run_service.signal_active(active_db, run_id, publisher=event_bus)
+                await _lifecycle_svc.signal_active(active_db, run_id)
             except ValueError as exc:
                 return str(exc)
             return "activated"
@@ -46,9 +53,7 @@ async def test_signal_active_serializes_with_concurrent_cancel(
         await asyncio.sleep(0.15)
         assert not active_task.done()
 
-        await run_service.cancel_run(
-            cancel_db, run_id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
-        )
+        await _lifecycle_svc.cancel_run(cancel_db, run_id)
         active_result = await asyncio.wait_for(active_task, timeout=5.0)
 
     assert "Cannot signal active from state 'cancelled'" in active_result

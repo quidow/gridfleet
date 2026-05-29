@@ -7,13 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
+from app.grid.service import GridService
 from app.hosts.models import Host
-from app.runs import service as run_service
 from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_release import RunReleaseService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_grid = GridService(settings=_settings)
+_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
 
 async def test_force_release_clears_stop_pending(
@@ -72,14 +79,10 @@ async def test_force_release_clears_stop_pending(
     )
     assert result == "deferred"
 
-    from unittest.mock import AsyncMock
-
-    fake_grid = AsyncMock()
-    fake_grid.terminate_session = AsyncMock(return_value=True)
-
-    await run_service.force_release(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid
-    )
+    fake_grid = make_fake_grid()
+    test_release = RunReleaseService(publisher=event_bus, settings=_settings, grid=fake_grid)
+    test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
+    await test_lifecycle.force_release(db_session, run.id)
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
@@ -149,40 +152,30 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
 
     call_log: list[str] = []
 
-    real_release = run_service._release_devices
     real_helper = run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended
 
-    async def _spy_release(*args: object, **kwargs: object) -> list:
-        # Marker is recorded AFTER awaiting the real implementation so the
-        # ordering assertion proves the helper ran strictly after
-        # ``_release_devices`` returned (i.e. after the run-state commit
-        # window closed). Logging before the await would also pass for a
-        # regression where the helper runs inside ``_release_devices``.
-        result = await real_release(*args, **kwargs)
-        call_log.append("release_done")
-        return result
+    class SpyReleaseService(RunReleaseService):
+        async def release_devices(self, *args: object, **kwargs: object) -> list:
+            result = await super().release_devices(*args, **kwargs)  # type: ignore[misc]
+            call_log.append("release_done")
+            return result  # type: ignore[return-value]
 
     async def _spy_helper(*args: object, **kwargs: object) -> object:
         call_log.append("helper")
         return await real_helper(*args, **kwargs)
 
-    from unittest.mock import AsyncMock
-
-    fake_grid = AsyncMock()
-    fake_grid.terminate_session = AsyncMock(return_value=True)
-
-    monkeypatch.setattr("app.runs.service_lifecycle._release_devices", _spy_release)
+    fake_grid_2 = make_fake_grid()
+    spy_release = SpyReleaseService(publisher=event_bus, settings=_settings, grid=fake_grid_2)
+    spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)
     monkeypatch.setattr(
         run_lifecycle_release.lifecycle_policy,
         "complete_deferred_stop_if_session_ended",
         _spy_helper,
     )
 
-    await run_service.force_release(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid
-    )
+    await spy_lifecycle.force_release(db_session, run.id)
 
-    # _release_devices must complete strictly before the lifecycle helper is
+    # release_devices must complete strictly before the lifecycle helper is
     # invoked on any device — otherwise the helper's internal commits could
     # leak under the run-state transaction.
     assert "release_done" in call_log

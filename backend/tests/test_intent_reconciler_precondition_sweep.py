@@ -264,6 +264,8 @@ async def test_forced_release_registers_run_active_precondition(
 ) -> None:
     from app.runs import service_lifecycle_release
     from app.runs.models import TestRun
+    from app.runs.service_lifecycle_release import RunReleaseService
+    from tests.fakes import FakeSettingsReader
 
     captured: list[IntentRegistration] = []
 
@@ -293,7 +295,10 @@ async def test_forced_release_registers_run_active_precondition(
     refreshed_run = await db_session.get(TestRun, run.id)
     assert refreshed_run is not None
 
-    await service_lifecycle_release._clear_desired_grid_run_id_for_run(
+    from unittest.mock import AsyncMock as _AsyncMock
+
+    _release_svc = RunReleaseService(publisher=_AsyncMock(), settings=FakeSettingsReader({}), grid=_AsyncMock())
+    await _release_svc.clear_desired_grid_run_id_for_run(
         db_session,
         run=refreshed_run,
         caller="run_force_release",
