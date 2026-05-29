@@ -45,13 +45,10 @@ from app.hosts.schemas import (
 from app.hosts.service_agent_logs import query_logs
 from app.hosts.service_host_events import query_host_events
 from app.packs import schemas as pack_schemas
+from app.packs.dependencies import PackServicesDep
 from app.packs.services import discovery as pack_discovery_service
-from app.packs.services import status as pack_status
-from app.packs.services.status import persist_doctor_results
 from app.plugins.service import PluginService
 from app.settings.dependencies import SettingsServicesDep
-
-get_host_driver_pack_status = pack_status.get_host_driver_pack_status
 
 HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -332,11 +329,15 @@ async def get_host_events(
 
 
 @router.get("/{host_id}/driver-packs", response_model=pack_schemas.HostDriverPacksOut)
-async def host_driver_packs(host_id: uuid.UUID, db: DbDep) -> pack_schemas.HostDriverPacksOut:
+async def host_driver_packs(
+    host_id: uuid.UUID, db: DbDep, pack_services: PackServicesDep
+) -> pack_schemas.HostDriverPacksOut:
     host = await db.get(Host, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="host not found")
-    return pack_schemas.HostDriverPacksOut.model_validate(await get_host_driver_pack_status(db, host_id))
+    return pack_schemas.HostDriverPacksOut.model_validate(
+        await pack_services.status.get_host_driver_pack_status(db, host_id)
+    )
 
 
 @router.post(
@@ -349,6 +350,7 @@ async def trigger_driver_doctor(
     db: DbDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
     host = await db.get(Host, host_id)
     if host is None:
@@ -364,7 +366,7 @@ async def trigger_driver_doctor(
         circuit_breaker=agent_comm.circuit_breaker,
     )
 
-    await persist_doctor_results(db, host_id, pack_id, checks)
+    await pack_services.status.persist_doctor_results(db, host_id, pack_id, checks)
     await db.commit()
 
     return [

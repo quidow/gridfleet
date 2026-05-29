@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import PackState
 from app.packs.schemas import (
     DriverPackHostsOut,
@@ -12,31 +13,29 @@ from app.packs.schemas import (
     PackPatch,
     RuntimePolicyPatch,
 )
-from app.packs.services.lifecycle import transition_pack_state
-from app.packs.services.service import build_pack_out, delete_pack, get_pack_detail, list_catalog, set_runtime_policy
-from app.packs.services.status import get_driver_pack_host_status
+from app.packs.services.service import build_pack_out
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
 
 @router.get("/catalog", response_model=PackCatalog)
-async def catalog(session: DbDep) -> PackCatalog:
-    return await list_catalog(session)
+async def catalog(session: DbDep, packs: PackServicesDep) -> PackCatalog:
+    return await packs.catalog.list_catalog(session)
 
 
 @router.get("/{pack_id}", response_model=PackOut)
-async def get_pack(pack_id: str, session: DbDep) -> PackOut:
-    result = await get_pack_detail(session, pack_id)
+async def get_pack(pack_id: str, session: DbDep, packs: PackServicesDep) -> PackOut:
+    result = await packs.catalog.get_pack_detail(session, pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
     return result
 
 
 @router.get("/{pack_id}/hosts", response_model=DriverPackHostsOut)
-async def hosts(pack_id: str, session: DbDep) -> DriverPackHostsOut:
-    if await get_pack_detail(session, pack_id) is None:
+async def hosts(pack_id: str, session: DbDep, packs: PackServicesDep) -> DriverPackHostsOut:
+    if await packs.catalog.get_pack_detail(session, pack_id) is None:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
-    return DriverPackHostsOut.model_validate(await get_driver_pack_host_status(session, pack_id))
+    return DriverPackHostsOut.model_validate(await packs.status.get_driver_pack_host_status(session, pack_id))
 
 
 @router.patch("/{pack_id}", response_model=PackOut)
@@ -45,6 +44,7 @@ async def update_pack(
     body: PackPatch,
     _username: AdminDep,
     session: DbDep,
+    packs: PackServicesDep,
     override: bool = False,
 ) -> PackOut:
     try:
@@ -52,7 +52,7 @@ async def update_pack(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid state: {body.state!r}") from exc
     try:
-        pack = await transition_pack_state(session, pack_id, target, override=override)
+        pack = await packs.lifecycle.transition_pack_state(session, pack_id, target, override=override)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     except ValueError as exc:
@@ -66,9 +66,10 @@ async def update_runtime_policy(
     body: RuntimePolicyPatch,
     _username: AdminDep,
     session: DbDep,
+    packs: PackServicesDep,
 ) -> PackOut:
     try:
-        pack = await set_runtime_policy(session, pack_id, body.runtime_policy)
+        pack = await packs.catalog.set_runtime_policy(session, pack_id, body.runtime_policy)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     return build_pack_out(pack)
@@ -79,9 +80,10 @@ async def delete_driver_pack(
     pack_id: str,
     _username: AdminDep,
     session: DbDep,
+    packs: PackServicesDep,
 ) -> Response:
     try:
-        await delete_pack(session, pack_id)
+        await packs.catalog.delete_pack(session, pack_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:

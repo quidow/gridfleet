@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import uuid
 
+    import httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.packs.adapter import FeatureActionResult
@@ -49,6 +50,7 @@ class FeatureProtocol(FeatureStatusRecorder, Protocol):
         feature_id: str,
         action_id: str,
         args: dict[str, Any],
+        agent_auth: httpx.BasicAuth | None = None,
     ) -> FeatureActionResult: ...
 
 
