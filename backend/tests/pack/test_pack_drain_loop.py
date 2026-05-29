@@ -52,7 +52,7 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
 
     with (
         patch("app.packs.services.drain.observe_background_loop", new=Mock(return_value=Observation())),
-        patch("app.packs.services.drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
+        patch.object(pack_drain.PackDrainLoop, "_complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
         patch("app.packs.services.drain.logger.info") as info,
         patch("app.packs.services.drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         pytest.raises(asyncio.CancelledError),

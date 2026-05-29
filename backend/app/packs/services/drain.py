@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.observability import get_logger, observe_background_loop
 from app.packs.models import DriverPack, PackState
-from app.packs.services.lifecycle import try_complete_drain
+from app.packs.services.lifecycle import PackLifecycleService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,21 +29,42 @@ class PackDrainLoop:
                 observe_background_loop(LOOP_NAME, POLL_INTERVAL_SEC).cycle(),
                 self._services.session_factory() as db,
             ):
-                completed = await complete_draining_packs_once(db)
+                completed = await self._complete_draining_packs_once(db)
                 if completed:
                     logger.info("Completed draining driver packs: %s", ", ".join(completed))
             await asyncio.sleep(POLL_INTERVAL_SEC)
 
+    async def _complete_draining_packs_once(self, db: AsyncSession) -> list[str]:
+        pack_ids = (
+            (
+                await db.execute(
+                    select(DriverPack.id).where(DriverPack.state == PackState.draining).order_by(DriverPack.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        lifecycle = PackLifecycleService()
+        completed: list[str] = []
+        for pack_id in pack_ids:
+            pack = await lifecycle.try_complete_drain(db, pack_id)
+            if pack.state == PackState.disabled:
+                completed.append(pack_id)
+        await db.commit()
+        return completed
+
 
 async def complete_draining_packs_once(db: AsyncSession) -> list[str]:
+    """Backward-compatible free function; used by tests (will be removed in Task 9)."""
     pack_ids = (
         (await db.execute(select(DriverPack.id).where(DriverPack.state == PackState.draining).order_by(DriverPack.id)))
         .scalars()
         .all()
     )
+    lifecycle = PackLifecycleService()
     completed: list[str] = []
     for pack_id in pack_ids:
-        pack = await try_complete_drain(db, pack_id)
+        pack = await lifecycle.try_complete_drain(db, pack_id)
         if pack.state == PackState.disabled:
             completed.append(pack_id)
     await db.commit()
