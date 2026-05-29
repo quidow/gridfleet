@@ -63,6 +63,12 @@ class PackLifecycleService:
         return {"active_runs": active_runs, "live_sessions": live_sessions}
 
     async def try_complete_drain(self, db: AsyncSession, pack_id: str) -> DriverPack:
+        # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
+        # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
+        # blocks here until any in-flight ``create_run`` transaction that
+        # observed ``state=enabled`` either commits its reservation or aborts.
+        # Once we acquire the lock, the recount below sees any reservation
+        # those transactions just committed.
         locked_stmt = (
             select(DriverPack)
             .where(DriverPack.id == pack_id)
@@ -139,6 +145,15 @@ class PackLifecycleService:
         return result
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Backward-compat free functions for routers/callers until Task 8/9 migration.
+# These are FULL COPIES of the class methods above, not delegation wrappers.
+# PackLifecycleService has no constructor deps, so delegation would work, but
+# callers in catalog router and tests import these names directly.
+# Remove when catalog router migrates to PackServicesDep in Task 8.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dict[str, int]:
     runs_with_reservations = (
         select(TestRun.id)
@@ -179,12 +194,6 @@ async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dic
 
 
 async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
-    # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
-    # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
-    # blocks here until any in-flight ``create_run`` transaction that
-    # observed ``state=enabled`` either commits its reservation or aborts.
-    # Once we acquire the lock, the recount below sees any reservation
-    # those transactions just committed.
     locked_stmt = (
         select(DriverPack).where(DriverPack.id == pack_id).with_for_update().execution_options(populate_existing=True)
     )
