@@ -34,7 +34,13 @@ from app.appium_nodes.services.reconciler_agent import (
     mark_node_stopped,
     stop_remote_node,
 )
-from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry, converge_host_rows
+from app.appium_nodes.services.reconciler_convergence import (
+    DesiredRow,
+    ObservedEntry,
+    _execute_action,
+    converge_host_rows,
+    decide_convergence_action,
+)
 from app.core.config import reconciler_convergence_enabled
 from app.core.database import async_session
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
@@ -1161,31 +1167,48 @@ class ReconcilerService:
         agent_port: int,
         require_leader: bool = True,
     ) -> None:
-        """Drive convergence for one host (body from :func:`converge_host_rows`)."""
+        """Drive convergence for one host."""
         session_scope = _session_scope(db)
-        await converge_host_rows(
-            host_id=host_id,
-            rows=desired_rows,
-            agent_running=observed,
-            now=datetime.now(UTC),
-            start_agent=self._make_start_agent(
-                require_leader=require_leader,
-                session_scope=session_scope,
-            ),
-            stop_agent=self._make_stop_agent(host_ip, agent_port),
-            write_observed=self._write_observed_factory(
-                require_leader=require_leader,
-                session_scope=session_scope,
-            ),
-            clear_token=self._clear_token_factory(
-                require_leader=require_leader,
-                session_scope=session_scope,
-            ),
-            reset_start_failure=self._make_reset_start_failure(
-                require_leader=require_leader,
-                session_scope=session_scope,
-            ),
+        start_agent = self._make_start_agent(
+            require_leader=require_leader,
+            session_scope=session_scope,
         )
+        stop_agent = self._make_stop_agent(host_ip, agent_port)
+        write_observed = self._write_observed_factory(
+            require_leader=require_leader,
+            session_scope=session_scope,
+        )
+        clear_token = self._clear_token_factory(
+            require_leader=require_leader,
+            session_scope=session_scope,
+        )
+        reset_start_failure = self._make_reset_start_failure(
+            require_leader=require_leader,
+            session_scope=session_scope,
+        )
+        observed_by_target = {entry.connection_target: entry for entry in observed}
+        for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
+            obs = observed_by_target.get(row.connection_target)
+            action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+            try:
+                await _execute_action(
+                    host_id=host_id,
+                    row=row,
+                    action=action,
+                    start_agent=start_agent,
+                    stop_agent=stop_agent,
+                    write_observed=write_observed,
+                    clear_token=clear_token,
+                    reset_start_failure=reset_start_failure,
+                )
+            except Exception:  # noqa: BLE001 — convergence loop; log and continue per-row
+                logger.warning(
+                    "appium_reconciler_convergence_action_failed",
+                    exc_info=True,
+                    host_id=str(host_id),
+                    device_id=str(row.device_id),
+                    action=action.kind,
+                )
 
     def _make_start_agent(
         self,
