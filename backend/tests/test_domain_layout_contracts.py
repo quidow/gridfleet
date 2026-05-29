@@ -58,7 +58,6 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
         "services.drain",
         "services.export",
         "services.feature_dispatch",
-        "services.feature_status",
         "services.host_compatibility",
         "services.ingest",
         "services.lifecycle",
