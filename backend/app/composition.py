@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.events.event_bus import EventBus
     from app.settings.service import SettingsService
 
+from app.agent_comm.operations import get_pack_device_properties, get_pack_devices
 from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
@@ -40,6 +41,7 @@ from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
 from app.packs import packs_settings
+from app.packs.services.discovery import PackDiscoveryService
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.release import PackReleaseService
@@ -119,6 +121,12 @@ def compose_app(
     pack_catalog = PackCatalogService(lifecycle=pack_lifecycle)
     pack_release = PackReleaseService(storage=pack_storage)
     pack_status = PackStatusService(feature=pack_feature)
+    pack_discovery_svc = PackDiscoveryService(
+        agent_get_pack_devices=get_pack_devices,
+        agent_get_pack_device_properties=get_pack_device_properties,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+    )
 
     device_state_svc = DeviceStateService(publisher=bus)
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
@@ -185,6 +193,7 @@ def compose_app(
             status=pack_status,
             lifecycle=pack_lifecycle,
             feature=pack_feature,
+            discovery=pack_discovery_svc,
             storage=pack_storage,
             publisher=bus,
             circuit_breaker=circuit_breaker,

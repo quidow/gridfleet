@@ -46,7 +46,7 @@ from app.hosts.service_agent_logs import query_logs
 from app.hosts.service_host_events import query_host_events
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
-from app.packs.services import discovery as pack_discovery_service
+from app.packs.protocols import PackDiscoveryProtocol
 from app.plugins.service import PluginService
 from app.settings.dependencies import SettingsServicesDep
 
@@ -55,7 +55,6 @@ HOST_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RES
 router = APIRouter(prefix="/api/hosts", tags=["hosts"], responses=HOST_ERROR_RESPONSES)
 logger = logging.getLogger(__name__)
 get_agent_tool_status = agent_operations.get_tool_status
-get_pack_devices = agent_operations.get_pack_devices
 
 _background_tasks: set[asyncio.Task[None]] = set()
 _LEVEL_EXPANSION: dict[str, list[str]] = {
@@ -113,8 +112,7 @@ def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[
 async def _auto_discover(
     host_id: uuid.UUID,
     publisher: EventPublisher,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
+    discovery: PackDiscoveryProtocol,
     crud: HostCrudProtocol,
 ) -> None:
     """Background task: trigger device discovery for a newly accepted host."""
@@ -123,13 +121,7 @@ async def _auto_discover(
             host = await crud.get_host(db, host_id)
             if host is None:
                 return
-            result = await pack_discovery_service.discover_devices(
-                db,
-                host,
-                agent_get_pack_devices=get_pack_devices,
-                settings=settings,
-                circuit_breaker=circuit_breaker,
-            )
+            result = await discovery.discover_devices(db, host)
             if result.new_devices:
                 await publisher.publish(
                     "host.discovery_completed",
@@ -167,6 +159,7 @@ async def register_host(
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     try:
         host, is_new = await host_services.crud.register_host(db, data)
@@ -180,8 +173,7 @@ async def register_host(
                 _auto_discover,
                 host.id,
                 event_services.publisher,
-                settings_services.service,
-                agent_comm.circuit_breaker,
+                pack_services.discovery,
                 host_services.crud,
             )
             _fire_and_forget(
@@ -203,6 +195,7 @@ async def approve_host(
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     host = await host_services.crud.approve_host(db, host_id)
     if host is None:
@@ -211,8 +204,7 @@ async def approve_host(
         _auto_discover,
         host.id,
         event_services.publisher,
-        settings_services.service,
-        agent_comm.circuit_breaker,
+        pack_services.discovery,
         host_services.crud,
     )
     _fire_and_forget(
@@ -452,19 +444,12 @@ async def discover_devices(
     host_id: uuid.UUID,
     db: DbDep,
     host_services: HostServicesDep,
-    settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> DiscoveryResult:
     host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    return await pack_discovery_service.discover_devices(
-        db,
-        host,
-        agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.service,
-        circuit_breaker=agent_comm.circuit_breaker,
-    )
+    return await pack_services.discovery.discover_devices(db, host)
 
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
@@ -472,19 +457,12 @@ async def intake_candidates(
     host_id: uuid.UUID,
     db: DbDep,
     host_services: HostServicesDep,
-    settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> list[IntakeCandidateRead]:
     host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
-    return await pack_discovery_service.list_intake_candidates(
-        db,
-        host,
-        agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.service,
-        circuit_breaker=agent_comm.circuit_breaker,
-    )
+    return await pack_services.discovery.list_intake_candidates(db, host)
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
@@ -493,28 +471,20 @@ async def confirm_discovery(
     data: DiscoveryConfirm,
     db: DbDep,
     host_services: HostServicesDep,
-    settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
+    pack_services: PackServicesDep,
 ) -> DiscoveryConfirmResult:
     host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     # Re-run discovery to get fresh data for validation
-    result = await pack_discovery_service.discover_devices(
-        db,
-        host,
-        agent_get_pack_devices=get_pack_devices,
-        settings=settings_services.service,
-        circuit_breaker=agent_comm.circuit_breaker,
-    )
+    result = await pack_services.discovery.discover_devices(db, host)
     try:
-        return await pack_discovery_service.confirm_discovery(
+        return await pack_services.discovery.confirm_discovery(
             db,
             host,
             data.add_identity_values,
             data.remove_identity_values,
             result,
-            settings=settings_services.service,
         )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
