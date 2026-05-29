@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
+from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -46,8 +47,8 @@ async def test_lifespan_refreshes_and_cleans_up_background_tasks() -> None:
         await stop_event.wait()
 
     with (
-        patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
-        patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
+        patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock) as refresh,
+        patch.object(CapabilitiesCache, "run_refresh_loop", side_effect=_wait_forever),
         patch.object(RegistrationService, "run", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock) as shutdown,
     ):

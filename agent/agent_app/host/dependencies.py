@@ -6,13 +6,16 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 
-from agent_app.host.capabilities import get_capabilities_snapshot
+from agent_app.host.capabilities import CapabilitiesCache, default_capabilities
 from agent_app.host.telemetry import get_host_telemetry
 from agent_app.host.version_guidance import AgentVersionGuidance, VersionGuidanceStore
 
 
-def get_capabilities_snapshot_dep() -> dict[str, Any]:
-    return get_capabilities_snapshot()
+def get_capabilities_snapshot_dep(request: Request) -> dict[str, Any]:
+    cache: CapabilitiesCache | None = getattr(request.app.state, "capabilities_cache", None)
+    if cache is None:
+        return default_capabilities()
+    return cache.get()
 
 
 async def get_host_telemetry_dep() -> dict[str, Any]:

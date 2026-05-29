@@ -101,13 +101,11 @@ async def test_reconfigure_unknown_port_returns_404() -> None:
     assert response.json()["detail"]["code"] == "DEVICE_NOT_FOUND"
 
 
-def test_health_capabilities_advertise_orchestration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_app.host.capabilities import get_capabilities_snapshot
+def test_health_capabilities_advertise_orchestration_contract() -> None:
+    from agent_app.host.capabilities import CapabilitiesCache
 
-    monkeypatch.setattr(
-        "agent_app.host.capabilities._capabilities_snapshot",
-        {"platforms": ["android_mobile"], "tools": {}, "missing_prerequisites": []},
-    )
+    cache = CapabilitiesCache(adapter_registry=None)
+    cache._snapshot = {"platforms": ["android_mobile"], "tools": {}, "missing_prerequisites": []}
 
-    payload: dict[str, Any] = get_capabilities_snapshot()
+    payload: dict[str, Any] = cache.get()
     assert payload["orchestration_contract_version"] == 2

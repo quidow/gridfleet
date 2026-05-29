@@ -14,13 +14,13 @@ from agent_app import __version__
 from agent_app.config import agent_settings, secret_value
 from agent_app.grid_url import get_local_ip
 from agent_app.host import hardware_info
-from agent_app.host.capabilities import get_or_refresh_capabilities_snapshot
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.observability import sanitize_log_value
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agent_app.host.capabilities import CapabilitiesCache
     from agent_app.host.version_guidance import VersionGuidanceStore
     from agent_app.pack.host_identity import HostIdentity
 
@@ -51,11 +51,13 @@ class RegistrationService:
     def __init__(
         self,
         *,
+        capabilities_cache: CapabilitiesCache,
         version_guidance: VersionGuidanceStore,
         host_identity: HostIdentity | None = None,
         on_advertised_ip_change: Callable[[str], Awaitable[None]] | None = None,
         refresh_interval: float | None = None,
     ) -> None:
+        self._capabilities_cache = capabilities_cache
         self._version_guidance = version_guidance
         self._host_identity = host_identity
         self._on_advertised_ip_change = on_advertised_ip_change
@@ -70,7 +72,7 @@ class RegistrationService:
 
     async def register_once(self, manager_url: str, agent_port: int) -> dict[str, Any] | None:
         """POST to /api/hosts/register. Returns response JSON on success, raises on HTTP error."""
-        capabilities = await get_or_refresh_capabilities_snapshot()
+        capabilities = await self._capabilities_cache.get_or_refresh()
         payload = {
             "hostname": socket.gethostname(),
             "ip": get_local_ip(),

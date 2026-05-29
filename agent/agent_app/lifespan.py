@@ -20,8 +20,7 @@ import httpx
 from agent_app import observability as agent_observability
 from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings, secret_value
-from agent_app.host.capabilities import capabilities_refresh_loop, refresh_capabilities_snapshot
-from agent_app.host.capabilities import set_adapter_registry as set_capabilities_adapter_registry
+from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.host.version_guidance import VersionGuidanceStore
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
@@ -243,14 +242,14 @@ async def _stop_grid_node_supervisors_for_shutdown(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    await refresh_capabilities_snapshot()
-    capabilities_task = asyncio.create_task(capabilities_refresh_loop(refresh_immediately=False))
-    capabilities_task.add_done_callback(_watchdog("capabilities_refresh"))
-
     host_identity = HostIdentity()
     runtime_registry = RuntimeRegistry()
     adapter_registry = AdapterRegistry()
-    set_capabilities_adapter_registry(adapter_registry)
+    capabilities_cache = CapabilitiesCache(adapter_registry=adapter_registry)
+    app.state.capabilities_cache = capabilities_cache
+    await capabilities_cache.refresh()
+    capabilities_task = asyncio.create_task(capabilities_cache.run_refresh_loop(refresh_immediately=False))
+    capabilities_task.add_done_callback(_watchdog("capabilities_refresh"))
     sidecar_supervisor = SidecarSupervisor()
     boot_id = uuid4()
     app.state.host_identity = host_identity
@@ -270,6 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.pack_state_loop_enabled = True
 
     registration = RegistrationService(
+        capabilities_cache=capabilities_cache,
         version_guidance=version_guidance,
         host_identity=host_identity,
     )

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_app.appium import appium_mgr
+from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
 from agent_app.main import app
 from agent_app.registration import RegistrationService
@@ -78,8 +79,8 @@ async def test_lifespan_stops_grid_node_supervisors_before_appium_shutdown() -> 
 
     try:
         with (
-            patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
-            patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
+            patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+            patch.object(CapabilitiesCache, "run_refresh_loop", side_effect=_wait_forever),
             patch.object(RegistrationService, "run", side_effect=_wait_forever),
             patch("agent_app.appium.appium_mgr.shutdown", side_effect=_record_shutdown),
         ):
