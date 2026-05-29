@@ -1,4 +1,4 @@
-"""Tests for pack_status_service.upsert_plugin_status.
+"""Tests for PackStatusService.upsert_plugin_status.
 
 Verifies that plugin status is keyed by (host_id, runtime_id, plugin_name)
 and that a second call with updated version/status updates the row instead of
@@ -8,6 +8,7 @@ inserting a duplicate.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select, text
@@ -16,7 +17,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
-from app.packs.services.status import upsert_plugin_status
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
+
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 
 @pytest.mark.asyncio
@@ -32,7 +37,7 @@ async def test_plugin_status_is_keyed_by_runtime(db_session: AsyncSession) -> No
     db_session.add(host)
     await db_session.commit()
 
-    await upsert_plugin_status(
+    await _status_svc.upsert_plugin_status(
         db_session,
         host_id=host.id,
         runtime_id="runtime-abc",
@@ -64,7 +69,7 @@ async def test_plugin_status_upsert_updates_existing_row(db_session: AsyncSessio
     db_session.add(host)
     await db_session.commit()
 
-    await upsert_plugin_status(
+    await _status_svc.upsert_plugin_status(
         db_session,
         host_id=host.id,
         runtime_id="runtime-xyz",
@@ -74,7 +79,7 @@ async def test_plugin_status_upsert_updates_existing_row(db_session: AsyncSessio
     )
     await db_session.commit()
 
-    await upsert_plugin_status(
+    await _status_svc.upsert_plugin_status(
         db_session,
         host_id=host.id,
         runtime_id="runtime-xyz",

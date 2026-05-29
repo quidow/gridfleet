@@ -19,9 +19,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.auth import auth_settings as process_settings
-from app.main import app
-from app.packs.routers.export import get_pack_storage
-from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -71,16 +68,10 @@ def _build_tarball() -> bytes:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def override_storage(tmp_path: Path) -> Iterator[None]:
-    """Override the export router's storage dependency to use a writable tmp_path."""
-
-    def _tmp_storage() -> PackStorageService:
-        return PackStorageService(root=tmp_path)
-
-    app.dependency_overrides[get_pack_storage] = _tmp_storage
-    yield
-    app.dependency_overrides.pop(get_pack_storage, None)
+@pytest.fixture
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Route pack storage to a per-test writable directory."""
+    return tmp_path
 
 
 @pytest.fixture
@@ -109,22 +100,15 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-async def test_export_route_returns_tarball_with_sha_header(client: AsyncClient, tmp_path: Path) -> None:
+async def test_export_route_returns_tarball_with_sha_header(client: AsyncClient) -> None:
     """POST /export returns gzip bytes with X-Pack-Sha256 header and Content-Disposition."""
     # First upload the pack so it exists in DB with artifact_path set
     tarball = _build_tarball()
     files = {"tarball": ("export-test-pack-1.0.0.tar.gz", tarball, "application/gzip")}
 
     # Reuse the upload route to create the pack with stored artifact
-    from app.packs.routers.uploads import get_pack_storage as upload_get_storage
-
-    # Override the upload storage to use the same tmp_path
-    app.dependency_overrides[upload_get_storage] = lambda: PackStorageService(root=tmp_path)
-    try:
-        upload_res = await client.post("/api/driver-packs/uploads", files=files)
-        assert upload_res.status_code == 201, upload_res.text
-    finally:
-        app.dependency_overrides.pop(upload_get_storage, None)
+    upload_res = await client.post("/api/driver-packs/uploads", files=files)
+    assert upload_res.status_code == 201, upload_res.text
 
     # Now test the export endpoint
     res = await client.post("/api/driver-packs/export-test-pack/releases/1.0.0/export")

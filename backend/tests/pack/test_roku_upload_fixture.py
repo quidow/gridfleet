@@ -8,10 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.main import app
 from app.packs.models import DriverPackRelease
-from app.packs.routers.uploads import get_pack_storage
-from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -20,6 +17,12 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "manifests"
+
+
+@pytest.fixture
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Route pack storage to a per-test writable directory."""
+    return tmp_path / "storage"
 
 
 async def test_roku_manifest_can_be_built_as_upload_tarball(
@@ -51,15 +54,11 @@ async def test_roku_manifest_can_be_built_as_upload_tarball(
     )
     assert out.exists()
 
-    app.dependency_overrides[get_pack_storage] = lambda: PackStorageService(root=tmp_path / "storage")
-    try:
-        with out.open("rb") as handle:
-            resp = await client.post(
-                "/api/driver-packs/uploads",
-                files={"tarball": ("roku-upload.tar.gz", handle, "application/gzip")},
-            )
-    finally:
-        app.dependency_overrides.pop(get_pack_storage, None)
+    with out.open("rb") as handle:
+        resp = await client.post(
+            "/api/driver-packs/uploads",
+            files={"tarball": ("roku-upload.tar.gz", handle, "application/gzip")},
+        )
 
     assert resp.status_code == 201
     body = resp.json()

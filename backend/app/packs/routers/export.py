@@ -13,32 +13,17 @@ Admin-only (``Depends(require_admin)``).
 from __future__ import annotations
 
 import re
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs import packs_settings
-from app.packs.services.export import export_pack
-from app.packs.services.storage import PackStorageService
+from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
 _UNSAFE_RE = re.compile(r"[^a-zA-Z0-9._-]")
-
-
-def get_pack_storage() -> PackStorageService:
-    """FastAPI dependency returning a :class:`PackStorageService` for the configured dir.
-
-    Override ``app.dependency_overrides[get_pack_storage]`` in tests to point
-    at a writable ``tmp_path``-rooted instance instead of the production dir.
-    """
-    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
-
-
-PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
 
 
 def _safe_filename_segment(value: str) -> str:
@@ -56,7 +41,7 @@ async def export_release(
     release: str,
     _username: AdminDep,
     session: DbDep,
-    storage: PackStorageDep,
+    packs: PackServicesDep,
 ) -> Response:
     """Export a driver-pack release as a ``.tar.gz`` tarball.
 
@@ -69,7 +54,7 @@ async def export_release(
         release: The SemVer release string.
         _username: Injected by ``require_admin``; confirms admin access.
         session: Database session.
-        storage: Pack storage service instance.
+        packs: Pack services container.
 
     Returns:
         ``application/gzip`` response with ``X-Pack-Sha256`` and
@@ -79,7 +64,7 @@ async def export_release(
         404: When the pack+release combination is not found.
     """
     try:
-        data, sha = await export_pack(session, storage, pack_id, release)
+        data, sha = await packs.release.export(session, pack_id, release)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

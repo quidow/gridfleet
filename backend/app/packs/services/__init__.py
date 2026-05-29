@@ -2,28 +2,22 @@ import importlib
 from types import ModuleType
 
 __all__ = [
-    "audit",
     "capability",
-    "delete",
-    "desired_state",
     "discovery",
     "drain",
     "export",
     "feature_dispatch",
-    "feature_status",
     "host_compatibility",
     "ingest",
     "lifecycle",
     "platform_catalog",
     "platform_resolver",
-    "policy",
     "release",
     "release_ordering",
     "service",
     "start_shim",
     "status",
     "storage",
-    "upload",
 ]
 
 

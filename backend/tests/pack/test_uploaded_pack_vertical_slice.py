@@ -42,8 +42,6 @@ from sqlalchemy import select
 
 from app.main import app
 from app.packs.models import DriverPackRelease
-from app.packs.routers.uploads import get_pack_storage
-from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,20 +216,9 @@ def _build_tarball(wheel: Path) -> bytes:
 
 
 @pytest.fixture
-def override_storage(tmp_path: Path) -> Iterator[Path]:
-    """Point the upload storage dependency at a writable ``tmp_path`` root."""
-
-    storage_root = tmp_path / "pack-storage"
-    storage_root.mkdir(parents=True, exist_ok=True)
-
-    def _tmp_storage() -> PackStorageService:
-        return PackStorageService(root=storage_root)
-
-    app.dependency_overrides[get_pack_storage] = _tmp_storage
-    try:
-        yield storage_root
-    finally:
-        app.dependency_overrides.pop(get_pack_storage, None)
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Point pack storage at a per-test writable directory."""
+    return tmp_path / "pack-storage"
 
 
 @pytest.fixture
@@ -258,7 +245,6 @@ def _clear_adapter_cache() -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("override_storage")
 async def test_upload_persists_pack_and_writes_artifact(
     client: AsyncClient,
     fixture_artifacts: tuple[bytes, str],
@@ -289,7 +275,6 @@ async def test_upload_persists_pack_and_writes_artifact(
     assert Path(release.artifact_path).read_bytes() == tarball_bytes
 
 
-@pytest.mark.usefixtures("override_storage")
 async def test_vertical_slice_upload_fetch_load_dispatch(
     client: AsyncClient,
     fixture_artifacts: tuple[bytes, str],

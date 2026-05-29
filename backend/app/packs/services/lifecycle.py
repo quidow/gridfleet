@@ -23,103 +23,117 @@ VALID_TRANSITIONS: dict[PackState, set[PackState]] = {
 }
 
 
-async def count_active_work_for_pack(session: AsyncSession, pack_id: str) -> dict[str, int]:
-    runs_with_reservations = (
-        select(TestRun.id)
-        .join(DeviceReservation, DeviceReservation.run_id == TestRun.id)
-        .join(Device, Device.id == DeviceReservation.device_id)
-        .where(
-            TestRun.state.notin_(TERMINAL_STATES),
-            Device.pack_id == pack_id,
-            DeviceReservation.released_at.is_(None),
-        )
-    )
-
-    runs_with_requirements = select(TestRun.id).where(
-        TestRun.state.in_({RunState.pending, RunState.preparing}),
-        cast(TestRun.requirements, PG_JSONB).contains(cast(literal(f'[{{"pack_id": "{pack_id}"}}]'), PG_JSONB)),
-    )
-
-    combined_runs = union(runs_with_reservations, runs_with_requirements).subquery()
-    active_runs = (await session.execute(select(func.count()).select_from(combined_runs))).scalar_one()
-
-    live_sessions = (
-        await session.execute(
-            select(func.count(func.distinct(Session.id)))
-            .select_from(Session)
-            .outerjoin(Device, Device.id == Session.device_id)
+class PackLifecycleService:
+    async def count_active_work_for_pack(self, db: AsyncSession, pack_id: str) -> dict[str, int]:
+        runs_with_reservations = (
+            select(TestRun.id)
+            .join(DeviceReservation, DeviceReservation.run_id == TestRun.id)
+            .join(Device, Device.id == DeviceReservation.device_id)
             .where(
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-                or_(
-                    Session.requested_pack_id == pack_id,
-                    Device.pack_id == pack_id,
-                ),
+                TestRun.state.notin_(TERMINAL_STATES),
+                Device.pack_id == pack_id,
+                DeviceReservation.released_at.is_(None),
             )
         )
-    ).scalar_one()
 
-    return {"active_runs": active_runs, "live_sessions": live_sessions}
+        runs_with_requirements = select(TestRun.id).where(
+            TestRun.state.in_({RunState.pending, RunState.preparing}),
+            cast(TestRun.requirements, PG_JSONB).contains(cast(literal(f'[{{"pack_id": "{pack_id}"}}]'), PG_JSONB)),
+        )
 
+        combined_runs = union(runs_with_reservations, runs_with_requirements).subquery()
+        active_runs = (await db.execute(select(func.count()).select_from(combined_runs))).scalar_one()
 
-async def try_complete_drain(session: AsyncSession, pack_id: str) -> DriverPack:
-    # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
-    # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
-    # blocks here until any in-flight ``create_run`` transaction that
-    # observed ``state=enabled`` either commits its reservation or aborts.
-    # Once we acquire the lock, the recount below sees any reservation
-    # those transactions just committed.
-    locked_stmt = (
-        select(DriverPack).where(DriverPack.id == pack_id).with_for_update().execution_options(populate_existing=True)
-    )
-    pack = (await session.execute(locked_stmt)).scalar_one_or_none()
-    if pack is None:
-        raise LookupError(f"pack {pack_id!r} not found")
-    if pack.state != PackState.draining:
-        return pack
-    counts = await count_active_work_for_pack(session, pack_id)
-    if counts["active_runs"] == 0 and counts["live_sessions"] == 0:
-        # Recount immediately before the state write. ``count_active_work_for_pack``
-        # reads ``DeviceReservation``/``Session`` without locking those rows,
-        # so under READ COMMITTED each statement in this transaction sees a
-        # fresh snapshot — the recount surfaces any reservations committed
-        # after the first count (defensive backstop for paths that did not
-        # take the ``FOR SHARE`` lock).
-        recheck = await count_active_work_for_pack(session, pack_id)
-        if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
-            pack.state = PackState.disabled
-    return pack
+        live_sessions = (
+            await db.execute(
+                select(func.count(func.distinct(Session.id)))
+                .select_from(Session)
+                .outerjoin(Device, Device.id == Session.device_id)
+                .where(
+                    Session.status == SessionStatus.running,
+                    Session.ended_at.is_(None),
+                    or_(
+                        Session.requested_pack_id == pack_id,
+                        Device.pack_id == pack_id,
+                    ),
+                )
+            )
+        ).scalar_one()
 
+        return {"active_runs": active_runs, "live_sessions": live_sessions}
 
-async def transition_pack_state(
-    session: AsyncSession,
-    pack_id: str,
-    target: PackState,
-    *,
-    override: bool = False,
-) -> DriverPack:
-    pack = (
-        await session.execute(
+    async def try_complete_drain(self, db: AsyncSession, pack_id: str) -> DriverPack:
+        # ``SELECT … FOR UPDATE`` on the pack row pairs with the ``FOR SHARE``
+        # taken by ``assert_runnable(..., pack_lock=True)`` in the allocator: it
+        # blocks here until any in-flight ``create_run`` transaction that
+        # observed ``state=enabled`` either commits its reservation or aborts.
+        # Once we acquire the lock, the recount below sees any reservation
+        # those transactions just committed.
+        locked_stmt = (
             select(DriverPack)
             .where(DriverPack.id == pack_id)
-            .options(
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-    ).scalar_one_or_none()
-    if pack is None:
-        raise LookupError(f"pack {pack_id!r} not found")
+        pack = (await db.execute(locked_stmt)).scalar_one_or_none()
+        if pack is None:
+            raise LookupError(f"pack {pack_id!r} not found")
+        if pack.state != PackState.draining:
+            return pack
+        counts = await self.count_active_work_for_pack(db, pack_id)
+        if counts["active_runs"] == 0 and counts["live_sessions"] == 0:
+            recheck = await self.count_active_work_for_pack(db, pack_id)
+            if recheck["active_runs"] == 0 and recheck["live_sessions"] == 0:
+                pack.state = PackState.disabled
+        return pack
 
-    current = PackState(pack.state)
+    async def transition_pack_state(
+        self,
+        db: AsyncSession,
+        pack_id: str,
+        target: PackState,
+        *,
+        override: bool = False,
+    ) -> DriverPack:
+        pack = (
+            await db.execute(
+                select(DriverPack)
+                .where(DriverPack.id == pack_id)
+                .options(
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                )
+            )
+        ).scalar_one_or_none()
+        if pack is None:
+            raise LookupError(f"pack {pack_id!r} not found")
 
-    if target == PackState.disabled and current == PackState.enabled:
-        pack.state = PackState.draining
-        await session.commit()
-        await try_complete_drain(session, pack_id)
-        await session.commit()
+        current = PackState(pack.state)
+
+        if target == PackState.disabled and current == PackState.enabled:
+            pack.state = PackState.draining
+            await db.commit()
+            await self.try_complete_drain(db, pack_id)
+            await db.commit()
+            result = (
+                await db.execute(
+                    select(DriverPack)
+                    .where(DriverPack.id == pack_id)
+                    .options(
+                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                    )
+                )
+            ).scalar_one()
+            return result
+
+        if target not in VALID_TRANSITIONS.get(current, set()):
+            raise ValueError(f"Cannot transition pack {pack_id!r} from {current.value!r} to {target.value!r}")
+
+        pack.state = target
+        await db.commit()
         result = (
-            await session.execute(
+            await db.execute(
                 select(DriverPack)
                 .where(DriverPack.id == pack_id)
                 .options(
@@ -130,19 +144,5 @@ async def transition_pack_state(
         ).scalar_one()
         return result
 
-    if target not in VALID_TRANSITIONS.get(current, set()):
-        raise ValueError(f"Cannot transition pack {pack_id!r} from {current.value!r} to {target.value!r}")
 
-    pack.state = target
-    await session.commit()
-    result = (
-        await session.execute(
-            select(DriverPack)
-            .where(DriverPack.id == pack_id)
-            .options(
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-            )
-        )
-    ).scalar_one()
-    return result
+# ──────────────────────────────────────────────────────────────────────────────

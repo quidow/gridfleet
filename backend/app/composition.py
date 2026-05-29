@@ -33,6 +33,13 @@ from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
+from app.packs import packs_settings
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.lifecycle import PackLifecycleService
+from app.packs.services.release import PackReleaseService
+from app.packs.services.service import PackCatalogService
+from app.packs.services.status import PackStatusService
+from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
@@ -95,6 +102,13 @@ def compose_app(
 
     grid_svc = GridService(settings=settings_svc)
 
+    pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
+    pack_feature = FeatureService(publisher=bus, circuit_breaker=circuit_breaker)
+    pack_lifecycle = PackLifecycleService()
+    pack_catalog = PackCatalogService(lifecycle=pack_lifecycle)
+    pack_release = PackReleaseService(storage=pack_storage)
+    pack_status = PackStatusService(feature=pack_feature)
+
     return AppServices(
         events=event_services,
         settings=settings_services,
@@ -133,7 +147,17 @@ def compose_app(
             settings=settings_svc,
             session_factory=session_factory,
         ),
-        packs=PackServices(session_factory=session_factory),
+        packs=PackServices(
+            catalog=pack_catalog,
+            release=pack_release,
+            status=pack_status,
+            lifecycle=pack_lifecycle,
+            feature=pack_feature,
+            storage=pack_storage,
+            publisher=bus,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        ),
         plugins=PluginServices(
             plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker),
             session_factory=session_factory,

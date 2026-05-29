@@ -1,41 +1,29 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs import packs_settings
+from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
-from app.packs.services import release as pack_release_service
-from app.packs.services.service import build_pack_out
-from app.packs.services.storage import PackStorageService
-from app.packs.services.upload import (
+from app.packs.services.ingest import (
     MAX_PACK_TARBALL_BYTES,
-    PackUploadConflictError,
-    PackUploadValidationError,
-    upload_pack,
 )
+from app.packs.services.ingest import (
+    PackIngestConflictError as PackUploadConflictError,
+)
+from app.packs.services.ingest import (
+    PackIngestValidationError as PackUploadValidationError,
+)
+from app.packs.services.service import build_pack_out
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
-
-
-def get_pack_storage() -> PackStorageService:
-    """FastAPI dependency that returns a PackStorageService rooted at the configured dir.
-
-    Override ``app.dependency_overrides[get_pack_storage]`` in tests to point at
-    a writable ``tmp_path``-rooted instance instead of the production storage dir.
-    """
-    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
-
-
-PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
 
 
 async def _read_limited_upload(tarball: UploadFile) -> bytes:
@@ -60,15 +48,14 @@ async def upload(
     tarball: UploadFile,
     username: AdminDep,
     session: DbDep,
-    storage: PackStorageDep,
+    packs: PackServicesDep,
 ) -> PackOut:
     data = await _read_limited_upload(tarball)
     if not data:
         raise HTTPException(status_code=400, detail="empty tarball")
     try:
-        pack = await upload_pack(
+        pack = await packs.release.upload(
             session,
-            storage=storage,
             username=username,
             origin_filename=tarball.filename or "unknown.tar.gz",
             data=data,
@@ -103,8 +90,8 @@ async def fetch_tarball(
 
 
 @router.get("/{pack_id}/releases", response_model=PackReleasesOut)
-async def list_releases(pack_id: str, session: DbDep) -> PackReleasesOut:
-    result = await pack_release_service.list_releases(session, pack_id)
+async def list_releases(pack_id: str, session: DbDep, packs: PackServicesDep) -> PackReleasesOut:
+    result = await packs.release.list_releases(session, pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
     return result
@@ -116,9 +103,10 @@ async def update_current_release(
     body: CurrentReleasePatch,
     _username: AdminDep,
     session: DbDep,
+    packs: PackServicesDep,
 ) -> PackOut:
     try:
-        pack = await pack_release_service.set_current_release(session, pack_id, body.release)
+        pack = await packs.release.set_current_release(session, pack_id, body.release)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await session.commit()
@@ -131,9 +119,10 @@ async def delete_release(
     release: str,
     _username: AdminDep,
     session: DbDep,
+    packs: PackServicesDep,
 ) -> Response:
     try:
-        await pack_release_service.delete_release(session, pack_id, release)
+        await packs.release.delete_release(session, pack_id, release)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

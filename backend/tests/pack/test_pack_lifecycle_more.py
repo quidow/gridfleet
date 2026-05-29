@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -14,16 +15,13 @@ from app.packs.models import (
     HostPackInstallation,
 )
 from app.packs.schemas import RuntimePolicy
-from app.packs.services import (
-    delete as pack_delete_service,
-)
-from app.packs.services import (
-    policy as pack_policy_service,
-)
-from app.packs.services import (
-    release as pack_release_service,
-)
+from app.packs.services.lifecycle import PackLifecycleService
+from app.packs.services.release import PackReleaseService
+from app.packs.services.service import PackCatalogService
 from tests.helpers import create_device_record
+
+_release_svc = PackReleaseService(storage=Mock())
+_catalog_svc = PackCatalogService(lifecycle=PackLifecycleService())
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -106,7 +104,7 @@ async def _seed_host(db_session: AsyncSession, *, hostname: str = "pack-host") -
 async def test_list_and_set_current_release(db_session: AsyncSession, tmp_path: Path) -> None:
     await _seed_pack_with_releases(db_session, tmp_path)
 
-    releases = await pack_release_service.list_releases(db_session, "local/coverage-pack")
+    releases = await _release_svc.list_releases(db_session, "local/coverage-pack")
     assert releases is not None
     assert releases.pack_id == "local/coverage-pack"
     assert [(release.release, release.is_current) for release in releases.releases] == [
@@ -115,13 +113,13 @@ async def test_list_and_set_current_release(db_session: AsyncSession, tmp_path: 
     ]
     assert releases.releases[0].platform_ids == ["android_mobile"]
 
-    assert await pack_release_service.list_releases(db_session, "missing/pack") is None
+    assert await _release_svc.list_releases(db_session, "missing/pack") is None
     with pytest.raises(LookupError):
-        await pack_release_service.set_current_release(db_session, "missing/pack", "1.0.0")
+        await _release_svc.set_current_release(db_session, "missing/pack", "1.0.0")
     with pytest.raises(LookupError):
-        await pack_release_service.set_current_release(db_session, "local/coverage-pack", "9.9.9")
+        await _release_svc.set_current_release(db_session, "local/coverage-pack", "9.9.9")
 
-    pack = await pack_release_service.set_current_release(db_session, "local/coverage-pack", "1.0.0")
+    pack = await _release_svc.set_current_release(db_session, "local/coverage-pack", "1.0.0")
     assert pack.current_release == "1.0.0"
 
 
@@ -149,7 +147,7 @@ async def test_delete_release_guards_installed_and_orphaned_platforms(
     await db_session.commit()
 
     with pytest.raises(RuntimeError, match="installed on 1 host"):
-        await pack_release_service.delete_release(db_session, pack_id, old_release_name)
+        await _release_svc.delete_release(db_session, pack_id, old_release_name)
 
     installation = (
         await db_session.execute(select(HostPackInstallation).where(HostPackInstallation.pack_id == pack_id))
@@ -182,7 +180,7 @@ async def test_delete_release_guards_installed_and_orphaned_platforms(
     db_session.expire_all()
 
     with pytest.raises(RuntimeError, match="only present in that release"):
-        await pack_release_service.delete_release(db_session, pack_id, old_release_name)
+        await _release_svc.delete_release(db_session, pack_id, old_release_name)
 
 
 async def test_delete_current_release_advances_current_and_unlinks_artifact(
@@ -191,7 +189,7 @@ async def test_delete_current_release_advances_current_and_unlinks_artifact(
 ) -> None:
     pack, _old_release, _new_release, _old_artifact, new_artifact = await _seed_pack_with_releases(db_session, tmp_path)
 
-    await pack_release_service.delete_release(db_session, pack.id, "2.0.0")
+    await _release_svc.delete_release(db_session, pack.id, "2.0.0")
     await db_session.commit()
 
     reloaded = await db_session.get(DriverPack, pack.id)
@@ -207,16 +205,16 @@ async def test_delete_release_rejects_missing_and_only_release(db_session: Async
     pack_id = pack.id
 
     with pytest.raises(LookupError):
-        await pack_release_service.delete_release(db_session, "missing/pack", "1.0.0")
+        await _release_svc.delete_release(db_session, "missing/pack", "1.0.0")
     with pytest.raises(LookupError):
-        await pack_release_service.delete_release(db_session, pack_id, "9.9.9")
+        await _release_svc.delete_release(db_session, pack_id, "9.9.9")
 
-    await pack_release_service.delete_release(db_session, pack_id, "2.0.0")
+    await _release_svc.delete_release(db_session, pack_id, "2.0.0")
     await db_session.commit()
     db_session.expire_all()
 
     with pytest.raises(ValueError, match="only release"):
-        await pack_release_service.delete_release(db_session, pack_id, "1.0.0")
+        await _release_svc.delete_release(db_session, pack_id, "1.0.0")
 
 
 async def test_delete_pack_guards_references_then_removes_pack_side_tables(
@@ -234,7 +232,7 @@ async def test_delete_pack_guards_references_then_removes_pack_side_tables(
     )
 
     with pytest.raises(RuntimeError, match="1 device still use it"):
-        await pack_delete_service.delete_pack(db_session, pack.id)
+        await _catalog_svc.delete_pack(db_session, pack.id)
 
     await db_session.delete(device)
     db_session.add_all(
@@ -245,7 +243,7 @@ async def test_delete_pack_guards_references_then_removes_pack_side_tables(
     )
     await db_session.commit()
 
-    await pack_delete_service.delete_pack(db_session, pack.id)
+    await _catalog_svc.delete_pack(db_session, pack.id)
     await db_session.commit()
 
     assert await db_session.get(DriverPack, pack.id) is None
@@ -257,16 +255,16 @@ async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSe
     await _seed_pack_with_releases(db_session, tmp_path)
 
     with pytest.raises(LookupError):
-        await pack_delete_service.delete_pack(db_session, "missing/pack")
+        await _catalog_svc.delete_pack(db_session, "missing/pack")
     with pytest.raises(LookupError):
-        await pack_policy_service.set_runtime_policy(db_session, "missing/pack", RuntimePolicy())
+        await _catalog_svc.set_runtime_policy(db_session, "missing/pack", RuntimePolicy())
 
     policy = RuntimePolicy(
         strategy="exact",
         appium_server_version="2.10.0",
         appium_driver_version="3.0.0",
     )
-    pack = await pack_policy_service.set_runtime_policy(db_session, "local/coverage-pack", policy)
+    pack = await _catalog_svc.set_runtime_policy(db_session, "local/coverage-pack", policy)
     assert pack.runtime_policy == {
         "strategy": "exact",
         "appium_server_version": "2.10.0",

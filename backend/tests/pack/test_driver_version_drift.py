@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation, HostRuntimeInstallation
 from app.packs.schemas import HostPackStatusOut
-from app.packs.services.status import get_host_driver_pack_status
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
+
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+_status_svc = PackStatusService(feature=_feature_svc)
 
 
 def test_host_pack_status_includes_driver_version_fields() -> None:
@@ -107,7 +113,7 @@ async def test_drift_detected_when_installed_differs_from_desired(db_session) ->
     )
     await db_session.flush()
 
-    result = await get_host_driver_pack_status(db_session, host_id)
+    result = await _status_svc.get_host_driver_pack_status(db_session, host_id)
     pack_status = result["packs"][0]
     assert pack_status["desired_appium_driver_version"] == "3.6.0"
     assert pack_status["installed_appium_driver_version"] == "3.5.0"

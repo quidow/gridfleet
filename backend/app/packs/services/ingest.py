@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import tarfile
+import uuid
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.events.models import SystemEvent
 from app.packs.manifest import ManifestValidationError, load_manifest_yaml
 from app.packs.models import (
     DriverPack,
@@ -19,7 +21,6 @@ from app.packs.models import (
     DriverPackRelease,
     PackState,
 )
-from app.packs.services.audit import record_pack_upload
 from app.packs.services.storage import PackStorageError
 
 if TYPE_CHECKING:
@@ -107,6 +108,29 @@ def _extract_manifest_text(data: bytes) -> str:
 
 def _store_artifact(storage: PackStorageService, *, pack_id: str, release: str, data: bytes) -> StorageRecord:
     return storage.store(pack_id=pack_id, release=release, data=data)
+
+
+async def record_pack_upload(
+    session: AsyncSession,
+    *,
+    username: str,
+    pack_id: str,
+    release: str,
+    artifact_sha256: str,
+    origin_filename: str,
+) -> None:
+    event = SystemEvent(
+        event_id=str(uuid.uuid4()),
+        type="driver_pack.upload",
+        data={
+            "uploaded_by": username,
+            "pack_id": pack_id,
+            "release": release,
+            "artifact_sha256": artifact_sha256,
+            "origin_filename": origin_filename,
+        },
+    )
+    session.add(event)
 
 
 async def ingest_pack_tarball(

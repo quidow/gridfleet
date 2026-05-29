@@ -5,9 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceReservation, DeviceType
 from app.packs.models import DriverPack, DriverPackRelease, PackState
-from app.packs.services.lifecycle import count_active_work_for_pack, transition_pack_state
+from app.packs.services.lifecycle import PackLifecycleService
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+
+_lifecycle = PackLifecycleService()
+count_active_work_for_pack = _lifecycle.count_active_work_for_pack
+transition_pack_state = _lifecycle.transition_pack_state
 
 
 async def _seed_pack(db: AsyncSession, pack_id: str = "test-pack", state: PackState = PackState.enabled) -> DriverPack:

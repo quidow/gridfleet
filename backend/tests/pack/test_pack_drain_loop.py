@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.models import DriverPack, PackState
 from app.packs.services import drain as pack_drain
-from app.packs.services.drain import complete_draining_packs_once
+from app.packs.services.drain import PackDrainLoop
+from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services_container import PackServices
 
 pytestmark = pytest.mark.asyncio
@@ -26,7 +27,20 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
     db_session.add(pack)
     await db_session.commit()
 
-    changed = await complete_draining_packs_once(db_session)
+    loop = PackDrainLoop(
+        services=PackServices(
+            catalog=Mock(),
+            release=Mock(),
+            status=Mock(),
+            lifecycle=PackLifecycleService(),
+            feature=Mock(),
+            storage=Mock(),
+            publisher=Mock(),
+            circuit_breaker=Mock(),
+            session_factory=Mock(),
+        )
+    )
+    changed = await loop._complete_draining_packs_once(db_session)
 
     assert changed == ["draining-pack"]
     refreshed = await db_session.get(DriverPack, "draining-pack")
@@ -52,12 +66,24 @@ async def test_pack_drain_loop_runs_one_logged_cycle() -> None:
 
     with (
         patch("app.packs.services.drain.observe_background_loop", new=Mock(return_value=Observation())),
-        patch("app.packs.services.drain.complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
+        patch.object(pack_drain.PackDrainLoop, "_complete_draining_packs_once", new=AsyncMock(return_value=["pack-a"])),
         patch("app.packs.services.drain.logger.info") as info,
         patch("app.packs.services.drain.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         pytest.raises(asyncio.CancelledError),
     ):
-        loop = pack_drain.PackDrainLoop(services=PackServices(session_factory=SessionScope))
+        loop = pack_drain.PackDrainLoop(
+            services=PackServices(
+                catalog=Mock(),
+                release=Mock(),
+                status=Mock(),
+                lifecycle=Mock(),
+                feature=Mock(),
+                storage=Mock(),
+                publisher=Mock(),
+                circuit_breaker=Mock(),
+                session_factory=SessionScope,
+            )
+        )
         await loop.run()
 
     info.assert_called_once_with("Completed draining driver packs: %s", "pack-a")

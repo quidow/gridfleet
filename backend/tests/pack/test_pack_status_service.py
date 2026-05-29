@@ -15,12 +15,22 @@ from sqlalchemy import select
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+from unittest.mock import Mock
+
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostStatus, OSType
 from app.packs.models import HostPackDoctorResult, HostPackFeatureStatus, HostPackInstallation, HostRuntimeInstallation
-from app.packs.services import status as pack_status_service
-from app.packs.services.status import apply_status, get_host_driver_pack_status
+from app.packs.protocols import PackStatusProtocol
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+_status_svc = PackStatusService(feature=_feature_svc)
+
+
+def test_pack_status_service_satisfies_protocol() -> None:
+    assert isinstance(PackStatusService.__new__(PackStatusService), PackStatusProtocol)
 
 
 @pytest.mark.asyncio
@@ -78,7 +88,7 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
         "doctor": [],
     }
 
-    await apply_status(db_session, payload, publisher=event_bus)
+    await _status_svc.apply_status(db_session, payload)
     await db_session.commit()
 
     installs = (await db_session.execute(select(HostPackInstallation))).scalars().all()
@@ -102,7 +112,7 @@ async def test_apply_status_one_installed_one_blocked(db_session: AsyncSession) 
 
 @pytest.mark.asyncio
 async def test_apply_status_persists_plugin_status_per_runtime(db_session: AsyncSession, db_host: Host) -> None:
-    await apply_status(
+    await _status_svc.apply_status(
         db_session,
         {
             "host_id": str(db_host.id),
@@ -129,7 +139,6 @@ async def test_apply_status_persists_plugin_status_per_runtime(db_session: Async
             "packs": [],
             "doctor": [],
         },
-        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -144,7 +153,7 @@ async def test_apply_status_persists_plugin_status_per_runtime(db_session: Async
 
 @pytest.mark.asyncio
 async def test_apply_status_persists_sidecar_feature_status(db_session: AsyncSession, db_host: Host) -> None:
-    await apply_status(
+    await _status_svc.apply_status(
         db_session,
         {
             "host_id": str(db_host.id),
@@ -163,7 +172,6 @@ async def test_apply_status_persists_sidecar_feature_status(db_session: AsyncSes
                 }
             ],
         },
-        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -177,7 +185,7 @@ async def test_apply_status_persists_sidecar_feature_status(db_session: AsyncSes
 
 @pytest.mark.asyncio
 async def test_host_driver_pack_status_returns_feature_status(db_session: AsyncSession, db_host: Host) -> None:
-    await apply_status(
+    await _status_svc.apply_status(
         db_session,
         {
             "host_id": str(db_host.id),
@@ -196,11 +204,10 @@ async def test_host_driver_pack_status_returns_feature_status(db_session: AsyncS
                 }
             ],
         },
-        publisher=event_bus,
     )
     await db_session.commit()
 
-    payload = await get_host_driver_pack_status(db_session, db_host.id)
+    payload = await _status_svc.get_host_driver_pack_status(db_session, db_host.id)
 
     assert payload["features"] == [
         {
@@ -227,7 +234,7 @@ async def test_host_driver_pack_status_omits_incompatible_pack_rows(db_session: 
     )
     await db_session.commit()
 
-    payload = await get_host_driver_pack_status(db_session, db_host.id)
+    payload = await _status_svc.get_host_driver_pack_status(db_session, db_host.id)
 
     assert payload["packs"] == []
 
@@ -247,7 +254,7 @@ async def test_driver_pack_host_status_omits_incompatible_hosts(db_session: Asyn
     )
     await db_session.commit()
 
-    payload = await pack_status_service.get_driver_pack_host_status(db_session, "appium-xcuitest")
+    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest")
 
     assert payload["hosts"] == []
 
@@ -296,7 +303,7 @@ async def test_driver_pack_host_status_returns_pack_rows_with_runtime_and_doctor
     db_session.add_all([runtime, pack, doctor])
     await db_session.commit()
 
-    payload = await pack_status_service.get_driver_pack_host_status(db_session, "appium-xcuitest")
+    payload = await _status_svc.get_driver_pack_host_status(db_session, "appium-xcuitest")
 
     assert payload["pack_id"] == "appium-xcuitest"
     assert payload["hosts"] == [
@@ -368,7 +375,7 @@ async def test_apply_status_clears_stale_doctor_rows_when_pack_reports_empty(db_
         "doctor": [],
     }
 
-    await apply_status(db_session, payload, publisher=event_bus)
+    await _status_svc.apply_status(db_session, payload)
     await db_session.commit()
 
     rows = (
@@ -422,7 +429,7 @@ async def test_apply_status_ignores_doctor_entries_for_unreported_packs(db_sessi
         ],
     }
 
-    await apply_status(db_session, payload, publisher=event_bus)
+    await _status_svc.apply_status(db_session, payload)
     await db_session.commit()
 
     rows = (
@@ -478,7 +485,7 @@ async def test_apply_status_preserves_doctor_rows_for_blocked_packs(db_session: 
         "doctor": [],
     }
 
-    await apply_status(db_session, payload, publisher=event_bus)
+    await _status_svc.apply_status(db_session, payload)
     await db_session.commit()
 
     rows = (

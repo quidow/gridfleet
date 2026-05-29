@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
 from app.packs.models import DriverPack, DriverPackRelease, PackState
-from app.packs.services.desired_state import compute_desired
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+_status_svc = PackStatusService(feature=FeatureService(publisher=event_bus, circuit_breaker=Mock()))
 
 
 pytestmark = pytest.mark.asyncio
@@ -71,7 +76,7 @@ async def test_desired_state_includes_manifest_features(db_session: AsyncSession
     )
     await db_session.commit()
 
-    desired = await compute_desired(db_session, db_host.id)
+    desired = await _status_svc.compute_desired(db_session, db_host.id)
 
     pack_payload = next(pack for pack in desired["packs"] if pack["id"] == "uploaded-sidecar-pack")
     assert pack_payload["features"] == {

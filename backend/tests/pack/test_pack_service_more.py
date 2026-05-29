@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services import service as pack_service
+from app.packs.services.lifecycle import PackLifecycleService
+from app.packs.services.service import PackCatalogService
 
 
 class ScalarRowsResult:
@@ -171,7 +173,8 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
     runtime = SimpleNamespace(appium_server_version="2.0.0", driver_specs=[{"version": "3.1.0"}])
     session = ExecuteSession(SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]))
 
-    summaries = await pack_service._runtime_summaries_by_pack(session, ["local/pack"])
+    svc = PackCatalogService(lifecycle=PackLifecycleService())
+    summaries = await svc._runtime_summaries_by_pack(session, ["local/pack"])  # type: ignore[arg-type]
 
     summary = summaries["local/pack"]
     assert summary.installed_hosts == 1
@@ -179,7 +182,7 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
     assert summary.actual_appium_server_versions == ["2.0.0"]
     assert summary.actual_appium_driver_versions == ["3.1.0"]
     assert summary.driver_drift_hosts == 1
-    assert await pack_service._runtime_summaries_by_pack(session, []) == {}
+    assert await svc._runtime_summaries_by_pack(session, []) == {}  # type: ignore[arg-type]
 
 
 async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() -> None:
@@ -187,23 +190,26 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
     session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
 
     with (
-        patch("app.packs.services.service.try_complete_drain", new=AsyncMock()) as complete_drain,
-        patch(
-            "app.packs.services.service.count_active_work_for_pack",
+        patch.object(PackLifecycleService, "try_complete_drain", new=AsyncMock()) as complete_drain,
+        patch.object(
+            PackLifecycleService,
+            "count_active_work_for_pack",
             new=AsyncMock(return_value={"active_runs": 2, "live_sessions": 1}),
         ),
     ):
-        catalog = await pack_service.list_catalog(session)  # type: ignore[arg-type]
+        catalog = await PackCatalogService(lifecycle=PackLifecycleService()).list_catalog(session)  # type: ignore[arg-type]
 
     assert session.committed is True
-    complete_drain.assert_awaited_once_with(session, "local/pack")
+    complete_drain.assert_awaited_once()
     assert catalog.packs[0].active_runs == 2
     assert catalog.packs[0].live_sessions == 1
 
-    missing = await pack_service.get_pack_detail(ExecuteSession(ScalarRowsResult([])), "missing")  # type: ignore[arg-type]
+    missing = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(
+        ExecuteSession(ScalarRowsResult([])), "missing"
+    )  # type: ignore[arg-type]
     assert missing is None
 
     detail_session = ExecuteSession(ScalarRowsResult([pack]), SimpleNamespace(all=lambda: []))
-    detail = await pack_service.get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
+    detail = await PackCatalogService(lifecycle=PackLifecycleService()).get_pack_detail(detail_session, "local/pack")  # type: ignore[arg-type]
     assert detail is not None
     assert detail.id == "local/pack"

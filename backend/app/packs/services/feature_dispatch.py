@@ -6,7 +6,7 @@ the host detail page; the frontend POSTs to
 this dispatcher resolves the host, validates the feature exists in the pack
 release, then forwards the call to the host agent's feature-action endpoint.
 
-It always records the result via :func:`pack_feature_status_service.record_feature_status`
+It always records the result via :meth:`FeatureService.record_feature_status`
 so the existing ``pack_feature.degraded`` / ``pack_feature.recovered`` SystemEvent
 webhook fires on transitions — including transient agent failures, which are
 treated as degraded.
@@ -20,15 +20,16 @@ from urllib.parse import quote
 import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.client import AgentClientFactory, AgentHttpClient
 from app.agent_comm.client import request as agent_request
 from app.core.errors import AgentCallError
+from app.events import queue_event_for_session
 from app.hosts.models import Host
 from app.packs.adapter import FeatureActionResult
-from app.packs.models import DriverPack, DriverPackRelease
-from app.packs.services.feature_status import record_feature_status
+from app.packs.models import DriverPack, DriverPackRelease, HostPackFeatureStatus
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
@@ -43,101 +44,12 @@ if TYPE_CHECKING:
 _DEFAULT_TIMEOUT_SEC: float = 30.0
 type _AgentClientLike = AgentHttpClient | httpx.AsyncClient
 
+EVENT_DEGRADED = "pack_feature.degraded"
+EVENT_RECOVERED = "pack_feature.recovered"
+
 
 def _as_agent_client(client: _AgentClientLike) -> AgentHttpClient:
     return cast("AgentHttpClient", client)
-
-
-async def dispatch_feature_action(
-    session: AsyncSession,
-    *,
-    host_id: uuid.UUID,
-    pack_id: str,
-    feature_id: str,
-    action_id: str,
-    args: dict[str, Any],
-    http_client_factory: AgentClientFactory = httpx.AsyncClient,
-    timeout: float | int = _DEFAULT_TIMEOUT_SEC,
-    circuit_breaker: CircuitBreakerProtocol,
-    agent_auth: httpx.BasicAuth | None = None,
-    publisher: EventPublisher,
-) -> FeatureActionResult:
-    """Forward a feature-action call to the host agent and persist the result.
-
-    Raises:
-        HTTPException(404): host, pack, or feature not found.
-        HTTPException(502): the agent returned a 5xx, was unreachable, or
-            replied with malformed JSON. The status row is still recorded as
-            ``ok=False`` so subscribers see a ``pack_feature.degraded`` event.
-    """
-    host = await session.get(Host, host_id)
-    if host is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Host {host_id} not found")
-
-    pack = (
-        await session.execute(
-            select(DriverPack)
-            .where(DriverPack.id == pack_id)
-            .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.features))
-        )
-    ).scalar_one_or_none()
-    if pack is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack {pack_id} not found")
-
-    release = selected_release(list(pack.releases), pack.current_release)
-    if release is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pack {pack_id} has no releases",
-        )
-
-    feature_ids = {feat.manifest_feature_id for feat in release.features}
-    if feature_id not in feature_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Feature {feature_id} not found in pack {pack_id} release {release.release}",
-        )
-
-    agent_url = (
-        f"http://{host.ip}:{host.agent_port}"
-        f"/agent/pack/features/{quote(feature_id, safe='')}/actions/{quote(action_id, safe='')}"
-    )
-    body = {"pack_id": pack_id, "args": dict(args)}
-
-    try:
-        result = await _call_agent(
-            host=host.ip,
-            url=agent_url,
-            body=body,
-            http_client_factory=http_client_factory,
-            timeout=timeout,
-            circuit_breaker=circuit_breaker,
-            agent_auth=agent_auth,
-        )
-    except _AgentDispatchError as exc:
-        # Record the degraded state so webhook subscribers learn about the
-        # outage immediately, then convert to 502 for the caller.
-        await record_feature_status(
-            session,
-            host_id=host_id,
-            pack_id=pack_id,
-            feature_id=feature_id,
-            ok=False,
-            detail=exc.detail,
-            publisher=publisher,
-        )
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail) from exc
-
-    await record_feature_status(
-        session,
-        host_id=host_id,
-        pack_id=pack_id,
-        feature_id=feature_id,
-        ok=result.ok,
-        detail=result.detail,
-        publisher=publisher,
-    )
-    return result
 
 
 class _AgentDispatchError(Exception):
@@ -148,67 +60,230 @@ class _AgentDispatchError(Exception):
         self.detail = detail
 
 
-async def _call_agent(
-    *,
-    host: str,
-    url: str,
-    body: dict[str, Any],
-    http_client_factory: AgentClientFactory,
-    timeout: float | int,
-    circuit_breaker: CircuitBreakerProtocol,
-    agent_auth: httpx.BasicAuth | None = None,
-) -> FeatureActionResult:
-    """POST the action body to the agent and parse the response.
+class FeatureService:
+    """Service class for feature-action dispatch and feature status recording."""
 
-    Mirrors the ``_send_request`` pattern used by
-    :mod:`app.agent_comm.operations` (see ``node_service.py``
-    and ``agent_operations.py:24-47``) so that circuit-breaker bookkeeping,
-    request-id headers, and timeout semantics stay consistent across all
-    backend → agent calls.
-    """
-    try:
-        client_manager = http_client_factory(timeout=timeout)
-        async with client_manager as client:
-            response = await agent_request(
-                "POST",
-                url,
-                endpoint="pack_feature_action",
-                host=host,
-                client_mode="fresh",
-                client=_as_agent_client(client),
-                json_body=body,
-                timeout=timeout,
-                circuit_breaker=circuit_breaker,
-                auth=agent_auth,
+    def __init__(self, *, publisher: EventPublisher, circuit_breaker: CircuitBreakerProtocol) -> None:
+        self._publisher = publisher
+        self._circuit_breaker = circuit_breaker
+
+    async def dispatch_feature_action(
+        self,
+        session: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        pack_id: str,
+        feature_id: str,
+        action_id: str,
+        args: dict[str, Any],
+        http_client_factory: AgentClientFactory = httpx.AsyncClient,
+        timeout: float | int = _DEFAULT_TIMEOUT_SEC,
+        agent_auth: httpx.BasicAuth | None = None,
+    ) -> FeatureActionResult:
+        """Forward a feature-action call to the host agent and persist the result.
+
+        Raises:
+            HTTPException(404): host, pack, or feature not found.
+            HTTPException(502): the agent returned a 5xx, was unreachable, or
+                replied with malformed JSON. The status row is still recorded as
+                ``ok=False`` so subscribers see a ``pack_feature.degraded`` event.
+        """
+        host = await session.get(Host, host_id)
+        if host is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Host {host_id} not found")
+
+        pack = (
+            await session.execute(
+                select(DriverPack)
+                .where(DriverPack.id == pack_id)
+                .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.features))
             )
-    except AgentCallError as exc:
-        raise _AgentDispatchError(f"Agent unreachable: {exc.message}") from exc
-    except httpx.HTTPError as exc:
-        raise _AgentDispatchError(f"Agent transport error: {exc}") from exc
+        ).scalar_one_or_none()
+        if pack is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack {pack_id} not found")
 
-    status_code = response.status_code
-    if status_code >= 500:
-        raise _AgentDispatchError(f"Agent feature action failed (HTTP {status_code})")
-    if status_code >= 400:
-        # 4xx from the agent is a permanent error — surface as failed dispatch.
-        raise _AgentDispatchError(f"Agent rejected feature action (HTTP {status_code})")
+        release = selected_release(list(pack.releases), pack.current_release)
+        if release is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pack {pack_id} has no releases",
+            )
 
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise _AgentDispatchError("Agent feature action returned invalid JSON") from exc
+        feature_ids = {feat.manifest_feature_id for feat in release.features}
+        if feature_id not in feature_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Feature {feature_id} not found in pack {pack_id} release {release.release}",
+            )
 
-    if not isinstance(payload, dict):
-        raise _AgentDispatchError("Agent feature action payload is not an object")
+        agent_url = (
+            f"http://{host.ip}:{host.agent_port}"
+            f"/agent/pack/features/{quote(feature_id, safe='')}/actions/{quote(action_id, safe='')}"
+        )
+        body = {"pack_id": pack_id, "args": dict(args)}
 
-    ok_value = payload.get("ok")
-    if not isinstance(ok_value, bool):
-        raise _AgentDispatchError("Agent feature action payload missing boolean 'ok'")
+        try:
+            result = await self._call_agent(
+                host=host.ip,
+                url=agent_url,
+                body=body,
+                http_client_factory=http_client_factory,
+                timeout=timeout,
+                agent_auth=agent_auth,
+            )
+        except _AgentDispatchError as exc:
+            # Record the degraded state so webhook subscribers learn about the
+            # outage immediately, then convert to 502 for the caller.
+            await self.record_feature_status(
+                session,
+                host_id=host_id,
+                pack_id=pack_id,
+                feature_id=feature_id,
+                ok=False,
+                detail=exc.detail,
+            )
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail) from exc
 
-    detail_value = payload.get("detail", "")
-    detail_str = detail_value if isinstance(detail_value, str) else ""
+        await self.record_feature_status(
+            session,
+            host_id=host_id,
+            pack_id=pack_id,
+            feature_id=feature_id,
+            ok=result.ok,
+            detail=result.detail,
+        )
+        return result
 
-    data_value = payload.get("data", {})
-    data_dict: dict[str, Any] = data_value if isinstance(data_value, dict) else {}
+    async def record_feature_status(
+        self,
+        session: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        pack_id: str,
+        feature_id: str,
+        ok: bool,
+        detail: str,
+    ) -> bool:
+        """Upsert the (host, pack, feature) status row and emit a webhook on transition.
 
-    return FeatureActionResult(ok=ok_value, detail=detail_str, data=data_dict)
+        Returns ``True`` when the persisted ``ok`` flipped (or was newly recorded
+        as degraded), otherwise ``False``.
+        """
+        existing = (
+            await session.execute(
+                select(HostPackFeatureStatus).where(
+                    HostPackFeatureStatus.host_id == host_id,
+                    HostPackFeatureStatus.pack_id == pack_id,
+                    HostPackFeatureStatus.feature_id == feature_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        transitioned: bool
+        event_type: str | None
+        if existing is None:
+            transitioned = not ok
+            event_type = EVENT_DEGRADED if not ok else None
+        elif existing.ok != ok:
+            transitioned = True
+            event_type = EVENT_RECOVERED if ok else EVENT_DEGRADED
+        else:
+            transitioned = False
+            event_type = None
+
+        stmt = insert(HostPackFeatureStatus).values(
+            host_id=host_id,
+            pack_id=pack_id,
+            feature_id=feature_id,
+            ok=ok,
+            detail=detail,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="host_pack_feature_status_uq",
+            set_={"ok": stmt.excluded.ok, "detail": stmt.excluded.detail},
+        )
+        await session.execute(stmt)
+        await session.flush()
+        if existing is not None:
+            await session.refresh(existing)
+
+        if event_type is not None and self._publisher is not None:
+            queue_event_for_session(
+                session,
+                event_type,
+                {
+                    "host_id": str(host_id),
+                    "pack_id": pack_id,
+                    "feature_id": feature_id,
+                    "ok": ok,
+                    "detail": detail,
+                },
+                publisher=self._publisher,
+            )
+
+        return transitioned
+
+    async def _call_agent(
+        self,
+        *,
+        host: str,
+        url: str,
+        body: dict[str, Any],
+        http_client_factory: AgentClientFactory,
+        timeout: float | int,
+        agent_auth: httpx.BasicAuth | None = None,
+    ) -> FeatureActionResult:
+        """POST the action body to the agent and parse the response.
+
+        Mirrors the ``_send_request`` pattern used by
+        :mod:`app.agent_comm.operations` (see ``node_service.py``
+        and ``agent_operations.py:24-47``) so that circuit-breaker bookkeeping,
+        request-id headers, and timeout semantics stay consistent across all
+        backend → agent calls.
+        """
+        try:
+            client_manager = http_client_factory(timeout=timeout)
+            async with client_manager as client:
+                response = await agent_request(
+                    "POST",
+                    url,
+                    endpoint="pack_feature_action",
+                    host=host,
+                    client_mode="fresh",
+                    client=_as_agent_client(client),
+                    json_body=body,
+                    timeout=timeout,
+                    circuit_breaker=self._circuit_breaker,
+                    auth=agent_auth,
+                )
+        except AgentCallError as exc:
+            raise _AgentDispatchError(f"Agent unreachable: {exc.message}") from exc
+        except httpx.HTTPError as exc:
+            raise _AgentDispatchError(f"Agent transport error: {exc}") from exc
+
+        status_code = response.status_code
+        if status_code >= 500:
+            raise _AgentDispatchError(f"Agent feature action failed (HTTP {status_code})")
+        if status_code >= 400:
+            # 4xx from the agent is a permanent error — surface as failed dispatch.
+            raise _AgentDispatchError(f"Agent rejected feature action (HTTP {status_code})")
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise _AgentDispatchError("Agent feature action returned invalid JSON") from exc
+
+        if not isinstance(payload, dict):
+            raise _AgentDispatchError("Agent feature action payload is not an object")
+
+        ok_value = payload.get("ok")
+        if not isinstance(ok_value, bool):
+            raise _AgentDispatchError("Agent feature action payload missing boolean 'ok'")
+
+        detail_value = payload.get("detail", "")
+        detail_str = detail_value if isinstance(detail_value, str) else ""
+
+        data_value = payload.get("data", {})
+        data_dict: dict[str, Any] = data_value if isinstance(data_value, dict) else {}
+
+        return FeatureActionResult(ok=ok_value, detail=detail_str, data=data_dict)

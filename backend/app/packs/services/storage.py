@@ -27,6 +27,8 @@ class StorageRecord:
 class PackStorageService:
     def __init__(self, root: Path) -> None:
         self._root = Path(root).resolve()
+
+    def _ensure_root(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _safe_segment(self, value: str) -> str:
@@ -39,6 +41,7 @@ class PackStorageService:
         return self._root / self._safe_segment(pack_id) / f"{self._safe_segment(release)}.tar.gz"
 
     def store(self, *, pack_id: str, release: str, data: bytes) -> StorageRecord:
+        self._ensure_root()
         target = self._path_for(pack_id, release)
         target.parent.mkdir(parents=True, exist_ok=True)
         sha = hashlib.sha256(data).hexdigest()

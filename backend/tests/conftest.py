@@ -3,6 +3,7 @@ import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -41,6 +42,12 @@ from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.lifecycle import PackLifecycleService
+from app.packs.services.release import PackReleaseService
+from app.packs.services.service import PackCatalogService
+from app.packs.services.status import PackStatusService
+from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
 from app.plugins.dependencies import get_plugin_services
 from app.plugins.service import PluginService
@@ -298,8 +305,18 @@ async def seeded_driver_packs(db_session: AsyncSession) -> None:
     await db_session.flush()
 
 
+@pytest.fixture
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Return a writable storage root for ``PackStorageService`` in tests.
+
+    Override this fixture in a test module to redirect pack storage to a
+    specific directory (e.g. ``tmp_path / "my-storage"``).
+    """
+    return tmp_path / "pack-storage"
+
+
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
+async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGenerator[AsyncClient]:
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
@@ -409,7 +426,20 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return PackServices(session_factory=sf)
+        storage = PackStorageService(root=pack_storage_root)
+        feature = FeatureService(publisher=test_event_bus, circuit_breaker=test_circuit_breaker)
+        lifecycle = PackLifecycleService()
+        return PackServices(
+            catalog=PackCatalogService(lifecycle=lifecycle),
+            release=PackReleaseService(storage=storage),
+            status=PackStatusService(feature=feature),
+            lifecycle=lifecycle,
+            feature=feature,
+            storage=storage,
+            publisher=test_event_bus,
+            circuit_breaker=test_circuit_breaker,
+            session_factory=sf,
+        )
 
     def override_get_plugin_services() -> PluginServices:
         assert db_session.bind is not None

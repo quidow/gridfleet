@@ -19,7 +19,7 @@ import pytest
 from app.auth import auth_settings as process_settings
 from app.main import app
 from app.packs.adapter import FeatureActionResult
-from app.packs.routers import host_features as feature_routes
+from app.packs.services.feature_dispatch import FeatureService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,6 +58,7 @@ async def test_action_route_dispatches_to_service(
     captured: dict[str, Any] = {}
 
     async def fake_dispatch(
+        self: FeatureService,
         session: AsyncSession,
         *,
         host_id: uuid.UUID,
@@ -67,7 +68,7 @@ async def test_action_route_dispatches_to_service(
         args: dict[str, Any],
         **_extra: object,
     ) -> FeatureActionResult:
-        del session  # unused — exercise routes only
+        del self, session  # unused — exercise routes only
         captured["host_id"] = host_id
         captured["pack_id"] = pack_id
         captured["feature_id"] = feature_id
@@ -75,7 +76,7 @@ async def test_action_route_dispatches_to_service(
         captured["args"] = args
         return FeatureActionResult(ok=True, detail="dispatched", data={"k": "v"})
 
-    monkeypatch.setattr(feature_routes, "dispatch_feature_action", fake_dispatch)
+    monkeypatch.setattr(FeatureService, "dispatch_feature_action", fake_dispatch)
 
     host_id = uuid.uuid4()
     res = await client.post(
@@ -100,10 +101,11 @@ async def test_action_route_404_on_unknown_combination(
     """Service raising HTTPException(404) bubbles out of the route as 404."""
     from fastapi import HTTPException
 
-    async def fake_dispatch(*_args: object, **_kwargs: object) -> FeatureActionResult:
+    async def fake_dispatch(self: FeatureService, *_args: object, **_kwargs: object) -> FeatureActionResult:
+        del self
         raise HTTPException(status_code=404, detail="pack not found")
 
-    monkeypatch.setattr(feature_routes, "dispatch_feature_action", fake_dispatch)
+    monkeypatch.setattr(FeatureService, "dispatch_feature_action", fake_dispatch)
 
     host_id = uuid.uuid4()
     res = await client.post(

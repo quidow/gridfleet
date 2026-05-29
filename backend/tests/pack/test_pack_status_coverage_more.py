@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 from sqlalchemy import select
 
 from app.hosts.models import HostPluginRuntimeStatus
 from app.packs.models import HostPackDoctorResult, HostPackInstallation, HostRuntimeInstallation
 from app.packs.services import status as pack_status_service
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+_status_svc = PackStatusService(feature=_feature_svc)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +52,7 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
     db_session.add_all([runtime, pack, plugin])
     await db_session.commit()
 
-    await pack_status_service.apply_status(
+    await _status_svc.apply_status(
         db_session,
         {
             "host_id": str(db_host.id),
@@ -80,7 +86,6 @@ async def test_apply_status_updates_existing_runtime_pack_and_plugin(db_session:
                 {"pack_id": "appium-xcuitest", "check_id": "ignored", "ok": False, "message": "ignored"},
             ],
         },
-        publisher=event_bus,
     )
     await db_session.commit()
 
