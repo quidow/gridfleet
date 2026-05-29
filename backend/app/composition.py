@@ -118,13 +118,13 @@ def compose_app(
     pack_release = PackReleaseService(storage=pack_storage)
     pack_status = PackStatusService(feature=pack_feature)
 
+    device_state_svc = DeviceStateService(publisher=bus)
+
     run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc)
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
-    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc)
+    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
     run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
     run_query = RunQueryService()
-
-    device_state_svc = DeviceStateService(publisher=bus)
 
     return AppServices(
         events=event_services,
