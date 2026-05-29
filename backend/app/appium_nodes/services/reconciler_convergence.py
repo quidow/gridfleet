@@ -200,52 +200,6 @@ async def _execute_action(
         )
 
 
-async def converge_host_rows(
-    *,
-    host_id: uuid.UUID,
-    rows: list[DesiredRow],
-    agent_running: list[ObservedEntry],
-    now: datetime,
-    start_agent: StartAgent,
-    stop_agent: StopAgent,
-    write_observed: WriteObserved,
-    clear_token: ClearToken,
-    reset_start_failure: ResetStartFailure,
-    raise_errors: bool = False,
-) -> None:
-    """Drive convergence for one host using caller-supplied I/O callbacks.
-
-    This is the pure-logic variant used by unit tests and the ``converge_device_now``
-    path.  The ``ReconcilerService`` uses its own method variant which wires the
-    callbacks to real DB/agent calls.
-    """
-    observed_by_target = {entry.connection_target: entry for entry in agent_running}
-    for row in sorted(rows, key=lambda r: str(r.device_id)):
-        obs = observed_by_target.get(row.connection_target)
-        action = decide_convergence_action(row, observed=obs, now=now)
-        try:
-            await _execute_action(
-                host_id=host_id,
-                row=row,
-                action=action,
-                start_agent=start_agent,
-                stop_agent=stop_agent,
-                write_observed=write_observed,
-                clear_token=clear_token,
-                reset_start_failure=reset_start_failure,
-            )
-        except Exception:
-            logger.warning(
-                "appium_reconciler_convergence_action_failed",
-                exc_info=True,
-                host_id=str(host_id),
-                device_id=str(row.device_id),
-                action=action.kind,
-            )
-            if raise_errors:
-                raise
-
-
 def _int_or_none(value: object) -> int | None:
     return value if isinstance(value, int) else None
 

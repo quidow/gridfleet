@@ -11,9 +11,43 @@ import pytest
 from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
     ObservedEntry,
-    converge_host_rows,
+    _execute_action,
     decide_convergence_action,
 )
+
+
+async def converge_host_rows(
+    *,
+    host_id: uuid.UUID,
+    rows: list[DesiredRow],
+    agent_running: list[ObservedEntry],
+    now: datetime,
+    start_agent: object,
+    stop_agent: object,
+    write_observed: object,
+    clear_token: object,
+    reset_start_failure: object,
+    raise_errors: bool = False,
+) -> None:
+    """Test-local re-implementation of the deleted free function, using the same logic."""
+    observed_by_target = {entry.connection_target: entry for entry in agent_running}
+    for row in sorted(rows, key=lambda r: str(r.device_id)):
+        obs = observed_by_target.get(row.connection_target)
+        action = decide_convergence_action(row, observed=obs, now=now)
+        try:
+            await _execute_action(
+                host_id=host_id,
+                row=row,
+                action=action,
+                start_agent=start_agent,  # type: ignore[arg-type]
+                stop_agent=stop_agent,  # type: ignore[arg-type]
+                write_observed=write_observed,  # type: ignore[arg-type]
+                clear_token=clear_token,  # type: ignore[arg-type]
+                reset_start_failure=reset_start_failure,  # type: ignore[arg-type]
+            )
+        except Exception:
+            if raise_errors:
+                raise
 
 
 def _row(**kw: object) -> DesiredRow:

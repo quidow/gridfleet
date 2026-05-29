@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: TC002
 
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_with_devices, settle_after_commit_tasks
@@ -51,22 +51,21 @@ async def test_host_offline_cascade_queues_all_events(
     # gap between the last unrelated test that called _check_hosts and this one can
     # exceed the threshold, causing the guard to swallow the offline cascade we are
     # asserting. Reset to None so the guard treats this call as the first cycle.
-    services = Mock()
-    services.publisher = event_bus
-    services.session_factory = db_session_maker
-    loop = HeartbeatLoop(services=services)
-    loop._last_cycle_monotonic = None
-
-    await loop._check_hosts(
-        db_session,
+    svc = HeartbeatService(
+        publisher=event_bus,
         settings=FakeSettingsReader(
             {
                 "general.max_missed_heartbeats": 1,
                 "general.heartbeat_interval_sec": 60,
             }
         ),
+        pool=Mock(),
         circuit_breaker=Mock(),
+        session_factory=db_session_maker,
     )
+    svc._last_cycle_monotonic = None
+
+    await svc._check_hosts(db_session)
     await settle_after_commit_tasks()
 
     types_in_order = [n for n, _ in event_bus_capture]

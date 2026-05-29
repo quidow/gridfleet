@@ -49,14 +49,19 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
 
     monkeypatch.setattr(node_health, "record_lifecycle_incident", AsyncMock())
     monkeypatch.setattr(node_health.lifecycle_policy, "record_control_action", AsyncMock())
-    await node_health._process_node_health(
+    from unittest.mock import Mock
+
+    from app.appium_nodes.services.node_health import NodeHealthService
+
+    svc = NodeHealthService(
+        publisher=event_bus, settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), grid=Mock()
+    )
+    await svc._process_node_health(
         db_session,
         node,
         device,
         result=ProbeResult(status="refused", detail="test"),
         grid_device_ids={str(device.id)},
-        settings=FakeSettingsReader({}),
-        publisher=event_bus,
     )
     await db_session.commit()
 

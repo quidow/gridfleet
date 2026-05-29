@@ -144,9 +144,13 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     fake_grid = AsyncMock()
     fake_grid.get_status = AsyncMock(return_value={})
     fake_grid.available_node_device_ids = Mock(return_value=set())
-    await node_health._check_nodes(
-        db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus, grid=fake_grid
-    )
+    await NodeHealthService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        grid=fake_grid,
+    ).check_nodes(db)
 
     db.commit.assert_awaited_once()
 

@@ -54,9 +54,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
     monkeypatch.setattr(appium_reconciler, "_fetch_node_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
-    monkeypatch.setattr(appium_reconciler, "_reconcile_all", AsyncMock(return_value={}))
     monkeypatch.setattr(appium_reconciler, "reconciler_convergence_enabled", lambda: True)
-    monkeypatch.setattr(appium_reconciler, "_drive_convergence", AsyncMock())
     monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = AppiumNodeServices(
