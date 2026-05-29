@@ -160,8 +160,6 @@ def compose_app(
             query=run_query,
             settings=settings_svc,
             session_factory=session_factory,
-            publisher=bus,
-            grid=grid_svc,
         ),
         grid=GridServices(
             grid=grid_svc,

@@ -9,8 +9,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
     from app.runs.protocols import (
         RunAllocatorProtocol,
         RunFailureProtocol,
@@ -29,7 +27,3 @@ class RunServices:
     query: RunQueryProtocol
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
-    # Kept temporarily so the reaper (still free-fn based) can access them.
-    # Dropped in Task 8 once the reaper delegates to services.lifecycle.
-    publisher: EventPublisher
-    grid: GridServiceProtocol
