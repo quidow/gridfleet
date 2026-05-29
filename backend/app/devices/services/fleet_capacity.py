@@ -366,6 +366,34 @@ async def collect_capacity_snapshot_once(
     return snapshot
 
 
+class FleetCapacityService:
+    def __init__(self, *, settings: SettingsReader, grid: GridServiceProtocol) -> None:
+        self._settings = settings
+        self._grid = grid
+
+    async def get_fleet_capacity_timeline(
+        self,
+        db: AsyncSession,
+        *,
+        date_from: datetime,
+        date_to: datetime,
+        bucket_minutes: int = DEFAULT_BUCKET_MINUTES,
+    ) -> analytics_schemas.FleetCapacityTimeline:
+        return await get_fleet_capacity_timeline(
+            db, date_from=date_from, date_to=date_to, bucket_minutes=bucket_minutes
+        )
+
+    async def collect_capacity_snapshot_once(
+        self,
+        db: AsyncSession,
+        *,
+        captured_at: datetime | None = None,
+    ) -> AnalyticsCapacitySnapshot | None:
+        return await collect_capacity_snapshot_once(
+            db, captured_at=captured_at, settings=self._settings, grid=self._grid
+        )
+
+
 class FleetCapacityLoop:
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services

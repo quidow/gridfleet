@@ -234,6 +234,15 @@ async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher, sett
     )
 
 
+class DataCleanupService:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
+        self._publisher = publisher
+        self._settings = settings
+
+    async def cleanup_old_data(self, db: AsyncSession) -> None:
+        await _cleanup_old_data(db, publisher=self._publisher, settings=self._settings)
+
+
 class DataCleanupLoop:
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
