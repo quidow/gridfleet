@@ -79,7 +79,6 @@ class CapabilitiesCache:
         """Refresh and return the cached capabilities snapshot."""
         async with self._lock:
             snapshot = await self.detect()
-            snapshot["orchestration_contract_version"] = ORCHESTRATION_CONTRACT_VERSION
             self._snapshot = deepcopy(snapshot)
             self._snapshot_at = time.monotonic()
             return deepcopy(snapshot)

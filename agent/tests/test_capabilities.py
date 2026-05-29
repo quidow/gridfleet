@@ -84,8 +84,18 @@ async def test_detect_capabilities_skips_adapters_without_tool_versions() -> Non
 
 async def test_capabilities_snapshot_refreshes_only_when_missing_or_forced() -> None:
     cache = _cache()
-    first_snapshot = {"platforms": ["roku"], "tools": {"adb": "1.0.41"}, "missing_prerequisites": ["java"]}
-    second_snapshot = {"platforms": ["roku"], "tools": {"adb": "1.0.42"}, "missing_prerequisites": []}
+    first_snapshot = {
+        "platforms": ["roku"],
+        "tools": {"adb": "1.0.41"},
+        "missing_prerequisites": ["java"],
+        "orchestration_contract_version": 2,
+    }
+    second_snapshot = {
+        "platforms": ["roku"],
+        "tools": {"adb": "1.0.42"},
+        "missing_prerequisites": [],
+        "orchestration_contract_version": 2,
+    }
     default_snapshot = {
         "platforms": [],
         "tools": {},
