@@ -458,3 +458,15 @@ class PackCatalogService:
                 driver_drift_hosts=data.driver_drift_hosts,
             )
         return summaries
+
+
+# Backward-compat wrappers for routers until Task 8 migration
+_default_catalog_svc = PackCatalogService()
+
+
+async def set_runtime_policy(db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> DriverPack:
+    return await _default_catalog_svc.set_runtime_policy(db, pack_id, policy)
+
+
+async def delete_pack(db: AsyncSession, pack_id: str) -> None:
+    await _default_catalog_svc.delete_pack(db, pack_id)
