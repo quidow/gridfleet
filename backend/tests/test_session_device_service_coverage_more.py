@@ -10,6 +10,7 @@ from app.devices.models import ConnectionType, DeviceHold, DeviceOperationalStat
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import service as device_service
+from app.devices.services.state import DeviceStateService
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
@@ -64,7 +65,7 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     db_session.add_all(sessions)
     await db_session.commit()
 
-    crud = SessionCrudService(publisher=Mock())
+    crud = SessionCrudService(publisher=Mock(), device_state=DeviceStateService(publisher=Mock()))
     listed, total = await crud.list_sessions(
         db_session,
         status=SessionStatus.error,
@@ -131,7 +132,7 @@ async def test_register_and_finish_session_guard_paths(
         operational_state=DeviceOperationalState.available,
     )
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
 
     with pytest.raises(ValueError, match="No matching device"):
         await crud.register_session(
@@ -218,7 +219,7 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     db.commit = AsyncMock()
     monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     monkeypatch.setattr(crud, "get_session", AsyncMock(return_value=session))
 
     result = await crud.mark_session_finished(db, "vanished-device")
@@ -232,7 +233,7 @@ async def test_session_service_missing_and_insert_conflict_guards(monkeypatch: p
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     monkeypatch.setattr(session_service, "_lock_resolved_device_for_session", AsyncMock(return_value=None))
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     monkeypatch.setattr(crud, "get_session", AsyncMock(side_effect=[None, None, None, None]))
 
     with pytest.raises(ValueError, match="Session insert conflicted"):
@@ -262,7 +263,7 @@ async def test_register_terminal_session_with_device_runs_deferred_stop_completi
     complete = AsyncMock()
     monkeypatch.setattr(session_service.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     session = await crud.register_session(
         db_session,
         session_id="terminal-device-session-id",

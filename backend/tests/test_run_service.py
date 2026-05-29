@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import handle_health_failure
+from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service_lifecycle_release as run_lifecycle_release
@@ -19,7 +20,9 @@ from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
-_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_release_svc = RunReleaseService(
+    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+)
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
 
@@ -80,7 +83,9 @@ async def test_force_release_clears_stop_pending(
     assert result == "deferred"
 
     fake_grid = make_fake_grid()
-    test_release = RunReleaseService(publisher=event_bus, settings=_settings, grid=fake_grid)
+    test_release = RunReleaseService(
+        publisher=event_bus, settings=_settings, grid=fake_grid, device_state=DeviceStateService(publisher=event_bus)
+    )
     test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
     await test_lifecycle.force_release(db_session, run.id)
 
@@ -165,7 +170,9 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         return await real_helper(*args, **kwargs)
 
     fake_grid_2 = make_fake_grid()
-    spy_release = SpyReleaseService(publisher=event_bus, settings=_settings, grid=fake_grid_2)
+    spy_release = SpyReleaseService(
+        publisher=event_bus, settings=_settings, grid=fake_grid_2, device_state=DeviceStateService(publisher=event_bus)
+    )
     spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)
     monkeypatch.setattr(
         run_lifecycle_release.lifecycle_policy,

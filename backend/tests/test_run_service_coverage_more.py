@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service as run_service
@@ -40,7 +41,9 @@ _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _query_svc = RunQueryService()
-_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_release_svc = RunReleaseService(
+    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+)
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 _failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
 
@@ -507,7 +510,12 @@ async def test_mark_running_sessions_released_success_path(
     await db_session.commit()
 
     # Use a fake grid that successfully terminates sessions.
-    release_with_fake_grid = RunReleaseService(publisher=event_bus, settings=_settings, grid=make_fake_grid())
+    release_with_fake_grid = RunReleaseService(
+        publisher=event_bus,
+        settings=_settings,
+        grid=make_fake_grid(),
+        device_state=DeviceStateService(publisher=event_bus),
+    )
     await release_with_fake_grid._mark_running_sessions_released(
         db_session,
         run,
@@ -724,6 +732,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
             settings=FakeSettingsReader(
                 {"reservations.max_ttl_minutes": 10, "reservations.default_heartbeat_timeout_sec": 30}
             ),
+            device_state=DeviceStateService(publisher=event_bus),
         )
         from app.runs.schemas import RunCreate as _RunCreate
 

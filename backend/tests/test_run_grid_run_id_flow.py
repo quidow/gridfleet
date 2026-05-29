@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
+from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
@@ -25,9 +26,13 @@ from tests.pack.factories import seed_test_packs
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
-_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_release_svc = RunReleaseService(
+    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+)
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
-_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
+_allocator_svc = RunAllocatorService(
+    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+)
 _failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
 
 if TYPE_CHECKING:

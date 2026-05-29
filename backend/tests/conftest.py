@@ -25,6 +25,7 @@ from app.core.leader import models as _leader_models  # noqa: F401  # Ensure lea
 from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
+from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
@@ -395,7 +396,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return SessionServices(
-            crud=SessionCrudService(publisher=test_event_bus),
+            crud=SessionCrudService(
+                publisher=test_event_bus, device_state=DeviceStateService(publisher=test_event_bus)
+            ),
             sync=SessionSyncService(
                 publisher=test_event_bus,
                 settings=settings_service,
@@ -413,11 +416,20 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         grid = GridService(settings=settings_service)
-        run_release = RunReleaseService(publisher=test_event_bus, settings=settings_service, grid=grid)
+        run_release = RunReleaseService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            grid=grid,
+            device_state=DeviceStateService(publisher=test_event_bus),
+        )
         run_lifecycle = RunLifecycleService(
             publisher=test_event_bus, settings=settings_service, grid=grid, release=run_release
         )
-        run_allocator = RunAllocatorService(publisher=test_event_bus, settings=settings_service)
+        run_allocator = RunAllocatorService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            device_state=DeviceStateService(publisher=test_event_bus),
+        )
         run_failure = RunFailureService(
             publisher=test_event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
         )

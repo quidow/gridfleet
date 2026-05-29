@@ -14,6 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
@@ -31,7 +32,9 @@ from tests.pack.factories import seed_test_packs
 
 _settings = FakeSettingsReader({})
 _query_svc = RunQueryService()
-_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
+_allocator_svc = RunAllocatorService(
+    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -1039,6 +1042,7 @@ async def test_sessions_straddle_active_signal_boundary(
 ) -> None:
     """Sessions started while a run is preparing carry run_id=NULL; sessions
     started after the explicit /active signal are linked to the run."""
+    from app.devices.services.state import DeviceStateService as _DeviceStateService
     from app.runs.models import RunState
     from app.sessions.service import SessionCrudService
     from tests.helpers import create_reserved_run
@@ -1056,7 +1060,7 @@ async def test_sessions_straddle_active_signal_boundary(
     await db_session.commit()
     run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=_DeviceStateService(publisher=event_bus))
     prep_session = await crud.register_session(
         db_session,
         session_id="sess-prep",
@@ -1065,10 +1069,15 @@ async def test_sessions_straddle_active_signal_boundary(
     )
     assert prep_session.run_id is None
 
-    crud_mock = SessionCrudService(publisher=Mock())
+    crud_mock = SessionCrudService(publisher=Mock(), device_state=_DeviceStateService(publisher=Mock()))
     await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
-    _release = RunReleaseService(publisher=event_bus, settings=_settings, grid=GridService(settings=_settings))
+    _release = RunReleaseService(
+        publisher=event_bus,
+        settings=_settings,
+        grid=GridService(settings=_settings),
+        device_state=_DeviceStateService(publisher=event_bus),
+    )
     _lifecycle = RunLifecycleService(
         publisher=event_bus, settings=_settings, grid=GridService(settings=_settings), release=_release
     )

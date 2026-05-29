@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services.state import DeviceStateService
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
@@ -58,7 +59,9 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
 
     entered_busy_write = asyncio.Event()
     allow_busy_write = asyncio.Event()
-    original_set = session_service.set_operational_state
+    import app.devices.services.state as _device_state_mod
+
+    original_set = _device_state_mod.set_operational_state
 
     async def gated_set(
         dev: Device,
@@ -70,11 +73,11 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
             await asyncio.wait_for(allow_busy_write.wait(), timeout=2.0)
         return await original_set(dev, new_status, **kwargs)
 
-    monkeypatch.setattr(session_service, "set_operational_state", gated_set)
+    monkeypatch.setattr(_device_state_mod, "set_operational_state", gated_set)
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
-            crud = SessionCrudService(publisher=event_bus)
+            crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
             await crud.register_session(
                 session,
                 session_id="register-race-session",
@@ -136,7 +139,7 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
 
     async def finish_session() -> None:
         async with db_session_maker() as session:
-            crud = SessionCrudService(publisher=Mock())
+            crud = SessionCrudService(publisher=Mock(), device_state=DeviceStateService(publisher=Mock()))
             await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     await asyncio.gather(

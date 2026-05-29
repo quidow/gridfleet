@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services.intent_types import NODE_PROCESS
+from app.devices.services.state import DeviceStateService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
 from tests.helpers import create_device
@@ -76,7 +77,7 @@ async def test_mark_session_finished_revokes_active_session_intent(
 
     assert await _intent_exists(db_session, device.id, source), "Precondition: intent must exist before the call"
 
-    crud = SessionCrudService(publisher=event_bus)
+    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
     result = await crud.mark_session_finished(db_session, session.session_id)
 
     assert result is not None
