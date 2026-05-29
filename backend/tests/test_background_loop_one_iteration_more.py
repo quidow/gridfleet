@@ -11,6 +11,8 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
@@ -151,18 +153,23 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(
-        fleet_capacity,
+        fleet_capacity.FleetCapacityService,
         "collect_capacity_snapshot_once",
         AsyncMock(side_effect=[RuntimeError("boom"), None]),
     )
     monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
+    _fc_settings = FakeSettingsReader({})
+    _fc_grid = Mock()
+    _fc_publisher = AsyncMock()
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_fc_publisher),
+            fleet_capacity=FleetCapacityService(grid=_fc_grid),
+            data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
+            publisher=_fc_publisher,
+            settings=_fc_settings,
+            grid=_fc_grid,
             session_factory=_Session,
             circuit_breaker=Mock(),
         )
@@ -171,7 +178,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     with pytest.raises(asyncio.CancelledError):
         await loop.run()
 
-    assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
+    assert fleet_capacity.FleetCapacityService.collect_capacity_snapshot_once.await_count == 2
 
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     poll_once_mock = AsyncMock(side_effect=[RuntimeError("boom"), None])

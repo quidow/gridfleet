@@ -22,6 +22,8 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
@@ -52,12 +54,17 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     )
     monkeypatch.setattr(intent_reconciler.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
+    _svc_grid_1 = Mock()
+    _svc_pub_1 = AsyncMock()
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_svc_pub_1),
+            fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
+            data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
+            publisher=_svc_pub_1,
+            settings=_svc_settings_1,
+            grid=_svc_grid_1,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -79,12 +86,17 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     sleep = AsyncMock(side_effect=asyncio.CancelledError())
     monkeypatch.setattr(intent_reconciler.asyncio, "sleep", sleep)
 
+    _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
+    _svc_grid_2 = Mock()
+    _svc_pub_2 = AsyncMock()
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({"general.intent_reconcile_interval_sec": 1}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_svc_pub_2),
+            fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
+            data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
+            publisher=_svc_pub_2,
+            settings=_svc_settings_2,
+            grid=_svc_grid_2,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -168,12 +180,17 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     )
     monkeypatch.setattr(device_connectivity.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    _svc_settings_3 = FakeSettingsReader({})
+    _svc_grid_3 = Mock()
+    _svc_pub_3 = AsyncMock()
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_svc_pub_3),
+            fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
+            data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
+            publisher=_svc_pub_3,
+            settings=_svc_settings_3,
+            grid=_svc_grid_3,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )
@@ -235,16 +252,23 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
     monkeypatch.setattr(data_cleanup, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(data_cleanup, "_cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(
+        data_cleanup.DataCleanupService, "cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom"))
+    )
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
 
+    _svc_settings_4 = FakeSettingsReader({})
+    _svc_grid_4 = Mock()
+    _svc_pub_4 = AsyncMock()
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_svc_pub_4),
+            fleet_capacity=FleetCapacityService(grid=_svc_grid_4),
+            data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
+            publisher=_svc_pub_4,
+            settings=_svc_settings_4,
+            grid=_svc_grid_4,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
         )

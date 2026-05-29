@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.property_refresh import PropertyRefreshLoop, _refresh_all_properties
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -123,12 +125,17 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         async def cycle(self) -> AsyncGenerator[None, None]:
             yield None
 
+    _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
+    _pr_grid = Mock()
+    _pr_publisher = AsyncMock()
     loop = PropertyRefreshLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=AsyncMock()),
-            publisher=AsyncMock(),
-            settings=FakeSettingsReader({"general.property_refresh_interval_sec": 1}),
-            grid=Mock(),
+            state=DeviceStateService(publisher=_pr_publisher),
+            fleet_capacity=FleetCapacityService(grid=_pr_grid),
+            data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
+            publisher=_pr_publisher,
+            settings=_pr_settings,
+            grid=_pr_grid,
             session_factory=AsyncMock(),
             circuit_breaker=Mock(),
         )

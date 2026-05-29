@@ -14,7 +14,7 @@ from app.analytics.schemas import (
 )
 from app.core.csv_export import to_csv_response
 from app.core.dependencies import DbDep
-from app.devices.services.fleet_capacity import get_fleet_capacity_timeline
+from app.devices.dependencies import DeviceServicesDep
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -91,6 +91,7 @@ async def fleet_overview(
 @router.get("/fleet/capacity-timeline", response_model=FleetCapacityTimeline)
 async def fleet_capacity_timeline(
     db: DbDep,
+    device_services: DeviceServicesDep,
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     bucket_minutes: int = Query(1, ge=1, le=1440),
@@ -98,6 +99,8 @@ async def fleet_capacity_timeline(
     df = date_from or _default_capacity_date_from()
     dt = date_to or _default_date_to()
     try:
-        return await get_fleet_capacity_timeline(db, date_from=df, date_to=dt, bucket_minutes=bucket_minutes)
+        return await device_services.fleet_capacity.get_fleet_capacity_timeline(
+            db, date_from=df, date_to=dt, bucket_minutes=bucket_minutes
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

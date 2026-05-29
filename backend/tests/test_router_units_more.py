@@ -243,13 +243,17 @@ async def test_analytics_router_non_csv_and_capacity_defaults() -> None:
     assert reliability == [reliability_row]
 
     db = object()
-    with patch.object(analytics, "get_fleet_capacity_timeline", new=AsyncMock(return_value=capacity)) as timeline:
-        response = await analytics.fleet_capacity_timeline(date_from=None, date_to=None, db=db)
+    mock_timeline = AsyncMock(return_value=capacity)
+    mock_fleet_capacity = SimpleNamespace(get_fleet_capacity_timeline=mock_timeline)
+    mock_device_services = SimpleNamespace(fleet_capacity=mock_fleet_capacity)
+    response = await analytics.fleet_capacity_timeline(
+        date_from=None, date_to=None, db=db, device_services=mock_device_services
+    )
 
     assert response is capacity
-    assert timeline.await_args.args == (db,)
-    assert timeline.await_args.kwargs["date_from"] is not None
-    assert timeline.await_args.kwargs["date_to"] is not None
+    assert mock_timeline.await_args.args == (db,)
+    assert mock_timeline.await_args.kwargs["date_from"] is not None
+    assert mock_timeline.await_args.kwargs["date_to"] is not None
 
 
 async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
@@ -1763,14 +1767,13 @@ async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
         )
     ]
 
+    mock_raising_timeline = AsyncMock(side_effect=ValueError("date_to must be after date_from"))
+    mock_fleet_capacity = SimpleNamespace(get_fleet_capacity_timeline=mock_raising_timeline)
+    mock_device_services = SimpleNamespace(fleet_capacity=mock_fleet_capacity)
     with (
         patch("app.analytics.router.analytics_service.get_session_summary", new=AsyncMock(return_value=summary)),
         patch("app.analytics.router.analytics_service.get_device_utilization", new=AsyncMock(return_value=utilization)),
         patch("app.analytics.router.analytics_service.get_device_reliability", new=AsyncMock(return_value=reliability)),
-        patch(
-            "app.analytics.router.get_fleet_capacity_timeline",
-            new=AsyncMock(side_effect=ValueError("date_to must be after date_from")),
-        ),
     ):
         assert await analytics.session_summary(db=object(), group_by=GroupByOption.platform) == summary
         csv_response = await analytics.session_summary(db=object(), group_by=GroupByOption.day, export_format="csv")
@@ -1778,7 +1781,7 @@ async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
         assert (await analytics.device_utilization(db=object(), export_format="csv")).media_type == "text/csv"
         assert (await analytics.device_reliability(db=object(), export_format="csv")).media_type == "text/csv"
         with pytest.raises(HTTPException) as exc:
-            await analytics.fleet_capacity_timeline(db=object(), bucket_minutes=5)
+            await analytics.fleet_capacity_timeline(db=object(), bucket_minutes=5, device_services=mock_device_services)
     assert exc.value.status_code == 422
 
 
