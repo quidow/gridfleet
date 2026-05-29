@@ -46,10 +46,8 @@ def test_host_diagnostics_normalizers_reject_invalid_shapes() -> None:
 async def test_get_host_diagnostics_returns_none_for_missing_host(db_session: AsyncSession) -> None:
     import uuid
 
-    assert (
-        await host_diagnostics.get_host_diagnostics(db_session, uuid.uuid4(), circuit_breaker=test_circuit_breaker)
-        is None
-    )
+    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=test_circuit_breaker)
+    assert await svc.get_host_diagnostics(db_session, uuid.uuid4()) is None
 
 
 async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
@@ -84,12 +82,11 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
     }
     await test_circuit_breaker.record_failure(host.ip, error="first failure")
 
+    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=test_circuit_breaker)
     with patch(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=snapshot)
     ):
-        diagnostics = await host_diagnostics.get_host_diagnostics(
-            db_session, host, circuit_breaker=test_circuit_breaker
-        )
+        diagnostics = await svc.get_host_diagnostics(db_session, host)
 
     assert diagnostics is not None
     assert diagnostics.host_id == host.id
@@ -117,12 +114,13 @@ async def test_get_host_diagnostics_handles_reported_at_datetime_and_bad_string(
         {"reported_at": "not-a-date", "running_nodes": []},
     ]
 
+    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=test_circuit_breaker)
     with patch(
         "app.hosts.service_diagnostics.control_plane_state_store.get_value",
         new=AsyncMock(side_effect=snapshots),
     ):
-        first = await host_diagnostics.get_host_diagnostics(db_session, host, circuit_breaker=test_circuit_breaker)
-        second = await host_diagnostics.get_host_diagnostics(db_session, host, circuit_breaker=test_circuit_breaker)
+        first = await svc.get_host_diagnostics(db_session, host)
+        second = await svc.get_host_diagnostics(db_session, host)
 
     assert first is not None
     assert first.appium_processes.reported_at == snapshots[0]["reported_at"]
@@ -170,10 +168,9 @@ async def test_get_host_diagnostics_filters_and_normalizes_recent_recovery_event
     )
     await db_session.commit()
 
+    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=test_circuit_breaker)
     with patch("app.hosts.service_diagnostics.control_plane_state_store.get_value", new=AsyncMock(return_value=None)):
-        diagnostics = await host_diagnostics.get_host_diagnostics(
-            db_session, host.id, circuit_breaker=test_circuit_breaker
-        )
+        diagnostics = await svc.get_host_diagnostics(db_session, host.id)
 
     assert diagnostics is not None
     assert [event.event_type for event in diagnostics.recent_recovery_events] == ["node_crash", "node_restart"]

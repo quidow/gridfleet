@@ -1235,11 +1235,17 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     assert detail["devices"] == [{"id": str(device.id)}]
 
     mock_agent_comm = Mock()
-    with patch("app.hosts.router.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value=None)):
+    with patch(
+        "app.hosts.service_diagnostics.HostDiagnosticsService.get_host_diagnostics",
+        new=AsyncMock(return_value=None),
+    ):
         with pytest.raises(HTTPException) as exc:
             await hosts.get_host_diagnostics(host_id, db=object(), agent_comm=mock_agent_comm)
     assert exc.value.status_code == 404
-    with patch("app.hosts.router.host_diagnostics.get_host_diagnostics", new=AsyncMock(return_value={"ok": True})):
+    with patch(
+        "app.hosts.service_diagnostics.HostDiagnosticsService.get_host_diagnostics",
+        new=AsyncMock(return_value={"ok": True}),
+    ):
         assert await hosts.get_host_diagnostics(host_id, db=object(), agent_comm=mock_agent_comm) == {"ok": True}
 
     telemetry_svc = Mock()

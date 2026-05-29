@@ -362,7 +362,8 @@ async def trigger_driver_doctor(
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
 async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, agent_comm: AgentCommServicesDep) -> HostDiagnosticsRead:
-    payload = await host_diagnostics.get_host_diagnostics(db, host_id, circuit_breaker=agent_comm.circuit_breaker)
+    svc = host_diagnostics.HostDiagnosticsService(circuit_breaker=agent_comm.circuit_breaker)
+    payload = await svc.get_host_diagnostics(db, host_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Host not found")
     return payload
