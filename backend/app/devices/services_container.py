@@ -10,7 +10,12 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import DataCleanupProtocol, DeviceStateWriter, FleetCapacityProtocol
+    from app.devices.protocols import (
+        DataCleanupProtocol,
+        DeviceStateWriter,
+        FleetCapacityProtocol,
+        PropertyRefreshProtocol,
+    )
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
 
@@ -20,6 +25,7 @@ class DeviceServices:
     state: DeviceStateWriter
     fleet_capacity: FleetCapacityProtocol
     data_cleanup: DataCleanupProtocol
+    property_refresh: PropertyRefreshProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

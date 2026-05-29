@@ -13,6 +13,7 @@ from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
@@ -167,6 +168,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             state=DeviceStateService(publisher=_fc_publisher),
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,

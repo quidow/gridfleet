@@ -7,19 +7,16 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.operations import get_pack_device_properties
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host, HostStatus
-from app.packs.services import discovery as pack_discovery
 
 if TYPE_CHECKING:
     import uuid
 
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.core.protocols import SettingsReader
+    from app.devices.protocols import PackDevicePropertiesProvider
     from app.devices.services_container import DeviceServices
 
 logger = get_logger(__name__)
@@ -29,13 +26,11 @@ LOOP_NAME = "property_refresh"
 MAX_PARALLEL_HOST_FETCHES = 8
 
 
-async def _refresh_all_properties(
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> None:
-    async with session_factory() as db:
+class PropertyRefreshService:
+    def __init__(self, *, discovery: PackDevicePropertiesProvider) -> None:
+        self._discovery = discovery
+
+    async def refresh_all_properties(self, db: AsyncSession) -> None:
         host_result = await db.execute(select(Host).where(Host.status == HostStatus.online))
         online_host_ids = [host.id for host in host_result.scalars().all()]
         if not online_host_ids:
@@ -54,10 +49,9 @@ async def _refresh_all_properties(
         if not devices:
             return
 
-        # Parallelize across hosts but keep requests to a single agent sequential —
-        # the original loop processed one device at a time per host. The shared `db`
-        # session is not used inside `_fetch_host`, which keeps the gather safe; all
-        # DB writes happen after the gather completes.
+        # Parallelize across hosts but keep requests to a single agent sequential.
+        # The shared `db` session is not used inside `_fetch_host`, which keeps the
+        # gather safe; all DB writes happen after the gather completes.
         devices_by_host: dict[uuid.UUID, list[Device]] = defaultdict(list)
         for device in devices:
             devices_by_host[device.host_id].append(device)
@@ -73,13 +67,7 @@ async def _refresh_all_properties(
                         host_results.append((device, None))
                         continue
                     try:
-                        data = await pack_discovery.fetch_pack_device_properties(
-                            host,
-                            device,
-                            agent_get_pack_device_properties=get_pack_device_properties,
-                            settings=settings,
-                            circuit_breaker=circuit_breaker,
-                        )
+                        data = await self._discovery.fetch_pack_device_properties(host, device)
                     except Exception:
                         logger.exception("Failed to fetch properties for device %s", device.identity_value)
                         host_results.append((device, None))
@@ -92,7 +80,7 @@ async def _refresh_all_properties(
             if data is None:
                 continue
             try:
-                await pack_discovery.apply_pack_device_properties(db, device, data)
+                await self._discovery.apply_pack_device_properties(db, device, data)
             except Exception:
                 logger.exception("Failed to apply refreshed properties for device %s", device.identity_value)
                 await db.rollback()
@@ -107,12 +95,11 @@ class PropertyRefreshLoop:
         while True:
             interval = float(self._services.settings.get("general.property_refresh_interval_sec"))
             try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle():
-                    await _refresh_all_properties(
-                        session_factory=self._services.session_factory,
-                        settings=self._services.settings,
-                        circuit_breaker=self._services.circuit_breaker,
-                    )
+                async with (
+                    observe_background_loop(LOOP_NAME, interval).cycle(),
+                    self._services.session_factory() as db,
+                ):
+                    await self._services.property_refresh.refresh_all_properties(db)
             except Exception:
                 logger.exception("Property refresh cycle failed")
             await asyncio.sleep(interval)

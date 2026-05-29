@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
-from app.devices.services.property_refresh import PropertyRefreshLoop, _refresh_all_properties
+from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
@@ -62,14 +62,16 @@ async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices
         operational_state="available",
     )
 
+    fetch_props = AsyncMock(return_value=None)
+
+    class _DiscoveryDouble:
+        fetch_pack_device_properties = fetch_props
+        apply_pack_device_properties = AsyncMock()
+
+    svc = PropertyRefreshService(discovery=_DiscoveryDouble())
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    with patch(
-        "app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties",
-        new_callable=AsyncMock,
-    ) as fetch_props:
-        await _refresh_all_properties(
-            session_factory=session_factory, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+    async with session_factory() as db:
+        await svc.refresh_all_properties(db)
 
     refreshed_identity_values = [await_call.args[1].identity_value for await_call in fetch_props.await_args_list]
     assert online_device.identity_value in refreshed_identity_values
@@ -108,12 +110,16 @@ async def test_property_refresh_continues_after_device_failure(
         operational_state="available",
     )
 
-    session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
     fetch_props = AsyncMock(side_effect=[RuntimeError("boom"), None])
-    with patch("app.devices.services.property_refresh.pack_discovery.fetch_pack_device_properties", fetch_props):
-        await _refresh_all_properties(
-            session_factory=session_factory, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+
+    class _DiscoveryDouble:
+        fetch_pack_device_properties = fetch_props
+        apply_pack_device_properties = AsyncMock()
+
+    svc = PropertyRefreshService(discovery=_DiscoveryDouble())
+    session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as db:
+        await svc.refresh_all_properties(db)
 
     refreshed_identity_values = sorted(await_call.args[1].identity_value for await_call in fetch_props.await_args_list)
     assert refreshed_identity_values == sorted([first.identity_value, second.identity_value])
@@ -128,11 +134,16 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
     _pr_grid = Mock()
     _pr_publisher = AsyncMock()
+
+    mock_property_refresh_svc = Mock()
+    mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
+
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_pr_publisher),
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
+            property_refresh=mock_property_refresh_svc,
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,
@@ -143,10 +154,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
 
     with (
         patch("app.devices.services.property_refresh.observe_background_loop", return_value=_Observation()),
-        patch(
-            "app.devices.services.property_refresh._refresh_all_properties",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
-        ),
         patch("app.devices.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         patch("app.devices.services.property_refresh.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
