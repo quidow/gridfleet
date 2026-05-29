@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.analytics.schemas import FleetCapacityTimeline
     from app.devices.models import Device, DeviceHold, DeviceOperationalState
     from app.events.catalog import EventSeverity
+    from app.hosts.models import Host
 
 
 @runtime_checkable
@@ -60,3 +61,18 @@ class FleetCapacityProtocol(Protocol):
 @runtime_checkable
 class DataCleanupProtocol(Protocol):
     async def cleanup_old_data(self, db: AsyncSession) -> None: ...
+
+
+@runtime_checkable
+class PackDevicePropertiesProvider(Protocol):
+    """Narrow cross-domain view of pack discovery needed by the property-refresh loop."""
+
+    async def fetch_pack_device_properties(self, host: Host, device: Device) -> dict[str, object] | None: ...
+    async def apply_pack_device_properties(
+        self, session: AsyncSession, device: Device, data: dict[str, object]
+    ) -> None: ...
+
+
+@runtime_checkable
+class PropertyRefreshProtocol(Protocol):
+    async def refresh_all_properties(self, db: AsyncSession) -> None: ...

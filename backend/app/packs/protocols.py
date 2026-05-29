@@ -10,6 +10,9 @@ if TYPE_CHECKING:
     import httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.models import Device
+    from app.hosts.models import Host
+    from app.hosts.schemas import DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
     from app.packs.adapter import FeatureActionResult
     from app.packs.models import DriverPack, PackState
     from app.packs.schemas import PackCatalog, PackOut, PackReleasesOut, RuntimePolicy
@@ -83,3 +86,21 @@ class PackLifecycleProtocol(Protocol):
     async def transition_pack_state(
         self, db: AsyncSession, pack_id: str, target: PackState, *, override: bool = False
     ) -> DriverPack: ...
+
+
+@runtime_checkable
+class PackDiscoveryProtocol(Protocol):
+    async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]: ...
+    async def discover_devices(self, session: AsyncSession, host: Host) -> DiscoveryResult: ...
+    async def fetch_pack_device_properties(self, host: Host, device: Device) -> dict[str, object] | None: ...
+    async def apply_pack_device_properties(
+        self, session: AsyncSession, device: Device, data: dict[str, object]
+    ) -> None: ...
+    async def confirm_discovery(
+        self,
+        db: AsyncSession,
+        host: Host,
+        add_identity_values: list[str],
+        remove_identity_values: list[str],
+        discovery_result: DiscoveryResult,
+    ) -> DiscoveryConfirmResult: ...
