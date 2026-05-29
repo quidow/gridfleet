@@ -263,12 +263,13 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    reconciler = Mock()
+    reconciler.run_cycle = AsyncMock(side_effect=RuntimeError("boom"))
     services = AppiumNodeServices(
         settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        publisher=Mock(),
-        grid=Mock(),
+        reconciler=reconciler,
+        node_health=Mock(),
+        heartbeat=Mock(),
         session_factory=lambda: Session(),
     )
 

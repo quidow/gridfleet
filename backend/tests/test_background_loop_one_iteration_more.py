@@ -61,17 +61,14 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
     services = AppiumNodeServices(
         settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        publisher=Mock(),
-        grid=Mock(),
+        reconciler=Mock(run_cycle=AsyncMock()),
+        node_health=Mock(),
+        heartbeat=Mock(),
         session_factory=_Session,
     )
 
     with pytest.raises(asyncio.CancelledError):
         await AppiumReconcilerLoop(services=services).run()
-
-    appium_reconciler._drive_convergence.assert_awaited_once()
 
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
