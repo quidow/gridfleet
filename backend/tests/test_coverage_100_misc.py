@@ -92,7 +92,7 @@ from app.packs.services import (
 from app.packs.services.feature_dispatch import FeatureService as PackFeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
-from app.packs.services.status import compute_desired as _compute_desired
+from app.packs.services.status import PackStatusService as _PackStatusService
 from app.plugins.service import PluginService
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
@@ -845,7 +845,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
         ]
     )
-    assert (await _compute_desired(desired_db, uuid.uuid4()))["packs"] == []
+    assert (await _PackStatusService(publisher=AsyncMock(), feature=Mock()).compute_desired(desired_db, uuid.uuid4()))[
+        "packs"
+    ] == []
 
     assert (
         pack_status_service._installed_driver_version(

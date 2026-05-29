@@ -10,7 +10,7 @@ from app.packs.services.capability import render_stereotype
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.service import PackCatalogService
 from app.packs.services.start_shim import build_pack_start_payload
-from app.packs.services.status import PackStatusService, compute_desired
+from app.packs.services.status import PackStatusService
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
@@ -46,7 +46,7 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
     assert any(p.id == "appium-uiautomator2" for p in catalog.packs)
 
     # 3. Desired.
-    desired = await compute_desired(db_session, host_id)
+    desired = await _status_svc.compute_desired(db_session, host_id)
     assert any(p["id"] == "appium-uiautomator2" and p["appium_server"]["package"] == "appium" for p in desired["packs"])
 
     # 4. Status.

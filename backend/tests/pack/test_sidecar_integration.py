@@ -4,16 +4,23 @@ import io
 import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.packs.models import DriverPackFeature
-from app.packs.services.status import compute_desired
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+_status_svc = PackStatusService(
+    publisher=event_bus, feature=FeatureService(publisher=event_bus, circuit_breaker=Mock())
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -54,6 +61,6 @@ async def test_uploaded_sidecar_pack_populates_feature_and_desired_state(
     ).scalar_one()
     assert feature.manifest_feature_id == "test_sidecar"
 
-    desired = await compute_desired(db_session, db_host.id)
+    desired = await _status_svc.compute_desired(db_session, db_host.id)
     desired_pack = next(pack for pack in desired["packs"] if pack["id"] == "uploaded/sidecar-fixture")
     assert desired_pack["features"]["test_sidecar"]["sidecar"]["adapter_hook"] == "sidecar_lifecycle"

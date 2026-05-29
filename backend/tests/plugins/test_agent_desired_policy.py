@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import DriverPack
-from app.packs.services.status import compute_desired
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
 from app.plugins.models import AppiumPlugin
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+_status_svc = PackStatusService(
+    publisher=event_bus, feature=FeatureService(publisher=event_bus, circuit_breaker=Mock())
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -25,7 +32,7 @@ async def test_desired_state_includes_runtime_policy(db_session: AsyncSession, d
     }
     await db_session.commit()
 
-    payload = await compute_desired(db_session, db_host.id)
+    payload = await _status_svc.compute_desired(db_session, db_host.id)
 
     desired = next(p for p in payload["packs"] if p["id"] == "appium-uiautomator2")
     assert desired["runtime_policy"]["strategy"] == "exact"
@@ -42,7 +49,7 @@ async def test_desired_state_includes_enabled_plugins_only(db_session: AsyncSess
     )
     await db_session.commit()
 
-    payload = await compute_desired(db_session, db_host.id)
+    payload = await _status_svc.compute_desired(db_session, db_host.id)
 
     assert payload["plugins"] == [
         {"name": "images", "version": "1.0.0", "source": "npm:appium-plugin-images", "package": None}
@@ -50,7 +57,7 @@ async def test_desired_state_includes_enabled_plugins_only(db_session: AsyncSess
 
 
 async def test_desired_state_filters_macos_only_packs_from_linux_hosts(db_session: AsyncSession, db_host: Host) -> None:
-    payload = await compute_desired(db_session, db_host.id)
+    payload = await _status_svc.compute_desired(db_session, db_host.id)
 
     pack_ids = {pack["id"] for pack in payload["packs"]}
     assert "appium-uiautomator2" in pack_ids
@@ -69,7 +76,7 @@ async def test_desired_state_includes_macos_only_packs_for_macos_hosts(db_sessio
     db_session.add(host)
     await db_session.flush()
 
-    payload = await compute_desired(db_session, host.id)
+    payload = await _status_svc.compute_desired(db_session, host.id)
 
     pack_ids = {pack["id"] for pack in payload["packs"]}
     assert "appium-xcuitest" in pack_ids
