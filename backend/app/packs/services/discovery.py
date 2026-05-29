@@ -67,6 +67,70 @@ class AgentClient(Protocol):
 IdentityKey = tuple[str, str, str]
 
 
+class PackDiscoveryService:
+    def __init__(
+        self,
+        *,
+        agent_get_pack_devices: PackDevicesFetcher,
+        agent_get_pack_device_properties: PackDevicePropertiesFetcher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+    ) -> None:
+        self._agent_get_pack_devices = agent_get_pack_devices
+        self._agent_get_pack_device_properties = agent_get_pack_device_properties
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+
+    async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]:
+        return await list_intake_candidates(
+            session,
+            host,
+            agent_get_pack_devices=self._agent_get_pack_devices,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def discover_devices(self, session: AsyncSession, host: Host) -> DiscoveryResult:
+        return await discover_devices(
+            session,
+            host,
+            agent_get_pack_devices=self._agent_get_pack_devices,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def fetch_pack_device_properties(self, host: Host, device: Device) -> dict[str, object] | None:
+        return await fetch_pack_device_properties(
+            host,
+            device,
+            agent_get_pack_device_properties=self._agent_get_pack_device_properties,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def apply_pack_device_properties(
+        self, session: AsyncSession, device: Device, data: dict[str, object]
+    ) -> None:
+        await apply_pack_device_properties(session, device, data)
+
+    async def confirm_discovery(
+        self,
+        db: AsyncSession,
+        host: Host,
+        add_identity_values: list[str],
+        remove_identity_values: list[str],
+        discovery_result: DiscoveryResult,
+    ) -> DiscoveryConfirmResult:
+        return await confirm_discovery(
+            db,
+            host,
+            add_identity_values,
+            remove_identity_values,
+            discovery_result,
+            settings=self._settings,
+        )
+
+
 def _identity_key(*, identity_scope: str | None, identity_scheme: str, identity_value: str) -> IdentityKey:
     return (identity_scope or "host", identity_scheme, identity_value)
 
