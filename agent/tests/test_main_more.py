@@ -8,6 +8,7 @@ from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespa
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dependencies import _latest_desired, _release_for_pack
+from agent_app.registration import RegistrationService
 
 
 async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -> None:
@@ -61,7 +62,7 @@ async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
     with (
         patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
-        patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
+        patch.object(RegistrationService, "run", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
         patch.object(agent_settings.core, "host_id", "test-host-id"),
         patch.object(agent_settings.manager, "backend_url", ""),
@@ -82,7 +83,7 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
     with (
         patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock),
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
-        patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
+        patch.object(RegistrationService, "run", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
         patch.object(agent_settings.core, "host_id", "test"),
         patch.object(agent_settings.manager, "backend_url", ""),

@@ -22,6 +22,7 @@ from agent_app.appium import appium_mgr
 from agent_app.config import agent_settings, secret_value
 from agent_app.host.capabilities import capabilities_refresh_loop, refresh_capabilities_snapshot
 from agent_app.host.capabilities import set_adapter_registry as set_capabilities_adapter_registry
+from agent_app.host.version_guidance import VersionGuidanceStore
 from agent_app.http_client import close as close_shared_http_client
 from agent_app.http_client import get_client as get_shared_http_client
 from agent_app.logs.shipper import LogShipperTask
@@ -34,7 +35,7 @@ from agent_app.pack.sidecar_supervisor import SidecarSupervisor
 from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
-from agent_app.registration import registration_loop
+from agent_app.registration import RegistrationService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -259,6 +260,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.boot_id = boot_id
     app.state.pack_state_loop_enabled = False
     app.state.pack_state_loop = None
+    version_guidance = VersionGuidanceStore()
+    app.state.version_guidance = version_guidance
 
     env_host_id = agent_settings.core.host_id
     backend_url = agent_settings.manager.effective_backend_url
@@ -266,15 +269,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host_identity.set(env_host_id)
         app.state.pack_state_loop_enabled = True
 
+    registration = RegistrationService(
+        version_guidance=version_guidance,
+        host_identity=host_identity,
+    )
+
     reg_task: asyncio.Task[None]
 
     def _start_registration_task() -> asyncio.Task[None]:
         nonlocal reg_task
         reg_task = asyncio.create_task(
-            registration_loop(
+            registration.run(
                 agent_settings.manager.manager_url,
                 agent_settings.core.agent_port,
-                host_identity,
             )
         )
         reg_task.add_done_callback(_watchdog("registration", _start_registration_task))

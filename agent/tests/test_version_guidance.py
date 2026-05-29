@@ -1,14 +1,10 @@
-from agent_app.host.version_guidance import (
-    clear_version_guidance,
-    get_version_guidance,
-    update_version_guidance,
-)
+from agent_app.host.version_guidance import VersionGuidanceStore
 
 
 def test_update_version_guidance_stores_supported_response_fields() -> None:
-    clear_version_guidance()
+    store = VersionGuidanceStore()
 
-    changed = update_version_guidance(
+    changed = store.update(
         {
             "required_agent_version": "0.2.0",
             "recommended_agent_version": "0.3.0",
@@ -18,7 +14,7 @@ def test_update_version_guidance_stores_supported_response_fields() -> None:
     )
 
     assert changed is True
-    guidance = get_version_guidance()
+    guidance = store.get()
     assert guidance.required_agent_version == "0.2.0"
     assert guidance.recommended_agent_version == "0.3.0"
     assert guidance.agent_version_status == "outdated"
@@ -26,21 +22,21 @@ def test_update_version_guidance_stores_supported_response_fields() -> None:
 
 
 def test_update_version_guidance_returns_false_for_same_guidance() -> None:
-    clear_version_guidance()
+    store = VersionGuidanceStore()
     payload = {
         "required_agent_version": "0.2.0",
         "recommended_agent_version": "0.3.0",
         "agent_version_status": "ok",
     }
 
-    assert update_version_guidance(payload) is True
-    assert update_version_guidance(payload) is False
+    assert store.update(payload) is True
+    assert store.update(payload) is False
 
 
 def test_update_version_guidance_ignores_non_string_values() -> None:
-    clear_version_guidance()
+    store = VersionGuidanceStore()
 
-    update_version_guidance(
+    store.update(
         {
             "required_agent_version": 123,
             "recommended_agent_version": None,
@@ -48,7 +44,7 @@ def test_update_version_guidance_ignores_non_string_values() -> None:
         }
     )
 
-    guidance = get_version_guidance()
+    guidance = store.get()
     assert guidance.required_agent_version is None
     assert guidance.recommended_agent_version is None
     assert guidance.agent_version_status == "unknown"
@@ -57,7 +53,7 @@ def test_update_version_guidance_ignores_non_string_values() -> None:
 
 def test_update_version_guidance_parses_full_host_registration_response() -> None:
     """Cross-component contract: field names must match backend HostRead schema exactly."""
-    clear_version_guidance()
+    store = VersionGuidanceStore()
 
     host_read_response = {
         "id": "a1b2c3d4-0000-0000-0000-000000000000",
@@ -77,9 +73,9 @@ def test_update_version_guidance_parses_full_host_registration_response() -> Non
         "created_at": "2026-05-01T00:00:00Z",
     }
 
-    update_version_guidance(host_read_response)
+    store.update(host_read_response)
 
-    guidance = get_version_guidance()
+    guidance = store.get()
     assert guidance.required_agent_version == "0.1.0"
     assert guidance.recommended_agent_version == "0.3.0"
     assert guidance.agent_version_status == "ok"
@@ -88,16 +84,11 @@ def test_update_version_guidance_parses_full_host_registration_response() -> Non
 
 def test_update_version_guidance_handles_missing_fields() -> None:
     """Backward-compat: older backends may omit recommended/update fields."""
-    clear_version_guidance()
+    store = VersionGuidanceStore()
 
-    update_version_guidance(
-        {
-            "id": "host-1",
-            "status": "online",
-        }
-    )
+    store.update({"id": "host-1", "status": "online"})
 
-    guidance = get_version_guidance()
+    guidance = store.get()
     assert guidance.required_agent_version is None
     assert guidance.recommended_agent_version is None
     assert guidance.agent_version_status is None

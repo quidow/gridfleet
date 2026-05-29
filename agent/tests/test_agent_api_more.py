@@ -14,6 +14,7 @@ from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import HardwareTelemetry, HealthCheckResult, LifecycleActionResult
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.pack.manifest import DesiredPack
+from agent_app.registration import RegistrationService
 
 
 class _AdapterContext(Protocol):
@@ -47,7 +48,7 @@ async def test_lifespan_refreshes_and_cleans_up_background_tasks() -> None:
     with (
         patch("agent_app.lifespan.refresh_capabilities_snapshot", new_callable=AsyncMock) as refresh,
         patch("agent_app.lifespan.capabilities_refresh_loop", side_effect=_wait_forever),
-        patch("agent_app.registration.registration_loop", side_effect=_wait_forever),
+        patch.object(RegistrationService, "run", side_effect=_wait_forever),
         patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock) as shutdown,
     ):
         async with lifespan(app):

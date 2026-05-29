@@ -10,7 +10,11 @@ from httpx import ASGITransport, AsyncClient
 
 from agent_app.appium import appium_mgr
 from agent_app.appium.dependencies import get_appium_mgr
-from agent_app.host.dependencies import get_capabilities_snapshot_dep, get_host_telemetry_dep
+from agent_app.host.dependencies import (
+    get_capabilities_snapshot_dep,
+    get_host_telemetry_dep,
+    get_version_guidance_payload,
+)
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import (
@@ -521,28 +525,19 @@ async def test_agent_tools_ensure_route_removed(client: AsyncClient) -> None:
 
 
 async def test_health_includes_version_guidance(client: AsyncClient) -> None:
-    from agent_app.host.version_guidance import clear_version_guidance, update_version_guidance
-
-    clear_version_guidance()
-    update_version_guidance(
-        {
-            "required_agent_version": "0.2.0",
-            "recommended_agent_version": "0.3.0",
-            "agent_version_status": "outdated",
-            "agent_update_available": True,
-        }
-    )
-    app.dependency_overrides[get_capabilities_snapshot_dep] = lambda: {"missing_prerequisites": []}
-    try:
-        resp = await client.get("/agent/health")
-    finally:
-        app.dependency_overrides.pop(get_capabilities_snapshot_dep, None)
-
-    assert resp.status_code == 200
-    assert resp.json()["version_guidance"] == {
+    guidance = {
         "required_agent_version": "0.2.0",
         "recommended_agent_version": "0.3.0",
         "agent_version_status": "outdated",
         "agent_update_available": True,
     }
-    clear_version_guidance()
+    app.dependency_overrides[get_version_guidance_payload] = lambda: guidance
+    app.dependency_overrides[get_capabilities_snapshot_dep] = lambda: {"missing_prerequisites": []}
+    try:
+        resp = await client.get("/agent/health")
+    finally:
+        app.dependency_overrides.pop(get_version_guidance_payload, None)
+        app.dependency_overrides.pop(get_capabilities_snapshot_dep, None)
+
+    assert resp.status_code == 200
+    assert resp.json()["version_guidance"] == guidance

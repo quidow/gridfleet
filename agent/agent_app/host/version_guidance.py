@@ -15,31 +15,27 @@ class AgentVersionGuidance:
         return asdict(self)
 
 
-_guidance = AgentVersionGuidance()
-
-
 def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def get_version_guidance() -> AgentVersionGuidance:
-    return _guidance
+class VersionGuidanceStore:
+    """Holds the latest agent-version guidance returned by the manager."""
 
+    def __init__(self) -> None:
+        self._guidance = AgentVersionGuidance()
 
-def clear_version_guidance() -> None:
-    global _guidance
-    _guidance = AgentVersionGuidance()
+    def get(self) -> AgentVersionGuidance:
+        return self._guidance
 
-
-def update_version_guidance(payload: dict[str, Any]) -> bool:
-    global _guidance
-    raw_update = payload.get("agent_update_available")
-    next_guidance = AgentVersionGuidance(
-        required_agent_version=_optional_str(payload.get("required_agent_version")),
-        recommended_agent_version=_optional_str(payload.get("recommended_agent_version")),
-        agent_version_status=_optional_str(payload.get("agent_version_status")),
-        agent_update_available=raw_update is True,
-    )
-    changed = next_guidance != _guidance
-    _guidance = next_guidance
-    return changed
+    def update(self, payload: dict[str, Any]) -> bool:
+        raw_update = payload.get("agent_update_available")
+        next_guidance = AgentVersionGuidance(
+            required_agent_version=_optional_str(payload.get("required_agent_version")),
+            recommended_agent_version=_optional_str(payload.get("recommended_agent_version")),
+            agent_version_status=_optional_str(payload.get("agent_version_status")),
+            agent_update_available=raw_update is True,
+        )
+        changed = next_guidance != self._guidance
+        self._guidance = next_guidance
+        return changed

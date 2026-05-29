@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from agent_app.config import ManagerSettings
-from agent_app.host.version_guidance import clear_version_guidance, get_version_guidance
-from agent_app.registration import _map_os_type, get_local_ip, register_with_manager, registration_loop
+from agent_app.host.version_guidance import VersionGuidanceStore
+from agent_app.registration import RegistrationService, _map_os_type, get_local_ip
 
 
 def test_get_local_ip_prefers_advertised_ip() -> None:
@@ -58,6 +58,7 @@ async def test_register_with_manager_sends_expected_payload() -> None:
     response.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=response)
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
         patch(
             "agent_app.registration.get_or_refresh_capabilities_snapshot",
@@ -68,7 +69,7 @@ async def test_register_with_manager_sends_expected_payload() -> None:
         patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
         patch("agent_app.registration.httpx.AsyncClient", return_value=client),
     ):
-        result = await register_with_manager("http://manager:8000", 5100)
+        result = await service.register_once("http://manager:8000", 5100)
 
     assert result == {"id": "host-1", "status": "online"}
     payload = client.post.await_args.kwargs["json"]
@@ -88,6 +89,7 @@ async def test_register_with_manager_uses_basic_auth_when_configured() -> None:
     response.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=response)
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
         patch(
             "agent_app.registration.get_or_refresh_capabilities_snapshot",
@@ -100,7 +102,7 @@ async def test_register_with_manager_uses_basic_auth_when_configured() -> None:
         patch("agent_app.registration.agent_settings.manager.manager_auth_username", "machine"),
         patch("agent_app.registration.agent_settings.manager.manager_auth_password", "machine-secret"),
     ):
-        result = await register_with_manager("http://manager:8000", 5100)
+        result = await service.register_once("http://manager:8000", 5100)
 
     assert result == {"id": "host-1", "status": "online"}
     auth = client.post.await_args.kwargs["auth"]
@@ -120,9 +122,11 @@ async def test_registration_loop_retries_after_4xx_rejection(caplog: pytest.LogC
     async def fake_sleep(delay: float) -> None:
         sleeps.append(delay)
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
-        patch(
-            "agent_app.registration.register_with_manager",
+        patch.object(
+            service,
+            "register_once",
             new_callable=AsyncMock,
             side_effect=[
                 httpx.HTTPStatusError("bad request", request=request, response=response),
@@ -133,7 +137,7 @@ async def test_registration_loop_retries_after_4xx_rejection(caplog: pytest.LogC
         caplog.at_level(logging.WARNING, logger="agent_app.registration"),
         pytest.raises(asyncio.CancelledError),
     ):
-        await registration_loop("http://manager:8000", 5100)
+        await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
     assert sleeps == [300.0]
@@ -148,16 +152,18 @@ async def test_registration_loop_retries_transport_failures_with_backoff() -> No
         if delay == 30.0:
             raise asyncio.CancelledError
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
-        patch(
-            "agent_app.registration.register_with_manager",
+        patch.object(
+            service,
+            "register_once",
             new_callable=AsyncMock,
             side_effect=[httpx.ConnectError("down"), {"id": "host-1", "status": "online"}],
         ) as register,
         patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
         pytest.raises(asyncio.CancelledError),
     ):
-        await registration_loop("http://manager:8000", 5100)
+        await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
     assert sleeps == [2.0, 30.0]
@@ -172,10 +178,11 @@ async def test_registration_loop_refreshes_successful_registration() -> None:
             raise asyncio.CancelledError
 
     host_identity = MagicMock()
-
+    service = RegistrationService(version_guidance=VersionGuidanceStore(), host_identity=host_identity)
     with (
-        patch(
-            "agent_app.registration.register_with_manager",
+        patch.object(
+            service,
+            "register_once",
             new_callable=AsyncMock,
             side_effect=[
                 {"id": "host-1", "status": "online"},
@@ -185,7 +192,7 @@ async def test_registration_loop_refreshes_successful_registration() -> None:
         patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
         pytest.raises(asyncio.CancelledError),
     ):
-        await registration_loop("http://manager:8000", 5100, host_identity)
+        await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
     assert sleeps == [30.0, 30.0]
@@ -201,10 +208,11 @@ async def test_registration_loop_notifies_when_advertised_ip_changes() -> None:
             raise asyncio.CancelledError
 
     on_ip_change = AsyncMock()
-
+    service = RegistrationService(version_guidance=VersionGuidanceStore(), on_advertised_ip_change=on_ip_change)
     with (
-        patch(
-            "agent_app.registration.register_with_manager",
+        patch.object(
+            service,
+            "register_once",
             new_callable=AsyncMock,
             side_effect=[
                 {"id": "host-1", "status": "online", "ip": "192.168.1.10"},
@@ -214,13 +222,13 @@ async def test_registration_loop_notifies_when_advertised_ip_changes() -> None:
         patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
         pytest.raises(asyncio.CancelledError),
     ):
-        await registration_loop("http://manager:8000", 5100, on_advertised_ip_change=on_ip_change)
+        await service.run("http://manager:8000", 5100)
 
     assert on_ip_change.await_args_list == [call("192.168.1.10"), call("192.168.88.107")]
 
 
 async def test_register_with_manager_stores_version_guidance() -> None:
-    clear_version_guidance()
+    store = VersionGuidanceStore()
     client = AsyncMock()
     client.__aenter__.return_value = client
     client.__aexit__.return_value = False
@@ -236,15 +244,16 @@ async def test_register_with_manager_stores_version_guidance() -> None:
     response.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=response)
 
+    service = RegistrationService(version_guidance=store)
     with (
         patch("agent_app.registration.get_or_refresh_capabilities_snapshot", new_callable=AsyncMock, return_value={}),
         patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
         patch("agent_app.registration.get_local_ip", return_value="10.0.0.5"),
         patch("agent_app.registration.httpx.AsyncClient", return_value=client),
     ):
-        await register_with_manager("http://manager:8000", 5100)
+        await service.register_once("http://manager:8000", 5100)
 
-    guidance = get_version_guidance()
+    guidance = store.get()
     assert guidance.required_agent_version == "0.2.0"
     assert guidance.recommended_agent_version == "0.3.0"
     assert guidance.agent_version_status == "outdated"
@@ -269,6 +278,7 @@ async def test_register_with_manager_sends_host_info() -> None:
         "total_disk_gb": 1024,
     }
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
         patch(
             "agent_app.registration.get_or_refresh_capabilities_snapshot",
@@ -280,14 +290,13 @@ async def test_register_with_manager_sends_host_info() -> None:
         patch("agent_app.registration.hardware_info.collect", return_value=hardware),
         patch("agent_app.registration.httpx.AsyncClient", return_value=client),
     ):
-        await register_with_manager("http://manager:8000", 5100)
+        await service.register_once("http://manager:8000", 5100)
 
     payload = client.post.await_args.kwargs["json"]
     assert payload["host_info"] == hardware
 
 
 async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.LogCaptureFixture) -> None:
-    clear_version_guidance()
     client = AsyncMock()
     client.__aenter__.return_value = client
     client.__aexit__.return_value = False
@@ -303,6 +312,7 @@ async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.L
     response.raise_for_status = MagicMock()
     client.post = AsyncMock(return_value=response)
 
+    service = RegistrationService(version_guidance=VersionGuidanceStore())
     with (
         patch("agent_app.registration.get_or_refresh_capabilities_snapshot", new_callable=AsyncMock, return_value={}),
         patch("agent_app.registration.socket.gethostname", return_value="agent-host"),
@@ -310,8 +320,8 @@ async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.L
         patch("agent_app.registration.httpx.AsyncClient", return_value=client),
         caplog.at_level("INFO"),
     ):
-        await register_with_manager("http://manager:8000", 5100)
-        await register_with_manager("http://manager:8000", 5100)
+        await service.register_once("http://manager:8000", 5100)
+        await service.register_once("http://manager:8000", 5100)
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages.count("Agent update available: recommended version is 0.3.0") == 1

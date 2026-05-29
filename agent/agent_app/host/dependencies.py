@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 
 from agent_app.host.capabilities import get_capabilities_snapshot
 from agent_app.host.telemetry import get_host_telemetry
-from agent_app.host.version_guidance import get_version_guidance
+from agent_app.host.version_guidance import AgentVersionGuidance, VersionGuidanceStore
 
 
 def get_capabilities_snapshot_dep() -> dict[str, Any]:
@@ -19,8 +19,11 @@ async def get_host_telemetry_dep() -> dict[str, Any]:
     return await get_host_telemetry()
 
 
-def get_version_guidance_payload() -> dict[str, Any]:
-    return get_version_guidance().to_payload()
+def get_version_guidance_payload(request: Request) -> dict[str, Any]:
+    store: VersionGuidanceStore | None = getattr(request.app.state, "version_guidance", None)
+    if store is None:
+        return AgentVersionGuidance().to_payload()
+    return store.get().to_payload()
 
 
 def get_registered_flag(request: Request) -> bool:
