@@ -14,10 +14,18 @@ from app.devices.models import ConnectionType, DeviceType
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostCreate, HostRegister
+from app.hosts.service import HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 CAPS_V2 = {"orchestration_contract_version": 2}
+
+
+def test_host_crud_service_satisfies_protocol() -> None:
+    from app.hosts.protocols import HostCrudProtocol
+    from app.hosts.service import HostCrudService
+
+    assert issubclass(HostCrudService, HostCrudProtocol)
 
 
 def test_coerce_missing_prerequisites_filters_duplicates_and_invalid_items() -> None:
@@ -46,22 +54,22 @@ def test_update_missing_prerequisites_from_health_updates_host_capabilities() ->
 
 
 async def test_create_and_delete_host(db_session: AsyncSession) -> None:
-    host = await host_service.create_host(
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({"agent.default_port": 6200}))
+    host = await svc.create_host(
         db_session,
         HostCreate(hostname="create-host", ip="10.0.0.10", os_type=OSType.linux, agent_port=None),
-        settings=FakeSettingsReader({"agent.default_port": 6200}),
     )
     assert host.agent_port == 6200
 
-    assert await host_service.delete_host(db_session, host.id) is True
-    assert await host_service.get_host(db_session, host.id) is None
+    assert await svc.delete_host(db_session, host.id) is True
+    assert await svc.get_host(db_session, host.id) is None
 
 
 async def test_delete_host_rejects_attached_devices(db_session: AsyncSession) -> None:
-    host = await host_service.create_host(
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    host = await svc.create_host(
         db_session,
         HostCreate(hostname="busy-host", ip="10.0.0.11", os_type=OSType.linux, agent_port=5100),
-        settings=FakeSettingsReader({}),
     )
     await create_device_record(
         db_session,
@@ -73,7 +81,7 @@ async def test_delete_host_rejects_attached_devices(db_session: AsyncSession) ->
     )
 
     with pytest.raises(ValueError, match="Cannot delete host"):
-        await host_service.delete_host(db_session, host.id)
+        await svc.delete_host(db_session, host.id)
 
 
 async def test_register_host_updates_existing_offline_host(db_session: AsyncSession) -> None:
@@ -87,7 +95,8 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
     db_session.add(host)
     await db_session.commit()
 
-    registered, is_new = await host_service.register_host(
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    registered, is_new = await svc.register_host(
         db_session,
         HostRegister(
             hostname="re-register",
@@ -97,8 +106,6 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
             agent_version="2.0.0",
             capabilities={**CAPS_V2, "missing_prerequisites": ["adb", 5]},
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
 
     assert is_new is False
@@ -111,7 +118,11 @@ async def test_register_host_updates_existing_offline_host(db_session: AsyncSess
 async def test_register_host_creates_pending_or_online_host_based_on_setting(
     db_session: AsyncSession,
 ) -> None:
-    host, is_new = await host_service.register_host(
+    svc_pending = HostCrudService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": False, "agent.default_port": 5151}),
+    )
+    host, is_new = await svc_pending.register_host(
         db_session,
         HostRegister(
             hostname="pending-host",
@@ -120,15 +131,17 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             agent_port=None,
             capabilities=CAPS_V2,
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({"agent.auto_accept_hosts": False, "agent.default_port": 5151}),
     )
 
     assert is_new is True
     assert host.status == HostStatus.pending
     assert host.agent_port == 5151
 
-    online_host, _ = await host_service.register_host(
+    svc_online = HostCrudService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"agent.auto_accept_hosts": True, "agent.default_port": 5200}),
+    )
+    online_host, _ = await svc_online.register_host(
         db_session,
         HostRegister(
             hostname="online-host",
@@ -137,8 +150,6 @@ async def test_register_host_creates_pending_or_online_host_based_on_setting(
             agent_port=None,
             capabilities=CAPS_V2,
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({"agent.auto_accept_hosts": True, "agent.default_port": 5200}),
     )
     assert online_host.status == HostStatus.online
 
@@ -168,14 +179,15 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     db_session.add_all([pending, online, reject_me])
     await db_session.commit()
 
-    approved = await host_service.approve_host(db_session, pending.id, publisher=event_bus)
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    approved = await svc.approve_host(db_session, pending.id)
     assert approved is not None
     assert approved.status == HostStatus.online
-    assert await host_service.approve_host(db_session, online.id, publisher=event_bus) is None
+    assert await svc.approve_host(db_session, online.id) is None
 
-    assert await host_service.reject_host(db_session, reject_me.id) is True
+    assert await svc.reject_host(db_session, reject_me.id) is True
     assert db_session.in_transaction() is False
-    assert await host_service.reject_host(db_session, online.id) is False
+    assert await svc.reject_host(db_session, online.id) is False
 
 
 async def test_list_hosts_and_missing_host_paths(db_session: AsyncSession) -> None:
@@ -183,9 +195,10 @@ async def test_list_hosts_and_missing_host_paths(db_session: AsyncSession) -> No
     db_session.add(host)
     await db_session.commit()
 
-    hosts = await host_service.list_hosts(db_session)
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    hosts = await svc.list_hosts(db_session)
     assert [item.hostname for item in hosts] == ["aaa"]
-    assert await host_service.delete_host(db_session, uuid4()) is False
+    assert await svc.delete_host(db_session, uuid4()) is False
 
 
 async def test_register_host_updates_agent_port_when_reprovided(db_session: AsyncSession) -> None:
@@ -199,7 +212,8 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
     db_session.add(existing)
     await db_session.commit()
 
-    updated, is_new = await host_service.register_host(
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
+    updated, is_new = await svc.register_host(
         db_session,
         HostRegister(
             hostname="report-host",
@@ -208,8 +222,6 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
             agent_port=5200,
             capabilities=CAPS_V2,
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
 
     assert is_new is False
@@ -217,6 +229,7 @@ async def test_register_host_updates_agent_port_when_reprovided(db_session: Asyn
 
 
 async def test_register_host_rejects_unsupported_agent_contract(db_session: AsyncSession) -> None:
+    svc = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     unsupported_values = (
         None,
         {},
@@ -225,7 +238,7 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
     )
     for capabilities in unsupported_values:
         with pytest.raises(ValueError, match="orchestration contract"):
-            await host_service.register_host(
+            await svc.register_host(
                 db_session,
                 HostRegister(
                     hostname=f"unsupported-{capabilities}",
@@ -234,6 +247,4 @@ async def test_register_host_rejects_unsupported_agent_contract(db_session: Asyn
                     agent_port=5100,
                     capabilities=capabilities,
                 ),
-                publisher=event_bus,
-                settings=FakeSettingsReader({}),
             )
