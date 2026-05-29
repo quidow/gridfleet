@@ -277,7 +277,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fake_publisher),
-            fleet_capacity=FleetCapacityService(settings=_fake_settings, grid=_fake_grid),
+            fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             publisher=_fake_publisher,
             settings=_fake_settings,

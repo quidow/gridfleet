@@ -165,7 +165,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fc_publisher),
-            fleet_capacity=FleetCapacityService(settings=_fc_settings, grid=_fc_grid),
+            fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             publisher=_fc_publisher,
             settings=_fc_settings,

@@ -19,7 +19,6 @@ from app.sessions.models import Session, SessionStatus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.protocols import SettingsReader
     from app.devices.services_container import DeviceServices
     from app.grid.protocols import GridServiceProtocol
 
@@ -202,8 +201,7 @@ async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
 
 
 class FleetCapacityService:
-    def __init__(self, *, settings: SettingsReader, grid: GridServiceProtocol) -> None:
-        self._settings = settings
+    def __init__(self, *, grid: GridServiceProtocol) -> None:
         self._grid = grid
 
     async def get_fleet_capacity_timeline(

@@ -20,7 +20,6 @@ from app.devices.services.fleet_capacity import (
 )
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 
@@ -145,7 +144,7 @@ async def test_fleet_capacity_helper_guard_paths(db_session: AsyncSession) -> No
     assert _extract_grid_counts({"error": "down", "value": {"ready": False}}) is None
     assert _extract_grid_counts({"value": "bad"}) is None
 
-    svc = FleetCapacityService(settings=FakeSettingsReader(), grid=MagicMock())
+    svc = FleetCapacityService(grid=MagicMock())
     with pytest.raises(ValueError, match="bucket_minutes"):
         await svc.get_fleet_capacity_timeline(
             db_session,
@@ -218,7 +217,7 @@ async def test_fleet_capacity_timeline_aggregates_snapshots_and_capacity_rejecti
     )
     await db_session.commit()
 
-    response = await FleetCapacityService(settings=FakeSettingsReader(), grid=MagicMock()).get_fleet_capacity_timeline(
+    response = await FleetCapacityService(grid=MagicMock()).get_fleet_capacity_timeline(
         db_session,
         date_from=date_from,
         date_to=date_from + timedelta(minutes=4),
@@ -291,7 +290,7 @@ async def test_fleet_capacity_timeline_picks_latest_snapshot_per_bucket(
     )
     await db_session.commit()
 
-    response = await FleetCapacityService(settings=FakeSettingsReader(), grid=MagicMock()).get_fleet_capacity_timeline(
+    response = await FleetCapacityService(grid=MagicMock()).get_fleet_capacity_timeline(
         db_session,
         date_from=date_from,
         date_to=date_from + timedelta(minutes=60),
@@ -312,7 +311,7 @@ async def test_fleet_capacity_timeline_aligns_unaligned_bounds(
     date_from = datetime(2026, 4, 18, 10, 23, tzinfo=UTC)
     date_to = datetime(2026, 4, 18, 11, 17, tzinfo=UTC)
 
-    response = await FleetCapacityService(settings=FakeSettingsReader(), grid=MagicMock()).get_fleet_capacity_timeline(
+    response = await FleetCapacityService(grid=MagicMock()).get_fleet_capacity_timeline(
         db_session,
         date_from=date_from,
         date_to=date_to,
@@ -426,7 +425,7 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
     fake_grid = AsyncMock()
     fake_grid.get_status = AsyncMock(return_value=_grid_status(active_sessions=3, queued_requests=2))
     fake_grid.available_node_device_ids = MagicMock(return_value=None)
-    snapshot = await FleetCapacityService(settings=FakeSettingsReader(), grid=fake_grid).collect_capacity_snapshot_once(
+    snapshot = await FleetCapacityService(grid=fake_grid).collect_capacity_snapshot_once(
         db_session,
         captured_at=datetime(2026, 4, 18, 12, tzinfo=UTC),
     )
@@ -473,9 +472,7 @@ async def test_capacity_snapshot_collector_skips_unreachable_grid(db_session: As
     fake_grid = AsyncMock()
     fake_grid.get_status = AsyncMock(return_value={"ready": False, "error": "connect failed"})
     fake_grid.available_node_device_ids = MagicMock(return_value=None)
-    snapshot = await FleetCapacityService(settings=FakeSettingsReader(), grid=fake_grid).collect_capacity_snapshot_once(
-        db_session
-    )
+    snapshot = await FleetCapacityService(grid=fake_grid).collect_capacity_snapshot_once(db_session)
 
     assert snapshot is None
     assert (await db_session.execute(select(AnalyticsCapacitySnapshot))).scalars().all() == []
@@ -540,7 +537,7 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
     fake_grid = AsyncMock()
     fake_grid.get_status = AsyncMock(return_value=_grid_status(active_sessions=0, queued_requests=0))
     fake_grid.available_node_device_ids = MagicMock(return_value=None)
-    snapshot = await FleetCapacityService(settings=FakeSettingsReader(), grid=fake_grid).collect_capacity_snapshot_once(
+    snapshot = await FleetCapacityService(grid=fake_grid).collect_capacity_snapshot_once(
         db_session,
         captured_at=datetime(2026, 4, 18, 13, tzinfo=UTC),
     )

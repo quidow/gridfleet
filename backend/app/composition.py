@@ -121,7 +121,7 @@ def compose_app(
     pack_status = PackStatusService(feature=pack_feature)
 
     device_state_svc = DeviceStateService(publisher=bus)
-    fleet_capacity_svc = FleetCapacityService(settings=settings_svc, grid=grid_svc)
+    fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
 
     run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)

@@ -363,7 +363,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _grid_svc = GridService(settings=settings_service)
         return DeviceServices(
             state=DeviceStateService(publisher=test_event_bus),
-            fleet_capacity=FleetCapacityService(settings=settings_service, grid=_grid_svc),
+            fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             publisher=test_event_bus,
             settings=settings_service,

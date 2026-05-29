@@ -131,7 +131,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_pr_publisher),
-            fleet_capacity=FleetCapacityService(settings=_pr_settings, grid=_pr_grid),
+            fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             publisher=_pr_publisher,
             settings=_pr_settings,
