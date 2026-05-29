@@ -1231,12 +1231,8 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         lambda: hosts.get_host_tool_status(
             host_id, db=object(), host_services=fake_hs_none, settings_services=mock_ss, agent_comm=_tools_agent_comm
         ),
-        lambda: hosts.discover_devices(
-            host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc
-        ),
-        lambda: hosts.intake_candidates(
-            host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc
-        ),
+        lambda: hosts.discover_devices(host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc),
+        lambda: hosts.intake_candidates(host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc),
     ):
         with pytest.raises(HTTPException) as exc:
             await call()
@@ -1367,9 +1363,7 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     )
     fake_ps_ok2 = SimpleNamespace(discovery=fake_disc_svc_ok2)
     assert (
-        await hosts.confirm_discovery(
-            host_id, body, db=object(), host_services=fake_hs_host, pack_services=fake_ps_ok2
-        )
+        await hosts.confirm_discovery(host_id, body, db=object(), host_services=fake_hs_host, pack_services=fake_ps_ok2)
         == "confirmed"
     )  # type: ignore[arg-type]
 
