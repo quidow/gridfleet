@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.services import heartbeat as heartbeat
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
@@ -86,11 +86,15 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
             patch.object(heartbeat, "assert_current_leader", new=AsyncMock()),
         ):
             async with db_session_maker() as db:
-                services = Mock()
-                services.session_factory = db_session_maker
-                loop = HeartbeatLoop(services=services)
+                svc = HeartbeatService(
+                    publisher=Mock(),
+                    settings=FakeSettingsReader({}),
+                    pool=Mock(),
+                    circuit_breaker=Mock(),
+                    session_factory=db_session_maker,
+                )
                 for _ in range(threshold):
-                    await loop._check_hosts(db, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+                    await svc._check_hosts(db)
 
     async def race_writer() -> None:
         await asyncio.wait_for(inside_offline_branch.wait(), timeout=2.0)

@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from app.settings.service import SettingsService
 
 from app.agent_comm.services_container import AgentCommServices
+from app.appium_nodes.services.heartbeat import HeartbeatService
+from app.appium_nodes.services.node_health import NodeHealthService
+from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
@@ -182,11 +185,28 @@ def compose_app(
             session_factory=session_factory,
         ),
         appium_nodes=AppiumNodeServices(
+            reconciler=ReconcilerService(
+                publisher=bus,
+                settings=settings_svc,
+                pool=http_pool,
+                circuit_breaker=circuit_breaker,
+                session_factory=session_factory,
+            ),
+            node_health=NodeHealthService(
+                publisher=bus,
+                settings=settings_svc,
+                pool=http_pool,
+                circuit_breaker=circuit_breaker,
+                grid=grid_svc,
+            ),
+            heartbeat=HeartbeatService(
+                publisher=bus,
+                settings=settings_svc,
+                pool=http_pool,
+                circuit_breaker=circuit_breaker,
+                session_factory=session_factory,
+            ),
             settings=settings_svc,
-            pool=http_pool,
-            circuit_breaker=circuit_breaker,
-            publisher=bus,
-            grid=grid_svc,
             session_factory=session_factory,
         ),
         jobs=DurableJobWorkerLoop(

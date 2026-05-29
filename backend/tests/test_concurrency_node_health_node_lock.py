@@ -60,14 +60,22 @@ async def test_node_health_failure_path_locks_appium_node(
 
             locked_device = await device_locking.lock_device(session, device_id)
             with patch("app.appium_nodes.services.node_health.record_event", racing_record_event):
-                await node_health._process_node_health(
+                from unittest.mock import Mock
+
+                from app.appium_nodes.services.node_health import NodeHealthService
+
+                await NodeHealthService(
+                    publisher=event_bus,
+                    settings=FakeSettingsReader({}),
+                    pool=Mock(),
+                    circuit_breaker=Mock(),
+                    grid=Mock(),
+                )._process_node_health(
                     session,
                     locked_device.appium_node,
                     locked_device,
                     result=ProbeResult(status="refused"),
                     grid_device_ids=set(),
-                    settings=FakeSettingsReader({}),
-                    publisher=event_bus,
                 )
             await session.commit()
 

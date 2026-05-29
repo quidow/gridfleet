@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
@@ -152,13 +153,20 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
     touch = AsyncMock()
     converge = AsyncMock()
     monkeypatch.setattr("app.appium_nodes.services.reconciler._touch_last_observed", touch)
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.converge_host_rows", converge)
+    monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
 
     @asynccontextmanager
     async def _mock_session_factory() -> AsyncMock:
         yield AsyncMock()
 
-    await appium_reconciler._drive_convergence(
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=_mock_session_factory,
+    )
+    await svc._drive_convergence(
         [
             {"id": "bad", "ip": "10.0.0.1", "agent_port": 5100},
             {"id": uuid.uuid4(), "ip": "10.0.0.2", "agent_port": 5100},
@@ -166,24 +174,22 @@ async def test_drive_convergence_filters_hosts_and_uses_cached_health(monkeypatc
         ],
         [active, backed_off],
         {backed_off.device_id: datetime.now(UTC) + timedelta(minutes=10)},
-        publisher=Mock(),
         health_by_host={host_id: observed_payload},
         require_leader=False,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        session_factory=_mock_session_factory,
     )
 
     touch.assert_awaited_once()
     converge.assert_awaited_once()
-    assert converge.await_args.kwargs["rows"] == [active]
+    # desired_rows (active_rows) is 2nd positional arg to converge_host_rows(None, active_rows, observed, ...)
+    assert converge.call_args.args[1] == [active]
 
 
 async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: pytest.MonkeyPatch) -> None:
     row = _desired_row()
-    stop_agent = appium_reconciler._make_stop_agent(
-        "10.0.0.1", 5100, settings=FakeSettingsReader(), circuit_breaker=Mock()
+    svc = ReconcilerService(
+        publisher=Mock(), settings=FakeSettingsReader(), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
     )
+    stop_agent = svc._make_stop_agent("10.0.0.1", 5100)
     assert await stop_agent(row=row, port=None) is None
     assert await stop_agent(row=row, port=0) is None
 
@@ -236,9 +242,10 @@ async def test_start_agent_and_empty_helpers_remaining_branches(monkeypatch: pyt
         yield Session()
 
     monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
-    start = appium_reconciler._make_start_agent(
-        require_leader=False, session_scope=scope, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    svc2 = ReconcilerService(
+        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
     )
+    start = svc2._make_start_agent(require_leader=False, session_scope=scope)
     with pytest.raises(RuntimeError, match="no longer exists"):
         await start(row=row, port=4723)
 

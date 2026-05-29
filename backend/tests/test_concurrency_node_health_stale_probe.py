@@ -71,13 +71,17 @@ async def _run_node_health_with_gate(
     fake_grid.available_node_device_ids = Mock(return_value=set())
 
     with (
-        patch("app.appium_nodes.services.node_health._check_node_health", side_effect=unhealthy_probe),
+        patch.object(node_health.NodeHealthService, "_check_node_health", side_effect=unhealthy_probe),
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
     ):
         async with db_session_maker() as session:
-            await node_health._check_nodes(
-                session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus, grid=fake_grid
-            )
+            await node_health.NodeHealthService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                pool=Mock(),
+                circuit_breaker=Mock(),
+                grid=fake_grid,
+            ).check_nodes(session)
 
 
 async def test_stale_unhealthy_probe_skips_when_node_stopped_before_lock(

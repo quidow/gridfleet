@@ -477,24 +477,22 @@ async def run_one_reconciler_cycle(settings: FakeSettingsReader | None = None) -
     functions so this just calls through the same code path.
     """
     from app.appium_nodes.services import reconciler as appium_reconciler
+    from app.appium_nodes.services.reconciler import ReconcilerService
+
+    resolved_settings = settings or FakeSettingsReader({})
+    svc = ReconcilerService(
+        publisher=test_event_bus,
+        settings=resolved_settings,
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=appium_reconciler.async_session,
+    )
 
     async with appium_reconciler.async_session() as db:
         hosts = await appium_reconciler._fetch_online_hosts(db)
         rows = await appium_reconciler._fetch_node_rows(db)
         desired = await appium_reconciler._fetch_desired_rows(db)
         backoff = await appium_reconciler._fetch_backoff_until(db)
-    resolved_settings = settings or FakeSettingsReader({})
-    health_by_host = await appium_reconciler._reconcile_all(
-        hosts, rows, settings=resolved_settings, circuit_breaker=Mock()
-    )
+    health_by_host = await svc._reconcile_all(hosts, rows)
     if appium_reconciler.reconciler_convergence_enabled():
-        await appium_reconciler._drive_convergence(
-            hosts,
-            desired,
-            backoff,
-            health_by_host=health_by_host,
-            settings=resolved_settings,
-            circuit_breaker=Mock(),
-            session_factory=appium_reconciler.async_session,
-            publisher=test_event_bus,
-        )
+        await svc._drive_convergence(hosts, desired, backoff, health_by_host=health_by_host)

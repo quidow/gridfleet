@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from app.appium_nodes.services import heartbeat as heartbeat
-from app.appium_nodes.services.heartbeat import HeartbeatLoop
+from app.appium_nodes.services.heartbeat import HeartbeatLoop, HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.errors import AgentCallError, AgentUnreachableError
@@ -33,28 +33,34 @@ async def test_auto_sync_plugins_on_recovery_handles_missing_host_and_errors(mon
                 raise RuntimeError("db down")
             return self.host
 
-    await heartbeat._auto_sync_plugins_on_recovery(
-        uuid.uuid4(), settings=FakeSettingsReader({}), circuit_breaker=Mock(), session_factory=lambda: FakeSession(None)
-    )
+    await HeartbeatService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=lambda: FakeSession(None),
+    )._auto_sync_plugins_on_recovery(uuid.uuid4())
 
     host = SimpleNamespace(id=uuid.uuid4())
     monkeypatch.setattr(PluginService, "list_plugins", AsyncMock(return_value=["plugin"]))
     sync = AsyncMock()
     monkeypatch.setattr(PluginService, "auto_sync_host_plugins", sync)
-    await heartbeat._auto_sync_plugins_on_recovery(
-        host.id,
+    await HeartbeatService(
+        publisher=Mock(),
         settings=FakeSettingsReader({}),
+        pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=lambda: FakeSession(host),
-    )
+    )._auto_sync_plugins_on_recovery(host.id)
     sync.assert_awaited_once_with(host, ["plugin"])
 
-    await heartbeat._auto_sync_plugins_on_recovery(
-        host.id,
+    await HeartbeatService(
+        publisher=Mock(),
         settings=FakeSettingsReader({}),
+        pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=lambda: FakeSession(host, fail_get=True),
-    )
+    )._auto_sync_plugins_on_recovery(host.id)
 
 
 async def test_background_task_scheduler_and_shutdown_paths() -> None:
@@ -193,15 +199,14 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
             return None
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    heartbeat_svc = Mock(run_cycle=AsyncMock(side_effect=RuntimeError("boom")))
     services = AppiumNodeServices(
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        publisher=Mock(),
-        grid=Mock(),
+        reconciler=Mock(),
+        node_health=Mock(),
+        heartbeat=heartbeat_svc,
         session_factory=lambda: Session(),
     )
 

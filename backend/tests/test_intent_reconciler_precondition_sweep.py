@@ -387,9 +387,16 @@ async def test_node_health_registers_node_running_precondition(
 
     monkeypatch.setattr(node_health, "register_intents_and_reconcile", fake_register)
 
+    from unittest.mock import Mock
+
+    from app.appium_nodes.services.node_health import NodeHealthService
+
     device = await create_device(db_session, host_id=db_host.id, name="autorec-prec")
     await _seed_node(db_session, device.id)
-    await node_health._attempt_node_restart(db_session, device=device, settings=FakeSettingsReader({}))
+    svc = NodeHealthService(
+        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), grid=Mock()
+    )
+    await svc._attempt_node_restart(db_session, device=device)
 
     node_intent = next(intent for intent in captured if intent.source == f"auto_recovery:node:{device.id}")
     recovery_intent = next(intent for intent in captured if intent.source == f"auto_recovery:recovery:{device.id}")

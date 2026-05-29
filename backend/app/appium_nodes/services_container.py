@@ -8,18 +8,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.agent_comm.http_pool import AgentHttpPool
-    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.protocols import HeartbeatProtocol, NodeHealthProtocol, ReconcilerProtocol
     from app.core.protocols import SettingsReader
-    from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
 class AppiumNodeServices:
+    reconciler: ReconcilerProtocol
+    node_health: NodeHealthProtocol
+    heartbeat: HeartbeatProtocol
     settings: SettingsReader
-    pool: AgentHttpPool
-    circuit_breaker: CircuitBreakerProtocol
-    publisher: EventPublisher
-    grid: GridServiceProtocol
     session_factory: async_sessionmaker[AsyncSession]

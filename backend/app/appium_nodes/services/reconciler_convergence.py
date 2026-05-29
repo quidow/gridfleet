@@ -118,52 +118,6 @@ def decide_convergence_action(
     return ConvergenceAction(kind="no_op")
 
 
-async def converge_host_rows(
-    *,
-    host_id: uuid.UUID,
-    rows: list[DesiredRow],
-    agent_running: list[ObservedEntry],
-    now: datetime,
-    start_agent: StartAgent,
-    stop_agent: StopAgent,
-    write_observed: WriteObserved,
-    clear_token: ClearToken,
-    reset_start_failure: ResetStartFailure,
-    raise_errors: bool = False,
-) -> None:
-    """Drive convergence for one host.
-
-    Hosts are parallelized by the caller; rows on a single host are processed
-    serially so one row's observed-state write is visible to the next row's
-    allocator call.
-    """
-    observed_by_target = {entry.connection_target: entry for entry in agent_running}
-    for row in sorted(rows, key=lambda item: str(item.device_id)):
-        observed = observed_by_target.get(row.connection_target)
-        action = decide_convergence_action(row, observed=observed, now=now)
-        try:
-            await _execute_action(
-                host_id=host_id,
-                row=row,
-                action=action,
-                start_agent=start_agent,
-                stop_agent=stop_agent,
-                write_observed=write_observed,
-                clear_token=clear_token,
-                reset_start_failure=reset_start_failure,
-            )
-        except Exception:
-            logger.warning(
-                "appium_reconciler_convergence_action_failed",
-                exc_info=True,
-                host_id=str(host_id),
-                device_id=str(row.device_id),
-                action=action.kind,
-            )
-            if raise_errors:
-                raise
-
-
 async def _execute_action(
     *,
     host_id: uuid.UUID,
