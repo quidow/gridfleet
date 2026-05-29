@@ -14,7 +14,7 @@ from app.packs.models import (
     HostPackInstallation,
     HostRuntimeInstallation,
 )
-from app.packs.services.feature_status import record_feature_status
+from app.packs.services.feature_dispatch import record_feature_status
 from app.packs.services.host_compatibility import manifest_supports_host_os
 
 if TYPE_CHECKING:

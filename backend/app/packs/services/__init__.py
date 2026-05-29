@@ -8,7 +8,6 @@ __all__ = [
     "drain",
     "export",
     "feature_dispatch",
-    "feature_status",
     "host_compatibility",
     "ingest",
     "lifecycle",

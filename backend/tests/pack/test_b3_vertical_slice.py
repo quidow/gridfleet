@@ -431,7 +431,7 @@ async def test_b3_feature_action_degraded_and_recovered(
     """
     # Inject publisher=event_bus into record_feature_status calls from feature_dispatch.
     from app.packs.services import feature_dispatch as fd_mod
-    from app.packs.services.feature_status import record_feature_status as _orig_rfs
+    from app.packs.services.feature_dispatch import record_feature_status as _orig_rfs
 
     async def _wrapped_rfs(*args: object, **kwargs: object) -> object:
         kwargs.setdefault("publisher", event_bus)

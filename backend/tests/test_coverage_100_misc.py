@@ -83,9 +83,6 @@ from app.packs.services import (
     feature_dispatch as pack_feature_dispatch_service,
 )
 from app.packs.services import (
-    feature_status as pack_feature_status_service,
-)
-from app.packs.services import (
     lifecycle as pack_lifecycle_service,
 )
 from app.packs.services import (
@@ -547,7 +544,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     assert (
-        await pack_feature_status_service.record_feature_status(
+        await pack_feature_dispatch_service.record_feature_status(
             db,
             host_id=uuid.uuid4(),
             pack_id="pack",
@@ -650,7 +647,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     existing_status = SimpleNamespace(ok=True)
     feature_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing_status))
     assert (
-        await pack_feature_status_service.record_feature_status(
+        await pack_feature_dispatch_service.record_feature_status(
             feature_db,
             host_id=uuid.uuid4(),
             pack_id="pack",

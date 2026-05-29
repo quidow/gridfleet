@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 
 from app.packs.models import HostPackFeatureStatus
-from app.packs.services.feature_status import record_feature_status
+from app.packs.services.feature_dispatch import record_feature_status
 from tests.helpers import drain_handlers, recent_events
 from tests.helpers import test_event_bus as event_bus
 
