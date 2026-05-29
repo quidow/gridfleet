@@ -486,18 +486,12 @@ class PackStatusService:
         return {"host_id": str(host_id), "packs": packs, "plugins": plugins}
 
 
-# ---------------------------------------------------------------------------
-# Backward-compat free-function wrappers
-#
-# These wrappers preserve the original function signatures used by routers and
-# tests that have not yet migrated to PackStatusService.  They construct a
-# throw-away service instance on every call, which is intentional: because
-# PackStatusService requires publisher + feature at construction time, no
-# singleton is possible here.  Callers that still pass `publisher=...` as a
-# kwarg (apply_status) are fully supported.
-#
-# TODO: remove once all callers migrate to PackStatusService.
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Backward-compat free functions for routers until Task 8 (PackServicesDep).
+# These are FULL COPIES of the class methods above, not delegation wrappers —
+# PackStatusService requires publisher + feature deps at construction time.
+# Remove these when pack routers migrate to PackServicesDep in Task 8.
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 async def persist_doctor_results(
