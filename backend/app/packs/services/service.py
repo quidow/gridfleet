@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.devices.models import Device
 from app.packs.models import (
     DriverPack,
     DriverPackFeature,
     DriverPackPlatform,
     DriverPackRelease,
+    HostPackDoctorResult,
+    HostPackFeatureStatus,
     HostPackInstallation,
     HostRuntimeInstallation,
     PackState,
@@ -278,3 +282,179 @@ def _runtime_driver_version(runtime: HostRuntimeInstallation) -> str | None:
         version = runtime.driver_specs[0].get("version")
         return str(version) if version is not None else None
     return None
+
+
+class PackCatalogService:
+    async def list_catalog(self, db: AsyncSession) -> PackCatalog:
+        rows = (
+            (
+                await db.execute(
+                    select(DriverPack)
+                    .options(
+                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                        selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                    )
+                    .order_by(DriverPack.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        for pack in rows:
+            if pack.state == PackState.draining:
+                await try_complete_drain(db, pack.id)
+        await db.commit()
+
+        runtime_summaries = await self._runtime_summaries_by_pack(db, [pack.id for pack in rows])
+        out: list[PackOut] = []
+        for pack in rows:
+            latest = selected_release(pack.releases, pack.current_release)
+            manifest = latest.manifest_json if latest else {}
+            drain_info: dict[str, int] = {"active_runs": 0, "live_sessions": 0}
+            if pack.state == PackState.draining:
+                drain_info = await count_active_work_for_pack(db, pack.id)
+            out.append(
+                PackOut(
+                    id=pack.id,
+                    display_name=pack.display_name,
+                    maintainer=pack.maintainer,
+                    license=pack.license,
+                    state=pack.state,
+                    current_release=latest.release if latest else None,
+                    platforms=[_platform_out(platform) for platform in latest.platforms] if latest else [],
+                    appium_server=_installable_out(manifest.get("appium_server")),
+                    appium_driver=_installable_out(manifest.get("appium_driver")),
+                    workarounds=_workarounds_out(manifest.get("workarounds", [])),
+                    doctor=_doctor_out(manifest.get("doctor", [])),
+                    insecure_features=manifest.get("insecure_features", []),
+                    features=_features_out(latest) if latest else {},
+                    runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
+                    active_runs=drain_info["active_runs"],
+                    live_sessions=drain_info["live_sessions"],
+                    runtime_summary=runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
+                )
+            )
+        return PackCatalog(packs=out)
+
+    async def get_pack_detail(self, db: AsyncSession, pack_id: str) -> PackOut | None:
+        row = (
+            await db.execute(
+                select(DriverPack)
+                .options(
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                )
+                .where(DriverPack.id == pack_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        runtime_summaries = await self._runtime_summaries_by_pack(db, [row.id])
+        return build_pack_out(row, runtime_summaries.get(row.id))
+
+    async def set_runtime_policy(self, db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> DriverPack:
+        pack = await db.get(DriverPack, pack_id)
+        if pack is None:
+            raise LookupError(pack_id)
+        pack.runtime_policy = policy.model_dump()
+        await db.commit()
+        reloaded = (
+            await db.execute(
+                select(DriverPack)
+                .options(
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                )
+                .where(DriverPack.id == pack_id)
+            )
+        ).scalar_one()
+        return reloaded
+
+    async def delete_pack(self, db: AsyncSession, pack_id: str) -> None:
+        pack = (
+            await db.execute(
+                select(DriverPack)
+                .where(DriverPack.id == pack_id)
+                .options(
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
+                )
+            )
+        ).scalar_one_or_none()
+        if pack is None:
+            raise LookupError(f"Pack {pack_id!r} not found")
+
+        device_count = (
+            await db.execute(select(func.count()).select_from(Device).where(Device.pack_id == pack_id))
+        ).scalar_one()
+        if device_count:
+            noun = "device" if device_count == 1 else "devices"
+            raise RuntimeError(f"Cannot delete pack {pack_id!r}; {device_count} {noun} still use it")
+
+        active_work = await count_active_work_for_pack(db, pack_id)
+        if active_work["active_runs"] or active_work["live_sessions"]:
+            raise RuntimeError(
+                f"Cannot delete pack {pack_id!r}; {active_work['active_runs']} active run(s) and "
+                f"{active_work['live_sessions']} live session(s) still reference it"
+            )
+
+        artifact_paths = [Path(release.artifact_path) for release in pack.releases if release.artifact_path]
+
+        await db.execute(delete(HostPackFeatureStatus).where(HostPackFeatureStatus.pack_id == pack_id))
+        await db.execute(delete(HostPackDoctorResult).where(HostPackDoctorResult.pack_id == pack_id))
+        await db.execute(delete(HostPackInstallation).where(HostPackInstallation.pack_id == pack_id))
+        await db.delete(pack)
+        await db.flush()
+
+        for artifact_path in artifact_paths:
+            artifact_path.unlink(missing_ok=True)
+
+    async def _runtime_summaries_by_pack(
+        self, db: AsyncSession, pack_ids: list[str]
+    ) -> dict[str, PackRuntimeSummaryOut]:
+        if not pack_ids:
+            return {}
+
+        rows = (
+            await db.execute(
+                select(HostPackInstallation, HostRuntimeInstallation)
+                .outerjoin(
+                    HostRuntimeInstallation,
+                    and_(
+                        HostRuntimeInstallation.host_id == HostPackInstallation.host_id,
+                        HostRuntimeInstallation.runtime_id == HostPackInstallation.runtime_id,
+                    ),
+                )
+                .where(HostPackInstallation.pack_id.in_(pack_ids))
+            )
+        ).all()
+
+        counters: dict[str, _RuntimeSummaryAccumulator] = {}
+        for pack_row, runtime in rows:
+            data = counters.setdefault(pack_row.pack_id, _RuntimeSummaryAccumulator())
+            if pack_row.status == "installed":
+                data.installed_hosts += 1
+            if pack_row.status == "blocked":
+                data.blocked_hosts += 1
+            if runtime is not None:
+                if runtime.appium_server_version:
+                    data.server_versions.add(runtime.appium_server_version)
+                driver_version = _runtime_driver_version(runtime)
+                if driver_version:
+                    data.driver_versions.add(driver_version)
+            desired = _desired_driver_version(pack_row)
+            actual = _runtime_driver_version(runtime) if runtime is not None else None
+            if desired is not None and actual is not None and desired != actual:
+                data.driver_drift_hosts += 1
+
+        summaries: dict[str, PackRuntimeSummaryOut] = {}
+        for pack_id, data in counters.items():
+            summaries[pack_id] = PackRuntimeSummaryOut(
+                installed_hosts=data.installed_hosts,
+                blocked_hosts=data.blocked_hosts,
+                actual_appium_server_versions=sorted(data.server_versions),
+                actual_appium_driver_versions=sorted(data.driver_versions),
+                driver_drift_hosts=data.driver_drift_hosts,
+            )
+        return summaries

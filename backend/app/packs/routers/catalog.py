@@ -12,13 +12,13 @@ from app.packs.schemas import (
     PackPatch,
     RuntimePolicyPatch,
 )
-from app.packs.services.delete import delete_pack
 from app.packs.services.lifecycle import transition_pack_state
-from app.packs.services.policy import set_runtime_policy
-from app.packs.services.service import build_pack_out, get_pack_detail, list_catalog
+from app.packs.services.service import PackCatalogService, build_pack_out, get_pack_detail, list_catalog
 from app.packs.services.status import get_driver_pack_host_status
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
+
+_catalog_svc = PackCatalogService()
 
 
 @router.get("/catalog", response_model=PackCatalog)
@@ -70,7 +70,7 @@ async def update_runtime_policy(
     session: DbDep,
 ) -> PackOut:
     try:
-        pack = await set_runtime_policy(session, pack_id, body.runtime_policy)
+        pack = await _catalog_svc.set_runtime_policy(session, pack_id, body.runtime_policy)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     return build_pack_out(pack)
@@ -83,7 +83,7 @@ async def delete_driver_pack(
     session: DbDep,
 ) -> Response:
     try:
-        await delete_pack(session, pack_id)
+        await _catalog_svc.delete_pack(session, pack_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
