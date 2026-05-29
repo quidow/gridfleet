@@ -4,7 +4,6 @@ from types import ModuleType
 __all__ = [
     "audit",
     "capability",
-    "delete",
     "desired_state",
     "discovery",
     "drain",
@@ -16,7 +15,6 @@ __all__ = [
     "lifecycle",
     "platform_catalog",
     "platform_resolver",
-    "policy",
     "release",
     "release_ordering",
     "service",

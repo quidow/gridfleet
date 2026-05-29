@@ -15,14 +15,9 @@ from app.packs.models import (
 )
 from app.packs.schemas import RuntimePolicy
 from app.packs.services import (
-    delete as pack_delete_service,
-)
-from app.packs.services import (
-    policy as pack_policy_service,
-)
-from app.packs.services import (
     release as pack_release_service,
 )
+from app.packs.services.service import delete_pack, set_runtime_policy
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
@@ -234,7 +229,7 @@ async def test_delete_pack_guards_references_then_removes_pack_side_tables(
     )
 
     with pytest.raises(RuntimeError, match="1 device still use it"):
-        await pack_delete_service.delete_pack(db_session, pack.id)
+        await delete_pack(db_session, pack.id)
 
     await db_session.delete(device)
     db_session.add_all(
@@ -245,7 +240,7 @@ async def test_delete_pack_guards_references_then_removes_pack_side_tables(
     )
     await db_session.commit()
 
-    await pack_delete_service.delete_pack(db_session, pack.id)
+    await delete_pack(db_session, pack.id)
     await db_session.commit()
 
     assert await db_session.get(DriverPack, pack.id) is None
@@ -257,16 +252,16 @@ async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSe
     await _seed_pack_with_releases(db_session, tmp_path)
 
     with pytest.raises(LookupError):
-        await pack_delete_service.delete_pack(db_session, "missing/pack")
+        await delete_pack(db_session, "missing/pack")
     with pytest.raises(LookupError):
-        await pack_policy_service.set_runtime_policy(db_session, "missing/pack", RuntimePolicy())
+        await set_runtime_policy(db_session, "missing/pack", RuntimePolicy())
 
     policy = RuntimePolicy(
         strategy="exact",
         appium_server_version="2.10.0",
         appium_driver_version="3.0.0",
     )
-    pack = await pack_policy_service.set_runtime_policy(db_session, "local/coverage-pack", policy)
+    pack = await set_runtime_policy(db_session, "local/coverage-pack", policy)
     assert pack.runtime_policy == {
         "strategy": "exact",
         "appium_server_version": "2.10.0",

@@ -71,9 +71,6 @@ from app.packs.services import (
     capability as pack_capability_service,
 )
 from app.packs.services import (
-    delete as pack_delete_service,
-)
-from app.packs.services import (
     desired_state as pack_desired_state_service,
 )
 from app.packs.services import (
@@ -93,6 +90,9 @@ from app.packs.services import (
 )
 from app.packs.services import (
     platform_resolver as pack_platform_resolver,
+)
+from app.packs.services import (
+    service as pack_delete_service,
 )
 from app.packs.services import (
     status as pack_status_service,

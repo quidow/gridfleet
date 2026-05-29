@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services import service as pack_service
+from app.packs.services.service import PackCatalogService
 
 
 class ScalarRowsResult:
@@ -171,7 +172,8 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
     runtime = SimpleNamespace(appium_server_version="2.0.0", driver_specs=[{"version": "3.1.0"}])
     session = ExecuteSession(SimpleNamespace(all=lambda: [(installed, runtime), (blocked, None)]))
 
-    summaries = await pack_service._runtime_summaries_by_pack(session, ["local/pack"])
+    svc = PackCatalogService()
+    summaries = await svc._runtime_summaries_by_pack(session, ["local/pack"])  # type: ignore[arg-type]
 
     summary = summaries["local/pack"]
     assert summary.installed_hosts == 1
@@ -179,7 +181,7 @@ async def test_runtime_summaries_count_hosts_versions_and_driver_drift() -> None
     assert summary.actual_appium_server_versions == ["2.0.0"]
     assert summary.actual_appium_driver_versions == ["3.1.0"]
     assert summary.driver_drift_hosts == 1
-    assert await pack_service._runtime_summaries_by_pack(session, []) == {}
+    assert await svc._runtime_summaries_by_pack(session, []) == {}  # type: ignore[arg-type]
 
 
 async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() -> None:
