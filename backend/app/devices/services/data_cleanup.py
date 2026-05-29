@@ -72,175 +72,174 @@ async def _delete_in_batches(
     return deleted_total
 
 
-async def _cleanup_old_data(db: AsyncSession, *, publisher: EventPublisher, settings: SettingsReader) -> None:
-    now = datetime.now(UTC)
-    sessions_deleted = 0
-    audit_deleted = 0
-    test_data_audit_deleted = 0
-    events_deleted = 0
-    host_resource_samples_deleted = 0
-    agent_log_entries_deleted = 0
-    capacity_snapshots_deleted = 0
-    diagnostic_snapshots_deleted = 0
-    agent_reconfigure_outbox_deleted = 0
-
-    # Sessions (only completed ones) — exclude probe rows; they have their own
-    # retention.probe_sessions_days window below.
-    sessions_days: int = settings.get("retention.sessions_days")
-    if sessions_days > 0:
-        cutoff = now - timedelta(days=sessions_days)
-        sessions_deleted = await _delete_in_batches(
-            db,
-            model=Session,
-            timestamp_column=Session.started_at,
-            cutoff=cutoff,
-            extra_predicates=(
-                Session.status != SessionStatus.running,
-                Session.ended_at.is_not(None),
-                or_(Session.test_name.is_(None), Session.test_name != PROBE_TEST_NAME),
-            ),
-        )
-
-    probe_sessions_days: int = settings.get("retention.probe_sessions_days")
-    probe_sessions_deleted = 0
-    if probe_sessions_days > 0:
-        cutoff = now - timedelta(days=probe_sessions_days)
-        probe_sessions_deleted = await _delete_in_batches(
-            db,
-            model=Session,
-            timestamp_column=Session.started_at,
-            cutoff=cutoff,
-            extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
-        )
-
-    # ConfigAuditLog
-    audit_days: int = settings.get("retention.audit_log_days")
-    if audit_days > 0:
-        cutoff = now - timedelta(days=audit_days)
-        audit_deleted = await _delete_in_batches(
-            db,
-            model=ConfigAuditLog,
-            timestamp_column=ConfigAuditLog.changed_at,
-            cutoff=cutoff,
-        )
-
-    outbox_days: int = settings.get("retention.agent_reconfigure_outbox_days")
-    if outbox_days > 0:
-        cutoff = now - timedelta(days=outbox_days)
-        agent_reconfigure_outbox_deleted = await _delete_in_batches(
-            db,
-            model=AgentReconfigureOutbox,
-            timestamp_column=AgentReconfigureOutbox.created_at,
-            cutoff=cutoff,
-            extra_predicates=(
-                (AgentReconfigureOutbox.delivered_at.is_not(None) | AgentReconfigureOutbox.abandoned_at.is_not(None)),
-            ),
-        )
-
-    # DeviceTestDataAuditLog (reuses retention.audit_log_days)
-    if audit_days > 0:
-        cutoff = now - timedelta(days=audit_days)
-        test_data_audit_deleted = await _delete_in_batches(
-            db,
-            model=DeviceTestDataAuditLog,
-            timestamp_column=DeviceTestDataAuditLog.changed_at,
-            cutoff=cutoff,
-        )
-    else:
-        test_data_audit_deleted = 0
-
-    # DeviceEvent
-    events_days: int = settings.get("retention.device_events_days")
-    if events_days > 0:
-        cutoff = now - timedelta(days=events_days)
-        events_deleted = await _delete_in_batches(
-            db,
-            model=DeviceEvent,
-            timestamp_column=DeviceEvent.created_at,
-            cutoff=cutoff,
-        )
-
-    # HostResourceSample
-    host_resource_telemetry_hours: int = settings.get("retention.host_resource_telemetry_hours")
-    if host_resource_telemetry_hours > 0:
-        cutoff = now - timedelta(hours=host_resource_telemetry_hours)
-        host_resource_samples_deleted = await _delete_in_batches(
-            db,
-            model=HostResourceSample,
-            timestamp_column=HostResourceSample.recorded_at,
-            cutoff=cutoff,
-        )
-
-    agent_log_days: int = settings.get("retention.agent_log_days")
-    if agent_log_days > 0:
-        cutoff = now - timedelta(days=agent_log_days)
-        # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
-        agent_log_entries_deleted = await _delete_in_batches(
-            db,
-            model=HostAgentLogEntry,
-            timestamp_column=HostAgentLogEntry.received_at,
-            cutoff=cutoff,
-        )
-
-    capacity_snapshots_days: int = settings.get("retention.capacity_snapshots_days")
-    if capacity_snapshots_days > 0:
-        cutoff = now - timedelta(days=capacity_snapshots_days)
-        capacity_snapshots_deleted = await _delete_in_batches(
-            db,
-            model=AnalyticsCapacitySnapshot,
-            timestamp_column=AnalyticsCapacitySnapshot.captured_at,
-            cutoff=cutoff,
-        )
-
-    diagnostic_snapshots_days: int = settings.get("retention.diagnostic_snapshots_days")
-    if diagnostic_snapshots_days > 0:
-        cutoff = now - timedelta(days=diagnostic_snapshots_days)
-        diagnostic_snapshots_deleted = await _delete_in_batches(
-            db,
-            model=DeviceDiagnosticSnapshot,
-            timestamp_column=DeviceDiagnosticSnapshot.captured_at,
-            cutoff=cutoff,
-        )
-
-    logger.info(
-        "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
-        "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
-        "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d",
-        sessions_deleted,
-        probe_sessions_deleted,
-        audit_deleted,
-        test_data_audit_deleted,
-        events_deleted,
-        host_resource_samples_deleted,
-        agent_log_entries_deleted,
-        capacity_snapshots_deleted,
-        diagnostic_snapshots_deleted,
-        agent_reconfigure_outbox_deleted,
-    )
-    await publisher.publish(
-        "system.cleanup_completed",
-        {
-            "sessions_deleted": sessions_deleted,
-            "probe_sessions_deleted": probe_sessions_deleted,
-            "audit_entries_deleted": audit_deleted,
-            "test_data_audit_entries_deleted": test_data_audit_deleted,
-            "device_events_deleted": events_deleted,
-            "host_resource_samples_deleted": host_resource_samples_deleted,
-            "agent_log_entries_deleted": agent_log_entries_deleted,
-            "capacity_snapshots_deleted": capacity_snapshots_deleted,
-            "diagnostic_snapshots_deleted": diagnostic_snapshots_deleted,
-            "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
-        },
-    )
-
-
 class DataCleanupService:
     def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
         self._publisher = publisher
         self._settings = settings
 
     async def cleanup_old_data(self, db: AsyncSession) -> None:
-        await _cleanup_old_data(db, publisher=self._publisher, settings=self._settings)
+        now = datetime.now(UTC)
+        sessions_deleted = 0
+        audit_deleted = 0
+        test_data_audit_deleted = 0
+        events_deleted = 0
+        host_resource_samples_deleted = 0
+        agent_log_entries_deleted = 0
+        capacity_snapshots_deleted = 0
+        diagnostic_snapshots_deleted = 0
+        agent_reconfigure_outbox_deleted = 0
+
+        # Sessions (only completed ones) — exclude probe rows; they have their own
+        # retention.probe_sessions_days window below.
+        sessions_days: int = self._settings.get("retention.sessions_days")
+        if sessions_days > 0:
+            cutoff = now - timedelta(days=sessions_days)
+            sessions_deleted = await _delete_in_batches(
+                db,
+                model=Session,
+                timestamp_column=Session.started_at,
+                cutoff=cutoff,
+                extra_predicates=(
+                    Session.status != SessionStatus.running,
+                    Session.ended_at.is_not(None),
+                    or_(Session.test_name.is_(None), Session.test_name != PROBE_TEST_NAME),
+                ),
+            )
+
+        probe_sessions_days: int = self._settings.get("retention.probe_sessions_days")
+        probe_sessions_deleted = 0
+        if probe_sessions_days > 0:
+            cutoff = now - timedelta(days=probe_sessions_days)
+            probe_sessions_deleted = await _delete_in_batches(
+                db,
+                model=Session,
+                timestamp_column=Session.started_at,
+                cutoff=cutoff,
+                extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
+            )
+
+        # ConfigAuditLog
+        audit_days: int = self._settings.get("retention.audit_log_days")
+        if audit_days > 0:
+            cutoff = now - timedelta(days=audit_days)
+            audit_deleted = await _delete_in_batches(
+                db,
+                model=ConfigAuditLog,
+                timestamp_column=ConfigAuditLog.changed_at,
+                cutoff=cutoff,
+            )
+
+        outbox_days: int = self._settings.get("retention.agent_reconfigure_outbox_days")
+        if outbox_days > 0:
+            cutoff = now - timedelta(days=outbox_days)
+            agent_reconfigure_outbox_deleted = await _delete_in_batches(
+                db,
+                model=AgentReconfigureOutbox,
+                timestamp_column=AgentReconfigureOutbox.created_at,
+                cutoff=cutoff,
+                extra_predicates=(
+                    (
+                        AgentReconfigureOutbox.delivered_at.is_not(None)
+                        | AgentReconfigureOutbox.abandoned_at.is_not(None)
+                    ),
+                ),
+            )
+
+        # DeviceTestDataAuditLog (reuses retention.audit_log_days)
+        if audit_days > 0:
+            cutoff = now - timedelta(days=audit_days)
+            test_data_audit_deleted = await _delete_in_batches(
+                db,
+                model=DeviceTestDataAuditLog,
+                timestamp_column=DeviceTestDataAuditLog.changed_at,
+                cutoff=cutoff,
+            )
+        else:
+            test_data_audit_deleted = 0
+
+        # DeviceEvent
+        events_days: int = self._settings.get("retention.device_events_days")
+        if events_days > 0:
+            cutoff = now - timedelta(days=events_days)
+            events_deleted = await _delete_in_batches(
+                db,
+                model=DeviceEvent,
+                timestamp_column=DeviceEvent.created_at,
+                cutoff=cutoff,
+            )
+
+        # HostResourceSample
+        host_resource_telemetry_hours: int = self._settings.get("retention.host_resource_telemetry_hours")
+        if host_resource_telemetry_hours > 0:
+            cutoff = now - timedelta(hours=host_resource_telemetry_hours)
+            host_resource_samples_deleted = await _delete_in_batches(
+                db,
+                model=HostResourceSample,
+                timestamp_column=HostResourceSample.recorded_at,
+                cutoff=cutoff,
+            )
+
+        agent_log_days: int = self._settings.get("retention.agent_log_days")
+        if agent_log_days > 0:
+            cutoff = now - timedelta(days=agent_log_days)
+            # `received_at` is server-clock; `ts` is agent-reported and may be skewed.
+            agent_log_entries_deleted = await _delete_in_batches(
+                db,
+                model=HostAgentLogEntry,
+                timestamp_column=HostAgentLogEntry.received_at,
+                cutoff=cutoff,
+            )
+
+        capacity_snapshots_days: int = self._settings.get("retention.capacity_snapshots_days")
+        if capacity_snapshots_days > 0:
+            cutoff = now - timedelta(days=capacity_snapshots_days)
+            capacity_snapshots_deleted = await _delete_in_batches(
+                db,
+                model=AnalyticsCapacitySnapshot,
+                timestamp_column=AnalyticsCapacitySnapshot.captured_at,
+                cutoff=cutoff,
+            )
+
+        diagnostic_snapshots_days: int = self._settings.get("retention.diagnostic_snapshots_days")
+        if diagnostic_snapshots_days > 0:
+            cutoff = now - timedelta(days=diagnostic_snapshots_days)
+            diagnostic_snapshots_deleted = await _delete_in_batches(
+                db,
+                model=DeviceDiagnosticSnapshot,
+                timestamp_column=DeviceDiagnosticSnapshot.captured_at,
+                cutoff=cutoff,
+            )
+
+        logger.info(
+            "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
+            "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
+            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d",
+            sessions_deleted,
+            probe_sessions_deleted,
+            audit_deleted,
+            test_data_audit_deleted,
+            events_deleted,
+            host_resource_samples_deleted,
+            agent_log_entries_deleted,
+            capacity_snapshots_deleted,
+            diagnostic_snapshots_deleted,
+            agent_reconfigure_outbox_deleted,
+        )
+        await self._publisher.publish(
+            "system.cleanup_completed",
+            {
+                "sessions_deleted": sessions_deleted,
+                "probe_sessions_deleted": probe_sessions_deleted,
+                "audit_entries_deleted": audit_deleted,
+                "test_data_audit_entries_deleted": test_data_audit_deleted,
+                "device_events_deleted": events_deleted,
+                "host_resource_samples_deleted": host_resource_samples_deleted,
+                "agent_log_entries_deleted": agent_log_entries_deleted,
+                "capacity_snapshots_deleted": capacity_snapshots_deleted,
+                "diagnostic_snapshots_deleted": diagnostic_snapshots_deleted,
+                "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
+            },
+        )
 
 
 class DataCleanupLoop:

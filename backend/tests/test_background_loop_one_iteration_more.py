@@ -153,7 +153,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(
-        fleet_capacity,
+        fleet_capacity.FleetCapacityService,
         "collect_capacity_snapshot_once",
         AsyncMock(side_effect=[RuntimeError("boom"), None]),
     )
@@ -178,7 +178,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     with pytest.raises(asyncio.CancelledError):
         await loop.run()
 
-    assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
+    assert fleet_capacity.FleetCapacityService.collect_capacity_snapshot_once.await_count == 2
 
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     poll_once_mock = AsyncMock(side_effect=[RuntimeError("boom"), None])

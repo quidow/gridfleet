@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
-from app.devices.services.data_cleanup import _cleanup_old_data
+from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
 from app.devices.services.review import mark_review_required
 from app.sessions.models import Session, SessionStatus
@@ -291,7 +291,7 @@ async def test_data_cleanup_deletes_snapshots_past_retention(
     )
     db_session.add_all([old, fresh])
     await db_session.commit()
-    await _cleanup_old_data(db_session, publisher=AsyncMock(), settings=FakeSettingsReader({}))
+    await DataCleanupService(publisher=AsyncMock(), settings=FakeSettingsReader({})).cleanup_old_data(db_session)
     result = await db_session.execute(
         select(DeviceDiagnosticSnapshot).where(DeviceDiagnosticSnapshot.device_id == device.id)
     )

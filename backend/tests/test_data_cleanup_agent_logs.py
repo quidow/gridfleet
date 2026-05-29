@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import insert, select
 
-from app.devices.services.data_cleanup import _cleanup_old_data
+from app.devices.services.data_cleanup import DataCleanupService
 from app.hosts.models import HostAgentLogEntry
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -54,7 +54,7 @@ async def test_prune_deletes_only_old_rows(db_session: AsyncSession, db_host: Ho
     )
     await db_session.commit()
 
-    await _cleanup_old_data(db_session, publisher=AsyncMock(), settings=FakeSettingsReader({}))
+    await DataCleanupService(publisher=AsyncMock(), settings=FakeSettingsReader({})).cleanup_old_data(db_session)
 
     rows = (
         (await db_session.execute(select(HostAgentLogEntry).where(HostAgentLogEntry.host_id == db_host.id)))

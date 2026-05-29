@@ -36,9 +36,9 @@ async def test_cleanup_deletes_old_test_data_audit_rows(db_session: AsyncSession
     db_session.add(old)
     await db_session.commit()
 
-    await data_cleanup._cleanup_old_data(
-        db_session, publisher=AsyncMock(), settings=FakeSettingsReader({"retention.audit_log_days": 7})
-    )
+    await data_cleanup.DataCleanupService(
+        publisher=AsyncMock(), settings=FakeSettingsReader({"retention.audit_log_days": 7})
+    ).cleanup_old_data(db_session)
 
     refreshed = await db_session.get(DeviceTestDataAuditLog, old.id)
     assert refreshed is None

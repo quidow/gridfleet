@@ -252,7 +252,9 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
     monkeypatch.setattr(data_cleanup, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(data_cleanup, "_cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(
+        data_cleanup.DataCleanupService, "cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom"))
+    )
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
 
