@@ -10,8 +10,8 @@ import pytest
 from sqlalchemy import select
 
 from app.packs.models import DriverPackFeature
+from app.packs.services.ingest import ingest_pack_tarball as upload_pack
 from app.packs.services.storage import PackStorageService
-from app.packs.services.upload import upload_pack
 
 if TYPE_CHECKING:
     from pathlib import Path

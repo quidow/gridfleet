@@ -13,14 +13,20 @@ from app.packs import packs_settings
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
 from app.packs.services import release as pack_release_service
+from app.packs.services.ingest import (
+    MAX_PACK_TARBALL_BYTES,
+)
+from app.packs.services.ingest import (
+    PackIngestConflictError as PackUploadConflictError,
+)
+from app.packs.services.ingest import (
+    PackIngestValidationError as PackUploadValidationError,
+)
+from app.packs.services.ingest import (
+    ingest_pack_tarball as upload_pack,
+)
 from app.packs.services.service import build_pack_out
 from app.packs.services.storage import PackStorageService
-from app.packs.services.upload import (
-    MAX_PACK_TARBALL_BYTES,
-    PackUploadConflictError,
-    PackUploadValidationError,
-    upload_pack,
-)
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024

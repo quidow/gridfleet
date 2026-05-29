@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.events.models import SystemEvent
-from app.packs.services.audit import record_pack_upload
+from app.packs.services.ingest import record_pack_upload
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

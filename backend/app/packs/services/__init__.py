@@ -2,7 +2,6 @@ import importlib
 from types import ModuleType
 
 __all__ = [
-    "audit",
     "capability",
     "desired_state",
     "discovery",
@@ -21,7 +20,6 @@ __all__ = [
     "start_shim",
     "status",
     "storage",
-    "upload",
 ]
 
 

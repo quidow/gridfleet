@@ -8,15 +8,21 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.packs.models import PackState
-from app.packs.services.storage import PackStorageService
-from app.packs.services.upload import (
+from app.packs.services.ingest import (
     MAX_PACK_MANIFEST_BYTES,
     MAX_PACK_TARBALL_BYTES,
     MAX_PACK_TARBALL_MEMBERS,
-    PackUploadConflictError,
-    PackUploadValidationError,
-    upload_pack,
 )
+from app.packs.services.ingest import (
+    PackIngestConflictError as PackUploadConflictError,
+)
+from app.packs.services.ingest import (
+    PackIngestValidationError as PackUploadValidationError,
+)
+from app.packs.services.ingest import (
+    ingest_pack_tarball as upload_pack,
+)
+from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

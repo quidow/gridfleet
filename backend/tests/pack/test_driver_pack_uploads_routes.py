@@ -19,8 +19,8 @@ from app.packs.models import (
     HostPackInstallation,
 )
 from app.packs.routers.uploads import get_pack_storage
+from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 from app.packs.services.storage import PackStorageService
-from app.packs.services.upload import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
