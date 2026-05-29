@@ -1227,7 +1227,7 @@ export interface paths {
          *         release: The SemVer release string.
          *         _username: Injected by ``require_admin``; confirms admin access.
          *         session: Database session.
-         *         storage: Pack storage service instance.
+         *         packs: Pack services container.
          *
          *     Returns:
          *         ``application/gzip`` response with ``X-Pack-Sha256`` and
