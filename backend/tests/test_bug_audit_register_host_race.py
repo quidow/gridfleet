@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import HostRegister
-from app.hosts.service import register_host
+from app.hosts.service import HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -67,6 +67,7 @@ async def test_register_host_races_concurrent_same_hostname(
                 await side.commit()
         return result
 
+    crud = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     db_session.execute = _race_after_select  # type: ignore[assignment, method-assign]
     try:
         # Fixed behavior: register_host would catch IntegrityError (or use
@@ -74,7 +75,7 @@ async def test_register_host_races_concurrent_same_hostname(
         # Current behavior (bug): the second registrant raises
         # IntegrityError on the hostname unique constraint.
         try:
-            await register_host(
+            await crud.register_host(
                 db_session,
                 HostRegister(
                     hostname=hostname,
@@ -84,8 +85,6 @@ async def test_register_host_races_concurrent_same_hostname(
                     agent_version="0.3.0",
                     capabilities={"orchestration_contract_version": 2},
                 ),
-                publisher=event_bus,
-                settings=FakeSettingsReader({}),
             )
         except IntegrityError as exc:
             pytest.fail(f"register_host raised IntegrityError on concurrent same-hostname insert: {exc}")
