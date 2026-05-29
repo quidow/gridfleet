@@ -147,124 +147,6 @@ def _platform_out(platform: DriverPackPlatform) -> PlatformOut:
     )
 
 
-async def list_catalog(session: AsyncSession) -> PackCatalog:
-    rows = (
-        (
-            await session.execute(
-                select(DriverPack)
-                .options(
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                    selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-                )
-                .order_by(DriverPack.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    for pack in rows:
-        if pack.state == PackState.draining:
-            await try_complete_drain(session, pack.id)
-    await session.commit()
-
-    runtime_summaries = await _runtime_summaries_by_pack(session, [pack.id for pack in rows])
-    out: list[PackOut] = []
-    for pack in rows:
-        latest = selected_release(pack.releases, pack.current_release)
-        manifest = latest.manifest_json if latest else {}
-        drain_info: dict[str, int] = {"active_runs": 0, "live_sessions": 0}
-        if pack.state == PackState.draining:
-            drain_info = await count_active_work_for_pack(session, pack.id)
-        out.append(
-            PackOut(
-                id=pack.id,
-                display_name=pack.display_name,
-                maintainer=pack.maintainer,
-                license=pack.license,
-                state=pack.state,
-                current_release=latest.release if latest else None,
-                platforms=[_platform_out(platform) for platform in latest.platforms] if latest else [],
-                appium_server=_installable_out(manifest.get("appium_server")),
-                appium_driver=_installable_out(manifest.get("appium_driver")),
-                workarounds=_workarounds_out(manifest.get("workarounds", [])),
-                doctor=_doctor_out(manifest.get("doctor", [])),
-                insecure_features=manifest.get("insecure_features", []),
-                features=_features_out(latest) if latest else {},
-                runtime_policy=RuntimePolicy.model_validate(pack.runtime_policy or {"strategy": "recommended"}),
-                active_runs=drain_info["active_runs"],
-                live_sessions=drain_info["live_sessions"],
-                runtime_summary=runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
-            )
-        )
-    return PackCatalog(packs=out)
-
-
-async def get_pack_detail(session: AsyncSession, pack_id: str) -> PackOut | None:
-    row = (
-        await session.execute(
-            select(DriverPack)
-            .options(
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.features),
-            )
-            .where(DriverPack.id == pack_id)
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        return None
-    runtime_summaries = await _runtime_summaries_by_pack(session, [row.id])
-    return build_pack_out(row, runtime_summaries.get(row.id))
-
-
-async def _runtime_summaries_by_pack(session: AsyncSession, pack_ids: list[str]) -> dict[str, PackRuntimeSummaryOut]:
-    if not pack_ids:
-        return {}
-
-    rows = (
-        await session.execute(
-            select(HostPackInstallation, HostRuntimeInstallation)
-            .outerjoin(
-                HostRuntimeInstallation,
-                and_(
-                    HostRuntimeInstallation.host_id == HostPackInstallation.host_id,
-                    HostRuntimeInstallation.runtime_id == HostPackInstallation.runtime_id,
-                ),
-            )
-            .where(HostPackInstallation.pack_id.in_(pack_ids))
-        )
-    ).all()
-
-    counters: dict[str, _RuntimeSummaryAccumulator] = {}
-    for pack_row, runtime in rows:
-        data = counters.setdefault(pack_row.pack_id, _RuntimeSummaryAccumulator())
-        if pack_row.status == "installed":
-            data.installed_hosts += 1
-        if pack_row.status == "blocked":
-            data.blocked_hosts += 1
-        if runtime is not None:
-            if runtime.appium_server_version:
-                data.server_versions.add(runtime.appium_server_version)
-            driver_version = _runtime_driver_version(runtime)
-            if driver_version:
-                data.driver_versions.add(driver_version)
-        desired = _desired_driver_version(pack_row)
-        actual = _runtime_driver_version(runtime) if runtime is not None else None
-        if desired is not None and actual is not None and desired != actual:
-            data.driver_drift_hosts += 1
-
-    summaries: dict[str, PackRuntimeSummaryOut] = {}
-    for pack_id, data in counters.items():
-        summaries[pack_id] = PackRuntimeSummaryOut(
-            installed_hosts=data.installed_hosts,
-            blocked_hosts=data.blocked_hosts,
-            actual_appium_server_versions=sorted(data.server_versions),
-            actual_appium_driver_versions=sorted(data.driver_versions),
-            driver_drift_hosts=data.driver_drift_hosts,
-        )
-    return summaries
-
-
 def _desired_driver_version(pack_row: HostPackInstallation) -> str | None:
     spec = pack_row.resolved_install_spec or {}
     version = spec.get("appium_driver_version")
@@ -462,6 +344,14 @@ class PackCatalogService:
 
 # Backward-compat wrappers for routers until Task 8 migration
 _default_catalog_svc = PackCatalogService()
+
+
+async def list_catalog(db: AsyncSession) -> PackCatalog:
+    return await _default_catalog_svc.list_catalog(db)
+
+
+async def get_pack_detail(db: AsyncSession, pack_id: str) -> PackOut | None:
+    return await _default_catalog_svc.get_pack_detail(db, pack_id)
 
 
 async def set_runtime_policy(db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> DriverPack:
