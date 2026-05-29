@@ -13,7 +13,10 @@ from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
-from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
+from app.hosts.service import HostCrudService
+from app.hosts.service_diagnostics import HostDiagnosticsService
+from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop, HardwareTelemetryService
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
@@ -175,19 +178,25 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     assert fleet_capacity.collect_capacity_snapshot_once.await_count == 2
 
     monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(
-        hardware_telemetry,
-        "poll_hardware_telemetry_once",
-        AsyncMock(side_effect=[RuntimeError("boom"), None]),
-    )
+    poll_once_mock = AsyncMock(side_effect=[RuntimeError("boom"), None])
+    monkeypatch.setattr(HardwareTelemetryService, "poll_once", poll_once_mock)
     monkeypatch.setattr(hardware_telemetry.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
+    _cb = Mock()
     loop = HardwareTelemetryLoop(
         services=HostServices(
+            crud=HostCrudService(publisher=AsyncMock(), settings=FakeSettingsReader({})),
+            hardware_telemetry=HardwareTelemetryService(
+                publisher=AsyncMock(),
+                settings=FakeSettingsReader({"general.hardware_telemetry_interval_sec": 0.01}),
+                circuit_breaker=_cb,
+            ),
+            resource_telemetry=HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=_cb),
+            diagnostics=HostDiagnosticsService(circuit_breaker=_cb),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.hardware_telemetry_interval_sec": 0.01}),
             pool=Mock(),
-            circuit_breaker=Mock(),
+            circuit_breaker=_cb,
             session_factory=_Session,
         )
     )
@@ -195,7 +204,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     with pytest.raises(asyncio.CancelledError):
         await loop.run()
 
-    assert hardware_telemetry.poll_hardware_telemetry_once.await_count == 2
+    assert poll_once_mock.await_count == 2
 
 
 async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -173,7 +173,7 @@ async def test_error_envelope_for_common_http_errors(client: AsyncClient) -> Non
 async def test_error_envelope_for_unhandled_exception(client: AsyncClient) -> None:
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as uncaught_client:
-        with patch("app.hosts.router.host_service.list_hosts", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        with patch("app.hosts.service.HostCrudService.list_hosts", new=AsyncMock(side_effect=RuntimeError("boom"))):
             response = await uncaught_client.get("/api/hosts")
 
     assert response.status_code == 500

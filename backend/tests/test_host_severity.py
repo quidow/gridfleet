@@ -114,8 +114,9 @@ async def test_approve_host_pending_to_online_emits_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """approve_host transitions pending→online and should emit severity='success'."""
-    from app.hosts import service as host_service
     from app.hosts.models import Host, HostStatus, OSType
+    from app.hosts.service import HostCrudService
+    from tests.fakes import FakeSettingsReader
 
     captured = _make_severity_capture(monkeypatch)
 
@@ -129,7 +130,9 @@ async def test_approve_host_pending_to_online_emits_success(
     db_session.add(host)
     await db_session.flush()
 
-    approved = await host_service.approve_host(db_session, host.id, publisher=event_bus)
+    approved = await HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).approve_host(
+        db_session, host.id
+    )
     assert approved is not None
 
     events = [e for e in captured if e["type"] == "host.status_changed"]
