@@ -14,6 +14,7 @@ from app.core.errors import AgentUnreachableError, CircuitOpenError
 from app.core.middleware import RequestContextMiddleware
 from app.core.shutdown import shutdown_coordinator
 from app.main import app
+from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_host
 
 HOST_PAYLOAD = {
@@ -184,8 +185,9 @@ async def test_error_envelope_for_unhandled_exception(client: AsyncClient) -> No
 async def test_error_envelope_for_agent_unreachable(client: AsyncClient) -> None:
     host = await create_host(client, **HOST_PAYLOAD)
 
-    with patch(
-        "app.hosts.router.pack_discovery_service.discover_devices",
+    with patch.object(
+        PackDiscoveryService,
+        "discover_devices",
         new=AsyncMock(side_effect=AgentUnreachableError("10.0.0.31", "Cannot reach agent host 10.0.0.31: boom")),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")
@@ -197,8 +199,9 @@ async def test_error_envelope_for_agent_unreachable(client: AsyncClient) -> None
 async def test_error_envelope_for_circuit_open(client: AsyncClient) -> None:
     host = await create_host(client, **HOST_PAYLOAD)
 
-    with patch(
-        "app.hosts.router.pack_discovery_service.discover_devices",
+    with patch.object(
+        PackDiscoveryService,
+        "discover_devices",
         new=AsyncMock(side_effect=CircuitOpenError("10.0.0.31", retry_after_seconds=12.0)),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")

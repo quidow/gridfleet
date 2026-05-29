@@ -10,6 +10,7 @@ from app.devices.services import lifecycle_incidents as incidents
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
 from app.packs.services import discovery as discovery
+from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
@@ -144,29 +145,24 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         AsyncMock(return_value={("appium-uiautomator2", "android_mobile"): "Android"}),
     )
 
-    intake = await discovery.list_intake_candidates(
-        db_session,
-        db_host,
+    svc = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
+        agent_get_pack_device_properties=AsyncMock(return_value=None),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
     )
+
+    intake = await svc.list_intake_candidates(db_session, db_host)
     assert [item.already_registered for item in intake] == [True, False]
     assert intake[0].platform_label == "Android"
 
-    result = await discovery.discover_devices(
-        db_session,
-        db_host,
-        agent_get_pack_devices=AsyncMock(return_value={"candidates": candidates}),
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
-    )
+    result = await svc.discover_devices(db_session, db_host)
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]
     assert result.removed_identity_values == ["discovery-removed"]
 
     monkeypatch.setattr("app.packs.services.discovery.ensure_device_payload_identity_available", AsyncMock())
-    confirm_result = await discovery.confirm_discovery(
+    confirm_result = await svc.confirm_discovery(
         db_session,
         db_host,
         add_identity_values=["discovery-new"],
@@ -184,7 +180,6 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
             ],
             removed_identity_values=result.removed_identity_values,
         ),
-        settings=FakeSettingsReader({}),
     )
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]
