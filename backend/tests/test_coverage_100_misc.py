@@ -62,7 +62,6 @@ from app.devices.services import (
     write as device_write,
 )
 from app.events import catalog as event_catalog
-from app.hosts import service as host_service
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
 from app.packs.manifest import AppiumInstallable
@@ -773,7 +772,12 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     host_db = AsyncMock()
     host_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
-    assert await host_service.reject_host(host_db, uuid.uuid4()) is False
+    from app.hosts.service import HostCrudService as _HostCrudService
+
+    assert (
+        await _HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).reject_host(host_db, uuid.uuid4())
+        is False
+    )
 
     class RecoveryCtx:
         async def __aenter__(self) -> AsyncMock:

@@ -26,7 +26,8 @@ from app.hosts import (
 from app.hosts import (
     service_resource_telemetry as host_resource_telemetry,
 )
-from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
+from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop, HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from tests.fakes import FakeSettingsReader
 
@@ -184,7 +185,18 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
         patch("app.hosts.service_hardware_telemetry.record_event", new=AsyncMock()) as record_event,
         patch("app.hosts.service_hardware_telemetry.queue_event_for_session", new=Mock()) as queue_event,
     ):
-        status = await hardware_telemetry.apply_telemetry_sample(
+        svc = HardwareTelemetryService(
+            publisher=Mock(),
+            settings=FakeSettingsReader(
+                {
+                    "general.hardware_temperature_critical_c": 50,
+                    "general.hardware_temperature_warning_c": 40,
+                    "general.hardware_telemetry_consecutive_samples": 1,
+                }
+            ),
+            circuit_breaker=Mock(),
+        )
+        status = await svc.apply_telemetry_sample(
             db,
             device,
             {
@@ -194,14 +206,6 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
                 "support_status": "supported",
                 "reported_at": "2026-05-01T12:00:00Z",
             },
-            publisher=Mock(),
-            settings=FakeSettingsReader(
-                {
-                    "general.hardware_temperature_critical_c": 50,
-                    "general.hardware_temperature_warning_c": 40,
-                    "general.hardware_telemetry_consecutive_samples": 1,
-                }
-            ),
         )
 
     assert status == HardwareHealthStatus.warning
@@ -266,31 +270,24 @@ async def test_effective_hardware_health_requires_consecutive_samples() -> None:
 
 
 async def test_get_device_telemetry_handles_missing_host_and_agent_errors() -> None:
-    assert (
-        await hardware_telemetry._get_device_telemetry(
-            _telemetry_device(host=None), settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
-        is None
+    svc = HardwareTelemetryService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
     )
+    assert await svc._get_device_telemetry(_telemetry_device(host=None)) is None
     host = SimpleNamespace(ip="10.0.0.1", agent_port=5100)
     device = _telemetry_device(host=host)
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(side_effect=AgentCallError("10.0.0.1", "failed")),
     ):
-        assert (
-            await hardware_telemetry._get_device_telemetry(
-                device, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-            )
-            is None
-        )
+        assert await svc._get_device_telemetry(device) is None
     with patch(
         "app.hosts.service_hardware_telemetry.fetch_pack_device_telemetry",
         new=AsyncMock(return_value={"battery_level_percent": 80}),
     ) as fetch:
-        assert await hardware_telemetry._get_device_telemetry(
-            device, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        ) == {"battery_level_percent": 80}
+        assert await svc._get_device_telemetry(device) == {"battery_level_percent": 80}
     fetch.assert_awaited_once()
 
 
@@ -309,19 +306,24 @@ async def test_poll_hardware_telemetry_commits_samples_and_rolls_back_failures()
             return Result()
 
     db = PollSession()
+    svc = HardwareTelemetryService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
     with (
-        patch(
-            "app.hosts.service_hardware_telemetry._get_device_telemetry",
+        patch.object(
+            svc,
+            "_get_device_telemetry",
             new=AsyncMock(side_effect=[None, {"battery_level_percent": 80}, {"battery_level_percent": 70}]),
         ),
-        patch(
-            "app.hosts.service_hardware_telemetry.apply_telemetry_sample",
+        patch.object(
+            svc,
+            "apply_telemetry_sample",
             new=AsyncMock(side_effect=[HardwareHealthStatus.healthy, RuntimeError("boom")]),
         ),
     ):
-        await hardware_telemetry.poll_hardware_telemetry_once(
-            db, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
-        )
+        await svc.poll_once(db)
 
     assert db.committed is True
     assert db.rolled_back is True
@@ -345,7 +347,9 @@ async def test_host_resource_sample_coercion_and_apply() -> None:
     )
     assert sample.memory_used_mb == 11
 
-    row = await host_resource_telemetry.apply_host_resource_sample(
+    row = await HostResourceTelemetryService(
+        settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).apply_host_resource_sample(
         db,
         host,
         {
@@ -384,9 +388,7 @@ async def test_poll_host_resource_telemetry_handles_agent_and_unexpected_errors(
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(side_effect=[None, AgentCallError("10.0.0.1", "failed"), RuntimeError("boom")]),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(
-            db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=Mock()).poll_once(db)
 
     assert db.rolled_back is True
 
@@ -410,9 +412,7 @@ async def test_poll_host_resource_telemetry_commits_successful_samples() -> None
         "app.hosts.service_resource_telemetry.agent_host_telemetry",
         new=AsyncMock(return_value={"cpu_percent": 50}),
     ):
-        await host_resource_telemetry.poll_host_resource_telemetry_once(
-            db, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await HostResourceTelemetryService(settings=FakeSettingsReader({}), circuit_breaker=Mock()).poll_once(db)
 
     assert db.committed is True
     assert db.added
@@ -428,8 +428,25 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
     async def fake_session() -> AsyncGenerator[FlushSession, None]:
         yield FlushSession()
 
+    resource_telemetry_svc = HostResourceTelemetryService(
+        settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
+        circuit_breaker=Mock(),
+    )
+
+    from app.hosts.service import HostCrudService
+    from app.hosts.service_diagnostics import HostDiagnosticsService
+    from app.hosts.service_hardware_telemetry import HardwareTelemetryService as _HWService
+
     loop = HostResourceTelemetryLoop(
         services=HostServices(
+            crud=HostCrudService(publisher=AsyncMock(), settings=FakeSettingsReader({})),
+            hardware_telemetry=_HWService(
+                publisher=AsyncMock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+            ),
+            resource_telemetry=resource_telemetry_svc,
+            diagnostics=HostDiagnosticsService(circuit_breaker=Mock()),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
             pool=Mock(),
@@ -440,10 +457,7 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
 
     with (
         patch("app.hosts.service_resource_telemetry.observe_background_loop", return_value=_Observation()),
-        patch(
-            "app.hosts.service_resource_telemetry.poll_host_resource_telemetry_once",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
-        ),
+        patch.object(resource_telemetry_svc, "poll_once", new=AsyncMock(side_effect=RuntimeError("boom"))),
         patch("app.hosts.service_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
         patch("app.hosts.service_resource_telemetry.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
@@ -460,7 +474,10 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
         async def scalar(self, *_args: object, **_kwargs: object) -> object | None:
             return host_id
 
-    settings = FakeSettingsReader({"retention.host_resource_telemetry_hours": 24})
+    svc = HostResourceTelemetryService(
+        settings=FakeSettingsReader({"retention.host_resource_telemetry_hours": 24}),
+        circuit_breaker=Mock(),
+    )
     for since, until, bucket_minutes, message in (
         (
             datetime(2026, 5, 1, tzinfo=UTC),
@@ -482,13 +499,12 @@ async def test_fetch_host_resource_telemetry_validation_paths() -> None:
         ),
     ):
         with pytest.raises(ValueError) as exc:
-            await host_resource_telemetry.fetch_host_resource_telemetry(
+            await svc.fetch_host_resource_telemetry(
                 FetchSession(),  # type: ignore[arg-type]
                 host_id,
                 since=since,
                 until=until,
                 bucket_minutes=bucket_minutes,
-                settings=settings,
             )
         assert message in str(exc.value)
 
@@ -499,13 +515,14 @@ async def test_fetch_host_resource_telemetry_returns_none_for_missing_host() -> 
             return None
 
     assert (
-        await host_resource_telemetry.fetch_host_resource_telemetry(
+        await HostResourceTelemetryService(
+            settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).fetch_host_resource_telemetry(
             MissingHostSession(),  # type: ignore[arg-type]
             uuid.uuid4(),
             since=datetime(2026, 5, 1, tzinfo=UTC),
             until=datetime(2026, 5, 2, tzinfo=UTC),
             bucket_minutes=5,
-            settings=FakeSettingsReader({}),
         )
         is None
     )

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.hosts import service as host_service
+from app.hosts.dependencies import HostServicesDep  # noqa: TC001
 from app.plugins.dependencies import PluginServicesDep  # noqa: TC001
 from app.plugins.models import AppiumPlugin  # noqa: TC001 - used in return type annotations
 from app.plugins.schemas import (
@@ -61,8 +61,10 @@ async def sync_all_plugins(db: DbDep, plugin_services: PluginServicesDep) -> dic
 
 
 @router.get("/hosts/{host_id}/plugins", response_model=list[HostPluginStatus])
-async def host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> list[dict[str, Any]]:
-    host = await host_service.get_host(db, host_id)
+async def host_plugins(
+    host_id: UUID, db: DbDep, plugin_services: PluginServicesDep, host_services: HostServicesDep
+) -> list[dict[str, Any]]:
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     all_plugins = await plugin_services.plugin.list_plugins(db)
@@ -70,8 +72,10 @@ async def host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServices
 
 
 @router.post("/hosts/{host_id}/plugins/sync", response_model=PluginSyncResult)
-async def sync_host_plugins(host_id: UUID, db: DbDep, plugin_services: PluginServicesDep) -> dict[str, Any]:
-    host = await host_service.get_host(db, host_id)
+async def sync_host_plugins(
+    host_id: UUID, db: DbDep, plugin_services: PluginServicesDep, host_services: HostServicesDep
+) -> dict[str, Any]:
+    host = await host_services.crud.get_host(db, host_id)
     if host is None:
         raise HTTPException(status_code=404, detail="Host not found")
     all_plugins = await plugin_services.plugin.list_plugins(db)

@@ -2,17 +2,25 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
-from app.hosts import service_resource_telemetry as host_resource_telemetry
 from app.hosts.models import HostResourceSample
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
+
+
+def _make_service(settings: FakeSettingsReader | None = None) -> HostResourceTelemetryService:
+    return HostResourceTelemetryService(
+        settings=settings or FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+    )
 
 
 async def test_apply_host_resource_sample_persists_partial_fields(
@@ -29,7 +37,8 @@ async def test_apply_host_resource_sample_persists_partial_fields(
         "disk_percent": None,
     }
 
-    row = await host_resource_telemetry.apply_host_resource_sample(db_session, db_host, sample)
+    service = _make_service()
+    row = await service.apply_host_resource_sample(db_session, db_host, sample)
     await db_session.commit()
     await db_session.refresh(row)
 
@@ -65,13 +74,13 @@ async def test_fetch_host_resource_telemetry_buckets_samples(
     )
     await db_session.commit()
 
-    payload = await host_resource_telemetry.fetch_host_resource_telemetry(
+    service = _make_service()
+    payload = await service.fetch_host_resource_telemetry(
         db_session,
         db_host.id,
         since=base,
         until=base + timedelta(minutes=30),
         bucket_minutes=5,
-        settings=FakeSettingsReader({}),
     )
 
     assert payload is not None
@@ -106,13 +115,13 @@ async def test_fetch_host_resource_telemetry_omits_empty_buckets(
     )
     await db_session.commit()
 
-    payload = await host_resource_telemetry.fetch_host_resource_telemetry(
+    service = _make_service()
+    payload = await service.fetch_host_resource_telemetry(
         db_session,
         db_host.id,
         since=base,
         until=base + timedelta(minutes=15),
         bucket_minutes=5,
-        settings=FakeSettingsReader({}),
     )
 
     assert payload is not None
@@ -149,14 +158,14 @@ async def test_fetch_host_resource_telemetry_validates_window_and_bucket(
     until: datetime,
     bucket_minutes: int,
 ) -> None:
+    service = _make_service()
     with pytest.raises(ValueError):
-        await host_resource_telemetry.fetch_host_resource_telemetry(
+        await service.fetch_host_resource_telemetry(
             db_session,
             db_host.id,
             since=since,
             until=until,
             bucket_minutes=bucket_minutes,
-            settings=FakeSettingsReader({}),
         )
 
 
@@ -164,12 +173,12 @@ async def test_fetch_host_resource_telemetry_rejects_window_larger_than_retentio
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    service = _make_service(FakeSettingsReader({"retention.host_resource_telemetry_hours": 1}))
     with pytest.raises(ValueError):
-        await host_resource_telemetry.fetch_host_resource_telemetry(
+        await service.fetch_host_resource_telemetry(
             db_session,
             db_host.id,
             since=datetime(2026, 4, 16, 9, 0, tzinfo=UTC),
             until=datetime(2026, 4, 16, 11, 0, tzinfo=UTC),
             bucket_minutes=5,
-            settings=FakeSettingsReader({"retention.host_resource_telemetry_hours": 1}),
         )

@@ -614,12 +614,15 @@ async def test_auto_prepare_host_diagnostics_syncs_plugins(db_session: AsyncSess
     await db_session.commit()
     await db_session.refresh(host)
     sync = AsyncMock()
+    crud_mock = Mock()
+    crud_mock.get_host = AsyncMock(return_value=host)
     with (
-        patch("app.hosts.router.host_service.get_host", new=AsyncMock(return_value=host)),
         patch.object(PluginService, "list_plugins", new=AsyncMock(return_value=[])),
         patch.object(PluginService, "auto_sync_host_plugins", sync),
     ):
-        await _auto_prepare_host_diagnostics(host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        await _auto_prepare_host_diagnostics(
+            host.id, settings=FakeSettingsReader({}), circuit_breaker=Mock(), crud=crud_mock
+        )
 
     sync.assert_awaited_once_with(host, [])
 

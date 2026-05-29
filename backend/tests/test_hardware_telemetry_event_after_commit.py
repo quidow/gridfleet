@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.hosts.service_hardware_telemetry import apply_telemetry_sample
+from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -25,8 +26,9 @@ async def test_hardware_health_changed_queues_after_commit(
     _hw_settings = FakeSettingsReader(
         {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
+    _hw_svc = HardwareTelemetryService(publisher=event_bus, settings=_hw_settings, circuit_breaker=Mock())
 
-    await apply_telemetry_sample(
+    await _hw_svc.apply_telemetry_sample(
         db_session,
         device,
         {
@@ -34,8 +36,6 @@ async def test_hardware_health_changed_queues_after_commit(
             "battery_level_percent": 80,
             "battery_temperature_c": 50,
         },
-        publisher=event_bus,
-        settings=_hw_settings,
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == []
@@ -59,8 +59,9 @@ async def test_hardware_health_changed_dropped_on_rollback(
     _rollback_settings = FakeSettingsReader(
         {"general.hardware_telemetry_consecutive_samples": 1, "general.hardware_temperature_critical_c": 40}
     )
+    _rollback_svc = HardwareTelemetryService(publisher=event_bus, settings=_rollback_settings, circuit_breaker=Mock())
 
-    await apply_telemetry_sample(
+    await _rollback_svc.apply_telemetry_sample(
         db_session,
         device,
         {
@@ -68,8 +69,6 @@ async def test_hardware_health_changed_dropped_on_rollback(
             "battery_level_percent": 80,
             "battery_temperature_c": 50,
         },
-        publisher=event_bus,
-        settings=_rollback_settings,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

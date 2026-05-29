@@ -41,7 +41,9 @@ from sqlalchemy import text, update
 from sqlalchemy.exc import DBAPIError
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.hosts.service import reject_host
+from app.hosts.service import HostCrudService
+from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -90,10 +92,11 @@ async def test_reject_host_races_concurrent_approve(
                     await side.rollback()
         return result
 
+    crud = HostCrudService(publisher=event_bus, settings=FakeSettingsReader({}))
     db_session.execute = _approve_between_select_and_commit  # type: ignore[assignment, method-assign]
     try:
         try:
-            rejected = await reject_host(db_session, host_id)
+            rejected = await crud.reject_host(db_session, host_id)
         except Exception as exc:  # noqa: BLE001
             pytest.fail(f"reject_host leaked exception under concurrent approve race: {exc!r}")
     finally:

@@ -12,10 +12,20 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.hosts.protocols import (
+        HardwareTelemetryProtocol,
+        HostCrudProtocol,
+        HostDiagnosticsProtocol,
+        HostResourceTelemetryProtocol,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class HostServices:
+    crud: HostCrudProtocol
+    hardware_telemetry: HardwareTelemetryProtocol
+    resource_telemetry: HostResourceTelemetryProtocol
+    diagnostics: HostDiagnosticsProtocol
     publisher: EventPublisher
     settings: SettingsReader
     pool: AgentHttpPool
