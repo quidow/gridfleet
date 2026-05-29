@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -9,12 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import set_operational_state
+from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
+from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_grid = GridService(settings=_settings)
+_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,9 +79,7 @@ async def test_release_devices_does_not_stomp_offline_writer(
             run_obj.completed_at = datetime.now(UTC)
             started.set()
             await proceed.wait()
-            await run_service._release_devices(
-                session, run_obj, settings=FakeSettingsReader(), grid=AsyncMock(), publisher=Mock()
-            )
+            await _release_svc.release_devices(session, run_obj)
 
     async def stomper() -> None:
         await started.wait()
@@ -177,9 +181,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
             run_obj.state = RunState.cancelled
             run_obj.completed_at = datetime.now(UTC)
             with patch("app.devices.services.state.is_ready_for_use_async", racing_is_ready):
-                await run_service._release_devices(
-                    session, run_obj, settings=FakeSettingsReader(), grid=AsyncMock(), publisher=Mock()
-                )
+                await _release_svc.release_devices(session, run_obj)
 
     async def stomper() -> None:
         await stomper_can_go.wait()

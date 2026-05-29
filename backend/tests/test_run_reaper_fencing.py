@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -10,12 +11,21 @@ import pytest
 
 from app.core.leader.advisory import LeadershipLost
 from app.runs.models import RunState, TestRun
-from app.runs.service_reaper import _reap_stale_runs
+from app.runs.service_reaper import RunReaperLoop
 from tests.fakes import FakeSettingsReader
-from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _make_reaper(lifecycle: object | None = None) -> RunReaperLoop:
+    mock_lifecycle = lifecycle or AsyncMock()
+    mock_services = SimpleNamespace(
+        lifecycle=mock_lifecycle,
+        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 60}),
+        session_factory=None,
+    )
+    return RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
 
 
 @pytest.mark.db
@@ -37,16 +47,18 @@ async def test_reaper_aborts_before_expiring_when_leadership_lost(
     initial_state = run.state
 
     expire = AsyncMock()
+    mock_lifecycle = AsyncMock()
+    mock_lifecycle.expire_run = expire
+    reaper = _make_reaper(mock_lifecycle)
 
     with (
-        patch("app.runs.service_reaper.run_service.expire_run", new=expire),
         patch(
             "app.runs.service_reaper.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock())
+        await reaper._reap_stale_runs(db_session)
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])
@@ -73,16 +85,18 @@ async def test_reaper_aborts_before_ttl_expiry_when_leadership_lost(
     initial_state = run.state
 
     expire = AsyncMock()
+    mock_lifecycle = AsyncMock()
+    mock_lifecycle.expire_run = expire
+    reaper = _make_reaper(mock_lifecycle)
 
     with (
-        patch("app.runs.service_reaper.run_service.expire_run", new=expire),
         patch(
             "app.runs.service_reaper.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _reap_stale_runs(db_session, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock())
+        await reaper._reap_stale_runs(db_session)
 
     expire.assert_not_called()
     await db_session.refresh(run, attribute_names=["state"])

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation
 from app.devices.services import state_write_guard
@@ -23,9 +24,14 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
 from app.runs import service as run_service
+from app.runs.service_lifecycle_failures import RunFailureService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
+_failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,15 +77,12 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     run = await create_reserved_run(db_session, name="counter-persists-run", devices=[device])
 
     # First cooldown.
-    excluded_until_1, count_1, escalated_1, threshold = await run_service.cooldown_device(
+    excluded_until_1, count_1, escalated_1, threshold = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,
         reason="probe timeout",
         ttl_seconds=60,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert count_1 == 1
     assert not escalated_1
@@ -124,15 +127,12 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     assert reservation.cooldown_count == 1, "counter must persist across exclusion clear"
 
     # Second cooldown lands after the first TTL elapsed. Counter accumulates.
-    _, count_2, escalated_2, _ = await run_service.cooldown_device(
+    _, count_2, escalated_2, _ = await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,
         reason="probe timeout again",
         ttl_seconds=60,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert count_2 == 2, "second cooldown after TTL expiry must yield count=2"
     assert not escalated_2 or threshold == 2
@@ -180,15 +180,12 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     await _seed_node(db_session, device.id)
     run = await create_reserved_run(db_session, name="no-rewind-run", devices=[device])
 
-    await run_service.cooldown_device(
+    await _failure_svc.cooldown_device(
         db_session,
         run.id,
         device.id,
         reason="flake",
         ttl_seconds=60,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     reservation = await _reservation_for(db_session, device.id)
     assert reservation.cooldown_count == 1

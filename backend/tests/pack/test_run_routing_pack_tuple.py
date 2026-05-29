@@ -7,7 +7,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.runs.schemas import DeviceRequirement
-from app.runs.service import _find_matching_devices
+from app.runs.service_allocator import _find_matching_devices
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 

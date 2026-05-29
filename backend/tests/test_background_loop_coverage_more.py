@@ -24,7 +24,6 @@ from app.devices.services import (
 )
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
-from app.runs.services_container import RunServices
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -172,18 +171,20 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 
 
 async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(run_reaper, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader")))
+    monkeypatch.setattr(
+        run_reaper.RunReaperLoop, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader"))
+    )
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    loop = run_reaper.RunReaperLoop(
-        services=RunServices(
-            publisher=event_bus,
-            settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
-            grid=Mock(),
-            session_factory=_fake_session,
-        )
+    mock_services = SimpleNamespace(
+        lifecycle=AsyncMock(),
+        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+        session_factory=_fake_session,
     )
+    loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
 
     with pytest.raises(SystemExit):
         await loop.run()
@@ -192,23 +193,23 @@ async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pyt
 
 
 async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
     monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
-        run_reaper,
+        run_reaper.RunReaperLoop,
         "_reap_stale_runs",
         AsyncMock(side_effect=[None, LeadershipLost("stale leader")]),
     )
     monkeypatch.setattr(run_reaper.asyncio, "sleep", AsyncMock(return_value=None))
     monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
 
-    loop = run_reaper.RunReaperLoop(
-        services=RunServices(
-            publisher=event_bus,
-            settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
-            grid=Mock(),
-            session_factory=_fake_session,
-        )
+    mock_services = SimpleNamespace(
+        lifecycle=AsyncMock(),
+        settings=FakeSettingsReader({"reservations.reaper_interval_sec": 1}),
+        session_factory=_fake_session,
     )
+    loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
 
     with pytest.raises(SystemExit):
         await loop.run()

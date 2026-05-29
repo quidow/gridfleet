@@ -14,15 +14,24 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.grid.service import GridService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
 from app.runs.schemas import DeviceRequirement, RunCreate, SessionCounts
+from app.runs.service_allocator import RunAllocatorService, _find_matching_devices, _readiness_for_match
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+_settings = FakeSettingsReader({})
+_query_svc = RunQueryService()
+_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -113,7 +122,7 @@ async def test_find_matching_devices_filters_tags_before_readiness(
 
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", fake_readiness)
 
-    devices = await run_service._find_matching_devices(
+    devices = await _find_matching_devices(
         db_session,
         DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", tags={"pool": "smoke"}),
     )
@@ -765,9 +774,7 @@ async def test_concurrent_create_run_reserves_device_once(
         async with session_factory() as session:
             run_payload = payload.model_copy(update={"name": name})
             try:
-                run, _devices = await run_service.create_run(
-                    session, run_payload, publisher=event_bus, settings=FakeSettingsReader({})
-                )
+                run, _devices = await _allocator_svc.create_run(session, run_payload)
                 return "success", str(run.id)
             except ValueError as exc:
                 return "error", str(exc)
@@ -813,16 +820,14 @@ async def test_fetch_session_counts_groups_by_status(
         name="Device FSC1",
         operational_state="available",
     )
-    run = await run_service.create_run(
+    run_obj, _ = await _allocator_svc.create_run(
         db_session,
         RunCreate(
             name="counts-run",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
-    run_id = run[0].id
+    run_id = run_obj.id
 
     db_session.add_all(
         [
@@ -835,12 +840,12 @@ async def test_fetch_session_counts_groups_by_status(
     )
     await db_session.commit()
 
-    counts_map = await run_service.fetch_session_counts(db_session, [run_id])
+    counts_map = await _query_svc.fetch_session_counts(db_session, [run_id])
     assert counts_map == {run_id: SessionCounts(passed=2, failed=1, error=1, running=1, total=5)}
 
 
 async def test_fetch_session_counts_handles_empty_input(db_session: AsyncSession) -> None:
-    assert await run_service.fetch_session_counts(db_session, []) == {}
+    assert await _query_svc.fetch_session_counts(db_session, []) == {}
 
 
 async def test_list_runs_returns_session_counts_per_run(
@@ -855,16 +860,14 @@ async def test_list_runs_returns_session_counts_per_run(
         name="Device LSC1",
         operational_state="available",
     )
-    run = await run_service.create_run(
+    run_obj, _ = await _allocator_svc.create_run(
         db_session,
         RunCreate(
             name="list-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
-    run_id = run[0].id
+    run_id = run_obj.id
 
     db_session.add_all(
         [
@@ -895,16 +898,14 @@ async def test_get_run_detail_returns_session_counts(
         name="Device DSC1",
         operational_state="available",
     )
-    run = await run_service.create_run(
+    run_obj, _ = await _allocator_svc.create_run(
         db_session,
         RunCreate(
             name="detail-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
-    run_id = run[0].id
+    run_id = run_obj.id
 
     db_session.add_all(
         [
@@ -995,7 +996,6 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.runs import service as run_service
     from tests.helpers import create_device
 
     devices = [
@@ -1010,12 +1010,10 @@ async def test_create_run_drops_devices_that_lost_availability_between_passes(
     ]
     await db_session.commit()
 
-    original_readiness = run_service._readiness_for_match
-
     async def flaky(db: AsyncSession, device: Device) -> bool:
         if device.id == devices[0].id:
             return False
-        return await original_readiness(db, device)
+        return await _readiness_for_match(db, device)
 
     monkeypatch.setattr("app.runs.service_allocator._readiness_for_match", flaky)
 
@@ -1070,7 +1068,11 @@ async def test_sessions_straddle_active_signal_boundary(
     crud_mock = SessionCrudService(publisher=Mock())
     await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
-    await run_service.signal_active(db_session, run.id, publisher=event_bus)
+    _release = RunReleaseService(publisher=event_bus, settings=_settings, grid=GridService(settings=_settings))
+    _lifecycle = RunLifecycleService(
+        publisher=event_bus, settings=_settings, grid=GridService(settings=_settings), release=_release
+    )
+    await _lifecycle.signal_active(db_session, run.id)
     await db_session.refresh(run)
     assert run.state == RunState.active
     assert run.started_at is not None

@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
-from app.runs import service as run_service
+from app.grid.service import GridService
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
+
+_settings = FakeSettingsReader({})
+_grid = GridService(settings=_settings)
+_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,9 +72,7 @@ async def test_cancel_run_revokes_health_failure_reservation_intent(db_session: 
         source=f"health_failure:reservation:{device.id}",
     )
 
-    await run_service.cancel_run(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
-    )
+    await _lifecycle_svc.cancel_run(db_session, run.id)
 
     assert not await _intent_exists(
         db_session,
@@ -82,9 +86,7 @@ async def test_complete_run_revokes_health_failure_reservation_intent(db_session
     run = await create_reserved_run(db_session, name="complete-release-run", devices=[device])
     await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
 
-    await run_service.complete_run(
-        db_session, run.id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
-    )
+    await _lifecycle_svc.complete_run(db_session, run.id)
 
     assert not await _intent_exists(
         db_session,
@@ -98,9 +100,7 @@ async def test_expire_run_revokes_health_failure_reservation_intent(db_session: 
     run = await create_reserved_run(db_session, name="expire-release-run", devices=[device])
     await _seed_health_failure_reservation_intent(db_session, device_id=device.id, run_id=run.id)
 
-    await run_service.expire_run(
-        db_session, run, "Heartbeat timeout", publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
-    )
+    await _lifecycle_svc.expire_run(db_session, run, "Heartbeat timeout")
 
     assert not await _intent_exists(
         db_session,

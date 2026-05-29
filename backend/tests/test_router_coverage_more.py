@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -64,7 +64,13 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
     db = MagicMock()
     mock_svc = MagicMock()
     mock_ss = SettingsServices(service=mock_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
-    _events = SimpleNamespace(publisher=event_bus)
+
+    mock_rs = SimpleNamespace(
+        allocator=AsyncMock(),
+        lifecycle=AsyncMock(),
+        failure=AsyncMock(),
+        query=AsyncMock(),
+    )
 
     monkeypatch.setattr(
         runs.run_service, "parse_includes", lambda include, allowed: {"capabilities"} if include else set()
@@ -75,19 +81,26 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             include="capabilities",
             db=db,
             settings_services=mock_ss,
-            events=_events,
+            run_services=mock_rs,
         )
     assert unsupported.value.status_code == 422
 
     monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: set())
-    monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(side_effect=PackUnavailableError("pack")))
+    mock_rs.allocator.create_run = AsyncMock(side_effect=PackUnavailableError("pack"))
     with pytest.raises(HTTPException) as pack_error:
-        await runs.create_run(RunCreate(name="r", requirements=[]), db=db, settings_services=mock_ss, events=_events)
+        await runs.create_run(
+            RunCreate(name="r", requirements=[]), db=db, settings_services=mock_ss, run_services=mock_rs
+        )
     assert pack_error.value.status_code == 422
 
-    monkeypatch.setattr(
-        runs.run_service, "list_runs_cursor", AsyncMock(side_effect=CursorPaginationError("bad cursor"))
+    run = _run()
+    mock_rs_list = SimpleNamespace(
+        allocator=AsyncMock(),
+        lifecycle=AsyncMock(),
+        failure=AsyncMock(),
+        query=AsyncMock(),
     )
+    mock_rs_list.query.list_runs_cursor = AsyncMock(side_effect=CursorPaginationError("bad cursor"))
     with pytest.raises(HTTPException) as cursor_error:
         await runs.list_runs(
             SimpleNamespace(query_params={"cursor": "bad"}),
@@ -101,18 +114,14 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             sort_by="created_at",
             sort_dir="desc",
             db=db,
+            run_services=mock_rs_list,
         )
     assert cursor_error.value.status_code == 422
 
-    run = _run()
-    monkeypatch.setattr(
-        runs.run_service,
-        "list_runs_cursor",
-        AsyncMock(return_value=CursorPage(items=[run], limit=1, next_cursor="next", prev_cursor="prev")),
+    mock_rs_list.query.list_runs_cursor = AsyncMock(
+        return_value=CursorPage(items=[run], limit=1, next_cursor="next", prev_cursor="prev")
     )
-    monkeypatch.setattr(
-        runs.run_service, "fetch_session_counts", AsyncMock(return_value={run.id: SessionCounts(running=1, total=1)})
-    )
+    mock_rs_list.query.fetch_session_counts = AsyncMock(return_value={run.id: SessionCounts(running=1, total=1)})
     monkeypatch.setattr(runs.run_service, "build_run_read", _run_read)
     page = await runs.list_runs(
         SimpleNamespace(query_params={"direction": "newer"}),
@@ -126,11 +135,13 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         sort_by="created_at",
         sort_dir="desc",
         db=db,
+        run_services=mock_rs_list,
     )
     assert page["next_cursor"] == "next"
     assert page["items"][0].session_counts.running == 1
 
-    monkeypatch.setattr(runs.run_service, "list_runs", AsyncMock(return_value=([run], 1)))
+    mock_rs_list.query.list_runs = AsyncMock(return_value=([run], 1))
+    mock_rs_list.query.fetch_session_counts = AsyncMock(return_value={run.id: SessionCounts()})
     offset_page = await runs.list_runs(
         SimpleNamespace(query_params={}),
         state=None,
@@ -143,6 +154,7 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
         sort_by="created_at",
         sort_dir="desc",
         db=db,
+        run_services=mock_rs_list,
     )
     assert offset_page["total"] == 1
     assert offset_page["offset"] == 2
@@ -160,6 +172,7 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             sort_by="created_at",
             sort_dir="desc",
             db=db,
+            run_services=mock_rs_list,
         )
     assert invalid_date.value.status_code == 422
     assert runs._parse_run_filter_datetime("2026-05-13", end_of_day=True).tzinfo is not None
@@ -168,97 +181,85 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
 async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     run = _run()
-    monkeypatch.setattr(runs.run_service, "fetch_session_counts", AsyncMock(return_value={}))
+
+    def _mk_rs() -> SimpleNamespace:
+        rs = SimpleNamespace(
+            allocator=AsyncMock(),
+            lifecycle=AsyncMock(),
+            failure=AsyncMock(),
+            query=AsyncMock(),
+        )
+        rs.query.fetch_session_counts = AsyncMock(return_value={})
+        return rs
+
     monkeypatch.setattr(runs.run_service, "build_run_read", _run_read)
 
-    for endpoint_name in ("signal_ready", "signal_active", "report_preparation_failure", "complete_run", "cancel_run"):
-        monkeypatch.setattr(runs.run_service, endpoint_name, AsyncMock(side_effect=ValueError("bad state")))
-
-    _events = SimpleNamespace(publisher=event_bus)
-    mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
+    # signal_ready error
+    mock_rs = _mk_rs()
+    mock_rs.lifecycle.signal_ready = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException) as ready_error:
-        await runs.signal_ready(run.id, db=db, events=_events)
+        await runs.signal_ready(run.id, db=db, run_services=mock_rs)
     assert ready_error.value.status_code == 409
+
+    # signal_active error
+    mock_rs.lifecycle.signal_active = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
-        await runs.signal_active(run.id, db=db, events=_events)
+        await runs.signal_active(run.id, db=db, run_services=mock_rs)
+
+    # report_preparation_failed error
+    mock_rs.failure.report_preparation_failure = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
         await runs.report_preparation_failed(
-            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db, events=_events
-        )
-    with pytest.raises(HTTPException):
-        await runs.complete_run(
-            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
-        )
-    with pytest.raises(HTTPException):
-        await runs.cancel_run(
-            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
+            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db, run_services=mock_rs
         )
 
-    monkeypatch.setattr(runs.run_service, "force_release", AsyncMock(side_effect=ValueError("missing")))
+    # complete_run error
+    mock_rs.lifecycle.complete_run = AsyncMock(side_effect=ValueError("bad state"))
+    with pytest.raises(HTTPException):
+        await runs.complete_run(run.id, db=db, run_services=mock_rs)
+
+    # cancel_run error
+    mock_rs.lifecycle.cancel_run = AsyncMock(side_effect=ValueError("bad state"))
+    with pytest.raises(HTTPException):
+        await runs.cancel_run(run.id, db=db, run_services=mock_rs)
+
+    # force_release error
+    mock_rs.lifecycle.force_release = AsyncMock(side_effect=ValueError("missing"))
     with pytest.raises(HTTPException) as force_error:
-        await runs.force_release(
-            run.id, db=db, events=_events, settings_services=mock_ss, run_services=SimpleNamespace(grid=AsyncMock())
-        )
+        await runs.force_release(run.id, db=db, run_services=mock_rs)
     assert force_error.value.status_code == 404
 
-    monkeypatch.setattr(runs.run_service, "heartbeat", AsyncMock(side_effect=ValueError("missing")))
+    # heartbeat error
+    mock_rs.lifecycle.heartbeat = AsyncMock(side_effect=ValueError("missing"))
     with pytest.raises(HTTPException) as heartbeat_error:
-        await runs.heartbeat(run.id, db=db)
+        await runs.heartbeat(run.id, db=db, run_services=mock_rs)
     assert heartbeat_error.value.status_code == 404
 
-    _agent_comm = SimpleNamespace(circuit_breaker=MagicMock())
-
-    monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(side_effect=ValueError("run not found")))
+    # cooldown errors
+    mock_rs.failure.cooldown_device = AsyncMock(side_effect=ValueError("run not found"))
     with pytest.raises(HTTPException) as not_found:
         await runs.cooldown_device_endpoint(
-            run.id,
-            uuid.uuid4(),
-            RunCooldownRequest(reason="bad", ttl_seconds=1),
-            db=db,
-            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-            agent_comm=_agent_comm,
-            events=SimpleNamespace(publisher=Mock()),
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
         )
     assert not_found.value.status_code == 404
 
-    monkeypatch.setattr(
-        runs.run_service, "cooldown_device", AsyncMock(side_effect=ValueError("ttl_seconds must be <= 30"))
-    )
+    mock_rs.failure.cooldown_device = AsyncMock(side_effect=ValueError("ttl_seconds must be <= 30"))
     with pytest.raises(HTTPException) as invalid_ttl:
         await runs.cooldown_device_endpoint(
-            run.id,
-            uuid.uuid4(),
-            RunCooldownRequest(reason="bad", ttl_seconds=1),
-            db=db,
-            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-            agent_comm=_agent_comm,
-            events=SimpleNamespace(publisher=Mock()),
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
         )
     assert invalid_ttl.value.status_code == 422
 
-    monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(return_value=(None, 2, True, 2)))
+    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 2, True, 2))
     escalated = await runs.cooldown_device_endpoint(
-        run.id,
-        uuid.uuid4(),
-        RunCooldownRequest(reason="bad", ttl_seconds=1),
-        db=db,
-        settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-        agent_comm=_agent_comm,
-        events=SimpleNamespace(publisher=Mock()),
+        run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
     )
     assert escalated.status == "maintenance_escalated"
 
-    monkeypatch.setattr(runs.run_service, "cooldown_device", AsyncMock(return_value=(None, 1, False, 2)))
+    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 1, False, 2))
     with pytest.raises(HTTPException) as no_expiry:
         await runs.cooldown_device_endpoint(
-            run.id,
-            uuid.uuid4(),
-            RunCooldownRequest(reason="bad", ttl_seconds=1),
-            db=db,
-            settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-            agent_comm=_agent_comm,
-            events=SimpleNamespace(publisher=Mock()),
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
         )
     assert no_expiry.value.status_code == 500
 
@@ -275,61 +276,53 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
         platform_id="platform",
         os_version="14",
     )
-    monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: {"config"})
-    monkeypatch.setattr(runs.run_service, "create_run", AsyncMock(return_value=(run, [info])))
     grid_svc = MagicMock()
     grid_svc.get = MagicMock(return_value="http://grid")
     grid_ss = SettingsServices(service=grid_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
-    _events = SimpleNamespace(publisher=event_bus)
+    mock_rs = SimpleNamespace(
+        allocator=AsyncMock(),
+        lifecycle=AsyncMock(),
+        failure=AsyncMock(),
+        query=AsyncMock(),
+    )
+    monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: {"config"})
+    mock_rs.allocator.create_run = AsyncMock(return_value=(run, [info]))
     created = await runs.create_run(
-        RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss, events=_events
+        RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss, run_services=mock_rs
     )
     assert created["devices"][0].unavailable_includes[0].reason == "device_not_found"
 
     active = _run(RunState.active)
-    monkeypatch.setattr(
-        runs.run_service, "fetch_session_counts", AsyncMock(return_value={active.id: SessionCounts(total=1)})
-    )
+    mock_rs.query.fetch_session_counts = AsyncMock(return_value={active.id: SessionCounts(total=1)})
     monkeypatch.setattr(runs.run_service, "build_run_read", _run_read)
-    for endpoint_name in (
-        "signal_ready",
-        "signal_active",
-        "report_preparation_failure",
-        "complete_run",
-        "cancel_run",
-        "force_release",
-    ):
-        monkeypatch.setattr(runs.run_service, endpoint_name, AsyncMock(return_value=active))
 
-    _events = SimpleNamespace(publisher=event_bus)
-    assert (await runs.signal_ready(active.id, db=db, events=_events)).session_counts.total == 1
-    assert (await runs.signal_active(active.id, db=db, events=_events)).state == RunState.active
+    mock_rs.lifecycle.signal_ready = AsyncMock(return_value=active)
+    assert (await runs.signal_ready(active.id, db=db, run_services=mock_rs)).session_counts.total == 1
+
+    mock_rs.lifecycle.signal_active = AsyncMock(return_value=active)
+    assert (await runs.signal_active(active.id, db=db, run_services=mock_rs)).state == RunState.active
+
+    mock_rs.failure.report_preparation_failure = AsyncMock(return_value=active)
     assert (
         await runs.report_preparation_failed(
             active.id,
             uuid.uuid4(),
             runs.RunPreparationFailureReport(message="bad"),
             db=db,
-            events=_events,
+            run_services=mock_rs,
         )
     ).state == RunState.active
-    assert (
-        await runs.complete_run(
-            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
-        )
-    ).state == RunState.active
-    assert (
-        await runs.cancel_run(
-            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
-        )
-    ).state == RunState.active
-    assert (
-        await runs.force_release(
-            active.id, db=db, events=_events, settings_services=grid_ss, run_services=SimpleNamespace(grid=AsyncMock())
-        )
-    ).state == RunState.active
+
+    mock_rs.lifecycle.complete_run = AsyncMock(return_value=active)
+    assert (await runs.complete_run(active.id, db=db, run_services=mock_rs)).state == RunState.active
+
+    mock_rs.lifecycle.cancel_run = AsyncMock(return_value=active)
+    assert (await runs.cancel_run(active.id, db=db, run_services=mock_rs)).state == RunState.active
+
+    mock_rs.lifecycle.force_release = AsyncMock(return_value=active)
+    assert (await runs.force_release(active.id, db=db, run_services=mock_rs)).state == RunState.active
 
 
 async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:

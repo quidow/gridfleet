@@ -3,20 +3,32 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
 
+from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
-from app.runs import service as run_service
+from app.grid.service import GridService
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
+from app.runs.service_allocator import RunAllocatorService
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_failures import RunFailureService
+from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+_settings = FakeSettingsReader({})
+_grid = GridService(settings=_settings)
+_circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
+_release_svc = RunReleaseService(publisher=event_bus, settings=_settings, grid=_grid)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_allocator_svc = RunAllocatorService(publisher=event_bus, settings=_settings)
+_failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
 
 if TYPE_CHECKING:
     import uuid
@@ -65,7 +77,7 @@ async def _seed_schedulable_node(
 async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
     await seed_test_packs(db_session)
     await db_session.commit()
-    run, _devices = await run_service.create_run(
+    run, _devices = await _allocator_svc.create_run(
         db_session,
         RunCreate(
             name="grid-run-id-test",
@@ -74,8 +86,6 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
             heartbeat_timeout_sec=120,
             created_by="tester",
         ),
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
     )
     return run.id
 
@@ -113,10 +123,8 @@ async def test_complete_run_clears_desired_grid_run_id(
     )
     run_id = await _create_run(db_session)
 
-    await run_service.signal_ready(db_session, run_id, publisher=event_bus)
-    await run_service.complete_run(
-        db_session, run_id, publisher=event_bus, settings=FakeSettingsReader(), grid=AsyncMock()
-    )
+    await _lifecycle_svc.signal_ready(db_session, run_id)
+    await _lifecycle_svc.complete_run(db_session, run_id)
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None
@@ -142,9 +150,7 @@ async def test_exclude_device_clears_only_that_device(
     )
     run_id = await _create_run(db_session, count=2)
 
-    await run_service.report_preparation_failure(
-        db_session, run_id, device_id, message="install failed", publisher=Mock()
-    )
+    await _failure_svc.report_preparation_failure(db_session, run_id, device_id, message="install failed")
 
     rows = (
         await db_session.execute(

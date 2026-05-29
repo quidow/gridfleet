@@ -53,6 +53,11 @@ from app.plugins.dependencies import get_plugin_services
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
 from app.runs.dependencies import get_run_services
+from app.runs.service_allocator import RunAllocatorService
+from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_lifecycle_failures import RunFailureService
+from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_query import RunQueryService
 from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
 from app.sessions.service import SessionCrudService
@@ -407,10 +412,23 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
+        grid = GridService(settings=settings_service)
+        run_release = RunReleaseService(publisher=test_event_bus, settings=settings_service, grid=grid)
+        run_lifecycle = RunLifecycleService(
+            publisher=test_event_bus, settings=settings_service, grid=grid, release=run_release
+        )
+        run_allocator = RunAllocatorService(publisher=test_event_bus, settings=settings_service)
+        run_failure = RunFailureService(
+            publisher=test_event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+        )
+        run_query = RunQueryService()
         return RunServices(
-            publisher=test_event_bus,
+            allocator=run_allocator,
+            lifecycle=run_lifecycle,
+            release=run_release,
+            failure=run_failure,
+            query=run_query,
             settings=settings_service,
-            grid=GridService(settings=settings_service),
             session_factory=sf,
         )
 
