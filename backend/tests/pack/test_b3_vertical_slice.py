@@ -41,11 +41,7 @@ import pytest
 from sqlalchemy import select
 
 from app.hosts.models import Host, HostStatus, OSType
-from app.main import app
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
-from app.packs.routers.uploads import get_pack_storage
-from app.packs.services import feature_dispatch as pack_feature_dispatch_service
-from app.packs.services.storage import PackStorageService
 from tests.helpers import drain_handlers, recent_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -249,63 +245,36 @@ class _FakeAgentClient:
 
 
 @pytest.fixture
-def override_storage(tmp_path: Path) -> Iterator[Path]:
-    storage_root = tmp_path / "b3-storage"
-    storage_root.mkdir(parents=True, exist_ok=True)
-
-    def _tmp_storage() -> PackStorageService:
-        return PackStorageService(root=storage_root)
-
-    app.dependency_overrides[get_pack_storage] = _tmp_storage
-    try:
-        yield storage_root
-    finally:
-        app.dependency_overrides.pop(get_pack_storage, None)
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Point pack storage at a per-test writable directory."""
+    return tmp_path / "b3-storage"
 
 
 @pytest.fixture
 def fake_agent(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeAgentClient]:
-    """Patch dispatch_feature_action's http_client_factory to use the fake."""
+    """Patch FeatureService.dispatch_feature_action to use the fake agent."""
     agent = _FakeAgentClient()
 
     def _factory(*, timeout: float | int) -> AgentHttpClient:
         del timeout
         return cast("AgentHttpClient", agent)
 
-    original = pack_feature_dispatch_service.dispatch_feature_action
-    # Wrap the function so the factory is always our fake, regardless of what
-    # the route passes.  We patch at the service module level because the route
-    # module imports dispatch_feature_action directly.
+    from app.packs.services.feature_dispatch import FeatureService
+
+    original = FeatureService.dispatch_feature_action
     import functools
 
     @functools.wraps(original)
     async def _patched(
+        self: FeatureService,
         session: AsyncSession,
         *,
-        host_id: uuid.UUID,
-        pack_id: str,
-        feature_id: str,
-        action_id: str,
-        args: dict[str, Any],
         http_client_factory: AgentClientFactory = _factory,
-        timeout: float | int = 30.0,
-        **extra: object,
+        **kwargs: object,
     ) -> object:
-        return await original(
-            session,
-            host_id=host_id,
-            pack_id=pack_id,
-            feature_id=feature_id,
-            action_id=action_id,
-            args=args,
-            http_client_factory=http_client_factory,
-            timeout=timeout,
-            **extra,
-        )
+        return await original(self, session, http_client_factory=http_client_factory, **kwargs)  # type: ignore[arg-type]
 
-    import app.packs.routers.host_features as feature_routes
-
-    monkeypatch.setattr(feature_routes, "dispatch_feature_action", _patched)
+    monkeypatch.setattr(FeatureService, "dispatch_feature_action", _patched)
     yield agent
 
 
@@ -375,7 +344,6 @@ async def _seed_host(session: AsyncSession) -> Host:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("override_storage")
 async def test_b3_upload_creates_pack_and_feature_rows(
     client: AsyncClient,
     fixture_artifacts: tuple[bytes, str],
@@ -422,23 +390,12 @@ async def test_b3_upload_creates_pack_and_feature_rows(
 async def test_b3_feature_action_degraded_and_recovered(
     client: AsyncClient,
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Steps 2-5: feature-action route → status row → webhook events.
 
     - First call: agent returns ok=False → status row ok=False → pack_feature.degraded emitted.
     - Second call: agent returns ok=True → status row ok=True → pack_feature.recovered emitted.
     """
-    # Inject publisher=event_bus into record_feature_status calls from feature_dispatch.
-    from app.packs.services import feature_dispatch as fd_mod
-    from app.packs.services.feature_dispatch import record_feature_status as _orig_rfs
-
-    async def _wrapped_rfs(*args: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
-        return await _orig_rfs(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(fd_mod, "record_feature_status", _wrapped_rfs)
-
     # Seed host + pack — capture host_id as a plain Python UUID immediately so
     # that expire_all() later does not trigger lazy I/O on the ORM object.
     host = await _seed_host(db_session)

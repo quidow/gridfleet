@@ -8,11 +8,8 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from app.main import app
 from app.packs.models import DriverPackFeature
-from app.packs.routers.uploads import get_pack_storage
 from app.packs.services.status import compute_desired
-from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -32,21 +29,22 @@ def _tarball_bytes(manifest_text: str) -> bytes:
     return buf.getvalue()
 
 
+@pytest.fixture
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Route pack storage to a per-test writable directory."""
+    return tmp_path / "storage"
+
+
 async def test_uploaded_sidecar_pack_populates_feature_and_desired_state(
     client: AsyncClient,
     db_session: AsyncSession,
     db_host,  # noqa: ANN001
-    tmp_path: Path,
 ) -> None:
     manifest_text = (Path(__file__).parent / "fixtures" / "sidecar_upload_pack" / "manifest.yaml").read_text()
-    app.dependency_overrides[get_pack_storage] = lambda: PackStorageService(root=tmp_path / "storage")
-    try:
-        response = await client.post(
-            "/api/driver-packs/uploads",
-            files={"tarball": ("sidecar.tar.gz", _tarball_bytes(manifest_text), "application/gzip")},
-        )
-    finally:
-        app.dependency_overrides.pop(get_pack_storage, None)
+    response = await client.post(
+        "/api/driver-packs/uploads",
+        files={"tarball": ("sidecar.tar.gz", _tarball_bytes(manifest_text), "application/gzip")},
+    )
     assert response.status_code == 201
 
     feature = (

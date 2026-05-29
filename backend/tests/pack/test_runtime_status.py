@@ -8,15 +8,21 @@ contaminate unrelated installed runtimes.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
+
+from app.hosts.models import Host, HostStatus, OSType
+from app.packs.models import HostRuntimeInstallation
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.status import PackStatusService
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostRuntimeInstallation
-from app.packs.services.status import get_host_driver_pack_status
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+_status_svc = PackStatusService(publisher=event_bus, feature=_feature_svc)
 
 
 @pytest.mark.asyncio
@@ -48,7 +54,7 @@ async def test_host_driver_pack_status_includes_runtime_and_plugin_status(
     db_session.add(runtime)
     await db_session.commit()
 
-    body = await get_host_driver_pack_status(db_session, host.id)
+    body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
 
     assert len(body["runtimes"]) == 1
     rt = body["runtimes"][0]
@@ -102,7 +108,7 @@ async def test_blocked_runtime_does_not_contaminate_installed_runtime(
     db_session.add_all([installed, blocked])
     await db_session.commit()
 
-    body = await get_host_driver_pack_status(db_session, host.id)
+    body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
 
     by_id = {rt["runtime_id"]: rt for rt in body["runtimes"]}
     assert "runtime-ok" in by_id
@@ -146,7 +152,7 @@ async def test_runtime_status_plugin_specs_defaults_to_empty_list(
     db_session.add(runtime)
     await db_session.commit()
 
-    body = await get_host_driver_pack_status(db_session, host.id)
+    body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
 
     assert len(body["runtimes"]) == 1
     rt = body["runtimes"][0]
@@ -168,7 +174,7 @@ async def test_get_host_driver_pack_status_empty_for_new_host(
     db_session.add(host)
     await db_session.commit()
 
-    body = await get_host_driver_pack_status(db_session, host.id)
+    body = await _status_svc.get_host_driver_pack_status(db_session, host.id)
 
     assert body["host_id"] == host.id
     assert body["packs"] == []

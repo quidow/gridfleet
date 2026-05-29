@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.auth import auth_settings as process_settings
 from app.devices.models import ConnectionType, Device, DeviceType
-from app.main import app
 from app.packs.models import (
     DriverPack,
     DriverPackRelease,
@@ -18,9 +17,7 @@ from app.packs.models import (
     HostPackFeatureStatus,
     HostPackInstallation,
 )
-from app.packs.routers.uploads import get_pack_storage
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
-from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -66,19 +63,10 @@ def _tarball(release: str = "0.1.0") -> bytes:
     return buf.getvalue()
 
 
-@pytest.fixture(autouse=True)
-def override_storage(tmp_path: Path) -> Iterator[None]:
-    """Override the pack storage dependency to use a writable tmp_path."""
-
-    def _tmp_storage() -> PackStorageService:
-        return PackStorageService(root=tmp_path)
-
-    app.dependency_overrides[get_pack_storage] = _tmp_storage
-    yield
-    # Clean up only our override; the conftest clears all overrides after the
-    # client fixture, but we clean ours here defensively in case client fixture
-    # teardown has already run.
-    app.dependency_overrides.pop(get_pack_storage, None)
+@pytest.fixture
+def pack_storage_root(tmp_path: Path) -> Path:
+    """Route pack storage to a per-test writable directory."""
+    return tmp_path
 
 
 @pytest.fixture

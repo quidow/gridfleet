@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs import packs_settings
 from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
@@ -23,23 +21,9 @@ from app.packs.services.ingest import (
     PackIngestValidationError as PackUploadValidationError,
 )
 from app.packs.services.service import build_pack_out
-from app.packs.services.storage import PackStorageService
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
-
-
-def get_pack_storage() -> PackStorageService:
-    """FastAPI dependency that returns a PackStorageService rooted at the configured dir.
-
-    Kept for test compatibility — tests may import and override this via
-    ``app.dependency_overrides[get_pack_storage]``.  Route handlers now use
-    ``PackServicesDep`` instead.  Remove once Task 9 migrates the tests.
-    """
-    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
-
-
-PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
 
 
 async def _read_limited_upload(tarball: UploadFile) -> bytes:

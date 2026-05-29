@@ -1,4 +1,4 @@
-"""Unit tests for ``pack_feature_status_service.record_feature_status``.
+"""Unit tests for ``FeatureService.record_feature_status``.
 
 The service tracks per-feature health for each (host, pack, feature) tuple in a
 ``host_pack_feature_status`` row. Whenever ``ok`` flips relative to the prior
@@ -10,12 +10,13 @@ SystemEvent so existing webhook subscribers receive an alert automatically.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
 
 from app.packs.models import HostPackFeatureStatus
-from app.packs.services.feature_dispatch import record_feature_status
+from app.packs.services.feature_dispatch import FeatureService
 from tests.helpers import drain_handlers, recent_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 PACK_ID = "appium-uiautomator2"
 FEATURE_ID = "android.diagnostics"
 
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+
 
 def _events(event_type: str) -> list[dict[str, object]]:
     return recent_events(event_bus, event_types=[event_type])
@@ -36,14 +39,13 @@ def _events(event_type: str) -> list[dict[str, object]]:
 @pytest.mark.asyncio
 async def test_first_record_with_ok_true_does_not_emit(db_session: AsyncSession, sample_host: Host) -> None:
     """First-ever recording with ``ok=True`` is the healthy baseline — no event."""
-    transitioned = await record_feature_status(
+    transitioned = await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -56,14 +58,13 @@ async def test_first_record_with_ok_true_does_not_emit(db_session: AsyncSession,
 @pytest.mark.asyncio
 async def test_first_record_with_ok_false_emits_degraded(db_session: AsyncSession, sample_host: Host) -> None:
     """First-ever recording with ``ok=False`` is treated as a fresh degradation."""
-    transitioned = await record_feature_status(
+    transitioned = await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="adb offline",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -83,27 +84,25 @@ async def test_first_record_with_ok_false_emits_degraded(db_session: AsyncSessio
 
 @pytest.mark.asyncio
 async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession, sample_host: Host) -> None:
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=True,
         detail="",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
     assert _events("pack_feature.degraded") == []
 
-    transitioned = await record_feature_status(
+    transitioned = await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="probe failed",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -117,27 +116,25 @@ async def test_transition_true_to_false_emits_degraded(db_session: AsyncSession,
 
 @pytest.mark.asyncio
 async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession, sample_host: Host) -> None:
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="boom",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
     assert len(_events("pack_feature.degraded")) == 1
 
-    transitioned = await record_feature_status(
+    transitioned = await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=True,
         detail="ok now",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -159,28 +156,26 @@ async def test_transition_false_to_true_emits_recovered(db_session: AsyncSession
 @pytest.mark.asyncio
 async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host) -> None:
     """Re-recording the same ``ok`` value is a noop for the webhook."""
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="first",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
     initial_degraded = len(_events("pack_feature.degraded"))
     assert initial_degraded == 1
 
-    transitioned = await record_feature_status(
+    transitioned = await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="still busted",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)
@@ -193,14 +188,13 @@ async def test_no_transition_no_emit(db_session: AsyncSession, sample_host: Host
 @pytest.mark.asyncio
 async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncSession, sample_host: Host) -> None:
     """The upsert stores ``ok`` + ``detail`` and bumps ``updated_at`` on each call."""
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=True,
         detail="initial",
-        publisher=event_bus,
     )
     await db_session.commit()
     first_row = (
@@ -217,14 +211,13 @@ async def test_status_row_persists_with_detail_and_updated_at(db_session: AsyncS
     assert first_row.detail == "initial"
     assert first_updated_at is not None
 
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
         feature_id=FEATURE_ID,
         ok=False,
         detail="something broke",
-        publisher=event_bus,
     )
     await db_session.commit()
     await db_session.refresh(first_row)

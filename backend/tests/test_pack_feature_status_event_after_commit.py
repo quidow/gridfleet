@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.packs.services.feature_dispatch import record_feature_status
+from app.packs.services.feature_dispatch import FeatureService
 from tests.helpers import settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from app.hosts.models import Host
+
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
 
 
 async def test_pack_feature_degraded_queues_after_commit(
@@ -19,14 +22,13 @@ async def test_pack_feature_degraded_queues_after_commit(
     db_host: Host,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=db_host.id,
         pack_id="appium-uiautomator2",
         feature_id="adb",
         ok=False,
         detail="missing",
-        publisher=event_bus,
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == []
@@ -44,14 +46,13 @@ async def test_pack_feature_event_dropped_on_rollback(
     db_host: Host,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await record_feature_status(
+    await _feature_svc.record_feature_status(
         db_session,
         host_id=db_host.id,
         pack_id="appium-uiautomator2",
         feature_id="adb",
         ok=False,
         detail="missing",
-        publisher=event_bus,
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

@@ -71,9 +71,6 @@ from app.packs.services import (
     capability as pack_capability_service,
 )
 from app.packs.services import (
-    desired_state as pack_desired_state_service,
-)
-from app.packs.services import (
     discovery as pack_discovery_service,
 )
 from app.packs.services import (
@@ -83,11 +80,9 @@ from app.packs.services import (
     feature_dispatch as pack_feature_dispatch_service,
 )
 from app.packs.services import (
-    lifecycle as pack_lifecycle_service,
-)
-from app.packs.services import (
     platform_resolver as pack_platform_resolver,
 )
+from app.packs.services import release_ordering as pack_desired_state_service
 from app.packs.services import (
     service as pack_delete_service,
 )
@@ -97,6 +92,10 @@ from app.packs.services import (
 from app.packs.services import (
     storage as pack_storage_service,
 )
+from app.packs.services.feature_dispatch import FeatureService as PackFeatureService
+from app.packs.services.lifecycle import PackLifecycleService
+from app.packs.services.service import PackCatalogService
+from app.packs.services.status import compute_desired as _compute_desired
 from app.plugins.service import PluginService
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
@@ -528,7 +527,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         AsyncMock(return_value={"active_runs": 1, "live_sessions": 0}),
     )
     with pytest.raises(RuntimeError, match="active run"):
-        await pack_delete_service.delete_pack(delete_db, "pack")
+        await PackCatalogService().delete_pack(delete_db, "pack")
 
 
 async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -544,14 +543,13 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     assert (
-        await pack_feature_dispatch_service.record_feature_status(
+        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock()).record_feature_status(
             db,
             host_id=uuid.uuid4(),
             pack_id="pack",
             feature_id="camera",
             ok=True,
             detail="ok",
-            publisher=event_bus,
         )
         is False
     )
@@ -559,9 +557,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     missing_pack_db = AsyncMock()
     missing_pack_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(LookupError):
-        await pack_lifecycle_service.try_complete_drain(missing_pack_db, "missing")
+        await PackLifecycleService().try_complete_drain(missing_pack_db, "missing")
     with pytest.raises(LookupError):
-        await pack_lifecycle_service.transition_pack_state(missing_pack_db, "missing", PackState.enabled)
+        await PackLifecycleService().transition_pack_state(missing_pack_db, "missing", PackState.enabled)
 
     desired_pack = SimpleNamespace(releases=[], current_release=None)
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
@@ -647,14 +645,13 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     existing_status = SimpleNamespace(ok=True)
     feature_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing_status))
     assert (
-        await pack_feature_dispatch_service.record_feature_status(
+        await PackFeatureService(publisher=event_bus, circuit_breaker=Mock()).record_feature_status(
             feature_db,
             host_id=uuid.uuid4(),
             pack_id="pack",
             feature_id="camera",
             ok=True,
             detail="still ok",
-            publisher=event_bus,
         )
         is False
     )
@@ -851,7 +848,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
         ]
     )
-    assert (await pack_desired_state_service.compute_desired(desired_db, uuid.uuid4()))["packs"] == []
+    assert (await _compute_desired(desired_db, uuid.uuid4()))["packs"] == []
 
     assert (
         pack_status_service._installed_driver_version(

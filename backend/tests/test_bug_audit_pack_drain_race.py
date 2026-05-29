@@ -23,8 +23,7 @@ from sqlalchemy import select
 
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.packs.models import DriverPack, PackState
-from app.packs.services import lifecycle as packs_lifecycle
-from app.packs.services.lifecycle import transition_pack_state
+from app.packs.services.lifecycle import PackLifecycleService
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device, create_host
 
@@ -60,13 +59,15 @@ async def test_drain_disables_pack_with_fresh_concurrent_reservation(
     device_id = device.id
     await db_session.commit()
 
-    original_count = packs_lifecycle.count_active_work_for_pack
+    original_count = PackLifecycleService.count_active_work_for_pack
     triggered = False
 
-    async def _count_then_concurrent_reserve(session: AsyncSession, target_pack_id: str) -> dict[str, int]:
+    async def _count_then_concurrent_reserve(
+        self: PackLifecycleService, session: AsyncSession, target_pack_id: str
+    ) -> dict[str, int]:
         nonlocal triggered
         # 1) Read counts as they stand right now (zero active work).
-        counts = await original_count(session, target_pack_id)
+        counts = await original_count(self, session, target_pack_id)
         # ``try_complete_drain`` calls ``count_active_work_for_pack`` twice:
         # the first read decides whether to attempt the disable; the second
         # is the defensive recount immediately before the state write. On
@@ -106,11 +107,11 @@ async def test_drain_disables_pack_with_fresh_concurrent_reservation(
             await side.commit()
         return counts
 
-    packs_lifecycle.count_active_work_for_pack = _count_then_concurrent_reserve  # type: ignore[assignment]
+    PackLifecycleService.count_active_work_for_pack = _count_then_concurrent_reserve  # type: ignore[assignment]
     try:
-        await transition_pack_state(db_session, pack_id, PackState.disabled)
+        await PackLifecycleService().transition_pack_state(db_session, pack_id, PackState.disabled)
     finally:
-        packs_lifecycle.count_active_work_for_pack = original_count
+        PackLifecycleService.count_active_work_for_pack = original_count
 
     async with db_session_maker() as side:
         refreshed_pack: Any = await side.get(DriverPack, pack_id)

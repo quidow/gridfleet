@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,11 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.models import HostPackInstallation, HostRuntimeInstallation
 from app.packs.services.capability import render_stereotype
-from app.packs.services.service import list_catalog
+from app.packs.services.feature_dispatch import FeatureService
+from app.packs.services.service import PackCatalogService
 from app.packs.services.start_shim import build_pack_start_payload
-from app.packs.services.status import apply_status, compute_desired
+from app.packs.services.status import PackStatusService, compute_desired
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
+
+_feature_svc = FeatureService(publisher=event_bus, circuit_breaker=Mock())
+_catalog_svc = PackCatalogService()
+_status_svc = PackStatusService(publisher=event_bus, feature=_feature_svc)
 
 
 class _FakeDevice:
@@ -35,7 +42,7 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
     host_id = host.id
 
     # 2. Catalog.
-    catalog = await list_catalog(db_session)
+    catalog = await _catalog_svc.list_catalog(db_session)
     assert any(p.id == "appium-uiautomator2" for p in catalog.packs)
 
     # 3. Desired.
@@ -70,7 +77,7 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
         ],
         "doctor": [],
     }
-    await apply_status(db_session, status_payload, publisher=event_bus)
+    await _status_svc.apply_status(db_session, status_payload)
     await db_session.commit()
 
     installs = (

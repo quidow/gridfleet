@@ -13,33 +13,17 @@ Admin-only (``Depends(require_admin)``).
 from __future__ import annotations
 
 import re
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs import packs_settings
 from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
-from app.packs.services.storage import PackStorageService
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 
 _UNSAFE_RE = re.compile(r"[^a-zA-Z0-9._-]")
-
-
-def get_pack_storage() -> PackStorageService:
-    """FastAPI dependency returning a :class:`PackStorageService` for the configured dir.
-
-    Kept for test compatibility — tests may import and override this via
-    ``app.dependency_overrides[get_pack_storage]``.  Route handlers now use
-    ``PackServicesDep`` instead.  Remove once Task 9 migrates the tests.
-    """
-    return PackStorageService(root=packs_settings.driver_pack_storage_dir)
-
-
-PackStorageDep = Annotated[PackStorageService, Depends(get_pack_storage)]
 
 
 def _safe_filename_segment(value: str) -> str:

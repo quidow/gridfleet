@@ -26,6 +26,7 @@ from sqlalchemy import select
 
 from app.packs.models import DriverPack, DriverPackFeature, DriverPackRelease, HostPackFeatureStatus
 from app.packs.services import feature_dispatch as pack_feature_dispatch_service
+from app.packs.services.feature_dispatch import FeatureService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -39,6 +40,10 @@ def _noop_breaker() -> AsyncMock:
     breaker = AsyncMock()
     breaker.before_request = AsyncMock(return_value=None)
     return breaker
+
+
+def _feature_svc(circuit_breaker: object | None = None) -> FeatureService:
+    return FeatureService(publisher=event_bus, circuit_breaker=circuit_breaker or _noop_breaker())
 
 
 PACK_ID = "local/feature-dispatch-test"
@@ -158,7 +163,7 @@ async def test_dispatch_calls_agent_and_records_ok_status(
         )
     )
 
-    result = await pack_feature_dispatch_service.dispatch_feature_action(
+    result = await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
@@ -166,8 +171,6 @@ async def test_dispatch_calls_agent_and_records_ok_status(
         action_id=ACTION_ID,
         args={"with_logs": True},
         http_client_factory=_factory(client),
-        circuit_breaker=_noop_breaker(),
-        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -211,7 +214,7 @@ async def test_dispatch_passes_agent_auth_to_agent_request(
         )
     )
 
-    await pack_feature_dispatch_service.dispatch_feature_action(
+    await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
@@ -219,9 +222,7 @@ async def test_dispatch_passes_agent_auth_to_agent_request(
         action_id=ACTION_ID,
         args={},
         http_client_factory=_factory(client),
-        circuit_breaker=_noop_breaker(),
         agent_auth=sentinel,
-        publisher=event_bus,
     )
 
     assert client.post_calls
@@ -247,7 +248,7 @@ async def test_dispatch_omits_auth_when_no_agent_auth_supplied(
         )
     )
 
-    await pack_feature_dispatch_service.dispatch_feature_action(
+    await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
@@ -255,9 +256,7 @@ async def test_dispatch_omits_auth_when_no_agent_auth_supplied(
         action_id=ACTION_ID,
         args={},
         http_client_factory=_factory(client),
-        circuit_breaker=_noop_breaker(),
         agent_auth=None,
-        publisher=event_bus,
     )
 
     assert client.post_calls
@@ -282,7 +281,7 @@ async def test_dispatch_records_failure_when_agent_returns_not_ok(
         )
     )
 
-    result = await pack_feature_dispatch_service.dispatch_feature_action(
+    result = await _feature_svc(_noop_breaker()).dispatch_feature_action(
         db_session,
         host_id=sample_host.id,
         pack_id=PACK_ID,
@@ -290,8 +289,6 @@ async def test_dispatch_records_failure_when_agent_returns_not_ok(
         action_id=ACTION_ID,
         args={},
         http_client_factory=_factory(client),
-        circuit_breaker=_noop_breaker(),
-        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -322,7 +319,7 @@ async def test_dispatch_404_when_host_missing(
     client = StrictAgentClient()
 
     with pytest.raises(HTTPException) as exc_info:
-        await pack_feature_dispatch_service.dispatch_feature_action(
+        await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
             host_id=uuid.uuid4(),  # unknown
             pack_id=PACK_ID,
@@ -330,8 +327,6 @@ async def test_dispatch_404_when_host_missing(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
-            circuit_breaker=_noop_breaker(),
-            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []  # never reached the agent
@@ -345,7 +340,7 @@ async def test_dispatch_404_when_pack_missing(
     client = StrictAgentClient()
 
     with pytest.raises(HTTPException) as exc_info:
-        await pack_feature_dispatch_service.dispatch_feature_action(
+        await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
             host_id=sample_host.id,
             pack_id="no-such-pack",
@@ -353,8 +348,6 @@ async def test_dispatch_404_when_pack_missing(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
-            circuit_breaker=_noop_breaker(),
-            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -370,7 +363,7 @@ async def test_dispatch_404_when_feature_id_not_in_release(
     client = StrictAgentClient()
 
     with pytest.raises(HTTPException) as exc_info:
-        await pack_feature_dispatch_service.dispatch_feature_action(
+        await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
             host_id=sample_host.id,
             pack_id=PACK_ID,
@@ -378,8 +371,6 @@ async def test_dispatch_404_when_feature_id_not_in_release(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
-            circuit_breaker=_noop_breaker(),
-            publisher=event_bus,
         )
     assert exc_info.value.status_code == 404
     assert client.post_calls == []
@@ -404,7 +395,7 @@ async def test_dispatch_502_on_agent_5xx(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await pack_feature_dispatch_service.dispatch_feature_action(
+        await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
             host_id=sample_host.id,
             pack_id=PACK_ID,
@@ -412,8 +403,6 @@ async def test_dispatch_502_on_agent_5xx(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
-            circuit_breaker=_noop_breaker(),
-            publisher=event_bus,
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()
@@ -443,7 +432,7 @@ async def test_dispatch_502_on_transport_error_records_degraded(
     client = StrictAgentClient(post_exception=httpx.ConnectError("connection refused"))
 
     with pytest.raises(HTTPException) as exc_info:
-        await pack_feature_dispatch_service.dispatch_feature_action(
+        await _feature_svc(_noop_breaker()).dispatch_feature_action(
             db_session,
             host_id=sample_host.id,
             pack_id=PACK_ID,
@@ -451,8 +440,6 @@ async def test_dispatch_502_on_transport_error_records_degraded(
             action_id=ACTION_ID,
             args={},
             http_client_factory=_factory(client),
-            circuit_breaker=_noop_breaker(),
-            publisher=event_bus,
         )
     assert exc_info.value.status_code == 502
     await db_session.commit()

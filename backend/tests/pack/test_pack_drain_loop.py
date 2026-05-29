@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.models import DriverPack, PackState
 from app.packs.services import drain as pack_drain
-from app.packs.services.drain import complete_draining_packs_once
+from app.packs.services.drain import PackDrainLoop
 from app.packs.services_container import PackServices
 
 pytestmark = pytest.mark.asyncio
@@ -26,7 +26,20 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
     db_session.add(pack)
     await db_session.commit()
 
-    changed = await complete_draining_packs_once(db_session)
+    loop = PackDrainLoop(
+        services=PackServices(
+            catalog=Mock(),
+            release=Mock(),
+            status=Mock(),
+            lifecycle=Mock(),
+            feature=Mock(),
+            storage=Mock(),
+            publisher=Mock(),
+            circuit_breaker=Mock(),
+            session_factory=Mock(),
+        )
+    )
+    changed = await loop._complete_draining_packs_once(db_session)
 
     assert changed == ["draining-pack"]
     refreshed = await db_session.get(DriverPack, "draining-pack")

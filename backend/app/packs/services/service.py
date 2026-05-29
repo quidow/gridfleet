@@ -34,8 +34,10 @@ from app.packs.schemas import (
     PlatformOut,
     RuntimePolicy,
 )
-from app.packs.services.lifecycle import count_active_work_for_pack, try_complete_drain
+from app.packs.services.lifecycle import PackLifecycleService as _PackLifecycleService
 from app.packs.services.release_ordering import selected_release
+
+_lifecycle_svc = _PackLifecycleService()
 
 
 @dataclass
@@ -185,7 +187,7 @@ class PackCatalogService:
 
         for pack in rows:
             if pack.state == PackState.draining:
-                await try_complete_drain(db, pack.id)
+                await _lifecycle_svc.try_complete_drain(db, pack.id)
         await db.commit()
 
         runtime_summaries = await self._runtime_summaries_by_pack(db, [pack.id for pack in rows])
@@ -195,7 +197,7 @@ class PackCatalogService:
             manifest = latest.manifest_json if latest else {}
             drain_info: dict[str, int] = {"active_runs": 0, "live_sessions": 0}
             if pack.state == PackState.draining:
-                drain_info = await count_active_work_for_pack(db, pack.id)
+                drain_info = await _lifecycle_svc.count_active_work_for_pack(db, pack.id)
             out.append(
                 PackOut(
                     id=pack.id,
@@ -274,7 +276,7 @@ class PackCatalogService:
             noun = "device" if device_count == 1 else "devices"
             raise RuntimeError(f"Cannot delete pack {pack_id!r}; {device_count} {noun} still use it")
 
-        active_work = await count_active_work_for_pack(db, pack_id)
+        active_work = await _lifecycle_svc.count_active_work_for_pack(db, pack_id)
         if active_work["active_runs"] or active_work["live_sessions"]:
             raise RuntimeError(
                 f"Cannot delete pack {pack_id!r}; {active_work['active_runs']} active run(s) and "
@@ -340,23 +342,3 @@ class PackCatalogService:
                 driver_drift_hosts=data.driver_drift_hosts,
             )
         return summaries
-
-
-# Backward-compat wrappers for routers until Task 8 migration
-_default_catalog_svc = PackCatalogService()
-
-
-async def list_catalog(db: AsyncSession) -> PackCatalog:
-    return await _default_catalog_svc.list_catalog(db)
-
-
-async def get_pack_detail(db: AsyncSession, pack_id: str) -> PackOut | None:
-    return await _default_catalog_svc.get_pack_detail(db, pack_id)
-
-
-async def set_runtime_policy(db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> DriverPack:
-    return await _default_catalog_svc.set_runtime_policy(db, pack_id, policy)
-
-
-async def delete_pack(db: AsyncSession, pack_id: str) -> None:
-    await _default_catalog_svc.delete_pack(db, pack_id)
