@@ -706,14 +706,7 @@ class NodeHealthLoop:
             interval = float(self._services.settings.get("general.node_check_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _check_nodes(
-                        db,
-                        settings=self._services.settings,
-                        pool=self._services.pool,
-                        circuit_breaker=self._services.circuit_breaker,
-                        publisher=self._services.publisher,
-                        grid=self._services.grid,
-                    )
+                    await self._services.node_health.check_nodes(db)
             except LeadershipLost as exc:
                 logger.error(
                     "node_health_loop_leadership_lost",

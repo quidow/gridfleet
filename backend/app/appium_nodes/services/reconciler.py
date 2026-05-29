@@ -260,31 +260,7 @@ class AppiumReconcilerLoop:
             cycle_start = time.monotonic()
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await assert_current_leader(db, settings=self._services.settings)
-                    hosts = await _fetch_online_hosts(db)
-                    rows = await _fetch_node_rows(db)
-                    desired = await _fetch_desired_rows(db)
-                    backoff = await _fetch_backoff_until(db)
-                # Agent IO and stops happen outside the DB session — no point holding it open.
-                health_by_host = await _reconcile_all(
-                    hosts,
-                    rows,
-                    settings=self._services.settings,
-                    pool=self._services.pool,
-                    circuit_breaker=self._services.circuit_breaker,
-                )
-                if reconciler_convergence_enabled():
-                    await _drive_convergence(
-                        hosts,
-                        desired,
-                        backoff,
-                        publisher=self._services.publisher,
-                        health_by_host=health_by_host,
-                        settings=self._services.settings,
-                        pool=self._services.pool,
-                        circuit_breaker=self._services.circuit_breaker,
-                        session_factory=self._services.session_factory,
-                    )
+                    await self._services.reconciler.run_cycle(db)
             except LeadershipLost as exc:
                 APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
                 logger.error(

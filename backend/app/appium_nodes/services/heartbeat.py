@@ -781,96 +781,6 @@ class HeartbeatService:
 class HeartbeatLoop:
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
-        self._loop_iteration = 0
-        self._last_cycle_monotonic: float | None = None
-        self._parallelism = 8
-
-    def _next_loop_iteration(self) -> int:
-        self._loop_iteration += 1
-        return self._loop_iteration
-
-    async def _check_hosts(
-        self,
-        db: AsyncSession,
-        *,
-        settings: SettingsReader,
-        pool: AgentHttpPool | None = None,
-        circuit_breaker: CircuitBreakerProtocol,
-    ) -> None:
-        """Ping all non-pending hosts in parallel.
-
-        ``db`` is used only to fetch the host id list; per-host work runs in fresh
-        sessions opened via ``async_session`` and commits independently.
-        """
-        iteration = self._next_loop_iteration()
-        leader_id = str(control_plane_leader.holder_id)
-
-        interval = float(settings.get("general.heartbeat_interval_sec"))
-        max_missed = int(settings.get("general.max_missed_heartbeats"))
-        now_mono = time.monotonic()
-        prev_mono = self._last_cycle_monotonic
-        guard_active = _resume_guard_active(
-            last_cycle_monotonic=prev_mono,
-            now_monotonic=now_mono,
-            interval_sec=interval,
-            max_missed=max_missed,
-        )
-        self._last_cycle_monotonic = now_mono
-        guard_gap_sec = round(now_mono - prev_mono, 1) if prev_mono is not None else None
-        guard_threshold_sec = interval * max_missed
-
-        stmt = select(Host.id).where(Host.status != HostStatus.pending)
-        host_ids = list((await db.execute(stmt)).scalars().all())
-
-        semaphore = asyncio.Semaphore(self._parallelism)
-
-        async def guarded(host_id: uuid.UUID) -> None:
-            async with semaphore:
-                try:
-                    async with self._services.session_factory() as host_db:
-                        host = await host_db.get(Host, host_id)
-                        if host is None:
-                            return
-                        ping_result = await _ping_agent(
-                            host.ip, host.agent_port, settings=settings, pool=pool, circuit_breaker=circuit_breaker
-                        )
-                        _emit_heartbeat_log(
-                            host_id=str(host.id),
-                            host_ip=host.ip,
-                            agent_port=host.agent_port,
-                            result=ping_result,
-                            leader_id=leader_id,
-                            loop_iteration=iteration,
-                        )
-                        record_heartbeat_ping(
-                            host_id=str(host.id),
-                            outcome=ping_result.outcome.value,
-                            client_mode=ping_result.client_mode.value,
-                            duration_seconds=ping_result.duration_ms / 1000.0,
-                        )
-                        # Fence: drop any writes from a stale leader that lost the advisory lock
-                        # while we were awaiting _ping_agent. assert_current_leader raises
-                        # LeadershipLost when another backend now owns the heartbeat row.
-                        await assert_current_leader(host_db, settings=settings)
-                        await _apply_host_ping_result(
-                            host_db,
-                            host,
-                            ping_result,
-                            guard_active=guard_active,
-                            guard_gap_sec=guard_gap_sec,
-                            guard_threshold_sec=guard_threshold_sec,
-                            publisher=self._services.publisher,
-                            settings=settings,
-                            circuit_breaker=circuit_breaker,
-                            session_factory=self._services.session_factory,
-                        )
-                        await host_db.commit()
-                except LeadershipLost:
-                    raise
-                except Exception:
-                    logger.exception("heartbeat_host_processing_failed", host_id=str(host_id))
-
-        await asyncio.gather(*(guarded(hid) for hid in host_ids))
 
     async def run(self) -> None:
         """Background loop that pings all host agents."""
@@ -879,12 +789,7 @@ class HeartbeatLoop:
             cycle_start = time.monotonic()
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._check_hosts(
-                        db,
-                        settings=self._services.settings,
-                        pool=self._services.pool,
-                        circuit_breaker=self._services.circuit_breaker,
-                    )
+                    await self._services.heartbeat.run_cycle(db)
             except LeadershipLost as exc:
                 record_heartbeat_cycle(
                     time.monotonic() - cycle_start,
