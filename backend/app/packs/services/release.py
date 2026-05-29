@@ -196,9 +196,13 @@ class PackReleaseService:
         )
 
 
-# ---------------------------------------------------------------------------
-# Backward-compat wrappers for routers until Task 8 migration
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Backward-compat free functions for routers until Task 8 (PackServicesDep).
+# These are FULL COPIES of the class methods above, not delegation wrappers —
+# PackReleaseService requires a storage object at construction time.
+# Remove these when routers/uploads.py and routers/export.py migrate to
+# PackServicesDep in Task 8.
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 async def list_releases(session: AsyncSession, pack_id: str) -> PackReleasesOut | None:
