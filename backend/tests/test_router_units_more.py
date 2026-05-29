@@ -356,31 +356,37 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     pack_id = "appium-demo"
     pack = SimpleNamespace(id=pack_id)
-    with patch("app.packs.routers.catalog.transition_pack_state", new=AsyncMock(return_value=pack)):
-        with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
-            assert (
-                await driver_packs.update_pack(
-                    pack_id,
-                    driver_packs.PackPatch(state="enabled"),
-                    _username="admin",
-                    session=object(),
-                )
-            ) == {"id": pack_id}
+    mock_packs_update = SimpleNamespace(lifecycle=SimpleNamespace(transition_pack_state=AsyncMock(return_value=pack)))
+    with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
+        assert (
+            await driver_packs.update_pack(
+                pack_id,
+                driver_packs.PackPatch(state="enabled"),
+                _username="admin",
+                session=object(),
+                packs=mock_packs_update,
+            )
+        ) == {"id": pack_id}
 
-    with patch("app.packs.routers.catalog.set_runtime_policy", new=AsyncMock(return_value=pack)):
-        with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
-            assert (
-                await driver_packs.update_runtime_policy(
-                    pack_id,
-                    driver_packs.RuntimePolicyPatch(runtime_policy=RuntimePolicy()),
-                    _username="admin",
-                    session=object(),
-                )
-            ) == {"id": pack_id}
+    mock_packs_policy = SimpleNamespace(catalog=SimpleNamespace(set_runtime_policy=AsyncMock(return_value=pack)))
+    with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
+        assert (
+            await driver_packs.update_runtime_policy(
+                pack_id,
+                driver_packs.RuntimePolicyPatch(runtime_policy=RuntimePolicy()),
+                _username="admin",
+                session=object(),
+                packs=mock_packs_policy,
+            )
+        ) == {"id": pack_id}
 
-    with patch("app.packs.routers.catalog.delete_pack", new=AsyncMock(side_effect=LookupError("missing"))):
-        with pytest.raises(HTTPException) as exc:
-            await driver_packs.delete_driver_pack(pack_id, _username="admin", session=DummySession())
+    mock_packs_del_404 = SimpleNamespace(
+        catalog=SimpleNamespace(delete_pack=AsyncMock(side_effect=LookupError("missing")))
+    )
+    with pytest.raises(HTTPException) as exc:
+        await driver_packs.delete_driver_pack(
+            pack_id, _username="admin", session=DummySession(), packs=mock_packs_del_404
+        )
     assert exc.value.status_code == 404
 
     plugin_id = uuid.uuid4()

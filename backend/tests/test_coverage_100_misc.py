@@ -84,9 +84,6 @@ from app.packs.services import (
 )
 from app.packs.services import release_ordering as pack_desired_state_service
 from app.packs.services import (
-    service as pack_delete_service,
-)
-from app.packs.services import (
     status as pack_status_service,
 )
 from app.packs.services import (
@@ -522,7 +519,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     delete_db = AsyncMock()
     delete_db.execute = AsyncMock(side_effect=[Result(SimpleNamespace(releases=[])), Result(0)])
     monkeypatch.setattr(
-        pack_delete_service,
+        PackLifecycleService,
         "count_active_work_for_pack",
         AsyncMock(return_value={"active_runs": 1, "live_sessions": 0}),
     )
