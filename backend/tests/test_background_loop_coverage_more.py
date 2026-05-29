@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import node_health as node_health
-from app.appium_nodes.services.node_health import NodeHealthLoop
+from app.appium_nodes.services.node_health import NodeHealthLoop, NodeHealthService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive as control_plane_leader_keepalive
 from app.core.leader.advisory import LeadershipLost
@@ -95,16 +95,23 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
 async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(node_health, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(node_health, "_check_nodes", AsyncMock(side_effect=LeadershipLost("stale leader")))
+    monkeypatch.setattr(NodeHealthService, "check_nodes", AsyncMock(side_effect=LeadershipLost("stale leader")))
     monkeypatch.setattr(node_health.os, "_exit", Mock(side_effect=SystemExit(70)))
 
+    settings = FakeSettingsReader({"general.node_check_interval_sec": 1})
+    node_health_svc = NodeHealthService(
+        publisher=Mock(),
+        settings=settings,
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        grid=Mock(),
+    )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(
-            settings=FakeSettingsReader({"general.node_check_interval_sec": 1}),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            publisher=Mock(),
-            grid=Mock(),
+            settings=settings,
+            reconciler=Mock(),
+            node_health=node_health_svc,
+            heartbeat=Mock(),
             session_factory=_fake_session,
         )
     )
@@ -128,7 +135,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
     db = AsyncMock()
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
-    monkeypatch.setattr(node_health, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
+    monkeypatch.setattr(NodeHealthService, "_bounded_check_node_health", AsyncMock(return_value={"healthy": True}))
     monkeypatch.setattr(node_health, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(node_health.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 

@@ -453,20 +453,17 @@ async def converge_device_now(
         ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
         for entry in parse_running_nodes(appium_processes)
     ]
-    svc = ReconcilerService(
-        publisher=publisher,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-        session_factory=async_session,
-    )
-    await svc.converge_host_rows(
+    await converge_host_rows(
         db,
         [row],
         observed,
         host_id=host.id,
         host_ip=host.ip,
         agent_port=host.agent_port,
+        publisher=publisher,
+        settings=settings,
+        circuit_breaker=circuit_breaker,
+        session_factory=async_session,
         require_leader=False,
         raise_errors=True,
     )
@@ -764,13 +761,18 @@ class ReconcilerService:
                     active_rows = active_rows_by_host.get(host_id, [])
                     if not active_rows:
                         return
-                    await self.converge_host_rows(
+                    await converge_host_rows(
                         None,
                         active_rows,
                         observed,
                         host_id=host_id,
                         host_ip=host_ip,
                         agent_port=agent_port,
+                        rows=active_rows,
+                        publisher=self._publisher,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                        session_factory=self._session_factory,
                         require_leader=require_leader,
                     )
                 finally:
@@ -1025,3 +1027,166 @@ class ReconcilerService:
             )
 
         return _reset
+
+
+# ---------------------------------------------------------------------------
+# Module-level shims — backward compat for tests that call these as free fns.
+# ---------------------------------------------------------------------------
+
+
+def _make_stop_agent(
+    host_ip: str,
+    agent_port: int,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> Callable[..., Awaitable[None]]:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=None,  # type: ignore[arg-type]
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=async_session,
+    )
+    return svc._make_stop_agent(host_ip, agent_port)
+
+
+def _write_observed_factory(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+    settings: SettingsReader,
+    publisher: EventPublisher,
+) -> Callable[..., Awaitable[None]]:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=publisher,
+        settings=settings,
+        pool=None,
+        circuit_breaker=None,  # type: ignore[arg-type]
+        session_factory=async_session,
+    )
+    return svc._write_observed_factory(require_leader=require_leader, session_scope=session_scope)
+
+
+def _clear_token_factory(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+    settings: SettingsReader,
+) -> Callable[..., Awaitable[None]]:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=None,  # type: ignore[arg-type]
+        settings=settings,
+        pool=None,
+        circuit_breaker=None,  # type: ignore[arg-type]
+        session_factory=async_session,
+    )
+    return svc._clear_token_factory(require_leader=require_leader, session_scope=session_scope)
+
+
+def _make_start_agent(
+    *,
+    require_leader: bool = True,
+    session_scope: SessionScope | None = None,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=None,  # type: ignore[arg-type]
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=async_session,
+    )
+    return svc._make_start_agent(require_leader=require_leader, session_scope=session_scope)
+
+
+async def _reconcile_all(
+    hosts: list[dict[str, object]],
+    rows: list[dict[str, object]],
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+) -> dict[uuid.UUID, dict[str, object]]:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=None,  # type: ignore[arg-type]
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=async_session,
+    )
+    return await svc._reconcile_all(hosts, rows)
+
+
+async def _drive_convergence(
+    hosts: list[dict[str, object]],
+    desired: list[DesiredRow],
+    backoff_until_by_device: dict[uuid.UUID, datetime],
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    session_factory: async_sessionmaker[AsyncSession],
+    health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
+    require_leader: bool = True,
+) -> None:
+    """Module-level shim — backward compat for tests and patches."""
+    svc = ReconcilerService(
+        publisher=publisher,
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=session_factory,
+    )
+    await svc._drive_convergence(
+        hosts,
+        desired,
+        backoff_until_by_device,
+        health_by_host=health_by_host,
+        require_leader=require_leader,
+    )
+
+
+async def converge_host_rows(
+    db: AsyncSession | None,
+    desired_rows: list[DesiredRow],
+    observed: list[ObservedEntry],
+    *,
+    host_id: uuid.UUID,
+    host_ip: str,
+    agent_port: int,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    session_factory: async_sessionmaker[AsyncSession],
+    require_leader: bool = True,
+    raise_errors: bool = False,
+    rows: list[DesiredRow] | None = None,
+    agent_running: list[ObservedEntry] | None = None,
+) -> None:
+    """Module-level shim — backward compat for tests that monkeypatch this name."""
+    # Support legacy keyword arg names used in some tests (rows= / agent_running=).
+    resolved_rows = rows if rows is not None else desired_rows
+    resolved_observed = agent_running if agent_running is not None else observed
+    svc = ReconcilerService(
+        publisher=publisher,
+        settings=settings,
+        pool=None,
+        circuit_breaker=circuit_breaker,
+        session_factory=session_factory,
+    )
+    await svc.converge_host_rows(
+        db,
+        resolved_rows,
+        resolved_observed,
+        host_id=host_id,
+        host_ip=host_ip,
+        agent_port=agent_port,
+        require_leader=require_leader,
+        raise_errors=raise_errors,
+    )

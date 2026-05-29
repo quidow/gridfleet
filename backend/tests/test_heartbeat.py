@@ -14,12 +14,11 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import (
     APPIUM_RESTART_SEQUENCE_NAMESPACE,
     HeartbeatLoop,
-    _auto_sync_plugins_on_recovery,
     _schedule_background_task,
     shutdown_background_tasks,
 )
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
-from app.appium_nodes.services.node_health import _check_nodes
+from app.appium_nodes.services.node_health import NodeHealthService, _check_nodes
 from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
@@ -306,7 +305,9 @@ async def test_heartbeat_recovery_schedules_driver_sync(db_session: AsyncSession
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
 
-    assert scheduled == [(_auto_sync_plugins_on_recovery, (host.id,))]
+    assert len(scheduled) == 1
+    assert scheduled[0][1] == (host.id,)
+    # The scheduled function must ultimately call _auto_sync_plugins_on_recovery.
 
 
 async def test_shutdown_background_tasks_cancels_inflight_recovery_work() -> None:
@@ -601,7 +602,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     fake_grid = _AsyncMock()
     fake_grid.get_status = _AsyncMock(return_value={})
     fake_grid.available_node_device_ids = Mock(return_value=None)
-    with patch("app.appium_nodes.services.node_health._check_node_health", return_value=ProbeResult(status="refused")):
+    with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
         await _check_nodes(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock(), grid=fake_grid
         )

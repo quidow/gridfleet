@@ -739,7 +739,11 @@ class HeartbeatService:
                             settings=self._settings,
                             circuit_breaker=self._circuit_breaker,
                             session_factory=self._session_factory,
-                            on_host_recovered=self._auto_sync_plugins_on_recovery,
+                            on_host_recovered=_make_host_recovery_task(
+                                settings=self._settings,
+                                circuit_breaker=self._circuit_breaker,
+                                session_factory=self._session_factory,
+                            ),
                         )
                         await host_db.commit()
                 except LeadershipLost:
@@ -753,9 +757,75 @@ class HeartbeatService:
         await self._check_hosts(db)
 
 
+async def _auto_sync_plugins_on_recovery(
+    host_id: uuid.UUID,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Module-level shim for backward-compat with tests and patches."""
+    try:
+        async with session_factory() as db:
+            host = await db.get(Host, host_id)
+            if host is None:
+                return
+            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
+            plugins = await svc.list_plugins(db)
+            await svc.auto_sync_host_plugins(host, plugins)
+    except Exception:
+        logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
+
+
+def _make_host_recovery_task(
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncTaskFactory:
+    """Return a coroutine factory that calls the module-level _auto_sync_plugins_on_recovery.
+
+    Used by HeartbeatService._check_hosts so that tests can patch the module-level
+    function and assert it was scheduled.
+    """
+
+    async def _task(host_id: uuid.UUID) -> None:
+        await _auto_sync_plugins_on_recovery(
+            host_id,
+            settings=settings,
+            circuit_breaker=circuit_breaker,
+            session_factory=session_factory,
+        )
+
+    return _task
+
+
 class HeartbeatLoop:
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
+        self._last_cycle_monotonic: float | None = None
+
+    async def _check_hosts(
+        self,
+        db: AsyncSession,
+        *,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+    ) -> None:
+        """Backward-compat shim for tests that call _check_hosts with explicit deps."""
+        pool: AgentHttpPool | None = getattr(self._services, "pool", None)
+        publisher: EventPublisher | None = getattr(self._services, "publisher", None)
+        svc = HeartbeatService(
+            publisher=publisher,  # type: ignore[arg-type]
+            settings=settings,
+            pool=pool,  # type: ignore[arg-type]
+            circuit_breaker=circuit_breaker,
+            session_factory=self._services.session_factory,
+        )
+        if self._last_cycle_monotonic is not None:
+            svc._last_cycle_monotonic = self._last_cycle_monotonic
+        await svc._check_hosts(db)
+        self._last_cycle_monotonic = svc._last_cycle_monotonic
 
     async def run(self) -> None:
         """Background loop that pings all host agents."""

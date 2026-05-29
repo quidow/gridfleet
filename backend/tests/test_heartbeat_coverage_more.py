@@ -193,15 +193,14 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
             return None
 
     monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(heartbeat.HeartbeatLoop, "_check_hosts", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    heartbeat_svc = Mock(run_cycle=AsyncMock(side_effect=RuntimeError("boom")))
     services = AppiumNodeServices(
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        publisher=Mock(),
-        grid=Mock(),
+        reconciler=Mock(),
+        node_health=Mock(),
+        heartbeat=heartbeat_svc,
         session_factory=lambda: Session(),
     )
 
