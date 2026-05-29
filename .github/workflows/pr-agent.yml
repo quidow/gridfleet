@@ -34,11 +34,21 @@ jobs:
           # Model routing.
           # `ollama_chat/` (not `ollama/`) is intentional — it routes through
           # LiteLLM to Ollama's /api/chat endpoint, which applies the chat template
-          # required by instruct-tuned models like Kimi K2. PR-Agent's docs only
-          # show `ollama/` (the legacy /api/generate endpoint) but pass the prefix
-          # through to LiteLLM unchanged, so both work.
-          config.model: "ollama_chat/kimi-k2.6:cloud"
-          config.fallback_models: '["ollama_chat/kimi-k2.6:cloud"]'
+          # required by instruct-tuned models. PR-Agent's docs only show `ollama/`
+          # (the legacy /api/generate endpoint) but pass the prefix through to
+          # LiteLLM unchanged, so both work.
+          #
+          # Must be a NON-thinking model. PR-Agent's `auto_improve` (code
+          # suggestions) prompt makes a reasoning model think past Ollama Cloud's
+          # 16384-token output cap (`finish_reason: length`), leaving `content`
+          # empty; PR-Agent then crashes parsing the empty YAML
+          # (`'NoneType' object is not subscriptable`) and posts no suggestions.
+          # PR-Agent cannot disable Ollama thinking (it only forwards
+          # `reasoning_effort` for OpenAI o3/o4-mini, and has no path to send
+          # Ollama's native `think: false` flag).
+          # qwen3-coder-next is non-thinking, so output budget goes to the answer.
+          config.model: "ollama_chat/qwen3-coder-next:cloud"
+          config.fallback_models: '["ollama_chat/qwen3-coder-next:cloud"]'
           # Both must be set: `custom_model_max_tokens` fills in for unknown models,
           # but `pr_agent.algo.utils.get_max_tokens` then caps it via
           # `min(max_model_tokens, custom_model_max_tokens)`. The default
