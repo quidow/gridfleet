@@ -60,28 +60,6 @@ APPIUM_RESTART_EVENT_KINDS = frozenset({"crash_detected", "restart_succeeded", "
 APPIUM_RESTART_EVENT_PROCESSES = frozenset({"appium", "grid_relay"})
 
 
-async def _auto_sync_plugins_on_recovery(
-    host_id: uuid.UUID,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol | None,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    if circuit_breaker is None:
-        return
-    try:
-        async with session_factory() as db:
-            host = await db.get(Host, host_id)
-            if host is None:
-                return
-            # transitional: local construction until appium_nodes converts to DI (Plan 10)
-            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
-            plugins = await svc.list_plugins(db)
-            await svc.auto_sync_host_plugins(host, plugins)
-    except Exception:
-        logger.exception("Automatic plugin sync on recovery failed for host %s", host_id)
-
-
 def _schedule_background_task(task_fn: AsyncTaskFactory, *args: object, **kwargs: object) -> None:
     task: asyncio.Task[None] = asyncio.create_task(task_fn(*args, **kwargs))
     _background_tasks.add(task)
@@ -538,6 +516,7 @@ async def _apply_host_ping_result(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol | None,
     session_factory: async_sessionmaker[AsyncSession],
+    on_host_recovered: AsyncTaskFactory | None = None,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
 
@@ -575,13 +554,8 @@ async def _apply_host_ping_result(
                     publisher=publisher,
                 )
             host.status = HostStatus.online
-            _schedule_background_task(
-                _auto_sync_plugins_on_recovery,
-                host.id,
-                settings=settings,
-                circuit_breaker=circuit_breaker,
-                session_factory=session_factory,
-            )
+            if on_host_recovered is not None:
+                _schedule_background_task(on_host_recovered, host.id)
         host.last_heartbeat = datetime.now(UTC)
         if health_data is not None:
             if "missing_prerequisites" in health_data:
@@ -765,6 +739,7 @@ class HeartbeatService:
                             settings=self._settings,
                             circuit_breaker=self._circuit_breaker,
                             session_factory=self._session_factory,
+                            on_host_recovered=self._auto_sync_plugins_on_recovery,
                         )
                         await host_db.commit()
                 except LeadershipLost:
