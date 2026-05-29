@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.models import HostResourceSample
+from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:

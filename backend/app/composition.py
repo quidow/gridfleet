@@ -108,7 +108,9 @@ def compose_app(
         ),
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
-            hardware_telemetry=HardwareTelemetryService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker),
+            hardware_telemetry=HardwareTelemetryService(
+                publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker
+            ),
             resource_telemetry=HostResourceTelemetryService(settings=settings_svc, circuit_breaker=circuit_breaker),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             publisher=bus,
