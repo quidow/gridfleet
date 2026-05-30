@@ -12,10 +12,13 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+from unittest.mock import MagicMock
+
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.devices.services import bulk as bulk_service
+from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
@@ -103,13 +106,13 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
-    started = await bulk_service.bulk_start_nodes(
-        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
+    settings = FakeSettingsReader({})
+    svc = BulkOperationsService(
+        publisher=event_bus, settings=settings, circuit_breaker=MagicMock(), maintenance=MagicMock()
     )
-    stopped = await bulk_service.bulk_stop_nodes(db_session, [device.id for device in devices], publisher=event_bus)
-    restarted = await bulk_service.bulk_restart_nodes(
-        db_session, [device.id for device in devices], publisher=event_bus, settings=FakeSettingsReader({})
-    )
+    started = await svc.bulk_start_nodes(db_session, [device.id for device in devices])
+    stopped = await svc.bulk_stop_nodes(db_session, [device.id for device in devices])
+    restarted = await svc.bulk_restart_nodes(db_session, [device.id for device in devices])
 
     assert started["succeeded"] == 1
     assert stopped["failed"] == 1
@@ -163,13 +166,9 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         AsyncMock(side_effect=[{"success": True}, AgentCallError("10.0.0.10", "boom")]),
     )
 
-    result = await bulk_service.bulk_reconnect(
-        db,
-        [eligible_ok.id, eligible_fail.id, ineligible.id],
-        publisher=event_bus,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
-    )
+    result = await BulkOperationsService(
+        publisher=event_bus, settings=FakeSettingsReader(), circuit_breaker=Mock(), maintenance=MagicMock()
+    ).bulk_reconnect(db, [eligible_ok.id, eligible_fail.id, ineligible.id])
 
     assert result["succeeded"] == 1
     assert result["failed"] == 2
@@ -196,18 +195,17 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         "app.devices.services.bulk.delete_device",
         AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),
     )
-    monkeypatch.setattr(
-        "app.devices.services.bulk.enter_maintenance",
-        AsyncMock(side_effect=[None, RuntimeError("boom")]),
-    )
-    monkeypatch.setattr(
-        "app.devices.services.bulk.exit_maintenance",
-        AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")]),
-    )
+    mock_maintenance = MagicMock()
+    mock_maintenance.enter_maintenance = AsyncMock(side_effect=[None, RuntimeError("boom")])
+    mock_maintenance.exit_maintenance = AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")])
+    mock_maintenance.schedule_device_recovery = AsyncMock()
 
-    deleted = await bulk_service.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()], publisher=event_bus)
-    entered = await bulk_service.bulk_enter_maintenance(db, [device.id for device in devices], publisher=event_bus)
-    exited = await bulk_service.bulk_exit_maintenance(db, [device.id for device in devices], publisher=event_bus)
+    svc = BulkOperationsService(
+        publisher=event_bus, settings=FakeSettingsReader(), circuit_breaker=MagicMock(), maintenance=mock_maintenance
+    )
+    deleted = await svc.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
+    entered = await svc.bulk_enter_maintenance(db, [device.id for device in devices])
+    exited = await svc.bulk_exit_maintenance(db, [device.id for device in devices])
 
     assert deleted["failed"] == 2
     assert entered["failed"] == 1
@@ -237,7 +235,12 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
     ]
     await db_session.commit()
 
-    result = await bulk_service.bulk_exit_maintenance(db_session, [d.id for d in devices], publisher=event_bus)
+    result = await BulkOperationsService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
+        circuit_breaker=MagicMock(),
+        maintenance=MaintenanceService(publisher=event_bus),
+    ).bulk_exit_maintenance(db_session, [d.id for d in devices])
 
     assert result["succeeded"] == 3
     assert result["failed"] == 0

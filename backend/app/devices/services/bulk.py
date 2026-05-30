@@ -16,7 +16,6 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.maintenance import enter_maintenance, exit_maintenance, schedule_device_recovery
 from app.devices.services.operator_node_lifecycle import (
     request_restart,
     request_start,
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import MaintenanceProtocol
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
 
@@ -139,270 +139,249 @@ async def _run_per_device_node_action(
     return _result(len(existing_device_ids), succeeded, errors)
 
 
-async def bulk_start_nodes(
-    db: AsyncSession,
-    device_ids: list[uuid.UUID],
-    *,
-    caller: str = "bulk",
-    publisher: EventPublisher,
-    settings: SettingsReader,
-) -> dict[str, Any]:
-    return await _run_per_device_node_action(
-        db,
-        device_ids,
-        operation="start_nodes",
-        action_fn=partial(_bulk_start_one, settings=settings),
-        caller=caller,
-        publisher=publisher,
-    )
+class BulkOperationsService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        maintenance: MaintenanceProtocol,
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+        self._maintenance = maintenance
 
+    async def bulk_start_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
+    ) -> dict[str, Any]:
+        return await _run_per_device_node_action(
+            db,
+            device_ids,
+            operation="start_nodes",
+            action_fn=partial(_bulk_start_one, settings=self._settings),
+            caller=caller,
+            publisher=self._publisher,
+        )
 
-async def bulk_stop_nodes(
-    db: AsyncSession,
-    device_ids: list[uuid.UUID],
-    *,
-    caller: str = "bulk",
-    publisher: EventPublisher,
-) -> dict[str, Any]:
-    return await _run_per_device_node_action(
-        db,
-        device_ids,
-        operation="stop_nodes",
-        action_fn=_bulk_stop_one,
-        caller=caller,
-        publisher=publisher,
-    )
+    async def bulk_stop_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
+    ) -> dict[str, Any]:
+        return await _run_per_device_node_action(
+            db,
+            device_ids,
+            operation="stop_nodes",
+            action_fn=_bulk_stop_one,
+            caller=caller,
+            publisher=self._publisher,
+        )
 
+    async def bulk_restart_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
+    ) -> dict[str, Any]:
+        return await _run_per_device_node_action(
+            db,
+            device_ids,
+            operation="restart_nodes",
+            action_fn=partial(_bulk_restart_one, settings=self._settings),
+            caller=caller,
+            publisher=self._publisher,
+        )
 
-async def bulk_restart_nodes(
-    db: AsyncSession,
-    device_ids: list[uuid.UUID],
-    *,
-    caller: str = "bulk",
-    publisher: EventPublisher,
-    settings: SettingsReader,
-) -> dict[str, Any]:
-    return await _run_per_device_node_action(
-        db,
-        device_ids,
-        operation="restart_nodes",
-        action_fn=partial(_bulk_restart_one, settings=settings),
-        caller=caller,
-        publisher=publisher,
-    )
+    async def bulk_update_tags(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
+    ) -> dict[str, Any]:
+        devices = await _load_devices(db, device_ids)
+        for device in devices:
+            if merge:
+                merged = {**(device.tags or {}), **tags}
+                device.tags = merged
+            else:
+                device.tags = tags
+        queue_event_for_session(
+            db,
+            "bulk.operation_completed",
+            {
+                "operation": "update_tags",
+                "total": len(devices),
+                "succeeded": len(devices),
+                "failed": 0,
+            },
+            severity=_bulk_severity(len(devices), len(devices), 0),
+            publisher=self._publisher,
+        )
+        await db.commit()
+        return _result(len(devices), len(devices), {})
 
-
-async def bulk_update_tags(
-    db: AsyncSession,
-    device_ids: list[uuid.UUID],
-    tags: dict[str, str],
-    merge: bool = True,
-    *,
-    publisher: EventPublisher,
-) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    for device in devices:
-        if merge:
-            merged = {**(device.tags or {}), **tags}
-            device.tags = merged
-        else:
-            device.tags = tags
-    queue_event_for_session(
-        db,
-        "bulk.operation_completed",
-        {
-            "operation": "update_tags",
-            "total": len(devices),
-            "succeeded": len(devices),
-            "failed": 0,
-        },
-        severity=_bulk_severity(len(devices), len(devices), 0),
-        publisher=publisher,
-    )
-    await db.commit()
-    return _result(len(devices), len(devices), {})
-
-
-async def bulk_delete(db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher) -> dict[str, Any]:
-    errors: dict[str, str] = {}
-    for device_id in device_ids:
-        try:
-            deleted = await delete_device(db, device_id)
-            if not deleted:
-                errors[str(device_id)] = "Device not found"
-        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
-            errors[str(device_id)] = str(e)
-    succeeded = len(device_ids) - len(errors)
-    total = len(device_ids)
-    failed = len(errors)
-    await publisher.publish(
-        "bulk.operation_completed",
-        {
-            "operation": "delete",
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-        },
-        severity=_bulk_severity(total, succeeded, failed),
-    )
-    return _result(len(device_ids), succeeded, errors)
-
-
-async def bulk_enter_maintenance(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher
-) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    ordered_ids = [device.id for device in devices]
-    errors: dict[str, str] = {}
-    for device_id in ordered_ids:
-        try:
-            device = await device_locking.lock_device(db, device_id)
-            await enter_maintenance(db, device, commit=False, publisher=publisher)
-        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk enter_maintenance must continue past one failure
-            errors[str(device_id)] = str(e)
-    succeeded = len(ordered_ids) - len(errors)
-    failed = len(errors)
-    total = len(ordered_ids)
-    queue_event_for_session(
-        db,
-        "bulk.operation_completed",
-        {
-            "operation": "enter_maintenance",
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-        },
-        severity=_bulk_severity(total, succeeded, failed),
-        publisher=publisher,
-    )
-    await db.commit()
-    return _result(len(ordered_ids), succeeded, errors)
-
-
-async def bulk_reconnect(
-    db: AsyncSession,
-    device_ids: list[uuid.UUID],
-    *,
-    publisher: EventPublisher,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> dict[str, Any]:
-    """Reconnect network-connected ADB devices."""
-    devices = await _load_devices(db, device_ids)
-    errors: dict[str, str] = {}
-    sem = asyncio.Semaphore(MAX_CONCURRENCY)
-
-    # Filter to eligible devices
-    lifecycle_cache: dict[tuple[str, str], list[dict]] = {}  # type: ignore[type-arg]
-
-    async def _supports_reconnect(device: Device) -> bool:
-        key = (device.pack_id, device.platform_id)
-        if key not in lifecycle_cache:
+    async def bulk_delete(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        errors: dict[str, str] = {}
+        for device_id in device_ids:
             try:
-                resolved = await resolve_pack_platform(
-                    db,
-                    pack_id=device.pack_id,
-                    platform_id=device.platform_id,
-                    device_type=device.device_type.value if device.device_type else None,
-                )
-                lifecycle_cache[key] = resolved.lifecycle_actions
-            except LookupError:
-                lifecycle_cache[key] = []
-        return platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
+                deleted = await delete_device(db, device_id)
+                if not deleted:
+                    errors[str(device_id)] = "Device not found"
+            except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
+                errors[str(device_id)] = str(e)
+        succeeded = len(device_ids) - len(errors)
+        total = len(device_ids)
+        failed = len(errors)
+        await self._publisher.publish(
+            "bulk.operation_completed",
+            {
+                "operation": "delete",
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+            },
+            severity=_bulk_severity(total, succeeded, failed),
+        )
+        return _result(len(device_ids), succeeded, errors)
 
-    eligible = []
-    for d in devices:
-        if (
-            await _supports_reconnect(d)
-            and d.connection_type
-            and d.connection_type.value == "network"
-            and d.ip_address
-            and d.host
-        ):
-            eligible.append(d)
-    for d in devices:
-        if d not in eligible:
-            errors[str(d.id)] = "Not a network-connected Android device"
-
-    async def _reconnect_one(device: Device) -> None:
-        async with sem:
-            host = device.host
-            assert host is not None  # guaranteed by filter
-            assert device.connection_target is not None  # guaranteed by filter
-            assert device.ip_address is not None  # guaranteed by filter
+    async def bulk_enter_maintenance(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        devices = await _load_devices(db, device_ids)
+        ordered_ids = [device.id for device in devices]
+        errors: dict[str, str] = {}
+        for device_id in ordered_ids:
             try:
-                data = await pack_device_lifecycle_action(
-                    host.ip,
-                    host.agent_port,
-                    device.connection_target,
-                    pack_id=device.pack_id,
-                    platform_id=device.platform_id,
-                    action="reconnect",
-                    args={"ip_address": device.ip_address, "port": 5555},
-                    http_client_factory=httpx.AsyncClient,
-                    settings=settings,
-                    circuit_breaker=circuit_breaker,
-                )
-                if not data.get("success"):
-                    errors[str(device.id)] = "Reconnect failed"
-            except AgentCallError as e:
+                device = await device_locking.lock_device(db, device_id)
+                await self._maintenance.enter_maintenance(db, device, commit=False)
+            except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk enter_maintenance must continue past one failure
+                errors[str(device_id)] = str(e)
+        succeeded = len(ordered_ids) - len(errors)
+        failed = len(errors)
+        total = len(ordered_ids)
+        queue_event_for_session(
+            db,
+            "bulk.operation_completed",
+            {
+                "operation": "enter_maintenance",
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+            },
+            severity=_bulk_severity(total, succeeded, failed),
+            publisher=self._publisher,
+        )
+        await db.commit()
+        return _result(len(ordered_ids), succeeded, errors)
+
+    async def bulk_exit_maintenance(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        devices = await _load_devices(db, device_ids)
+        errors: dict[str, str] = {}
+        successful: list[uuid.UUID] = []
+        for device in devices:
+            try:
+                await self._maintenance.exit_maintenance(db, device, commit=False)
+                successful.append(device.id)
+            except ValueError as e:
                 errors[str(device.id)] = str(e)
+            except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk exit_maintenance must continue past one failure
+                errors[str(device.id)] = str(e)
+        succeeded = len(devices) - len(errors)
+        failed = len(errors)
+        total = len(devices)
+        queue_event_for_session(
+            db,
+            "bulk.operation_completed",
+            {
+                "operation": "exit_maintenance",
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+            },
+            severity=_bulk_severity(total, succeeded, failed),
+            publisher=self._publisher,
+        )
+        await db.commit()
 
-    await asyncio.gather(*[_reconnect_one(d) for d in eligible])
-    succeeded = len(devices) - len(errors)
-    total = len(devices)
-    failed = len(errors)
-    await publisher.publish(
-        "bulk.operation_completed",
-        {
-            "operation": "reconnect",
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-        },
-        severity=_bulk_severity(total, succeeded, failed),
-    )
-    return _result(len(devices), succeeded, errors)
+        # Enqueue recovery jobs after the bulk transaction commits to avoid
+        # create_job committing mid-loop (which could leave a device stranded
+        # with state mutations flushed but no recovery job if create_job raises).
+        for device_id in successful:
+            try:
+                await self._maintenance.schedule_device_recovery(db, device_id)
+            except Exception as exc:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
+                logger.warning("bulk_exit_maintenance: failed to enqueue recovery for %s: %s", device_id, exc)
 
+        return _result(len(devices), succeeded, errors)
 
-async def bulk_exit_maintenance(
-    db: AsyncSession, device_ids: list[uuid.UUID], *, publisher: EventPublisher
-) -> dict[str, Any]:
-    devices = await _load_devices(db, device_ids)
-    errors: dict[str, str] = {}
-    successful: list[uuid.UUID] = []
-    for device in devices:
-        try:
-            await exit_maintenance(db, device, commit=False, publisher=publisher)
-            successful.append(device.id)
-        except ValueError as e:
-            errors[str(device.id)] = str(e)
-        except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk exit_maintenance must continue past one failure
-            errors[str(device.id)] = str(e)
-    succeeded = len(devices) - len(errors)
-    failed = len(errors)
-    total = len(devices)
-    queue_event_for_session(
-        db,
-        "bulk.operation_completed",
-        {
-            "operation": "exit_maintenance",
-            "total": total,
-            "succeeded": succeeded,
-            "failed": failed,
-        },
-        severity=_bulk_severity(total, succeeded, failed),
-        publisher=publisher,
-    )
-    await db.commit()
+    async def bulk_reconnect(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
+    ) -> dict[str, Any]:
+        """Reconnect network-connected ADB devices."""
+        devices = await _load_devices(db, device_ids)
+        errors: dict[str, str] = {}
+        sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
-    # Enqueue recovery jobs after the bulk transaction commits to avoid
-    # create_job committing mid-loop (which could leave a device stranded
-    # with state mutations flushed but no recovery job if create_job raises).
-    for device_id in successful:
-        try:
-            await schedule_device_recovery(db, device_id)
-        except Exception as exc:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
-            logger.warning("bulk_exit_maintenance: failed to enqueue recovery for %s: %s", device_id, exc)
+        # Filter to eligible devices
+        lifecycle_cache: dict[tuple[str, str], list[dict]] = {}  # type: ignore[type-arg]
 
-    return _result(len(devices), succeeded, errors)
+        async def _supports_reconnect(device: Device) -> bool:
+            key = (device.pack_id, device.platform_id)
+            if key not in lifecycle_cache:
+                try:
+                    resolved = await resolve_pack_platform(
+                        db,
+                        pack_id=device.pack_id,
+                        platform_id=device.platform_id,
+                        device_type=device.device_type.value if device.device_type else None,
+                    )
+                    lifecycle_cache[key] = resolved.lifecycle_actions
+                except LookupError:
+                    lifecycle_cache[key] = []
+            return platform_has_lifecycle_action(lifecycle_cache[key], "reconnect")
+
+        eligible = []
+        for d in devices:
+            if (
+                await _supports_reconnect(d)
+                and d.connection_type
+                and d.connection_type.value == "network"
+                and d.ip_address
+                and d.host
+            ):
+                eligible.append(d)
+        for d in devices:
+            if d not in eligible:
+                errors[str(d.id)] = "Not a network-connected Android device"
+
+        async def _reconnect_one(device: Device) -> None:
+            async with sem:
+                host = device.host
+                assert host is not None  # guaranteed by filter
+                assert device.connection_target is not None  # guaranteed by filter
+                assert device.ip_address is not None  # guaranteed by filter
+                try:
+                    data = await pack_device_lifecycle_action(
+                        host.ip,
+                        host.agent_port,
+                        device.connection_target,
+                        pack_id=device.pack_id,
+                        platform_id=device.platform_id,
+                        action="reconnect",
+                        args={"ip_address": device.ip_address, "port": 5555},
+                        http_client_factory=httpx.AsyncClient,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                    )
+                    if not data.get("success"):
+                        errors[str(device.id)] = "Reconnect failed"
+                except AgentCallError as e:
+                    errors[str(device.id)] = str(e)
+
+        await asyncio.gather(*[_reconnect_one(d) for d in eligible])
+        succeeded = len(devices) - len(errors)
+        total = len(devices)
+        failed = len(errors)
+        await self._publisher.publish(
+            "bulk.operation_completed",
+            {
+                "operation": "reconnect",
+                "total": total,
+                "succeeded": succeeded,
+                "failed": failed,
+            },
+            severity=_bulk_severity(total, succeeded, failed),
+        )
+        return _result(len(devices), succeeded, errors)

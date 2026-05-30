@@ -20,8 +20,11 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -275,12 +278,21 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_grid = Mock()
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
+    _fake_maintenance = MaintenanceService(publisher=_fake_publisher)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fake_publisher),
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_fake_publisher, settings=_fake_settings),
+            maintenance=_fake_maintenance,
+            bulk=BulkOperationsService(
+                publisher=_fake_publisher,
+                settings=_fake_settings,
+                circuit_breaker=Mock(),
+                maintenance=_fake_maintenance,
+            ),
             publisher=_fake_publisher,
             settings=_fake_settings,
             grid=_fake_grid,

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices import locking as device_locking
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
@@ -30,7 +31,7 @@ async def test_exit_maintenance_enqueues_recovery_job(
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await maintenance_service.exit_maintenance(db_session, locked, publisher=Mock())
+    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
 
     rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 1
@@ -76,11 +77,11 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
 
     mock_schedule = AsyncMock(side_effect=RuntimeError("simulated transient DB error"))
     with (
-        patch("app.devices.services.maintenance.schedule_device_recovery", new=mock_schedule),
+        patch("app.devices.services.maintenance._schedule_device_recovery", new=mock_schedule),
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
         # Must NOT raise even though schedule_device_recovery raises.
-        result = await maintenance_service.exit_maintenance(db_session, locked, publisher=Mock())
+        result = await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
 
     # Sanity: the patched mock actually intercepted the call. If this fires,
     # the warning-call assertion below would also fail but for a different

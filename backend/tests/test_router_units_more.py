@@ -278,49 +278,46 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     group_id = uuid.uuid4()
     device_id = uuid.uuid4()
 
-    _grp_ss = _mock_settings_svc(FakeSettingsReader({}))
-    with patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.update_group(
-                group_id,
-                device_groups.DeviceGroupUpdate(name="new"),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-    assert exc.value.status_code == 404
-    updated_group = SimpleNamespace(id=group_id)
-    with (
-        patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=updated_group)),
-        patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value={"id": group_id})),
-    ):
-        assert await device_groups.update_group(
+    ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.update_group(
             group_id,
             device_groups.DeviceGroupUpdate(name="new"),
             db=object(),
-            events=SimpleNamespace(publisher=event_bus),
-            settings_services=_grp_ss,
-        ) == {"id": group_id}
+            device_services=ds_update_none,
+        )
+    assert exc.value.status_code == 404
+    updated_group = SimpleNamespace(id=group_id)
+    ds_update_ok = SimpleNamespace(
+        groups=SimpleNamespace(
+            update_group=AsyncMock(return_value=updated_group),
+            get_group=AsyncMock(return_value={"id": group_id}),
+        )
+    )
+    assert await device_groups.update_group(
+        group_id,
+        device_groups.DeviceGroupUpdate(name="new"),
+        db=object(),
+        device_services=ds_update_ok,
+    ) == {"id": group_id}
 
-    with patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.add_members(
-                group_id,
-                device_groups.GroupMembershipUpdate(device_ids=[device_id]),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-        assert exc.value.status_code == 404
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.remove_members(
-                group_id,
-                device_groups.GroupMembershipUpdate(device_ids=[device_id]),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-        assert exc.value.status_code == 404
+    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.add_members(
+            group_id,
+            device_groups.GroupMembershipUpdate(device_ids=[device_id]),
+            db=object(),
+            device_services=ds_members_none,
+        )
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.remove_members(
+            group_id,
+            device_groups.GroupMembershipUpdate(device_ids=[device_id]),
+            db=object(),
+            device_services=ds_members_none,
+        )
+    assert exc.value.status_code == 404
 
     with patch.object(devices_core.device_service, "update_device", new=AsyncMock(return_value=object())):
         with patch.object(devices_core.device_presenter, "serialize_device", new=AsyncMock(return_value={"id": "ok"})):
@@ -863,15 +860,9 @@ async def test_bulk_router_delegates_all_operations() -> None:
         (bulk.bulk_reconnect, "bulk_reconnect", body),
         (bulk.bulk_update_tags, "bulk_update_tags", tags_body),
     ):
-        with patch(
-            f"app.devices.routers.bulk.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": service_name})
-        ):
-            kwargs = {"db": object(), "events": SimpleNamespace(publisher=event_bus)}
-            if service_name in {"bulk_start_nodes", "bulk_restart_nodes", "bulk_reconnect"}:
-                kwargs["settings_services"] = SimpleNamespace(service=FakeSettingsReader({}))
-            if service_name == "bulk_reconnect":
-                kwargs["agent_comm"] = SimpleNamespace(circuit_breaker=Mock())
-            assert await call(payload, **kwargs) == {"ok": service_name}
+        mock_bulk = AsyncMock(**{service_name: AsyncMock(return_value={"ok": service_name})})
+        device_services = SimpleNamespace(bulk=mock_bulk)
+        assert await call(payload, db=object(), device_services=device_services) == {"ok": service_name}
 
 
 async def test_devices_test_data_router_paths() -> None:
@@ -1392,42 +1383,36 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
     serialized = {"id": str(device_id)}
 
     _dev_ctrl_ss = _mock_settings_svc(FakeSettingsReader({}))
-    _dev_ctrl_events = SimpleNamespace(publisher=Mock())
-    for call, service_name in (
+    for method_name, call_fn in (
         (
-            lambda: devices_control.enter_device_maintenance(
-                device_id, object(), db=object(), events=_dev_ctrl_events, settings_services=_dev_ctrl_ss
-            ),
             "enter_maintenance",
+            lambda ds: devices_control.enter_device_maintenance(
+                device_id, object(), db=object(), device_services=ds, settings_services=_dev_ctrl_ss
+            ),
         ),
         (
-            lambda: devices_control.exit_device_maintenance(
-                device_id, db=object(), events=_dev_ctrl_events, settings_services=_dev_ctrl_ss
-            ),
             "exit_maintenance",
+            lambda ds: devices_control.exit_device_maintenance(
+                device_id, db=object(), device_services=ds, settings_services=_dev_ctrl_ss
+            ),
         ),
     ):
-        with (
-            patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-            patch(
-                f"app.devices.routers.control.maintenance_service.{service_name}",
-                new=AsyncMock(side_effect=ValueError("bad")),
-            ),
-        ):
+        mock_maintenance = AsyncMock(**{method_name: AsyncMock(side_effect=ValueError("bad"))})
+        device_services_err = SimpleNamespace(maintenance=mock_maintenance)
+        with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
             with pytest.raises(HTTPException) as exc:
-                await call()
+                await call_fn(device_services_err)
         assert exc.value.status_code == 409
 
+        mock_maintenance_ok = AsyncMock(**{method_name: AsyncMock(return_value=device)})
+        device_services_ok = SimpleNamespace(maintenance=mock_maintenance_ok)
         with (
             patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-            patch(
-                f"app.devices.routers.control.maintenance_service.{service_name}", new=AsyncMock(return_value=device)
-            ),
             patch(
                 "app.devices.routers.control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)
             ),
         ):
-            assert await call() == serialized
+            assert await call_fn(device_services_ok) == serialized
 
     config = {"env": {"A": "B"}}
     config_ss = _mock_settings_svc(FakeSettingsReader({}))
@@ -2082,55 +2067,40 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
     group_id = uuid.uuid4()
     device_ids = [uuid.uuid4()]
 
-    with patch("app.devices.routers.groups.device_group_service.get_group_device_ids", new=AsyncMock(return_value=[])):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups._group_device_ids_or_404(object(), group_id, settings=FakeSettingsReader({}))
+    ds_empty = SimpleNamespace(groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=[])))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups._group_device_ids_or_404(object(), group_id, ds_empty)
     assert exc.value.status_code == 404
 
-    _bulk_ss = _mock_settings_svc(FakeSettingsReader({}))
-    with (
-        patch(
-            "app.devices.routers.groups.device_group_service.get_group",
-            new=AsyncMock(return_value={"group_type": "dynamic"}),
-        ),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.add_members(
-                group_id,
-                body=SimpleNamespace(device_ids=device_ids),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_bulk_ss,
-            )
-        assert exc.value.status_code == 400
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.remove_members(
-                group_id,
-                body=SimpleNamespace(device_ids=device_ids),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_bulk_ss,
-            )
-        assert exc.value.status_code == 400
+    ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value={"group_type": "dynamic"})))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.add_members(
+            group_id,
+            body=SimpleNamespace(device_ids=device_ids),
+            db=object(),
+            device_services=ds_dynamic,
+        )
+    assert exc.value.status_code == 400
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.remove_members(
+            group_id,
+            body=SimpleNamespace(device_ids=device_ids),
+            db=object(),
+            device_services=ds_dynamic,
+        )
+    assert exc.value.status_code == 400
 
     async def assert_bulk(
         call: Callable[..., Awaitable[dict[str, Any]]],
-        service_name: str,
+        bulk_method: str,
         *args: object,
     ) -> None:
-        with (
-            patch(
-                "app.devices.routers.groups.device_group_service.get_group_device_ids",
-                new=AsyncMock(return_value=device_ids),
-            ),
-            patch(f"app.devices.routers.groups.bulk_service.{service_name}", new=AsyncMock(return_value={"ok": 1})),
-        ):
-            kwargs: dict[str, Any] = {
-                "db": object(),
-                "events": SimpleNamespace(publisher=event_bus),
-                "settings_services": _bulk_ss,
-            }
-            assert await call(group_id, *args, **kwargs) == {"ok": 1}
+        mock_bulk = AsyncMock(**{bulk_method: AsyncMock(return_value={"ok": 1})})
+        ds = SimpleNamespace(
+            groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=device_ids)),
+            bulk=mock_bulk,
+        )
+        assert await call(group_id, *args, db=object(), device_services=ds) == {"ok": 1}
 
     await assert_bulk(device_groups.group_bulk_start, "bulk_start_nodes")
     await assert_bulk(device_groups.group_bulk_stop, "bulk_stop_nodes")
@@ -2141,20 +2111,12 @@ async def test_device_group_router_bulk_and_membership_branches() -> None:
         BulkMaintenanceEnter(device_ids=device_ids),
     )
     await assert_bulk(device_groups.group_bulk_exit_maintenance, "bulk_exit_maintenance")
-    with (
-        patch(
-            "app.devices.routers.groups.device_group_service.get_group_device_ids",
-            new=AsyncMock(return_value=device_ids),
-        ),
-        patch("app.devices.routers.groups.bulk_service.bulk_reconnect", new=AsyncMock(return_value={"ok": 1})),
-    ):
-        assert await device_groups.group_bulk_reconnect(
-            group_id,
-            db=object(),
-            events=SimpleNamespace(publisher=event_bus),
-            settings_services=_bulk_ss,
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
-        ) == {"ok": 1}
+    mock_bulk_reconnect = AsyncMock(bulk_reconnect=AsyncMock(return_value={"ok": 1}))
+    ds_reconnect = SimpleNamespace(
+        groups=SimpleNamespace(get_group_device_ids=AsyncMock(return_value=device_ids)),
+        bulk=mock_bulk_reconnect,
+    )
+    assert await device_groups.group_bulk_reconnect(group_id, db=object(), device_services=ds_reconnect) == {"ok": 1}
     await assert_bulk(
         device_groups.group_bulk_update_tags,
         "bulk_update_tags",

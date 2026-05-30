@@ -13,6 +13,7 @@ from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.errors import AgentCallError
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
     get_device_or_404,
@@ -28,7 +29,6 @@ from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
 from app.devices.services import health as device_health_service
 from app.devices.services import identity, lifecycle_policy
 from app.devices.services import intent as intent_service
-from app.devices.services import maintenance as maintenance_service
 from app.devices.services import presenter as device_presenter
 from app.events.dependencies import EventServicesDep
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -54,12 +54,12 @@ async def enter_device_maintenance(
     device_id: uuid.UUID,
     body: DeviceMaintenanceUpdate,
     db: DbDep,
-    events: EventServicesDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        device = await maintenance_service.enter_maintenance(db, device, publisher=events.publisher)
+        device = await device_services.maintenance.enter_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return await device_presenter.serialize_device(db, device, settings=settings_services.service)
@@ -67,11 +67,11 @@ async def enter_device_maintenance(
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
 async def exit_device_maintenance(
-    device_id: uuid.UUID, db: DbDep, events: EventServicesDep, settings_services: SettingsServicesDep
+    device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        device = await maintenance_service.exit_maintenance(db, device, publisher=events.publisher)
+        device = await device_services.maintenance.exit_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return await device_presenter.serialize_device(db, device, settings=settings_services.service)

@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.devices.services import maintenance as maintenance_service
 from app.devices.services import state_write_guard
+from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
@@ -143,7 +143,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.
     locked = await device_locking.lock_device(db_session, device.id)
-    await maintenance_service.exit_maintenance(db_session, locked, publisher=AsyncMock())
+    await MaintenanceService(publisher=AsyncMock()).exit_maintenance(db_session, locked)
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.

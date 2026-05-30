@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.runs.protocols import MaintenanceWriter
 
 
 def _cooldown_intents(
@@ -100,10 +101,12 @@ class RunFailureService:
         publisher: EventPublisher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
+        maintenance: MaintenanceWriter,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._maintenance = maintenance
 
     async def report_preparation_failure(
         self,
@@ -313,13 +316,10 @@ class RunFailureService:
         *,
         maintenance_reason: str = "Operator entered maintenance",
     ) -> Device:
-        from app.devices.services.maintenance import enter_maintenance  # noqa: PLC0415
-
-        return await enter_maintenance(
+        return await self._maintenance.enter_maintenance(
             db,
             device,
             commit=False,
             allow_reserved=True,
             maintenance_reason=maintenance_reason,
-            publisher=self._publisher,
         )

@@ -11,8 +11,11 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -163,12 +166,21 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_settings = FakeSettingsReader({})
     _fc_grid = Mock()
     _fc_publisher = AsyncMock()
+    _fc_maintenance = MaintenanceService(publisher=_fc_publisher)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fc_publisher),
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_fc_publisher, settings=_fc_settings),
+            maintenance=_fc_maintenance,
+            bulk=BulkOperationsService(
+                publisher=_fc_publisher,
+                settings=_fc_settings,
+                circuit_breaker=Mock(),
+                maintenance=_fc_maintenance,
+            ),
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,

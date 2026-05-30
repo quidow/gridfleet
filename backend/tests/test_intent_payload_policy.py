@@ -130,6 +130,7 @@ async def test_cooldown_intent_payload_shape(
     db_host: Host,
 ) -> None:
     from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+    from app.devices.services.maintenance import MaintenanceService
     from app.runs.service_lifecycle_failures import RunFailureService
 
     device = await create_device(
@@ -167,7 +168,12 @@ async def test_cooldown_intent_payload_shape(
 
     _test_settings = FakeSettingsReader({})
     _test_cb = AgentCircuitBreaker(publisher=event_bus, settings=_test_settings)
-    _failure_svc = RunFailureService(publisher=event_bus, settings=_test_settings, circuit_breaker=_test_cb)
+    _failure_svc = RunFailureService(
+        publisher=event_bus,
+        settings=_test_settings,
+        circuit_breaker=_test_cb,
+        maintenance=MaintenanceService(publisher=event_bus),
+    )
     cooldown_reason = "flaky connection detected"
     _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(
         db_session,

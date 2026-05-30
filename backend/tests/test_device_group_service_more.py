@@ -7,12 +7,17 @@ from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
+from app.devices.services.groups import DeviceGroupsService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _svc(settings: object | None = None) -> DeviceGroupsService:
+    return DeviceGroupsService(publisher=event_bus, settings=settings or FakeSettingsReader({}))
 
 
 async def test_static_group_membership_counts_and_idempotent_changes(db_session: AsyncSession) -> None:
@@ -23,63 +28,49 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
         identity_value="group-static-2",
         name="Group Static 2",
     )
-    group = await device_group_service.create_group(
+    svc = _svc()
+    group = await svc.create_group(
         db_session,
         DeviceGroupCreate(name="static phones", description="operator set", group_type="static"),
-        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
-    assert (
-        await device_group_service.add_members(
-            db_session, group.id, [first_device.id, second_device.id], publisher=event_bus
-        )
-        == 2
-    )
-    assert await device_group_service.add_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
+    assert await svc.add_members(db_session, group.id, [first_device.id, second_device.id]) == 2
+    assert await svc.add_members(db_session, group.id, [first_device.id]) == 0
 
-    groups = await device_group_service.list_groups(db_session, settings=FakeSettingsReader({}))
+    groups = await svc.list_groups(db_session)
     assert groups[0]["device_count"] == 2
 
-    detail = await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({}))
+    detail = await svc.get_group(db_session, group.id)
     assert detail is not None
     assert [device.id for device in detail["devices"]] == [first_device.id, second_device.id]
-    assert await device_group_service.get_group_device_ids(db_session, group.id, settings=FakeSettingsReader({})) == [
-        first_device.id,
-        second_device.id,
-    ]
+    assert await svc.get_group_device_ids(db_session, group.id) == [first_device.id, second_device.id]
 
-    assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 1
-    assert await device_group_service.remove_members(db_session, group.id, [first_device.id], publisher=event_bus) == 0
+    assert await svc.remove_members(db_session, group.id, [first_device.id]) == 1
+    assert await svc.remove_members(db_session, group.id, [first_device.id]) == 0
 
-    updated = await device_group_service.update_group(
+    updated = await svc.update_group(
         db_session,
         group.id,
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
-        publisher=event_bus,
     )
     assert updated is not None
     assert updated.name == "static phones updated"
     assert updated.description == "renamed"
 
-    assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is True
-    assert await device_group_service.delete_group(db_session, group.id, publisher=event_bus) is False
-    assert await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({})) is None
-    assert (
-        await device_group_service.update_group(
-            db_session, group.id, DeviceGroupUpdate(name="missing"), publisher=event_bus
-        )
-        is None
-    )
+    assert await svc.delete_group(db_session, group.id) is True
+    assert await svc.delete_group(db_session, group.id) is False
+    assert await svc.get_group(db_session, group.id) is None
+    assert await svc.update_group(db_session, group.id, DeviceGroupUpdate(name="missing")) is None
 
 
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
     _host, device = await seed_host_and_device(db_session, identity="group-dynamic-1")
     filters = DeviceGroupFilters(platform_id="android_mobile", tags={"tier": "smoke"})
-    group = await device_group_service.create_group(
+    svc = _svc()
+    group = await svc.create_group(
         db_session,
         DeviceGroupCreate(name="dynamic smoke", group_type="dynamic", filters=filters),
-        publisher=event_bus,
     )
     await settle_after_commit_tasks()
 
@@ -93,11 +84,9 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
             new=AsyncMock(return_value=[device]),
         ) as list_devices,
     ):
-        groups = await device_group_service.list_groups(db_session, settings=FakeSettingsReader({}))
-        detail = await device_group_service.get_group(db_session, group.id, settings=FakeSettingsReader({}))
-        device_ids = await device_group_service.get_group_device_ids(
-            db_session, group.id, settings=FakeSettingsReader({})
-        )
+        groups = await svc.list_groups(db_session)
+        detail = await svc.get_group(db_session, group.id)
+        device_ids = await svc.get_group_device_ids(db_session, group.id)
 
     assert groups[0]["group_type"] == "dynamic"
     assert groups[0]["filters"] == {"platform_id": "android_mobile", "tags": {"tier": "smoke"}}
@@ -109,11 +98,10 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     count_devices.assert_awaited_once()
     assert list_devices.await_count == 2
 
-    updated = await device_group_service.update_group(
+    updated = await svc.update_group(
         db_session,
         group.id,
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
-        publisher=event_bus,
     )
     assert updated is not None
     assert updated.filters == {"platform_id": "ios"}
@@ -121,9 +109,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         "app.devices.services.groups.device_service.list_devices_by_filters",
         new=AsyncMock(return_value=[device]),
     ):
-        assert await device_group_service.get_group_device_ids(
-            db_session, group.id, settings=FakeSettingsReader({})
-        ) == [device.id]
+        assert await svc.get_group_device_ids(db_session, group.id) == [device.id]
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
@@ -143,4 +129,4 @@ async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: 
     await db_session.delete(group)
     await db_session.commit()
 
-    assert await device_group_service.get_group_device_ids(db_session, group.id, settings=FakeSettingsReader({})) == []
+    assert await _svc().get_group_device_ids(db_session, group.id) == []

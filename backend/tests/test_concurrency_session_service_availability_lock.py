@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
-from app.devices.services import maintenance as maintenance_service
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
@@ -32,7 +32,7 @@ async def _enter_maintenance_after_gate(
     async def do_maintenance() -> None:
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await maintenance_service.enter_maintenance(session, locked, publisher=Mock())
+            await MaintenanceService(publisher=Mock()).enter_maintenance(session, locked)
 
     maintenance_task = asyncio.create_task(do_maintenance())
     await asyncio.sleep(0.05)
