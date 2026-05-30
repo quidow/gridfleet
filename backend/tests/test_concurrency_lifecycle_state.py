@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -113,6 +113,7 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             await svc.handle_health_failure(
                 session,
@@ -233,6 +234,7 @@ async def test_concurrent_health_failure_stale_overwrite(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             with patch.object(
                 LifecyclePolicyActionsService, "record_auto_stopped_incident", barrier_record_auto_stopped
@@ -256,6 +258,7 @@ async def test_concurrent_health_failure_stale_overwrite(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             await svc.handle_health_failure(
                 session,

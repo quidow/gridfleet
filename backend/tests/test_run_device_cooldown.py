@@ -626,6 +626,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     ).attempt_auto_recovery(
         db_session,
         device,

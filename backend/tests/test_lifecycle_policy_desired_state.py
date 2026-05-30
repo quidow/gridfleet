@@ -74,6 +74,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=Mock()),
+        viability=Mock(),
     )
     with (
         patch.object(
@@ -224,6 +225,7 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     )
     await svc.attempt_auto_recovery(
         db_session,

@@ -404,6 +404,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+                    viability=Mock(),
                 ),
             ),
             publisher=test_event_bus,
@@ -446,6 +447,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+            viability=Mock(),
         )
         return SessionServices(
             crud=SessionCrudService(
@@ -476,6 +478,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+            viability=Mock(),
         )
         run_release = RunReleaseService(
             publisher=test_event_bus,

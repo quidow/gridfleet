@@ -50,6 +50,7 @@ def _make_svc(
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(publisher=pub),  # type: ignore[arg-type]
+        viability=Mock(),
     )
 
 

@@ -34,7 +34,7 @@ class VerificationRunnerService:
         circuit_breaker: CircuitBreakerProtocol,
         preparation: VerificationPreparationService,
         execution: VerificationExecutionService,
-        viability: SessionViabilityProbe | None = None,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher

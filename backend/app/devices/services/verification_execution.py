@@ -65,7 +65,7 @@ class VerificationExecutionService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
-        viability: SessionViabilityProbe | None = None,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._publisher = publisher
         self._settings = settings

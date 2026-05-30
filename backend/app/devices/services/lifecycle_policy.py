@@ -80,7 +80,7 @@ class LifecyclePolicyService:
         publisher: EventPublisher,
         settings: SettingsReader,
         actions: LifecyclePolicyActionsService,
-        viability: SessionViabilityProbe | None = None,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._publisher = publisher
         self._settings = settings

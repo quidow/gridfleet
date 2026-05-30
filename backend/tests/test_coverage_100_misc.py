@@ -359,7 +359,11 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
     )
     exec_svc = VerificationExecutionService(
-        publisher=publisher, settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
+        publisher=publisher,
+        settings=settings,
+        circuit_breaker=cb,
+        crud=DeviceCrudService(settings=settings),
+        viability=Mock(),
     )
     runner = VerificationRunnerService(
         session_factory=SessionCtx,
@@ -368,6 +372,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         preparation=prep,
         execution=exec_svc,
+        viability=Mock(),
     )
     assert await runner._load_persisted_job(str(uuid.uuid4())) is None
     await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
@@ -857,7 +862,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                viability=Mock(),
             ),
+            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=QueueCtx,

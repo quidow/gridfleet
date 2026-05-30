@@ -1,6 +1,7 @@
 """D1: connectivity loss must NOT exclude device from its active run."""
 
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +74,7 @@ async def test_connectivity_loss_keeps_device_in_run(
         publisher=event_bus,
         settings=None,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     )
     await svc.note_connectivity_loss(db_session, locked, reason="Heartbeat timeout")
     await db_session.commit()

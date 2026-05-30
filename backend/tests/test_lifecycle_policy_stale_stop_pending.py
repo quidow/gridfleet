@@ -1,7 +1,7 @@
 """D4: stale stop_pending on offline device must not trap recovery."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -107,6 +107,7 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(publisher=event_bus),
+            viability=Mock(),
         ).attempt_auto_recovery(
             db_session,
             device,
@@ -180,6 +181,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     ).attempt_auto_recovery(
         db_session,
         device,

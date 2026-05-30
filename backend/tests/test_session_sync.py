@@ -31,6 +31,7 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=pub),
+        viability=Mock(),
     )
 
 

@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -104,7 +104,9 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=settings_service),
+                viability=Mock(),
             ),
+            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=_sf,
@@ -215,7 +217,9 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
                     crud=DeviceCrudService(settings=settings_service),
+                    viability=Mock(),
                 ),
+                viability=Mock(),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=_sf,
@@ -225,6 +229,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(publisher=AsyncMock()),
+                    viability=Mock(),
                 ),
             ),
         ).run_pending_once()
@@ -283,7 +288,9 @@ async def test_device_recovery_job_completed_when_device_missing(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=settings_service),
+                viability=Mock(),
             ),
+            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=_sf,

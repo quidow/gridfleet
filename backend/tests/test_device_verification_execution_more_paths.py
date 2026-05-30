@@ -43,7 +43,11 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
 
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=settings, circuit_breaker=Mock(), crud=DeviceCrudService(settings=settings)
+            publisher=event_bus,
+            settings=settings,
+            circuit_breaker=Mock(),
+            crud=DeviceCrudService(settings=settings),
+            viability=Mock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
@@ -55,7 +59,11 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     _s2 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=_s2, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s2)
+            publisher=event_bus,
+            settings=_s2,
+            circuit_breaker=Mock(),
+            crud=DeviceCrudService(settings=_s2),
+            viability=Mock(),
         ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
@@ -63,14 +71,22 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
     _s3 = FakeSettingsReader({})
     assert await VerificationExecutionService(
-        publisher=event_bus, settings=_s3, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s3)
+        publisher=event_bus,
+        settings=_s3,
+        circuit_breaker=Mock(),
+        crud=DeviceCrudService(settings=_s3),
+        viability=Mock(),
     ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
     _s4 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=_s4, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s4)
+            publisher=event_bus,
+            settings=_s4,
+            circuit_breaker=Mock(),
+            crud=DeviceCrudService(settings=_s4),
+            viability=Mock(),
         ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
@@ -127,7 +143,11 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     context = SimpleNamespace(save_device_id=None, transient_device=_device(identity_value="missing"))
     _s5 = FakeSettingsReader({})
     svc = VerificationExecutionService(
-        publisher=event_bus, settings=_s5, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s5)
+        publisher=event_bus,
+        settings=_s5,
+        circuit_breaker=Mock(),
+        crud=DeviceCrudService(settings=_s5),
+        viability=Mock(),
     )
     with pytest.raises(NodeManagerError, match="no persisted device id"):
         await svc.execute_verification_context(
@@ -149,7 +169,11 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
     _s6 = FakeSettingsReader({})
     svc2 = VerificationExecutionService(
-        publisher=event_bus, settings=_s6, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s6)
+        publisher=event_bus,
+        settings=_s6,
+        circuit_breaker=Mock(),
+        crud=DeviceCrudService(settings=_s6),
+        viability=Mock(),
     )
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
@@ -246,7 +270,11 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     device = _device(device_type="real_device", connection_type="usb")
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=settings, circuit_breaker=Mock(), crud=DeviceCrudService(settings=settings)
+            publisher=event_bus,
+            settings=settings,
+            circuit_breaker=Mock(),
+            crud=DeviceCrudService(settings=settings),
+            viability=Mock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )

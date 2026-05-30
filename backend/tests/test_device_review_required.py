@@ -249,6 +249,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         publisher=Mock(),
         settings=settings,
         actions=LifecyclePolicyActionsService(publisher=Mock()),
+        viability=Mock(),
     )
     with (
         patch(
@@ -299,6 +300,7 @@ async def test_review_required_short_circuits_auto_recovery(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     )
     probe = AsyncMock()
     with patch("app.sessions.service_viability.run_session_viability_probe", new=probe):

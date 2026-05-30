@@ -91,6 +91,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     )
     assert await svc.run_device_health(job, _device(None), http_client_factory=object) is None
     assert job["current_stage"] == "device_health"
@@ -106,6 +107,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_device_health(_job(), device, http_client_factory=object)
     assert detail == "Agent health check failed: down"
 
@@ -119,6 +121,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
+            viability=Mock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
@@ -134,6 +137,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
+            viability=Mock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         == "adb ready failed (no)"
     )
@@ -175,6 +179,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).stop_existing_managed_node_for_update(_job(), db_session, context)
     assert detail is not None
     assert "stop failed" in detail
@@ -187,6 +192,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_probe(
         _job(),
         db_session,
@@ -207,6 +213,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_probe(
         _job(),
         db_session,
@@ -238,6 +245,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_probe(
         _job(),
         db_session,
@@ -310,6 +318,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_probe(
         _job(),
         db_session,
@@ -380,6 +389,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     ).run_probe(
         _job(),
         db_session,
@@ -442,6 +452,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
+            viability=Mock(),
         ).run_probe(
             _job(),
             db_session,
@@ -578,6 +589,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     )
     svc.stop_existing_managed_node_for_update = AsyncMock(return_value="stop failed")  # type: ignore[method-assign]
     outcome = await svc.execute_verification_context(
@@ -676,6 +688,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
+        viability=Mock(),
     )
     svc2.stop_existing_managed_node_for_update = AsyncMock(return_value=None)  # type: ignore[method-assign]
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]

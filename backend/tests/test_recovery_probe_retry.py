@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -161,6 +161,7 @@ async def test_attempt_auto_recovery_forwards_publisher_to_recovery_probe(
         publisher=publisher,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=publisher),
+        viability=Mock(),
     )
     with patch.object(lifecycle_policy, "_run_recovery_probe", new=_capture):
         await svc.attempt_auto_recovery(

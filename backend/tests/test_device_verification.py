@@ -145,7 +145,9 @@ async def _wait_for_job(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
+                    viability=Mock(),
                 ),
+                viability=Mock(),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
@@ -1506,7 +1508,9 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
+                    viability=Mock(),
                 ),
+                viability=Mock(),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
