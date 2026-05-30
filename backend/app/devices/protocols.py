@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from app.devices.schemas.portability import ExportBundle
     from app.events.catalog import EventSeverity
     from app.hosts.models import Host
+    from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
 @runtime_checkable
@@ -263,3 +264,22 @@ class DeviceCrudProtocol(Protocol):
 class ConnectivityProtocol(Protocol):
     async def check_connectivity(self, db: AsyncSession) -> None: ...
     async def check_expired_cooldowns(self, db: AsyncSession) -> None: ...
+
+
+@runtime_checkable
+class SessionViabilityProbe(Protocol):
+    async def run_session_viability_probe(
+        self, db: AsyncSession, device: Device, *, checked_by: SessionViabilityCheckedBy
+    ) -> dict[str, Any]: ...
+    async def record_session_viability_result(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        status: str,
+        error: str | None = ...,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]: ...
+    async def probe_session_via_grid(
+        self, capabilities: dict[str, Any], timeout_sec: int, *, grid_url: str | None = ...
+    ) -> tuple[bool, str | None]: ...
