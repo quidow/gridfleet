@@ -62,6 +62,7 @@ from app.devices.services import (
     write as device_write,
 )
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_preparation import VerificationPreparationService
 from app.devices.services.verification_runner import VerificationRunnerService
@@ -353,8 +354,12 @@ async def test_device_verification_runner_missing_job_branches() -> None:
     settings = FakeSettingsReader({})
     cb = Mock()
     publisher = AsyncMock()
-    prep = VerificationPreparationService(settings=settings, circuit_breaker=cb)
-    exec_svc = VerificationExecutionService(publisher=publisher, settings=settings, circuit_breaker=cb)
+    prep = VerificationPreparationService(
+        settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
+    )
+    exec_svc = VerificationExecutionService(
+        publisher=publisher, settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
+    )
     runner = VerificationRunnerService(
         session_factory=SessionCtx,
         publisher=publisher,
@@ -727,15 +732,17 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     group_db.execute = AsyncMock(
         side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
     )
+    _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
-        publisher=event_bus, settings=FakeSettingsReader({})
+        publisher=event_bus, settings=_gs1, crud=DeviceCrudService(settings=_gs1)
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
+    _gs2 = FakeSettingsReader({})
     assert (
         await device_group_service.DeviceGroupsService(
-            publisher=event_bus, settings=FakeSettingsReader({})
+            publisher=event_bus, settings=_gs2, crud=DeviceCrudService(settings=_gs2)
         ).delete_group(missing_group_db, uuid.uuid4())
         is False
     )
@@ -840,9 +847,16 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            preparation=VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+            preparation=VerificationPreparationService(
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                crud=DeviceCrudService(settings=FakeSettingsReader({})),
+            ),
             execution=VerificationExecutionService(
-                publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                publisher=AsyncMock(),
+                settings=FakeSettingsReader({}),
+                circuit_breaker=Mock(),
+                crud=DeviceCrudService(settings=FakeSettingsReader({})),
             ),
         ),
     )

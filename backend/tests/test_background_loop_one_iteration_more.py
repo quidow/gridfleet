@@ -19,6 +19,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
@@ -171,24 +172,27 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_grid = Mock()
     _fc_publisher = AsyncMock()
     _fc_maintenance = MaintenanceService(publisher=_fc_publisher)
+    _fc_crud = DeviceCrudService(settings=_fc_settings)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fc_publisher),
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fc_publisher, settings=_fc_settings),
+            groups=DeviceGroupsService(publisher=_fc_publisher, settings=_fc_settings, crud=_fc_crud),
             maintenance=_fc_maintenance,
             bulk=BulkOperationsService(
                 publisher=_fc_publisher,
                 settings=_fc_settings,
                 circuit_breaker=Mock(),
                 maintenance=_fc_maintenance,
+                crud=_fc_crud,
             ),
             presenter=DevicePresenterService(settings=_fc_settings),
             test_data=TestDataService(publisher=_fc_publisher),
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
+            crud=_fc_crud,
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,

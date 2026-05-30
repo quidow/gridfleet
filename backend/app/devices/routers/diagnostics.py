@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
 from app.core.leader.models import ControlPlaneStateEntry
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import DeviceDiagnosticSnapshot
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.diagnostics import (
@@ -96,10 +97,11 @@ async def _enforce_rate_limit(db: AsyncSession, device_id: uuid.UUID) -> None:
 async def export_device_diagnostics(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     persist: bool = Query(default=True),
     redact: bool = Query(default=False),
 ) -> DiagnosticExportResponse:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     await _enforce_rate_limit(db, device_id)
     warnings: list[str] = []
     payload = await diagnostics_export.assemble_bundle(db, device, redact=redact)
@@ -125,10 +127,11 @@ async def export_device_diagnostics(
 async def list_device_diagnostic_snapshots(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     limit: int = Query(default=20, ge=1, le=100),
     before: uuid.UUID | None = Query(default=None),
 ) -> DiagnosticSnapshotListResponse:
-    await get_device_or_404(device_id, db)
+    await get_device_or_404(device_id, db, device_services.crud)
     stmt = (
         select(DeviceDiagnosticSnapshot)
         .where(DeviceDiagnosticSnapshot.device_id == device_id)
@@ -166,9 +169,10 @@ async def get_device_diagnostic_snapshot(
     device_id: uuid.UUID,
     snapshot_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     redact: bool = Query(default=False),
 ) -> DiagnosticSnapshotDetail:
-    await get_device_or_404(device_id, db)
+    await get_device_or_404(device_id, db, device_services.crud)
     row = (
         await db.execute(
             select(DeviceDiagnosticSnapshot).where(

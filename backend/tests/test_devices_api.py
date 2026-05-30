@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
@@ -14,8 +14,10 @@ from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -740,7 +742,8 @@ async def test_device_detail_surfaces_emulator_state(
 async def test_device_create_payload_preserves_explicit_unified_platform_lane(
     db_session: AsyncSession, default_host_id: str
 ) -> None:
-    payload = await device_service.prepare_device_create_payload(
+    crud = DeviceCrudService(settings=FakeSettingsReader())
+    payload = await crud.prepare_device_create_payload(
         db_session,
         DeviceVerificationCreate(
             host_id=default_host_id,
@@ -805,7 +808,8 @@ async def test_update_device_returns_none_when_device_missing(client: AsyncClien
     import uuid
 
     missing_id = uuid.uuid4()
-    result = await device_service.update_device(
+    crud = DeviceCrudService(settings=FakeSettingsReader())
+    result = await crud.update_device(
         db_session,
         missing_id,
         DevicePatch(),
@@ -1181,10 +1185,22 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
 
     with (
         patch(
-            "app.devices.routers.catalog.device_service.get_device", new_callable=AsyncMock, return_value=fake_device
+            "app.devices.routers.control.get_device_or_404",
+            new_callable=AsyncMock,
+            return_value=fake_device,
         ),
         patch(
-            "app.devices.routers.catalog.session_viability.get_session_viability",
+            "app.devices.routers.control.fetch_pack_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True, "adb_connected": {"connected": True}},
+        ),
+        patch(
+            "app.devices.routers.control.fetch_appium_status",
+            new_callable=AsyncMock,
+            return_value={"running": True, "port": 4723},
+        ),
+        patch(
+            "app.devices.routers.control.session_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value={
                 "status": "failed",
@@ -1195,7 +1211,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
             },
         ),
         patch(
-            "app.devices.routers.catalog.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": "session_viability",
@@ -1215,15 +1231,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
                 "recovery_state": "eligible",
             },
         ),
-        patch("app.devices.routers.catalog.httpx.AsyncClient") as mock_client_cls,
     ):
-        mock_client = mock_client_cls.return_value
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = False
-        mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {"healthy": True, "adb_connected": {"connected": True}}
-        mock_client.get = AsyncMock(return_value=mock_response)
         resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000123/health")
 
     assert resp.status_code == 200

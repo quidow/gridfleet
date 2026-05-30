@@ -35,6 +35,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
@@ -149,9 +150,14 @@ def compose_app(
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(publisher=bus)
-    groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc)
+    crud_svc = DeviceCrudService(settings=settings_svc)
+    groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
     bulk_svc = BulkOperationsService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, maintenance=maintenance_svc
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        maintenance=maintenance_svc,
+        crud=crud_svc,
     )
 
     run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
@@ -163,10 +169,10 @@ def compose_app(
     run_query = RunQueryService()
 
     verification_preparation_svc = VerificationPreparationService(
-        settings=settings_svc, circuit_breaker=circuit_breaker
+        settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
     )
     verification_execution_svc = VerificationExecutionService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -194,6 +200,7 @@ def compose_app(
             test_data=test_data_svc,
             portability_export=portability_export_svc,
             verification=verification_svc,
+            crud=crud_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

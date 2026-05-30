@@ -10,6 +10,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -190,8 +191,13 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
+    _settings_bulk = FakeSettingsReader({})
     await BulkOperationsService(
-        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=MagicMock()
+        publisher=event_bus,
+        settings=_settings_bulk,
+        circuit_breaker=MagicMock(),
+        maintenance=MagicMock(),
+        crud=DeviceCrudService(settings=_settings_bulk),
     ).bulk_start_nodes(db_session, [device.id], caller="bulk")
 
     assert captured == ["bulk"]
@@ -224,8 +230,13 @@ async def test_bulk_start_nodes_accepts_group_caller(
     from app.devices.services import bulk as bulk_service
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start)
+    _settings_group = FakeSettingsReader({})
     await BulkOperationsService(
-        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=MagicMock()
+        publisher=event_bus,
+        settings=_settings_group,
+        circuit_breaker=MagicMock(),
+        maintenance=MagicMock(),
+        crud=DeviceCrudService(settings=_settings_group),
     ).bulk_start_nodes(db_session, [device.id], caller="group")
 
     assert captured == ["group"]

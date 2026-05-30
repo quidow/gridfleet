@@ -44,6 +44,7 @@ from app.core.schemas_health import HealthStatusRead, LiveHealthRead
 from app.core.shutdown import shutdown_coordinator
 from app.devices import routers as device_routers
 from app.devices import services as device_services
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.services import state_write_guard
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
@@ -80,7 +81,6 @@ DataCleanupLoop = device_services.data_cleanup.DataCleanupLoop
 DeviceConnectivityLoop = device_services.connectivity.DeviceConnectivityLoop
 device_health = device_services.health
 DeviceIntentReconcilerLoop = device_services.intent_reconciler.DeviceIntentReconcilerLoop
-device_service = device_services.service
 FleetCapacityLoop = device_services.fleet_capacity.FleetCapacityLoop
 assess_devices_async = device_services.readiness.assess_devices_async
 is_ready_for_use_async = device_services.readiness.is_ready_for_use_async
@@ -358,13 +358,11 @@ async def metrics(db: DbDep) -> Response:
 @app.get("/api/availability", dependencies=[Depends(auth_dependencies.require_any_auth)])
 async def check_availability(
     db: DbDep,
-    settings_services: SettingsServicesDep,
+    device_services: DeviceServicesDep,
     platform_id: str = Query(...),
     count: int = Query(1, ge=1),
 ) -> dict[str, Any]:
-    available_devices = await device_service.list_devices(
-        db, settings=settings_services.service, platform_id=platform_id, status="available"
-    )
+    available_devices = await device_services.crud.list_devices(db, platform_id=platform_id, status="available")
     readiness_map = await assess_devices_async(db, available_devices)
     matched = sum(
         1

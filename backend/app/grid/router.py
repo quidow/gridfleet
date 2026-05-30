@@ -3,21 +3,18 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.core.dependencies import DbDep
-from app.devices.services import service as device_service
+from app.devices.dependencies import DeviceServicesDep
 from app.grid.dependencies import GridServicesDep
 from app.grid.schemas import GridQueueRead, GridStatusRead
 from app.grid.slot_parser import list_slot_sessions
-from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 
 
 @router.get("/status", response_model=GridStatusRead)
-async def grid_status(
-    db: DbDep, grid_services: GridServicesDep, settings_services: SettingsServicesDep
-) -> dict[str, Any]:
+async def grid_status(db: DbDep, grid_services: GridServicesDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     grid_data = await grid_services.grid.get_status()
-    devices = await device_service.list_devices(db, settings=settings_services.service)
+    devices = await device_services.crud.list_devices(db)
 
     registry_devices = []
     for device in devices:

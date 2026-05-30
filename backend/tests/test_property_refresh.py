@@ -14,6 +14,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
@@ -146,24 +147,27 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
 
     _pr_maintenance = MaintenanceService(publisher=_pr_publisher)
+    _pr_crud = DeviceCrudService(settings=_pr_settings)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_pr_publisher),
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,
-            groups=DeviceGroupsService(publisher=_pr_publisher, settings=_pr_settings),
+            groups=DeviceGroupsService(publisher=_pr_publisher, settings=_pr_settings, crud=_pr_crud),
             maintenance=_pr_maintenance,
             bulk=BulkOperationsService(
                 publisher=_pr_publisher,
                 settings=_pr_settings,
                 circuit_breaker=Mock(),
                 maintenance=_pr_maintenance,
+                crud=_pr_crud,
             ),
             presenter=DevicePresenterService(settings=_pr_settings),
             test_data=TestDataService(publisher=_pr_publisher),
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
+            crud=_pr_crud,
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,

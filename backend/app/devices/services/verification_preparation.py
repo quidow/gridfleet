@@ -11,7 +11,6 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.services import readiness as device_readiness
-from app.devices.services import service as device_service
 from app.devices.services import write as device_write
 from app.devices.services.identity import (
     looks_like_ip_address,
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.device import DeviceVerificationUpdate
 
 
@@ -50,9 +50,12 @@ class PreparedVerificationContext:
 
 
 class VerificationPreparationService:
-    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+    def __init__(
+        self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol, crud: DeviceCrudProtocol
+    ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._crud = crud
 
     async def validate_create_request(
         self,
@@ -95,7 +98,7 @@ class VerificationPreparationService:
         except DeviceIdentityConflictError as exc:
             return await _validation_failed(job, str(exc))
 
-        saved_device = await device_service.create_device(
+        saved_device = await self._crud.create_device(
             db,
             DeviceVerificationCreate.model_validate(payload),
             initial_operational_state=DeviceOperationalState.verifying,
@@ -138,7 +141,7 @@ class VerificationPreparationService:
         http_client_factory: AgentClientFactory,
     ) -> tuple[PreparedVerificationContext | None, str | None]:
         await set_stage(job, "validation", "running")
-        existing = await device_service.get_device(db, device_id)
+        existing = await self._crud.get_device(db, device_id)
         if existing is None:
             return await _validation_failed(job, "Device was not found")
 

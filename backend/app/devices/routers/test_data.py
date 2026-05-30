@@ -14,7 +14,7 @@ router = APIRouter(tags=["devices-test-data"], responses={**RESPONSES_400, **RES
 
 @router.get("/{device_id}/test_data", response_model=TestDataRead)
 async def get_test_data(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await device_services.test_data.get_device_test_data(db, device)
 
 
@@ -47,7 +47,7 @@ async def get_history(
     device_services: DeviceServicesDep,
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict[str, Any]]:
-    await get_device_or_404(device_id, db)
+    await get_device_or_404(device_id, db, device_services.crud)
     logs = await device_services.test_data.get_test_data_history(db, device_id, limit=limit)
     return [
         {

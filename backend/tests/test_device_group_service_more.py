@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from app.devices.models import DeviceGroup, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -17,7 +18,8 @@ if TYPE_CHECKING:
 
 
 def _svc(settings: object | None = None) -> DeviceGroupsService:
-    return DeviceGroupsService(publisher=event_bus, settings=settings or FakeSettingsReader({}))
+    _settings = settings or FakeSettingsReader({})
+    return DeviceGroupsService(publisher=event_bus, settings=_settings, crud=DeviceCrudService(settings=_settings))
 
 
 async def test_static_group_membership_counts_and_idempotent_changes(db_session: AsyncSession) -> None:
@@ -74,19 +76,13 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     )
     await settle_after_commit_tasks()
 
-    with (
-        patch(
-            "app.devices.services.groups.device_service.count_devices_by_filters",
-            new=AsyncMock(return_value=5),
-        ) as count_devices,
-        patch(
-            "app.devices.services.groups.device_service.list_devices_by_filters",
-            new=AsyncMock(return_value=[device]),
-        ) as list_devices,
-    ):
-        groups = await svc.list_groups(db_session)
-        detail = await svc.get_group(db_session, group.id)
-        device_ids = await svc.get_group_device_ids(db_session, group.id)
+    mock_crud = AsyncMock()
+    mock_crud.count_devices_by_filters = AsyncMock(return_value=5)
+    mock_crud.list_devices_by_filters = AsyncMock(return_value=[device])
+    svc_mocked = DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({}), crud=mock_crud)
+    groups = await svc_mocked.list_groups(db_session)
+    detail = await svc_mocked.get_group(db_session, group.id)
+    device_ids = await svc_mocked.get_group_device_ids(db_session, group.id)
 
     assert groups[0]["group_type"] == "dynamic"
     assert groups[0]["filters"] == {"platform_id": "android_mobile", "tags": {"tier": "smoke"}}
@@ -95,8 +91,8 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     assert detail["device_count"] == 1
     assert detail["devices"] == [device]
     assert device_ids == [device.id]
-    count_devices.assert_awaited_once()
-    assert list_devices.await_count == 2
+    mock_crud.count_devices_by_filters.assert_awaited_once()
+    assert mock_crud.list_devices_by_filters.await_count == 2
 
     updated = await svc.update_group(
         db_session,
@@ -105,11 +101,10 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
     )
     assert updated is not None
     assert updated.filters == {"platform_id": "ios"}
-    with patch(
-        "app.devices.services.groups.device_service.list_devices_by_filters",
-        new=AsyncMock(return_value=[device]),
-    ):
-        assert await svc.get_group_device_ids(db_session, group.id) == [device.id]
+    mock_crud2 = AsyncMock()
+    mock_crud2.list_devices_by_filters = AsyncMock(return_value=[device])
+    svc_mocked2 = DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({}), crud=mock_crud2)
+    assert await svc_mocked2.get_group_device_ids(db_session, group.id) == [device.id]
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:

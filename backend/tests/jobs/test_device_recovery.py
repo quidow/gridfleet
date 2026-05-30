@@ -13,6 +13,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_preparation import VerificationPreparationService
 from app.devices.services.verification_runner import VerificationRunnerService
@@ -91,9 +92,16 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+                preparation=VerificationPreparationService(
+                    settings=settings_service,
+                    circuit_breaker=AsyncMock(),
+                    crud=DeviceCrudService(settings=settings_service),
+                ),
                 execution=VerificationExecutionService(
-                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+                    publisher=AsyncMock(),
+                    settings=settings_service,
+                    circuit_breaker=AsyncMock(),
+                    crud=DeviceCrudService(settings=settings_service),
                 ),
             ),
         ).run_pending_once()
@@ -189,9 +197,16 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+                preparation=VerificationPreparationService(
+                    settings=settings_service,
+                    circuit_breaker=AsyncMock(),
+                    crud=DeviceCrudService(settings=settings_service),
+                ),
                 execution=VerificationExecutionService(
-                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+                    publisher=AsyncMock(),
+                    settings=settings_service,
+                    circuit_breaker=AsyncMock(),
+                    crud=DeviceCrudService(settings=settings_service),
                 ),
             ),
         ).run_pending_once()
@@ -240,9 +255,16 @@ async def test_device_recovery_job_completed_when_device_missing(
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=AsyncMock(),
-            preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+            preparation=VerificationPreparationService(
+                settings=settings_service,
+                circuit_breaker=AsyncMock(),
+                crud=DeviceCrudService(settings=settings_service),
+            ),
             execution=VerificationExecutionService(
-                publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+                publisher=AsyncMock(),
+                settings=settings_service,
+                circuit_breaker=AsyncMock(),
+                crud=DeviceCrudService(settings=settings_service),
             ),
         ),
     ).run_pending_once()

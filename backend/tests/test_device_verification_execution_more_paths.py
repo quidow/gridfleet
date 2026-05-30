@@ -8,6 +8,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -42,7 +43,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
 
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=settings, circuit_breaker=Mock()
+            publisher=event_bus, settings=settings, circuit_breaker=Mock(), crud=DeviceCrudService(settings=settings)
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
@@ -51,22 +52,25 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
 
     fetch.side_effect = None
     fetch.return_value = {"healthy": False, "checks": [{"check_id": "boot_completed", "ok": False, "message": "no"}]}
+    _s2 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            publisher=event_bus, settings=_s2, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s2)
         ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
 
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
+    _s3 = FakeSettingsReader({})
     assert await VerificationExecutionService(
-        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        publisher=event_bus, settings=_s3, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s3)
     ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
+    _s4 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            publisher=event_bus, settings=_s4, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s4)
         ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
@@ -81,12 +85,13 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     job: dict[str, object] = {"stages": []}
     transient = _device()
     node = SimpleNamespace(observed_running=True)
+    mock_crud = AsyncMock()
+    mock_crud.delete_device = AsyncMock()
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value="cleanup failed"))
-    monkeypatch.setattr(execution.device_service, "delete_device", AsyncMock())
 
     create_context = SimpleNamespace(mode="create", save_device_id=uuid.uuid4(), transient_device=transient)
     outcome = await execution._finalize_failure(
-        db, create_context, error="bad", job=job, node=node, publisher=event_bus
+        db, create_context, error="bad", job=job, node=node, publisher=event_bus, crud=mock_crud
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -107,6 +112,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         job=job,
         original_fields={"name": "original"},
         publisher=event_bus,
+        crud=mock_crud,
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -119,7 +125,10 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     db.commit = AsyncMock()
     job: dict[str, object] = {"stages": []}
     context = SimpleNamespace(save_device_id=None, transient_device=_device(identity_value="missing"))
-    svc = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    _s5 = FakeSettingsReader({})
+    svc = VerificationExecutionService(
+        publisher=event_bus, settings=_s5, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s5)
+    )
     with pytest.raises(NodeManagerError, match="no persisted device id"):
         await svc.execute_verification_context(
             job,
@@ -138,7 +147,10 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     )
     finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
-    svc2 = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    _s6 = FakeSettingsReader({})
+    svc2 = VerificationExecutionService(
+        publisher=event_bus, settings=_s6, circuit_breaker=Mock(), crud=DeviceCrudService(settings=_s6)
+    )
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
         await svc2.execute_verification_context(
@@ -211,6 +223,7 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
         job={"stages": []},
         node=SimpleNamespace(port=4723, pid=22),
         publisher=event_bus,
+        crud=AsyncMock(),
     )
 
     assert outcome.status == "completed"
@@ -233,7 +246,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     device = _device(device_type="real_device", connection_type="usb")
     assert (
         await VerificationExecutionService(
-            publisher=event_bus, settings=settings, circuit_breaker=Mock()
+            publisher=event_bus, settings=settings, circuit_breaker=Mock(), crud=DeviceCrudService(settings=settings)
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )

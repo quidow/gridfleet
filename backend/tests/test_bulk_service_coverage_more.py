@@ -10,6 +10,7 @@ from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -48,11 +49,13 @@ def _svc(
     settings: object | None = None,
     circuit_breaker: object | None = None,
 ) -> BulkOperationsService:
+    _settings = settings or FakeSettingsReader({})
     return BulkOperationsService(
         publisher=event_bus,
-        settings=settings or FakeSettingsReader({}),
+        settings=_settings,
         circuit_breaker=circuit_breaker or MagicMock(),
         maintenance=maintenance or MagicMock(),
+        crud=DeviceCrudService(settings=_settings),
     )
 
 
@@ -122,12 +125,15 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
 
     publish = AsyncMock()
     mock_publisher = SimpleNamespace(publish=publish)
-    monkeypatch.setattr(bulk_service, "delete_device", fake_delete)
+    mock_crud_del = AsyncMock()
+    mock_crud_del.delete_device = AsyncMock(side_effect=fake_delete)
+    _settings_del2 = FakeSettingsReader({})
     deleted = await BulkOperationsService(
         publisher=mock_publisher,  # type: ignore[arg-type]
-        settings=FakeSettingsReader({}),
+        settings=_settings_del2,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
+        crud=mock_crud_del,
     ).bulk_delete(db, [first.id, second.id])
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"
@@ -177,8 +183,13 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     mock_maintenance = MagicMock()
     mock_maintenance.exit_maintenance = AsyncMock(side_effect=[None, ValueError("not in maintenance")])
     mock_maintenance.schedule_device_recovery = AsyncMock(side_effect=RuntimeError("queue down"))
+    _settings_exit2 = FakeSettingsReader({})
     exited = await BulkOperationsService(
-        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=mock_maintenance
+        publisher=event_bus,
+        settings=_settings_exit2,
+        circuit_breaker=MagicMock(),
+        maintenance=mock_maintenance,
+        crud=DeviceCrudService(settings=_settings_exit2),
     ).bulk_exit_maintenance(db, [success.id, failure.id])
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure.id)] == "not in maintenance"
@@ -193,8 +204,13 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     mock_maintenance2.enter_maintenance = fake_enter
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
     monkeypatch.setattr(bulk_service.device_locking, "lock_device", AsyncMock(side_effect=[success, failure]))
+    _settings_enter2 = FakeSettingsReader({})
     entered = await BulkOperationsService(
-        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=mock_maintenance2
+        publisher=event_bus,
+        settings=_settings_enter2,
+        circuit_breaker=MagicMock(),
+        maintenance=mock_maintenance2,
+        crud=DeviceCrudService(settings=_settings_enter2),
     ).bulk_enter_maintenance(db, [success.id, failure.id])
     assert entered["succeeded"] == 1
     assert entered["errors"][str(failure.id)] == "enter failed"

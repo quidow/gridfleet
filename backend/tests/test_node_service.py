@@ -17,11 +17,13 @@ from app.appium_nodes.services.reconciler_agent import (
     start_remote_node,
 )
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
+
+_crud = DeviceCrudService(settings=FakeSettingsReader())
 
 HOST_PAYLOAD = {
     "hostname": "remote-host",
@@ -123,7 +125,7 @@ async def test_remote_start_node_attaches_node_to_device_instance(
         )
     db_session.add(device)
     await db_session.commit()
-    loaded_device = await device_service.get_device(db_session, device.id)
+    loaded_device = await _crud.get_device(db_session, device.id)
     assert loaded_device is not None
 
     mock_client = AsyncMock()
@@ -263,7 +265,7 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
         )
     db_session.add(device)
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
 
     real = node_service._hold_device_row_lock
@@ -311,7 +313,7 @@ async def test_mark_node_started_raises_when_device_already_deleted(db_session: 
         )
     db_session.add(device)
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
     deleted_id = loaded.id
 
@@ -375,7 +377,7 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
     db_session.add(node)
     device.appium_node = node
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
 
     real = node_service._hold_device_row_lock
@@ -441,7 +443,7 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
     db_session.add(node)
     device.appium_node = node
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
     assert loaded.appium_node is not None
 
@@ -606,7 +608,7 @@ async def test_start_remote_node_aligns_simulator_caps_with_probe_request(
         os_version="18.0",
         device_type="simulator",
     )
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
 
     start_response = _mock_agent_response(
@@ -721,7 +723,7 @@ async def test_start_remote_node_renders_stereotype_once(
         identity_scope=DEVICE_PAYLOAD["identity_scope"],
         os_version=DEVICE_PAYLOAD["os_version"],
     )
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
 
     calls = 0
@@ -776,7 +778,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
         operational_state="available",
     )
     await db_session.commit()
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
 
     await node_agent.mark_node_started(
@@ -861,7 +863,7 @@ async def test_restart_node_via_agent_does_not_start_when_stop_unacknowledged(
     db_session.add(node)
     await db_session.commit()
 
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await _crud.get_device(db_session, device.id)
     assert loaded is not None
     assert loaded.appium_node is not None
 

@@ -21,7 +21,6 @@ from app.devices.services.operator_node_lifecycle import (
     request_start,
     request_stop,
 )
-from app.devices.services.service import delete_device
 from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import MaintenanceProtocol
+    from app.devices.protocols import DeviceCrudProtocol, MaintenanceProtocol
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
 
@@ -147,11 +146,13 @@ class BulkOperationsService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceProtocol,
+        crud: DeviceCrudProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._maintenance = maintenance
+        self._crud = crud
 
     async def bulk_start_nodes(
         self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
@@ -218,7 +219,7 @@ class BulkOperationsService:
         errors: dict[str, str] = {}
         for device_id in device_ids:
             try:
-                deleted = await delete_device(db, device_id)
+                deleted = await self._crud.delete_device(db, device_id)
                 if not deleted:
                     errors[str(device_id)] = "Device not found"
             except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
