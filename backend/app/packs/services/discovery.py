@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.models import Host
+    from app.packs.protocols import DeviceSerializer
 
 
 class PackDevicesFetcher(Protocol):
@@ -75,11 +76,13 @@ class PackDiscoveryService:
         agent_get_pack_device_properties: PackDevicePropertiesFetcher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
+        serializer: DeviceSerializer,
     ) -> None:
         self._agent_get_pack_devices = agent_get_pack_devices
         self._agent_get_pack_device_properties = agent_get_pack_device_properties
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._serializer = serializer
 
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]:
         raw = await self._agent_get_pack_devices(

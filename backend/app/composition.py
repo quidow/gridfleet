@@ -32,8 +32,11 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.portability_export import PortabilityExportService
+from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
+from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -119,6 +122,10 @@ def compose_app(
 
     grid_svc = GridService(settings=settings_svc)
 
+    presenter_svc = DevicePresenterService(settings=settings_svc)
+    test_data_svc = TestDataService(publisher=bus)
+    portability_export_svc = PortabilityExportService()
+
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
     pack_feature = FeatureService(publisher=bus, circuit_breaker=circuit_breaker)
     pack_lifecycle = PackLifecycleService()
@@ -130,6 +137,7 @@ def compose_app(
         agent_get_pack_device_properties=get_pack_device_properties,
         settings=settings_svc,
         circuit_breaker=circuit_breaker,
+        serializer=presenter_svc,
     )
 
     device_state_svc = DeviceStateService(publisher=bus)
@@ -162,6 +170,9 @@ def compose_app(
             groups=groups_svc,
             maintenance=maintenance_svc,
             bulk=bulk_svc,
+            presenter=presenter_svc,
+            test_data=test_data_svc,
+            portability_export=portability_export_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

@@ -16,8 +16,11 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.portability_export import PortabilityExportService
+from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
+from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
@@ -92,6 +95,9 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
                 ),
+                presenter=DevicePresenterService(settings=settings_service),
+                test_data=TestDataService(publisher=event_bus),
+                portability_export=PortabilityExportService(),
                 publisher=event_bus,
                 settings=settings_service,
                 grid=_grid_svc,

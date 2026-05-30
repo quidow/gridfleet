@@ -61,6 +61,7 @@ from app.devices.services import test_data as test_data_service
 from app.devices.services import (
     write as device_write,
 )
+from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
 from app.events import catalog as event_catalog
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
@@ -584,6 +585,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         agent_get_pack_device_properties=AsyncMock(return_value=None),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
+        serializer=_DevicePresenterService(settings=FakeSettingsReader()),
     ).discover_devices(
         discovery_db,
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
