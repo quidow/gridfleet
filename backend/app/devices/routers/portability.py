@@ -4,8 +4,8 @@ from fastapi import APIRouter, HTTPException, Response
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.portability import ExportBundle, ImportCommitRequest, ImportCommitResult, ImportPreview
-from app.devices.services.portability_export import build_export_bundle
 from app.devices.services.portability_import import BundleHashMismatchError, commit_import, validate_bundle
 
 router = APIRouter(
@@ -20,8 +20,8 @@ router = APIRouter(
     response_model=ExportBundle,
     summary="Export all registered devices as a portable JSON bundle",
 )
-async def export_devices(db: DbDep, response: Response) -> ExportBundle:
-    bundle = await build_export_bundle(db)
+async def export_devices(db: DbDep, device_services: DeviceServicesDep, response: Response) -> ExportBundle:
+    bundle = await device_services.portability_export.build_export_bundle(db)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     response.headers["Content-Disposition"] = f'attachment; filename="gridfleet-devices-{stamp}.json"'
     return bundle

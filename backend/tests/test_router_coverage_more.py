@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -343,11 +343,17 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         "id": str(group_id),
         "devices": [],
     }
-    with patch("app.devices.routers.groups.device_presenter.serialize_device", new=AsyncMock(return_value={})):
-        assert await device_groups.get_group(group_id, db=db, device_services=ds_create) == {
-            "id": str(group_id),
-            "devices": [],
-        }
+    ds_create_with_presenter = SimpleNamespace(
+        groups=SimpleNamespace(
+            create_group=AsyncMock(return_value=SimpleNamespace(id=group_id)),
+            get_group=AsyncMock(return_value={"id": str(group_id), "devices": []}),
+        ),
+        presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
+    )
+    assert await device_groups.get_group(group_id, db=db, device_services=ds_create_with_presenter) == {
+        "id": str(group_id),
+        "devices": [],
+    }
 
     ds_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
