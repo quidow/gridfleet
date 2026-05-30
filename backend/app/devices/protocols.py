@@ -14,9 +14,24 @@ if TYPE_CHECKING:
     from app.analytics.models import AnalyticsCapacitySnapshot
     from app.analytics.schemas import FleetCapacityTimeline
     from app.core.type_defs import SessionFactory
-    from app.devices.models import Device, DeviceGroup, DeviceHold, DeviceOperationalState, DeviceReservation
+    from app.devices.models import (
+        ConnectionType,
+        Device,
+        DeviceGroup,
+        DeviceHold,
+        DeviceOperationalState,
+        DeviceReservation,
+        DeviceType,
+        HardwareHealthStatus,
+    )
     from app.devices.models.test_data_audit import DeviceTestDataAuditLog
-    from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
+    from app.devices.schemas.device import (
+        DevicePatch,
+        DeviceVerificationCreate,
+        DeviceVerificationUpdate,
+        HardwareTelemetryState,
+    )
+    from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.devices.schemas.portability import ExportBundle
     from app.events.catalog import EventSeverity
@@ -189,3 +204,56 @@ class VerificationProtocol(Protocol):
         self, job_id: str, session_factory: SessionFactory = ...
     ) -> dict[str, Any] | None: ...
     async def clear_verification_jobs(self, session_factory: SessionFactory = ...) -> None: ...
+
+
+@runtime_checkable
+class DeviceCrudProtocol(Protocol):
+    async def prepare_device_create_payload(
+        self, db: AsyncSession, data: DeviceVerificationCreate
+    ) -> dict[str, Any]: ...
+    async def prepare_device_update_payload(
+        self, db: AsyncSession, device: Device, data: DevicePatch | DeviceVerificationUpdate
+    ) -> dict[str, Any]: ...
+    async def create_device(
+        self,
+        db: AsyncSession,
+        data: DeviceVerificationCreate,
+        *,
+        mark_verified: bool = ...,
+        initial_operational_state: DeviceOperationalState = ...,
+    ) -> Device: ...
+    async def list_devices(
+        self,
+        db: AsyncSession,
+        *,
+        pack_id: str | None = ...,
+        platform_id: str | None = ...,
+        status: ChipStatus | None = ...,
+        host_id: uuid.UUID | None = ...,
+        identity_value: str | None = ...,
+        connection_target: str | None = ...,
+        device_type: DeviceType | None = ...,
+        connection_type: ConnectionType | None = ...,
+        os_version: str | None = ...,
+        search: str | None = ...,
+        hardware_health_status: HardwareHealthStatus | None = ...,
+        hardware_telemetry_state: HardwareTelemetryState | None = ...,
+        tags: dict[str, str] | None = ...,
+        sort_by: str = ...,
+        sort_dir: str = ...,
+    ) -> list[Device]: ...
+    async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]: ...
+    async def list_devices_paginated(
+        self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
+    ) -> tuple[list[Device], int]: ...
+    async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int: ...
+    async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None: ...
+    async def update_device(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        data: DevicePatch | DeviceVerificationUpdate,
+        *,
+        enforce_patch_contract: bool = ...,
+    ) -> Device | None: ...
+    async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
