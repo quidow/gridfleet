@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -6,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
-from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
@@ -21,7 +22,11 @@ from tests.helpers import test_event_bus as event_bus
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
@@ -77,14 +82,23 @@ async def test_force_release_clears_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    real_deferred_stop = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=_settings,
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    )
+    result = await real_deferred_stop.handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
     )
     assert result == "deferred"
 
     fake_grid = make_fake_grid()
     test_release = RunReleaseService(
-        publisher=event_bus, settings=_settings, grid=fake_grid, device_state=DeviceStateService(publisher=event_bus)
+        publisher=event_bus,
+        settings=_settings,
+        grid=fake_grid,
+        device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=real_deferred_stop,
     )
     test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
     await test_lifecycle.force_release(db_session, run.id)
@@ -157,28 +171,27 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
 
     call_log: list[str] = []
 
-    real_helper = run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended
-
     class SpyReleaseService(RunReleaseService):
         async def release_devices(self, *args: object, **kwargs: object) -> list:
             result = await super().release_devices(*args, **kwargs)  # type: ignore[misc]
             call_log.append("release_done")
             return result  # type: ignore[return-value]
 
-    async def _spy_helper(*args: object, **kwargs: object) -> object:
+    async def _spy_deferred_stop(db: object, device: object) -> object:
         call_log.append("helper")
-        return await real_helper(*args, **kwargs)
+
+    spy_deferred_stop = AsyncMock()
+    spy_deferred_stop.complete_deferred_stop_if_session_ended = _spy_deferred_stop
 
     fake_grid_2 = make_fake_grid()
     spy_release = SpyReleaseService(
-        publisher=event_bus, settings=_settings, grid=fake_grid_2, device_state=DeviceStateService(publisher=event_bus)
+        publisher=event_bus,
+        settings=_settings,
+        grid=fake_grid_2,
+        device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=spy_deferred_stop,
     )
     spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)
-    monkeypatch.setattr(
-        run_lifecycle_release.lifecycle_policy,
-        "complete_deferred_stop_if_session_ended",
-        _spy_helper,
-    )
 
     await spy_lifecycle.force_release(db_session, run.id)
 

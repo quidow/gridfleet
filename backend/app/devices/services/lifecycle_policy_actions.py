@@ -48,22 +48,347 @@ if TYPE_CHECKING:
     from app.runs.models import TestRun
 
 
+class LifecyclePolicyActionsService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def complete_auto_stop(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        device = await _lock_for_state_write(db, device)
+        run, entry = await self.exclude_run_if_needed(db, device, reason=reason, source=source)
+        await self.handle_node_crash(
+            db,
+            device,
+            source=source,
+            reason=reason,
+        )
+        next_state["stop_pending"] = False
+        next_state["stop_pending_reason"] = None
+        next_state["stop_pending_since"] = None
+        await self.record_auto_stopped_incident(
+            db,
+            device,
+            next_state,
+            run=run,
+            reason=reason,
+            source=source,
+            detail=detail,
+        )
+        await db.commit()
+        return run, entry
+
+    async def handle_node_crash(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> None:
+        """Record a node crash and stop the underlying Appium node.
+
+        Triggered by ``complete_auto_stop`` on ``connectivity_lost`` and
+        ``health_check_fail`` in addition to genuine Appium crashes.
+
+        Operational-state semantics:
+        - Node running: writes desired_state='stopped' and lets the reconciler stop
+          the agent process.
+        - Node not running or absent (``else`` branch): forces ``offline`` directly
+          using the already-held row lock; no re-acquisition needed.
+
+        ``node_crash`` and ``device.crashed`` events fire only when the device is
+        not already offline — a device that is already offline cannot crash again.
+        The ``failure_event_type`` event always fires for observability.
+        """
+        device = await _lock_for_state_write(db, device)
+        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+        await record_event(
+            db,
+            device.id,
+            failure_event_type(source),
+            {"source": source, "reason": reason},
+        )
+        if device.operational_state != DeviceOperationalState.offline:
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_crash,
+                {"error": reason, "source": source, "will_restart": True},
+            )
+            if self._publisher is not None:
+                queue_device_crashed_event(
+                    db,
+                    device_id=str(device.id),
+                    device_name=device.name,
+                    source=source,
+                    reason=reason,
+                    will_restart=True,
+                    process=None,
+                    severity="warning",
+                    publisher=self._publisher,
+                )
+
+        if node is not None and node.observed_running:
+            await _MACHINE.transition(
+                device,
+                TransitionEvent.AUTO_STOP_EXECUTED,
+                reason=f"Node crash recorded ({source}): {reason}",
+                publisher=self._publisher,
+            )
+            await register_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                intents=_crash_intents(device, source=source, reason=reason),
+                reason=reason,
+            )
+            await db.commit()
+        else:
+            await _MACHINE.transition(
+                device,
+                TransitionEvent.AUTO_STOP_EXECUTED,
+                reason=f"Node crash recorded ({source}): {reason}",
+                publisher=self._publisher,
+            )
+            if node is not None:
+                await register_intents_and_reconcile(
+                    db,
+                    device_id=device.id,
+                    intents=_crash_intents(device, source=source, reason=reason),
+                    reason=reason,
+                )
+            await db.commit()
+
+    async def exclude_run_if_needed(
+        self, db: AsyncSession, device: Device, *, reason: str, source: str
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        """Exclude the device from its active run reservation and emit the
+        ``lifecycle_run_excluded`` incident.
+
+        Called only from genuine exclusion-worthy paths: ``complete_auto_stop``
+        (health failure) and the CI preparation-failure flow in
+        ``run_service``. Connectivity loss is intentionally NOT a caller — a
+        transient blip leaves the reservation entry intact (see D1).
+
+        Does NOT escalate the device into maintenance. Auto-escalation to
+        maintenance from health failures is intentionally absent — only three
+        paths flip ``hold`` to ``maintenance``: operator-driven UI actions,
+        ``report_preparation_failure`` (testkit pre-run signal). Callers that
+        need the device parked in maintenance must call
+        ``maintenance_service.enter_maintenance`` themselves.
+        """
+        run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
+        if run is None:
+            return None, entry
+
+        was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
+        run = await run_reservation_service.exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
+        if run is not None:
+            await register_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                intents=[
+                    IntentRegistration(
+                        source=f"health_failure:reservation:{device.id}",
+                        axis=RESERVATION,
+                        run_id=run.id,
+                        payload={
+                            "excluded": True,
+                            "priority": PRIORITY_HEALTH_FAILURE,
+                            "exclusion_reason": reason,
+                        },
+                    )
+                ],
+                reason=reason,
+            )
+            await revoke_intents_and_reconcile(db, device_id=device.id, sources=[f"run:{run.id}"], reason=reason)
+        if run is not None and not was_excluded:
+            await lifecycle_incident_service.record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_run_excluded,
+                summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                reason=reason,
+                detail=f"Excluded from {run.name}",
+                source=source,
+                run_id=run.id,
+                run_name=run.name,
+            )
+        return run, entry
+
+    async def restore_run_if_needed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        run: TestRun | None,
+        entry: DeviceReservation | None,
+        *,
+        reason: str,
+        source: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        if (
+            run is None
+            or run.state in TERMINAL_STATES
+            or not run_reservation_service.reservation_entry_is_excluded(entry)
+        ):
+            return run, entry
+
+        run = await run_reservation_service.restore_device_to_run(db, device.id, commit=False)
+        entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
+        if run is not None:
+            await revoke_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                sources=[f"health_failure:reservation:{device.id}"],
+                reason=reason,
+            )
+            await register_intents_and_reconcile(
+                db,
+                device_id=device.id,
+                intents=[
+                    IntentRegistration(
+                        source=f"run:{run.id}",
+                        axis=GRID_ROUTING,
+                        run_id=run.id,
+                        payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
+                    )
+                ],
+                reason=reason,
+            )
+            await lifecycle_incident_service.record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_run_restored,
+                summary_state=DeviceLifecyclePolicySummaryState.idle,
+                reason=reason,
+                detail=f"Restored to {run.name}",
+                source=source,
+                run_id=run.id,
+                run_name=run.name,
+            )
+        return run, entry
+
+    async def record_recovery_suppressed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        source: str,
+        reason: str,
+        suppression_reason: str,
+        run: TestRun | None,
+    ) -> bool:
+        device = await _lock_for_state_write(db, device)
+        # Re-derive the working state from the freshly-locked device so that
+        # fields written by concurrent committers (between our caller's read and
+        # our write) are not clobbered.  The caller is expected to either persist
+        # its intent eagerly (when an intermediate commit may release the row lock,
+        # e.g. handle_health_failure → complete_auto_stop) or hold the lock
+        # continuously through to this call (e.g. attempt_auto_recovery).
+        # Either way, by the time we re-lock here the row reflects the caller's
+        # intent plus any concurrent committers' updates.
+        fresh = policy_state(device)
+        # Dedup: a device parked in suppressed state with the same reason emits
+        # nothing new. ``device_connectivity_loop`` retries suppressed devices on
+        # every iteration; without this guard the events table and ``last_action_at``
+        # churn every few minutes for the lifetime of the suppression.
+        already_suppressed = (
+            fresh.get("last_action") == "recovery_suppressed"
+            and fresh.get("recovery_suppressed_reason") == suppression_reason
+        )
+        if already_suppressed:
+            return False
+        fresh["recovery_suppressed_reason"] = suppression_reason
+        set_action(fresh, "recovery_suppressed")
+        write_state(device, fresh)
+        await lifecycle_incident_service.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_recovery_suppressed,
+            summary_state=DeviceLifecyclePolicySummaryState.suppressed,
+            reason=suppression_reason,
+            detail=reason,
+            source=source,
+            run_id=run.id if run is not None else None,
+            run_name=run.name if run is not None else None,
+        )
+        await db.commit()
+        return False
+
+    async def record_auto_stopped_incident(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        run: TestRun | None,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> None:
+        device = await _lock_for_state_write(db, device)
+        # Preserve any state mutations committed by concurrent writers between
+        # our caller's read and our write.  ``stop_pending*`` is the only field
+        # this call site explicitly resets, so we carry that forward from
+        # ``next_state`` (the caller already set it to ``False``).
+        fresh = policy_state(device)
+        fresh["stop_pending"] = next_state.get("stop_pending", False)
+        fresh["stop_pending_reason"] = next_state.get("stop_pending_reason")
+        fresh["stop_pending_since"] = next_state.get("stop_pending_since")
+        set_action(fresh, "auto_stopped")
+        write_state(device, fresh)
+        await lifecycle_incident_service.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_auto_stopped,
+            summary_state=(
+                DeviceLifecyclePolicySummaryState.excluded
+                if run is not None
+                else DeviceLifecyclePolicySummaryState.recoverable
+            ),
+            reason=reason,
+            detail=detail,
+            source=source,
+            run_id=run.id if run is not None else None,
+            run_name=run.name if run is not None else None,
+        )
+
+    async def record_ci_preparation_failed(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> None:
+        """Persist the CI preparation failure onto the lifecycle_policy_state JSON.
+
+        The caller is responsible for holding the device row lock and for the
+        surrounding maintenance / event / commit work; this helper only owns the
+        JSON column write so ``run_service`` does not need to import
+        ``write_state`` or other low-level lifecycle_policy_state primitives.
+        """
+        device = await _lock_for_state_write(db, device)
+        fresh = policy_state(device)
+        fresh["last_failure_source"] = source
+        fresh["last_failure_reason"] = reason
+        clear_deferred_stop(fresh)
+        fresh["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
+        clear_backoff(fresh)
+        set_action(fresh, "ci_preparation_failed")
+        write_state(device, fresh)
+
+    async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
+        stmt = (
+            select(func.count())
+            .select_from(Session)
+            .where(
+                Session.device_id == device_id,
+                Session.status == SessionStatus.running,
+                Session.ended_at.is_(None),
+            )
+        )
+        result = await db.execute(stmt)
+        return bool(result.scalar_one())
+
+
 async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
-
-
-async def has_running_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    stmt = (
-        select(func.count())
-        .select_from(Session)
-        .where(
-            Session.device_id == device_id,
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
-        )
-    )
-    result = await db.execute(stmt)
-    return bool(result.scalar_one())
 
 
 def failure_event_type(source: str) -> DeviceEventType:
@@ -100,117 +425,6 @@ def reset_reconciler_start_failure_state(device: Device) -> None:
         write_state(device, fresh)
 
 
-async def exclude_run_if_needed(
-    db: AsyncSession,
-    device: Device,
-    *,
-    reason: str,
-    source: str,
-) -> tuple[TestRun | None, DeviceReservation | None]:
-    """Exclude the device from its active run reservation and emit the
-    ``lifecycle_run_excluded`` incident.
-
-    Called only from genuine exclusion-worthy paths: ``complete_auto_stop``
-    (health failure) and the CI preparation-failure flow in
-    ``run_service``. Connectivity loss is intentionally NOT a caller — a
-    transient blip leaves the reservation entry intact (see D1).
-
-    Does NOT escalate the device into maintenance. Auto-escalation to
-    maintenance from health failures is intentionally absent — only three
-    paths flip ``hold`` to ``maintenance``: operator-driven UI actions,
-    ``report_preparation_failure`` (testkit pre-run signal). Callers that
-    need the device parked in maintenance must call
-    ``maintenance_service.enter_maintenance`` themselves.
-    """
-    run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
-    if run is None:
-        return None, entry
-
-    was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-    run = await run_reservation_service.exclude_device_from_run(db, device.id, reason=reason, commit=False)
-    entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
-    if run is not None:
-        await register_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"health_failure:reservation:{device.id}",
-                    axis=RESERVATION,
-                    run_id=run.id,
-                    payload={
-                        "excluded": True,
-                        "priority": PRIORITY_HEALTH_FAILURE,
-                        "exclusion_reason": reason,
-                    },
-                )
-            ],
-            reason=reason,
-        )
-        await revoke_intents_and_reconcile(db, device_id=device.id, sources=[f"run:{run.id}"], reason=reason)
-    if run is not None and not was_excluded:
-        await lifecycle_incident_service.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_run_excluded,
-            summary_state=DeviceLifecyclePolicySummaryState.excluded,
-            reason=reason,
-            detail=f"Excluded from {run.name}",
-            source=source,
-            run_id=run.id,
-            run_name=run.name,
-        )
-    return run, entry
-
-
-async def restore_run_if_needed(
-    db: AsyncSession,
-    device: Device,
-    run: TestRun | None,
-    entry: DeviceReservation | None,
-    *,
-    reason: str,
-    source: str,
-) -> tuple[TestRun | None, DeviceReservation | None]:
-    if run is None or run.state in TERMINAL_STATES or not run_reservation_service.reservation_entry_is_excluded(entry):
-        return run, entry
-
-    run = await run_reservation_service.restore_device_to_run(db, device.id, commit=False)
-    entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
-    if run is not None:
-        await revoke_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            sources=[f"health_failure:reservation:{device.id}"],
-            reason=reason,
-        )
-        await register_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"run:{run.id}",
-                    axis=GRID_ROUTING,
-                    run_id=run.id,
-                    payload={"accepting_new_sessions": True, "priority": PRIORITY_RUN_ROUTING},
-                )
-            ],
-            reason=reason,
-        )
-        await lifecycle_incident_service.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_run_restored,
-            summary_state=DeviceLifecyclePolicySummaryState.idle,
-            reason=reason,
-            detail=f"Restored to {run.name}",
-            source=source,
-            run_id=run.id,
-            run_name=run.name,
-        )
-    return run, entry
-
-
 def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRegistration]:
     del reason
     if source == "connectivity":
@@ -236,231 +450,3 @@ def _crash_intents(device: Device, *, source: str, reason: str) -> list[IntentRe
             payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
         ),
     ]
-
-
-async def handle_node_crash(
-    db: AsyncSession,
-    device: Device,
-    *,
-    source: str,
-    reason: str,
-    publisher: EventPublisher,
-) -> None:
-    """Record a node crash and stop the underlying Appium node.
-
-    Triggered by ``complete_auto_stop`` on ``connectivity_lost`` and
-    ``health_check_fail`` in addition to genuine Appium crashes.
-
-    Operational-state semantics:
-    - Node running: writes desired_state='stopped' and lets the reconciler stop
-      the agent process.
-    - Node not running or absent (``else`` branch): forces ``offline`` directly
-      using the already-held row lock; no re-acquisition needed.
-
-    ``node_crash`` and ``device.crashed`` events fire only when the device is
-    not already offline — a device that is already offline cannot crash again.
-    The ``failure_event_type`` event always fires for observability.
-    """
-    device = await _lock_for_state_write(db, device)
-    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    await record_event(
-        db,
-        device.id,
-        failure_event_type(source),
-        {"source": source, "reason": reason},
-    )
-    if device.operational_state != DeviceOperationalState.offline:
-        await record_event(
-            db,
-            device.id,
-            DeviceEventType.node_crash,
-            {"error": reason, "source": source, "will_restart": True},
-        )
-        if publisher is not None:
-            queue_device_crashed_event(
-                db,
-                device_id=str(device.id),
-                device_name=device.name,
-                source=source,
-                reason=reason,
-                will_restart=True,
-                process=None,
-                severity="warning",
-                publisher=publisher,
-            )
-
-    if node is not None and node.observed_running:
-        await _MACHINE.transition(
-            device,
-            TransitionEvent.AUTO_STOP_EXECUTED,
-            reason=f"Node crash recorded ({source}): {reason}",
-            publisher=publisher,
-        )
-        await register_intents_and_reconcile(
-            db,
-            device_id=device.id,
-            intents=_crash_intents(device, source=source, reason=reason),
-            reason=reason,
-        )
-        await db.commit()
-    else:
-        await _MACHINE.transition(
-            device,
-            TransitionEvent.AUTO_STOP_EXECUTED,
-            reason=f"Node crash recorded ({source}): {reason}",
-            publisher=publisher,
-        )
-        if node is not None:
-            await register_intents_and_reconcile(
-                db,
-                device_id=device.id,
-                intents=_crash_intents(device, source=source, reason=reason),
-                reason=reason,
-            )
-        await db.commit()
-
-
-async def record_recovery_suppressed(
-    db: AsyncSession,
-    device: Device,
-    next_state: dict[str, Any],
-    *,
-    source: str,
-    reason: str,
-    suppression_reason: str,
-    run: TestRun | None,
-) -> bool:
-    device = await _lock_for_state_write(db, device)
-    # Re-derive the working state from the freshly-locked device so that
-    # fields written by concurrent committers (between our caller's read and
-    # our write) are not clobbered.  The caller is expected to either persist
-    # its intent eagerly (when an intermediate commit may release the row lock,
-    # e.g. handle_health_failure → complete_auto_stop) or hold the lock
-    # continuously through to this call (e.g. attempt_auto_recovery).
-    # Either way, by the time we re-lock here the row reflects the caller's
-    # intent plus any concurrent committers' updates.
-    fresh = policy_state(device)
-    # Dedup: a device parked in suppressed state with the same reason emits
-    # nothing new. ``device_connectivity_loop`` retries suppressed devices on
-    # every iteration; without this guard the events table and ``last_action_at``
-    # churn every few minutes for the lifetime of the suppression.
-    already_suppressed = (
-        fresh.get("last_action") == "recovery_suppressed"
-        and fresh.get("recovery_suppressed_reason") == suppression_reason
-    )
-    if already_suppressed:
-        return False
-    fresh["recovery_suppressed_reason"] = suppression_reason
-    set_action(fresh, "recovery_suppressed")
-    write_state(device, fresh)
-    await lifecycle_incident_service.record_lifecycle_incident(
-        db,
-        device,
-        DeviceEventType.lifecycle_recovery_suppressed,
-        summary_state=DeviceLifecyclePolicySummaryState.suppressed,
-        reason=suppression_reason,
-        detail=reason,
-        source=source,
-        run_id=run.id if run is not None else None,
-        run_name=run.name if run is not None else None,
-    )
-    await db.commit()
-    return False
-
-
-async def record_auto_stopped_incident(
-    db: AsyncSession,
-    device: Device,
-    next_state: dict[str, Any],
-    *,
-    run: TestRun | None,
-    reason: str,
-    source: str,
-    detail: str,
-) -> None:
-    device = await _lock_for_state_write(db, device)
-    # Preserve any state mutations committed by concurrent writers between
-    # our caller's read and our write.  ``stop_pending*`` is the only field
-    # this call site explicitly resets, so we carry that forward from
-    # ``next_state`` (the caller already set it to ``False``).
-    fresh = policy_state(device)
-    fresh["stop_pending"] = next_state.get("stop_pending", False)
-    fresh["stop_pending_reason"] = next_state.get("stop_pending_reason")
-    fresh["stop_pending_since"] = next_state.get("stop_pending_since")
-    set_action(fresh, "auto_stopped")
-    write_state(device, fresh)
-    await lifecycle_incident_service.record_lifecycle_incident(
-        db,
-        device,
-        DeviceEventType.lifecycle_auto_stopped,
-        summary_state=(
-            DeviceLifecyclePolicySummaryState.excluded
-            if run is not None
-            else DeviceLifecyclePolicySummaryState.recoverable
-        ),
-        reason=reason,
-        detail=detail,
-        source=source,
-        run_id=run.id if run is not None else None,
-        run_name=run.name if run is not None else None,
-    )
-
-
-async def complete_auto_stop(
-    db: AsyncSession,
-    device: Device,
-    next_state: dict[str, Any],
-    *,
-    reason: str,
-    source: str,
-    detail: str,
-    publisher: EventPublisher,
-) -> tuple[TestRun | None, DeviceReservation | None]:
-    device = await _lock_for_state_write(db, device)
-    run, entry = await exclude_run_if_needed(db, device, reason=reason, source=source)
-    await handle_node_crash(
-        db,
-        device,
-        source=source,
-        reason=reason,
-        publisher=publisher,
-    )
-    next_state["stop_pending"] = False
-    next_state["stop_pending_reason"] = None
-    next_state["stop_pending_since"] = None
-    await record_auto_stopped_incident(
-        db,
-        device,
-        next_state,
-        run=run,
-        reason=reason,
-        source=source,
-        detail=detail,
-    )
-    await db.commit()
-    return run, entry
-
-
-async def record_ci_preparation_failed(
-    db: AsyncSession,
-    device: Device,
-    *,
-    reason: str,
-    source: str,
-) -> None:
-    """Persist the CI preparation failure onto the lifecycle_policy_state JSON.
-
-    The caller is responsible for holding the device row lock and for the
-    surrounding maintenance / event / commit work; this helper only owns the
-    JSON column write so ``run_service`` does not need to import
-    ``write_state`` or other low-level lifecycle_policy_state primitives.
-    """
-    device = await _lock_for_state_write(db, device)
-    fresh = policy_state(device)
-    fresh["last_failure_source"] = source
-    fresh["last_failure_reason"] = reason
-    clear_deferred_stop(fresh)
-    fresh["recovery_suppressed_reason"] = MAINTENANCE_HOLD_SUPPRESSION_REASON
-    clear_backoff(fresh)
-    set_action(fresh, "ci_preparation_failed")
-    write_state(device, fresh)

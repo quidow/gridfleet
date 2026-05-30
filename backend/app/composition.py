@@ -32,6 +32,8 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
@@ -71,6 +73,7 @@ from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.runs.services_container import RunServices
+from app.sessions import service_viability as session_viability
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
 from app.sessions.services_container import SessionServices
@@ -148,12 +151,17 @@ def compose_app(
     )
 
     device_state_svc = DeviceStateService(publisher=bus)
+    lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus)
+    lifecycle_policy_svc = LifecyclePolicyService(publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc)
+    session_viability.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(publisher=bus)
     crud_svc = DeviceCrudService(settings=settings_svc)
-    connectivity_svc = ConnectivityService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
+    connectivity_svc = ConnectivityService(
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, lifecycle_policy=lifecycle_policy_svc
+    )
     groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
     bulk_svc = BulkOperationsService(
         publisher=bus,
@@ -163,11 +171,21 @@ def compose_app(
         crud=crud_svc,
     )
 
-    run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
+    run_release = RunReleaseService(
+        publisher=bus,
+        settings=settings_svc,
+        grid=grid_svc,
+        device_state=device_state_svc,
+        deferred_stop=lifecycle_policy_svc,
+    )
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
     run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
     run_failure = RunFailureService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, maintenance=maintenance_svc
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        maintenance=maintenance_svc,
+        lifecycle_actions=lifecycle_actions_svc,
     )
     run_query = RunQueryService()
 
@@ -185,7 +203,12 @@ def compose_app(
         preparation=verification_preparation_svc,
         execution=verification_execution_svc,
     )
-    recovery_runner_svc = RecoveryJobService(session_factory=session_factory, publisher=bus, settings=settings_svc)
+    recovery_runner_svc = RecoveryJobService(
+        session_factory=session_factory,
+        publisher=bus,
+        settings=settings_svc,
+        lifecycle_policy=lifecycle_policy_svc,
+    )
     verification_svc = VerificationService()
 
     return AppServices(
@@ -226,8 +249,10 @@ def compose_app(
             session_factory=session_factory,
         ),
         sessions=SessionServices(
-            crud=SessionCrudService(publisher=bus, device_state=device_state_svc),
-            sync=SessionSyncService(publisher=bus, settings=settings_svc, grid=grid_svc),
+            crud=SessionCrudService(publisher=bus, device_state=device_state_svc, lifecycle=lifecycle_policy_svc),
+            sync=SessionSyncService(
+                publisher=bus, settings=settings_svc, grid=grid_svc, lifecycle=lifecycle_policy_svc
+            ),
             settings=settings_svc,
             grid=grid_svc,
             session_factory=session_factory,
@@ -277,6 +302,7 @@ def compose_app(
                 pool=http_pool,
                 circuit_breaker=circuit_breaker,
                 grid=grid_svc,
+                recovery_control=lifecycle_policy_svc,
             ),
             heartbeat=HeartbeatService(
                 publisher=bus,

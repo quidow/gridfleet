@@ -66,7 +66,9 @@ async def test_session_listing_cursor_filters_and_payload_helpers(
     db_session.add_all(sessions)
     await db_session.commit()
 
-    crud = SessionCrudService(publisher=Mock(), device_state=DeviceStateService(publisher=Mock()))
+    crud = SessionCrudService(
+        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
+    )
     listed, total = await crud.list_sessions(
         db_session,
         status=SessionStatus.error,
@@ -133,7 +135,9 @@ async def test_register_and_finish_session_guard_paths(
         operational_state=DeviceOperationalState.available,
     )
 
-    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+    crud = SessionCrudService(
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
+    )
 
     with pytest.raises(ValueError, match="No matching device"):
         await crud.register_session(
@@ -174,18 +178,10 @@ async def test_register_and_finish_session_guard_paths(
     live = Session(session_id="finish-device", device_id=device.id, status=SessionStatus.running)
     db_session.add(live)
     await db_session.commit()
-    monkeypatch.setattr(
-        "app.sessions.service.lifecycle_policy.handle_session_finished",
-        AsyncMock(),
-    )
     finished = await crud.mark_session_finished(db_session, "finish-device")
     assert finished is not None
     assert finished.ended_at is not None
 
-    monkeypatch.setattr(
-        "app.sessions.service.lifecycle_policy.complete_deferred_stop_if_session_ended",
-        AsyncMock(),
-    )
     run = TestRun(name="terminal reservation", requirements=[], state=RunState.active)
     db_session.add(run)
     await db_session.flush()
@@ -220,7 +216,9 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     db.commit = AsyncMock()
     monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
 
-    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+    crud = SessionCrudService(
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
+    )
     monkeypatch.setattr(crud, "get_session", AsyncMock(return_value=session))
 
     result = await crud.mark_session_finished(db, "vanished-device")
@@ -234,7 +232,9 @@ async def test_session_service_missing_and_insert_conflict_guards(monkeypatch: p
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     monkeypatch.setattr(session_service, "_lock_resolved_device_for_session", AsyncMock(return_value=None))
 
-    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+    crud = SessionCrudService(
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
+    )
     monkeypatch.setattr(crud, "get_session", AsyncMock(side_effect=[None, None, None, None]))
 
     with pytest.raises(ValueError, match="Session insert conflicted"):
@@ -262,9 +262,12 @@ async def test_register_terminal_session_with_device_runs_deferred_stop_completi
         AsyncMock(return_value=(None, None)),
     )
     complete = AsyncMock()
-    monkeypatch.setattr(session_service.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
+    mock_lifecycle = AsyncMock()
+    mock_lifecycle.complete_deferred_stop_if_session_ended = complete
 
-    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+    crud = SessionCrudService(
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=mock_lifecycle
+    )
     session = await crud.register_session(
         db_session,
         session_id="terminal-device-session-id",
@@ -364,11 +367,11 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         AsyncMock(return_value=SimpleNamespace(readiness_state="ready")),
     )
     monkeypatch.setattr(
-        "app.devices.services.service.lifecycle_policy.build_lifecycle_policy",
+        "app.devices.services.service.lifecycle_policy_summary.build_lifecycle_policy",
         AsyncMock(return_value=object()),
     )
     monkeypatch.setattr(
-        "app.devices.services.service.lifecycle_policy.build_lifecycle_policy_summary",
+        "app.devices.services.service.lifecycle_policy_summary.build_lifecycle_policy_summary",
         lambda _policy: {"state": "healthy"},
     )
     monkeypatch.setattr(

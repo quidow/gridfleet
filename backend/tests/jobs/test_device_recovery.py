@@ -12,6 +12,8 @@ from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
@@ -78,39 +80,39 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
         max_attempts=1,
     )
 
-    with patch(
-        "app.devices.services.lifecycle_policy.attempt_auto_recovery",
-        new=AsyncMock(return_value=True),
-    ) as recover:
-        _sf = _session_factory(db_session)
-        worked = await DurableJobService(
+    recover = AsyncMock(return_value=True)
+    mock_lifecycle_policy = AsyncMock()
+    mock_lifecycle_policy.attempt_auto_recovery = recover
+    _sf = _session_factory(db_session)
+    worked = await DurableJobService(
+        session_factory=_sf,
+        publisher=AsyncMock(),
+        settings=settings_service,
+        circuit_breaker=AsyncMock(),
+        verification_runner=VerificationRunnerService(
             session_factory=_sf,
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=AsyncMock(),
-            verification_runner=VerificationRunnerService(
-                session_factory=_sf,
+            preparation=VerificationPreparationService(
+                settings=settings_service,
+                circuit_breaker=AsyncMock(),
+                crud=DeviceCrudService(settings=settings_service),
+            ),
+            execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                preparation=VerificationPreparationService(
-                    settings=settings_service,
-                    circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service),
-                ),
-                execution=VerificationExecutionService(
-                    publisher=AsyncMock(),
-                    settings=settings_service,
-                    circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service),
-                ),
+                crud=DeviceCrudService(settings=settings_service),
             ),
-            recovery_runner=RecoveryJobService(
-                session_factory=_sf,
-                publisher=AsyncMock(),
-                settings=settings_service,
-            ),
-        ).run_pending_once()
+        ),
+        recovery_runner=RecoveryJobService(
+            session_factory=_sf,
+            publisher=AsyncMock(),
+            settings=settings_service,
+            lifecycle_policy=mock_lifecycle_policy,
+        ),
+    ).run_pending_once()
 
     assert worked is True
     recover.assert_awaited_once()
@@ -219,6 +221,11 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 session_factory=_sf,
                 publisher=AsyncMock(),
                 settings=settings_service,
+                lifecycle_policy=LifecyclePolicyService(
+                    publisher=AsyncMock(),
+                    settings=settings_service,
+                    actions=LifecyclePolicyActionsService(publisher=AsyncMock()),
+                ),
             ),
         ).run_pending_once()
 
@@ -282,6 +289,7 @@ async def test_device_recovery_job_completed_when_device_missing(
             session_factory=_sf,
             publisher=AsyncMock(),
             settings=settings_service,
+            lifecycle_policy=AsyncMock(),
         ),
     ).run_pending_once()
 

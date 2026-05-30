@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
@@ -135,6 +135,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         pool=Mock(),
         circuit_breaker=Mock(),
         grid=Mock(),
+        recovery_control=AsyncMock(),
     )._process_node_health(
         db_session,
         node,

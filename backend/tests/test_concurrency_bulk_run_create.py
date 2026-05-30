@@ -1,7 +1,7 @@
 # backend/tests/test_concurrency_bulk_run_create.py
 import asyncio
 from collections.abc import AsyncGenerator
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -106,7 +106,10 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 verification=VerificationService(),
                 crud=_crud_svc,
                 connectivity=ConnectivityService(
-                    publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+                    publisher=event_bus,
+                    settings=settings_service,
+                    circuit_breaker=test_circuit_breaker,
+                    lifecycle_policy=AsyncMock(),
                 ),
                 publisher=event_bus,
                 settings=settings_service,
@@ -149,6 +152,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 settings=settings_service,
                 grid=grid,
                 device_state=DeviceStateService(publisher=event_bus),
+                deferred_stop=AsyncMock(),
             )
             run_lifecycle = RunLifecycleService(
                 publisher=event_bus, settings=settings_service, grid=grid, release=run_release
@@ -163,6 +167,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 maintenance=MaintenanceService(publisher=event_bus),
+                lifecycle_actions=AsyncMock(),
             )
             run_query = RunQueryService()
             return RunServices(

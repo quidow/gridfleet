@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from app.core.pagination import CursorPage
     from app.devices.models import Device, DeviceHold, DeviceOperationalState
+    from app.devices.models.reservation import DeviceReservation
     from app.events.catalog import EventSeverity
     from app.runs.models import RunState, TestRun
     from app.runs.schemas import ReservedDeviceInfo, RunCreate, SessionCounts
@@ -134,3 +135,29 @@ class MaintenanceWriter(Protocol):
         allow_reserved: bool = ...,
         maintenance_reason: str = ...,
     ) -> Device: ...
+
+
+@runtime_checkable
+class DeviceDeferredStop(Protocol):
+    async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> object: ...
+
+
+@runtime_checkable
+class DeviceLifecycleFailureWriter(Protocol):
+    async def exclude_run_if_needed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        source: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]: ...
+
+    async def record_ci_preparation_failed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        source: str,
+    ) -> None: ...

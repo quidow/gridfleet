@@ -169,7 +169,9 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_pr_crud,
-            connectivity=ConnectivityService(publisher=_pr_publisher, settings=_pr_settings, circuit_breaker=Mock()),
+            connectivity=ConnectivityService(
+                publisher=_pr_publisher, settings=_pr_settings, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+            ),
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,

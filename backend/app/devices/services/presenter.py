@@ -11,7 +11,7 @@ from app.devices.models import DeviceIntent
 from app.devices.schemas.device import DeviceReservationRead
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
 from app.devices.services.intent_evaluator import (
     evaluate_grid_routing,
@@ -58,8 +58,10 @@ class DevicePresenterService:
             reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
         reservation, reservation_entry = reservation_context
         readiness = await device_readiness.assess_device_async(db, device)
-        policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
-        lifecycle_summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
+        policy = await lifecycle_policy_summary.build_lifecycle_policy(
+            db, device, reservation_context=reservation_context
+        )
+        lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
         await _ensure_appium_node_loaded(db, device)
         if health_summary is None:
             health_summary = device_health.build_public_summary(device)

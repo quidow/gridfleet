@@ -71,7 +71,8 @@ async def test_health_failure_intent_payload_shape(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import handle_health_failure
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     device = await create_device(
         db_session,
@@ -88,7 +89,12 @@ async def test_health_failure_intent_payload_shape(
     device.appium_node = node
     await db_session.commit()
 
-    result = await handle_health_failure(
+    _svc = LifecyclePolicyService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=Mock()),
+    )
+    result = await _svc.handle_health_failure(
         db_session,
         device,
         source="device_checks",
@@ -173,6 +179,7 @@ async def test_cooldown_intent_payload_shape(
         settings=_test_settings,
         circuit_breaker=_test_cb,
         maintenance=MaintenanceService(publisher=event_bus),
+        lifecycle_actions=AsyncMock(),
     )
     cooldown_reason = "flaky connection detected"
     _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(
@@ -272,7 +279,8 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import attempt_auto_recovery
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     device = await create_device(
         db_session,
@@ -300,13 +308,15 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await LifecyclePolicyService(
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            actions=LifecyclePolicyActionsService(publisher=event_bus),
+        ).attempt_auto_recovery(
             db_session,
             device,
             source="device_connectivity",
             reason="Node went offline",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 

@@ -89,7 +89,9 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_1,
-            connectivity=ConnectivityService(publisher=_svc_pub_1, settings=_svc_settings_1, circuit_breaker=Mock()),
+            connectivity=ConnectivityService(
+                publisher=_svc_pub_1, settings=_svc_settings_1, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+            ),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
@@ -139,7 +141,9 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_2,
-            connectivity=ConnectivityService(publisher=_svc_pub_2, settings=_svc_settings_2, circuit_breaker=Mock()),
+            connectivity=ConnectivityService(
+                publisher=_svc_pub_2, settings=_svc_settings_2, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+            ),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
@@ -166,6 +170,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         pool=Mock(),
         circuit_breaker=Mock(),
         grid=Mock(),
+        recovery_control=AsyncMock(),
     )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(
@@ -211,6 +216,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         pool=Mock(),
         circuit_breaker=Mock(),
         grid=fake_grid,
+        recovery_control=AsyncMock(),
     ).check_nodes(db)
 
     db.commit.assert_awaited_once()
@@ -251,7 +257,9 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_3,
-            connectivity=ConnectivityService(publisher=_svc_pub_3, settings=_svc_settings_3, circuit_breaker=Mock()),
+            connectivity=ConnectivityService(
+                publisher=_svc_pub_3, settings=_svc_settings_3, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+            ),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
@@ -347,7 +355,9 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_4,
-            connectivity=ConnectivityService(publisher=_svc_pub_4, settings=_svc_settings_4, circuit_breaker=Mock()),
+            connectivity=ConnectivityService(
+                publisher=_svc_pub_4, settings=_svc_settings_4, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+            ),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,

@@ -67,6 +67,14 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             with state_write_guard.bypass():
                 observed_node.active_connection_target = "127.0.0.1:4723"
 
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+
+    svc = LifecyclePolicyService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=Mock()),
+    )
     with (
         patch.object(
             lifecycle_policy.session_viability,
@@ -78,13 +86,11 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             new=AsyncMock(side_effect=_register_then_mark_running),
         ),
     ):
-        await lifecycle_policy.attempt_auto_recovery(
+        await svc.attempt_auto_recovery(
             db_session,
             device,
             source="health_recovery",
             reason="test",
-            settings=FakeSettingsReader({}),
-            publisher=Mock(),
         )
 
     intent = (
@@ -180,7 +186,6 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
     The revoke happens at every recovery success branch, including the
     "already healthy" early-return.
     """
-    from app.devices.services import lifecycle_policy
     from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST
 
     device = await create_device(
@@ -212,13 +217,19 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
     )
     await db_session.commit()
 
-    await lifecycle_policy.attempt_auto_recovery(
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+
+    svc = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    )
+    await svc.attempt_auto_recovery(
         db_session,
         device,
         source="device_checks",
         reason="Device reconnected and passed health checks",
-        settings=FakeSettingsReader({}),
-        publisher=event_bus,
     )
 
     leftover = (
@@ -253,14 +264,13 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     db_session.add(node)
     await db_session.commit()
 
-    from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
-    await lifecycle_policy_actions.handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
         db_session,
         device,
         source="connectivity_lost",
         reason="agent disconnected",
-        publisher=event_bus,
     )
 
     events = (
@@ -301,14 +311,13 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     db_session.add(node)
     await db_session.commit()
 
-    from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
-    await lifecycle_policy_actions.handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
         db_session,
         device,
         source="health_check_fail",
         reason="probe failed",
-        publisher=event_bus,
     )
 
     events = (

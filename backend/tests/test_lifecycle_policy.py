@@ -23,14 +23,11 @@ from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
-from app.devices.services.lifecycle_policy import (
-    DeferredStopOutcome,
-    attempt_auto_recovery,
+from app.devices.services.lifecycle_policy import DeferredStopOutcome, LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
-    clear_pending_auto_stop_on_recovery,
-    handle_health_failure,
-    handle_session_finished,
 )
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
@@ -39,6 +36,21 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+def _make_svc(
+    publisher: object = None,
+    settings: object = None,
+) -> LifecyclePolicyService:
+    from unittest.mock import Mock
+
+    pub = publisher if publisher is not None else Mock()
+    svc_settings = settings if settings is not None else FakeSettingsReader({})
+    return LifecyclePolicyService(
+        publisher=pub,  # type: ignore[arg-type]
+        settings=svc_settings,  # type: ignore[arg-type]
+        actions=LifecyclePolicyActionsService(publisher=pub),  # type: ignore[arg-type]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +101,7 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
     db_session.add(device)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_svc(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
     )
 
@@ -122,7 +134,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
     db_session.add(Session(session_id="sess-policy-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_svc(publisher=event_bus).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
     )
 
@@ -177,7 +189,7 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
     db_session.add(run)
     await db_session.commit()
 
-    await handle_health_failure(
+    await _make_svc(publisher=event_bus).handle_health_failure(
         db_session, device, source="device_checks", reason="Health probe failed", publisher=event_bus
     )
 
@@ -237,14 +249,14 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     db_session.add_all([run, session])
     await db_session.commit()
 
-    await handle_health_failure(
+    await _make_svc(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="Health probe failed", publisher=Mock()
     )
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
     await db_session.commit()
 
-    stopped = await handle_session_finished(db_session, device, publisher=Mock())
+    stopped = await _make_svc(publisher=Mock()).handle_session_finished(db_session, device)
 
     await db_session.refresh(device)
     await db_session.refresh(run, ["device_reservations"])
@@ -282,13 +294,11 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
         }
     await db_session.commit()
 
-    recovered = await attempt_auto_recovery(
+    recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
         db_session,
         device,
         source="device_checks",
         reason="Healthy again",
-        settings=FakeSettingsReader({}),
-        publisher=event_bus,
     )
 
     assert recovered is False
@@ -340,6 +350,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    svc = _make_svc(publisher=Mock())
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
@@ -354,13 +365,11 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=Mock(),
         )
 
     await db_session.refresh(run, ["device_reservations"])
@@ -432,13 +441,11 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
             "checked_by": "recovery",
         },
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     assert recovered is True
@@ -496,13 +503,11 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
             "checked_by": "recovery",
         },
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     assert recovered is True
@@ -598,6 +603,7 @@ async def test_recovery_rejoin_publishes_availability_event(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    svc = _make_svc(publisher=event_bus)
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
@@ -612,13 +618,11 @@ async def test_recovery_rejoin_publishes_availability_event(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     assert recovered is True
@@ -674,13 +678,11 @@ async def test_recovery_reloads_device_before_starting_node(
 
     register_recovery = AsyncMock()
     with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
-        recovered = await attempt_auto_recovery(
+        recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     assert recovered is False
@@ -734,6 +736,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    svc = _make_svc(publisher=Mock())
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
@@ -748,13 +751,11 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=Mock(),
         )
 
     await db_session.refresh(run, ["device_reservations"])
@@ -796,6 +797,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
+    svc = _make_svc(publisher=event_bus)
     with (
         patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
         patch(
@@ -819,13 +821,11 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
             ],
         ) as mock_probe,
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Healthy again",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     await db_session.refresh(device)
@@ -859,7 +859,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_svc(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
     )
     assert result == "deferred"
@@ -874,7 +874,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
+    stopped = await _make_svc(publisher=Mock()).handle_session_finished(db_session, reloaded)
 
     await db_session.refresh(reloaded)
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
@@ -932,8 +932,8 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
         ),
     ):
         recovery_started_at = datetime.now(UTC)
-        recovered = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="Healthy again", settings=settings, publisher=Mock()
+        recovered = await _make_svc(publisher=Mock(), settings=settings).attempt_auto_recovery(
+            db_session, device, source="device_checks", reason="Healthy again"
         )
 
     assert recovered is False
@@ -1064,7 +1064,7 @@ async def test_clear_pending_auto_stop_on_recovery_drops_intent_and_records_inci
     db_session.add(device)
     await db_session.commit()
 
-    cleared = await clear_pending_auto_stop_on_recovery(
+    cleared = await _make_svc().clear_pending_auto_stop_on_recovery(
         db_session,
         device,
         source="node_health",
@@ -1120,7 +1120,7 @@ async def test_clear_pending_auto_stop_on_recovery_no_op_when_not_pending(
     db_session.add(device)
     await db_session.commit()
 
-    cleared = await clear_pending_auto_stop_on_recovery(
+    cleared = await _make_svc().clear_pending_auto_stop_on_recovery(
         db_session,
         device,
         source="node_health",
@@ -1189,7 +1189,7 @@ async def test_handle_session_finished_drops_intent_when_healthy(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    stopped = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     await db_session.commit()
     # CLEARED_RECOVERED: intent dropped, no auto-stop. Callers must use the
     # explicit outcome (not "not AUTO_STOPPED") to decide whether to restore
@@ -1257,7 +1257,7 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
+    stopped = await _make_svc(publisher=Mock()).handle_session_finished(db_session, reloaded)
     await db_session.commit()
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 
@@ -1315,7 +1315,7 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    stopped = await handle_session_finished(db_session, reloaded, publisher=Mock())
+    stopped = await _make_svc(publisher=Mock()).handle_session_finished(db_session, reloaded)
     await db_session.commit()
     assert stopped is DeferredStopOutcome.AUTO_STOPPED
 
@@ -1350,7 +1350,7 @@ async def test_handle_session_finished_returns_no_pending_when_intent_absent(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
 
@@ -1392,7 +1392,7 @@ async def test_handle_session_finished_clears_stale_session_running_suppression(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
     await db_session.refresh(reloaded)
@@ -1479,7 +1479,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     await db_session.commit()
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     assert outcome is DeferredStopOutcome.NO_PENDING
 
     await db_session.refresh(node)
@@ -1534,7 +1534,7 @@ async def test_handle_session_finished_returns_running_session_exists_under_lock
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     assert outcome is DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
     await db_session.refresh(reloaded)
@@ -1610,7 +1610,7 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
 
     reloaded = await db_session.get(Device, device.id)
     assert reloaded is not None
-    outcome = await handle_session_finished(db_session, reloaded, publisher=event_bus)
+    outcome = await _make_svc(publisher=event_bus).handle_session_finished(db_session, reloaded)
     await db_session.commit()
     assert outcome is DeferredStopOutcome.CLEARED_RECOVERED
 
@@ -1625,11 +1625,10 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
 def test_lifecycle_run_import_order_is_acyclic() -> None:
     import importlib
 
-    lifecycle_policy = importlib.import_module("app.devices.services.lifecycle_policy")
-    lifecycle_policy_summary = importlib.import_module("app.devices.services.lifecycle_policy_summary")
+    lifecycle_policy_summary_mod = importlib.import_module("app.devices.services.lifecycle_policy_summary")
     run_service = importlib.import_module("app.runs.service")
 
-    assert lifecycle_policy.build_lifecycle_policy is lifecycle_policy_summary.build_lifecycle_policy
+    assert hasattr(lifecycle_policy_summary_mod, "build_lifecycle_policy")
     assert hasattr(run_service, "reservation_entry_is_excluded")
 
 
@@ -1651,9 +1650,12 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
     suppressed = AsyncMock(return_value="suppressed")
-    monkeypatch.setattr(lifecycle_policy_module, "record_recovery_suppressed", suppressed)
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
 
-    assert await handle_health_failure(db, device, source="checks", reason="bad", publisher=event_bus) == "suppressed"
+    svc = _make_svc(publisher=event_bus)
+    assert (
+        await svc.handle_health_failure(db, device, source="checks", reason="bad", publisher=event_bus) == "suppressed"
+    )
 
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
@@ -1662,47 +1664,28 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     )
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    mock_has_running = AsyncMock(return_value=False)
+    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", mock_has_running)
 
     with state_write_guard.bypass():
         device.hold = None
     device.recovery_allowed = False
-    assert (
-        await attempt_auto_recovery(
-            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        == "suppressed"
-    )
+    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     device.recovery_allowed = True
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
-    assert (
-        await attempt_auto_recovery(
-            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        == "suppressed"
-    )
+    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     with state_write_guard.bypass():
         device.hold = None
-    lifecycle_policy_module.has_running_client_session.return_value = True
-    assert (
-        await attempt_auto_recovery(
-            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        == "suppressed"
-    )
+    mock_has_running.return_value = True
+    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
-    lifecycle_policy_module.has_running_client_session.return_value = False
+    mock_has_running.return_value = False
     with state_write_guard.bypass():
         device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
-    assert (
-        await attempt_auto_recovery(
-            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        is False
-    )
+    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
     db.commit.assert_awaited()
 
 
@@ -1728,7 +1711,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     )
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: node)
-    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
@@ -1746,9 +1729,11 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         AsyncMock(return_value={"status": "passed"}),
     )
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
-    monkeypatch.setattr(lifecycle_policy_module, "restore_run_if_needed", AsyncMock(return_value=(run, excluded_entry)))
+    mock_restore_run = AsyncMock(return_value=(run, excluded_entry))
+    monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
-    monkeypatch.setattr(lifecycle_policy_module, "set_hold", AsyncMock())
+    mock_set_hold = AsyncMock()
+    monkeypatch.setattr(lifecycle_policy_module, "set_hold", mock_set_hold)
     monkeypatch.setattr(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
@@ -1758,14 +1743,10 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         AsyncMock(),
     )
 
-    assert (
-        await attempt_auto_recovery(
-            db, device, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        is True
-    )
-    lifecycle_policy_module.restore_run_if_needed.assert_awaited_once()
-    lifecycle_policy_module.set_hold.assert_awaited_with(
+    svc = _make_svc(publisher=event_bus)
+    assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
+    mock_restore_run.assert_awaited_once()
+    mock_set_hold.assert_awaited_with(
         device,
         DeviceHold.reserved,
         reason="Rejoined run after checks: reconnected",
@@ -1801,12 +1782,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     machine = SimpleNamespace(transition=AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "_MACHINE", machine)
 
-    assert (
-        await attempt_auto_recovery(
-            db, busy, source="checks", reason="reconnected", settings=FakeSettingsReader({}), publisher=event_bus
-        )
-        is True
-    )
+    assert await svc.attempt_auto_recovery(db, busy, source="checks", reason="reconnected") is True
     machine.transition.assert_awaited()
     assert machine.transition.await_args.args[1] is lifecycle_policy_module.TransitionEvent.AUTO_STOP_EXECUTED
 
@@ -1831,7 +1807,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
     monkeypatch.setattr(lifecycle_policy_module, "policy_state", lambda _device: {})
     monkeypatch.setattr(lifecycle_policy_module, "write_state", lambda _device, state: setattr(_device, "state", state))
-    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
         "get_device_reservation_with_entry",
@@ -1849,13 +1825,11 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     )
 
     assert (
-        await attempt_auto_recovery(
+        await _make_svc(publisher=event_bus).attempt_auto_recovery(
             db,
             device,  # type: ignore[arg-type]
             source="device_checks",
             reason="reconnected",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
         is False
     )
@@ -1904,7 +1878,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         lambda target, state: setattr(target, "lifecycle_policy_state", dict(state)),
     )
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
-    monkeypatch.setattr(lifecycle_policy_module, "has_running_client_session", AsyncMock(return_value=False))
+    monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", AsyncMock(return_value=False))
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
         "get_device_reservation_with_entry",
@@ -1949,21 +1923,21 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         AsyncMock(side_effect=observe_node_running),
     )
 
+    settings_with_grid = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 5,
+            "general.lifecycle_recovery_backoff_max_sec": 20,
+            "general.lifecycle_recovery_review_threshold": 5,
+            "grid.hub_url": "http://grid:4444",
+        }
+    )
+    svc = _make_svc(publisher=event_bus, settings=settings_with_grid)
     assert (
-        await attempt_auto_recovery(
+        await svc.attempt_auto_recovery(
             db,
             device,
             source="device_checks",
             reason="reconnected",
-            settings=FakeSettingsReader(
-                {
-                    "general.lifecycle_recovery_backoff_base_sec": 5,
-                    "general.lifecycle_recovery_backoff_max_sec": 20,
-                    "general.lifecycle_recovery_review_threshold": 5,
-                    "grid.hub_url": "http://grid:4444",
-                }
-            ),
-            publisher=event_bus,
         )
         is True
     )  # type: ignore[arg-type]
@@ -1987,23 +1961,23 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         "run_session_viability_probe",
         AsyncMock(return_value={"status": "failed", "error": "probe failed"}),
     )
-    monkeypatch.setattr(lifecycle_policy_module, "complete_auto_stop", AsyncMock())
+    mock_complete_auto_stop = AsyncMock()
+    monkeypatch.setattr(LifecyclePolicyActionsService, "complete_auto_stop", mock_complete_auto_stop)
     monkeypatch.setattr(
         lifecycle_policy_module,
         "_set_backoff",
         lambda state, *, settings: "2026-05-13T12:00:00+00:00",
     )
 
+    svc2 = _make_svc(publisher=event_bus)
     assert (
-        await attempt_auto_recovery(
+        await svc2.attempt_auto_recovery(
             db2,
             failing,
             source="device_checks",
             reason="still bad",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
         is False
     )  # type: ignore[arg-type]
     assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
-    lifecycle_policy_module.complete_auto_stop.assert_awaited_once()
+    mock_complete_auto_stop.assert_awaited_once()

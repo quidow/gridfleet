@@ -31,6 +31,8 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
@@ -395,7 +397,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             verification=VerificationService(),
             crud=_crud_svc,
             connectivity=ConnectivityService(
-                publisher=test_event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+                publisher=test_event_bus,
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+                lifecycle_policy=LifecyclePolicyService(
+                    publisher=test_event_bus,
+                    settings=settings_service,
+                    actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+                ),
             ),
             publisher=test_event_bus,
             settings=settings_service,
@@ -433,14 +442,22 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
+        _lifecycle_policy_svc = LifecyclePolicyService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+        )
         return SessionServices(
             crud=SessionCrudService(
-                publisher=test_event_bus, device_state=DeviceStateService(publisher=test_event_bus)
+                publisher=test_event_bus,
+                device_state=DeviceStateService(publisher=test_event_bus),
+                lifecycle=_lifecycle_policy_svc,
             ),
             sync=SessionSyncService(
                 publisher=test_event_bus,
                 settings=settings_service,
                 grid=GridService(settings=settings_service),
+                lifecycle=_lifecycle_policy_svc,
             ),
             settings=settings_service,
             grid=GridService(settings=settings_service),
@@ -454,11 +471,17 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         grid = GridService(settings=settings_service)
+        _lifecycle_policy_svc_runs = LifecyclePolicyService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+        )
         run_release = RunReleaseService(
             publisher=test_event_bus,
             settings=settings_service,
             grid=grid,
             device_state=DeviceStateService(publisher=test_event_bus),
+            deferred_stop=_lifecycle_policy_svc_runs,
         )
         run_lifecycle = RunLifecycleService(
             publisher=test_event_bus, settings=settings_service, grid=grid, release=run_release
@@ -473,6 +496,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(publisher=test_event_bus),
+            lifecycle_actions=LifecyclePolicyActionsService(publisher=test_event_bus),
         )
         run_query = RunQueryService()
         return RunServices(

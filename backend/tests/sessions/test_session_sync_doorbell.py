@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from app.sessions.service_sync import SessionSyncLoop, SessionSyncService
 from app.sessions.services_container import SessionServices
@@ -34,6 +34,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
         publisher=event_bus,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         grid=make_fake_grid(_GRID_UP_EMPTY),
+        lifecycle=AsyncMock(),
     )
 
     async def fake_sync(db: object) -> None:
@@ -79,6 +80,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
         publisher=event_bus,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         grid=make_fake_grid(_GRID_UP_EMPTY),
+        lifecycle=AsyncMock(),
     )
 
     async def fake_sync(db: object) -> None:

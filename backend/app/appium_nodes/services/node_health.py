@@ -27,7 +27,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.event import record_event
 from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_types import (
@@ -45,6 +44,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.protocols import DeviceRecoveryControl
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -83,12 +83,14 @@ class NodeHealthService:
         pool: AgentHttpPool,
         circuit_breaker: CircuitBreakerProtocol,
         grid: GridServiceProtocol,
+        recovery_control: DeviceRecoveryControl,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._pool = pool
         self._circuit_breaker = circuit_breaker
         self._grid = grid
+        self._recovery_control = recovery_control
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
@@ -290,7 +292,7 @@ class NodeHealthService:
         if healthy:
             if locked_node.consecutive_health_failures > 0:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
-                await lifecycle_policy.record_control_action(
+                await self._recovery_control.record_control_action(
                     db,
                     device,
                     action="node_monitor_recovered",
@@ -301,7 +303,7 @@ class NodeHealthService:
                 # describes the recovery; pass ``record_incident=False`` to avoid
                 # publishing a duplicate ``lifecycle_recovered`` event for the
                 # same recovery moment.
-                await lifecycle_policy.clear_pending_auto_stop_on_recovery(
+                await self._recovery_control.clear_pending_auto_stop_on_recovery(
                     db,
                     device,
                     source="node_health",

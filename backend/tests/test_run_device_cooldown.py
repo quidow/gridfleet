@@ -563,7 +563,10 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     await db_session.commit()
 
     await ConnectivityService(
-        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)
@@ -578,7 +581,8 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
 
 async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
     """attempt_auto_recovery must not restart a node while cooldown is active."""
-    from app.devices.services.lifecycle_policy import attempt_auto_recovery
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.hosts.models import Host
 
     host = await db_session.get(Host, default_host_id)
@@ -618,13 +622,15 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     db_session.add(reservation)
     await db_session.commit()
 
-    recovered = await attempt_auto_recovery(
+    recovered = await LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    ).attempt_auto_recovery(
         db_session,
         device,
         source="device_checks",
         reason="Healthy again",
-        settings=FakeSettingsReader({}),
-        publisher=event_bus,
     )
     assert recovered is False
 
@@ -694,7 +700,10 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
     await db_session.commit()
 
     await ConnectivityService(
-        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Exclusion should be cleared
@@ -747,7 +756,10 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
     await db_session.commit()
 
     await ConnectivityService(
-        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+        publisher=Mock(),
+        settings=FakeSettingsReader(),
+        circuit_breaker=Mock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Stale released row should be untouched

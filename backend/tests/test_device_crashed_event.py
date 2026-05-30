@@ -76,18 +76,17 @@ async def test_handle_node_crash_queues_device_crashed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     from app.devices import locking as device_locking
-    from app.devices.services.lifecycle_policy_actions import handle_node_crash
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     _, device = await seed_host_and_device(db_session, identity="lifecycle-crash-1")
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
         db_session,
         locked,
         source="connectivity_lost",
         reason="ADB disconnect",
-        publisher=event_bus,
     )
     await db_session.commit()
     await settle_after_commit_tasks()
@@ -108,7 +107,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     is already in offline state."""
     from app.devices import locking as device_locking
     from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-    from app.devices.services.lifecycle_policy_actions import handle_node_crash
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     _, device = await seed_host_and_device(
         db_session, identity="already-offline-crash", operational_state=DeviceOperationalState.offline
@@ -116,12 +115,11 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
         db_session,
         locked,
         source="session_viability",
         reason="Recovery probe failed",
-        publisher=event_bus,
     )
     await db_session.commit()
     await settle_after_commit_tasks()

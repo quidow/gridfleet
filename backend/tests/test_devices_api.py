@@ -1211,7 +1211,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
             },
         ),
         patch(
-            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": "session_viability",
@@ -1286,7 +1286,7 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
             return_value=None,
         ),
         patch(
-            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": None,
@@ -1358,7 +1358,7 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
             return_value=None,
         ),
         patch(
-            "app.devices.routers.control.lifecycle_policy.build_lifecycle_policy",
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
             new_callable=AsyncMock,
             return_value={
                 "last_failure_source": None,

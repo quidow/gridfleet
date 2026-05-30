@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -21,7 +21,11 @@ from tests.helpers import test_event_bus as event_bus
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=AsyncMock(),
 )
 
 pytestmark = pytest.mark.asyncio

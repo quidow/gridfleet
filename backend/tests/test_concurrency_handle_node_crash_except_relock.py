@@ -9,8 +9,8 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import lifecycle_policy_actions as lifecycle_policy_actions
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from tests.helpers import create_device
 
@@ -73,12 +73,11 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
     async with db_session_maker() as session:
         target = await session.get(Device, device_id)
         assert target is not None
-        await lifecycle_policy_actions.handle_node_crash(
+        await LifecyclePolicyActionsService(publisher=Mock()).handle_node_crash(
             session,
             target,
             source="test",
             reason="simulated failure",
-            publisher=Mock(),
         )
 
     assert device_lock_count >= 1

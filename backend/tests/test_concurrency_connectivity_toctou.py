@@ -60,7 +60,10 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(
-                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    publisher=event_bus,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
+                    lifecycle_policy=AsyncMock(),
                 ).check_connectivity(session)
 
     async def racer() -> None:
@@ -113,6 +116,9 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             await asyncio.wait_for(racer_done.wait(), timeout=2.0)
         return await original_lock(db, did, **kw)
 
+    mock_lifecycle_policy = AsyncMock()
+    mock_lifecycle_policy.note_connectivity_loss = note_connectivity_loss
+
     async def runner() -> None:
         with (
             patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
@@ -120,16 +126,15 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             patch("app.devices.services.connectivity._uses_endpoint_health", new=AsyncMock(return_value=False)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_health.update_device_checks", new=AsyncMock()),
-            patch(
-                "app.devices.services.connectivity.lifecycle_policy.note_connectivity_loss",
-                new=note_connectivity_loss,
-            ),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(
-                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    publisher=event_bus,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
+                    lifecycle_policy=mock_lifecycle_policy,
                 ).check_connectivity(session)
 
     async def racer() -> None:

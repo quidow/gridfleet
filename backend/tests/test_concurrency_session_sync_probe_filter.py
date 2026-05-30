@@ -75,7 +75,9 @@ async def test_session_sync_does_not_persist_probe_sessions(
     fake_grid.get_status = AsyncMock(return_value=fake_status)
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
+    )
     await svc.sync(db_session)
 
     sessions = (
@@ -127,7 +129,9 @@ async def test_session_sync_does_persist_real_session(
     fake_grid.get_status = AsyncMock(return_value=fake_status)
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
+    )
     await svc.sync(db_session)
 
     sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()

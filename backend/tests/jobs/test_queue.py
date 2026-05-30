@@ -54,6 +54,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
             session_factory=sf,
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
+            lifecycle_policy=AsyncMock(),
         ),
     )
 

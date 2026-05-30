@@ -57,6 +57,9 @@ from sqlalchemy import select
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -106,7 +109,12 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
         async with db_session_maker() as session:
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
-            await lifecycle_policy.handle_health_failure(
+            svc = LifecyclePolicyService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                actions=LifecyclePolicyActionsService(publisher=event_bus),
+            )
+            await svc.handle_health_failure(
                 session,
                 device_obj,
                 source=source,
@@ -184,20 +192,18 @@ async def test_concurrent_health_failure_stale_overwrite(
     # Track whether the barrier was actually reached.
     barrier_entered = False
 
-    # Import at point-of-use so we can patch correctly.
-    from app.devices.services import lifecycle_policy_actions as lpa
-
     # We need to pause writer A between its current_state construction and its
     # write_state call.  The most natural injection point is to wrap
     # ``record_auto_stopped_incident`` (called at the end of complete_auto_stop)
     # since it runs right before the final commit.
     #
-    # record_auto_stopped_incident is async, so we can patch it
-    # with an async wrapper that inserts the barrier for the first call.
-    original_record_auto_stopped = lpa.record_auto_stopped_incident
+    # record_auto_stopped_incident is now a method on LifecyclePolicyActionsService,
+    # so we patch it at the class level so all instances are affected.
+    original_record_auto_stopped = LifecyclePolicyActionsService.record_auto_stopped_incident
     first_call_done = False
 
     async def barrier_record_auto_stopped(
+        self: LifecyclePolicyActionsService,
         db: AsyncSession,
         device_arg: Device,
         next_state: dict[str, Any],
@@ -216,15 +222,22 @@ async def test_concurrent_health_failure_stale_overwrite(
             await b_has_committed.wait()
             barrier_entered = True
         await original_record_auto_stopped(
-            db, device_arg, next_state, run=run, reason=reason, source=source, detail=detail
+            self, db, device_arg, next_state, run=run, reason=reason, source=source, detail=detail
         )
 
     async def writer_a() -> None:
         async with db_session_maker() as session:
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
-            with patch.object(lpa, "record_auto_stopped_incident", barrier_record_auto_stopped):
-                await lifecycle_policy.handle_health_failure(
+            svc = LifecyclePolicyService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                actions=LifecyclePolicyActionsService(publisher=event_bus),
+            )
+            with patch.object(
+                LifecyclePolicyActionsService, "record_auto_stopped_incident", barrier_record_auto_stopped
+            ):
+                await svc.handle_health_failure(
                     session,
                     device_obj,
                     source="src-a",
@@ -239,7 +252,12 @@ async def test_concurrent_health_failure_stale_overwrite(
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
             # Writer B runs without any patching; commits normally.
-            await lifecycle_policy.handle_health_failure(
+            svc = LifecyclePolicyService(
+                publisher=event_bus,
+                settings=FakeSettingsReader({}),
+                actions=LifecyclePolicyActionsService(publisher=event_bus),
+            )
+            await svc.handle_health_failure(
                 session,
                 device_obj,
                 source="src-b",

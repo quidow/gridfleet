@@ -14,12 +14,9 @@ from app.devices.services import state_write_guard
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.events.protocols import EventPublisher
-
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
-from app.devices.services import lifecycle_policy
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
@@ -228,7 +225,10 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await ConnectivityService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
     assert delete_value.await_count == 1
@@ -265,7 +265,10 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
         await ConnectivityService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
@@ -307,7 +310,10 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             verification=VerificationService(),
             crud=_fake_crud,
             connectivity=ConnectivityService(
-                publisher=_fake_publisher, settings=_fake_settings, circuit_breaker=Mock()
+                publisher=_fake_publisher,
+                settings=_fake_settings,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
             ),
             publisher=_fake_publisher,
             settings=_fake_settings,
@@ -360,12 +366,14 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
     await db_session.commit()
 
     handle_health_failure_called = False
-    original_handler = lifecycle_policy.handle_health_failure
 
-    async def spy(db: AsyncSession, device: Device, *, source: str, reason: str, publisher: EventPublisher) -> str:
+    async def spy(*args: object, **kwargs: object) -> str:
         nonlocal handle_health_failure_called
         handle_health_failure_called = True
-        return await original_handler(db, device, source=source, reason=reason, publisher=publisher)
+        return ""
+
+    mock_lifecycle_policy = AsyncMock()
+    mock_lifecycle_policy.handle_health_failure = spy
 
     with (
         patch(
@@ -385,10 +393,12 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
             ),
         ),
         patch("app.devices.services.connectivity.assert_current_leader"),
-        patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
         await ConnectivityService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
         ).check_connectivity(db_session)
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

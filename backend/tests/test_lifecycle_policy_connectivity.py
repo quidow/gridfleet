@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
-from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import RunState, TestRun
@@ -65,8 +66,15 @@ async def test_connectivity_loss_keeps_device_in_run(
     db_session.add(run)
     await db_session.commit()
 
+    from tests.helpers import test_event_bus as event_bus
+
     locked = await device_locking.lock_device(db_session, device.id)
-    await lifecycle_policy.note_connectivity_loss(db_session, locked, reason="Heartbeat timeout")
+    svc = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=None,  # type: ignore[arg-type]
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    )
+    await svc.note_connectivity_loss(db_session, locked, reason="Heartbeat timeout")
     await db_session.commit()
 
     # Reservation entry must still be active (not excluded).

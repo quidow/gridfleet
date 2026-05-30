@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -73,7 +74,9 @@ async def test_orphan_hydration_writes_device_to_ended_session(
         await side.commit()
 
     info = {"device_id": str(device_id), "connection_target": device.connection_target}
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid())
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=AsyncMock()
+    )
     await svc._hydrate_orphan_session_row(db_session, sid, info)
 
     await db_session.commit()

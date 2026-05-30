@@ -1,26 +1,24 @@
+from __future__ import annotations
+
 import asyncio
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
-from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core import metrics_recorders as metrics
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
-from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
@@ -29,12 +27,19 @@ from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, Inc
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import legacy_label_for_audit
-from app.devices.services_container import DeviceServices
-from app.events.protocols import EventPublisher
 from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services_container import DeviceServices
+    from app.events.protocols import EventPublisher
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
@@ -276,11 +281,17 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher
 
 class ConnectivityService:
     def __init__(
-        self, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        lifecycle_policy: LifecyclePolicyService,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._lifecycle_policy = lifecycle_policy
 
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
@@ -367,7 +378,7 @@ class ConnectivityService:
                                 publisher=self._publisher,
                             )
                             if not was_offline:
-                                await lifecycle_policy.handle_health_failure(
+                                await self._lifecycle_policy.handle_health_failure(
                                     db,
                                     device,
                                     source="device_checks",
@@ -409,7 +420,7 @@ class ConnectivityService:
                             CONNECTIVITY_NAMESPACE,
                             device.identity_value,
                         )
-                        restored = await lifecycle_policy.attempt_auto_recovery(
+                        restored = await self._lifecycle_policy.attempt_auto_recovery(
                             db,
                             device,
                             source="device_checks",
@@ -418,8 +429,6 @@ class ConnectivityService:
                                 if previously_offline
                                 else "Startup recovery after healthy reconnect"
                             ),
-                            settings=self._settings,
-                            publisher=self._publisher,
                         )
                         if restored:
                             await control_plane_state_store.delete_value(
@@ -502,7 +511,7 @@ class ConnectivityService:
                                         CONNECTIVITY_NAMESPACE,
                                         device.identity_value,
                                     )
-                                    restored = await lifecycle_policy.attempt_auto_recovery(
+                                    restored = await self._lifecycle_policy.attempt_auto_recovery(
                                         db,
                                         device,
                                         source="device_checks",
@@ -511,8 +520,6 @@ class ConnectivityService:
                                             if previously_offline
                                             else "Startup recovery after healthy endpoint check"
                                         ),
-                                        settings=self._settings,
-                                        publisher=self._publisher,
                                     )
                                     if restored:
                                         await control_plane_state_store.delete_value(
@@ -559,7 +566,7 @@ class ConnectivityService:
                                 reason="Device disconnected",
                                 publisher=self._publisher,
                             )
-                            await lifecycle_policy.note_connectivity_loss(
+                            await self._lifecycle_policy.note_connectivity_loss(
                                 db, locked_device, reason="Device disconnected"
                             )
                             await control_plane_state_store.set_value(
@@ -589,7 +596,9 @@ class ConnectivityService:
                             reason="Device disconnected",
                             publisher=self._publisher,
                         )
-                        await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+                        await self._lifecycle_policy.note_connectivity_loss(
+                            db, locked_device, reason="Device disconnected"
+                        )
                         await control_plane_state_store.set_value(
                             db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
                         )
