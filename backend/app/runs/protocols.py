@@ -121,3 +121,15 @@ class DeviceStateWriter(Protocol):
         publish_event: bool = ...,
         severity: EventSeverity | None = ...,
     ) -> bool: ...
+
+
+@runtime_checkable
+class MaintenanceWriter(Protocol):
+    async def enter_maintenance(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        commit: bool = ...,
+        maintenance_reason: str = ...,
+    ) -> Device: ...
