@@ -1,6 +1,7 @@
 # backend/tests/test_concurrency_bulk_run_create.py
 import asyncio
 from collections.abc import AsyncGenerator
+from unittest.mock import Mock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -8,9 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
+from app.devices.dependencies import get_device_services
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
+from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -67,8 +75,33 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             async with db_session_maker() as session:
                 yield session
 
+        def _override_device_services() -> DeviceServices:
+            sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
+            _grid_svc = GridService(settings=settings_service)
+            _maintenance_svc = MaintenanceService(publisher=event_bus)
+            return DeviceServices(
+                state=DeviceStateService(publisher=event_bus),
+                fleet_capacity=FleetCapacityService(grid=_grid_svc),
+                data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
+                property_refresh=PropertyRefreshService(discovery=Mock()),
+                groups=DeviceGroupsService(publisher=event_bus, settings=settings_service),
+                maintenance=_maintenance_svc,
+                bulk=BulkOperationsService(
+                    publisher=event_bus,
+                    settings=settings_service,
+                    circuit_breaker=test_circuit_breaker,
+                    maintenance=_maintenance_svc,
+                ),
+                publisher=event_bus,
+                settings=settings_service,
+                grid=_grid_svc,
+                session_factory=sf,
+                circuit_breaker=test_circuit_breaker,
+            )
+
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_event_services] = _override_event_services
+        app.dependency_overrides[get_device_services] = _override_device_services
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post(
@@ -79,6 +112,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
         finally:
             app.dependency_overrides.pop(get_db, None)
             app.dependency_overrides.pop(get_event_services, None)
+            app.dependency_overrides.pop(get_device_services, None)
 
     async def run_create() -> int:
         async def override_get_db() -> AsyncGenerator[AsyncSession]:
