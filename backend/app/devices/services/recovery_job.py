@@ -28,6 +28,28 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class RecoveryJobService:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        publisher: EventPublisher,
+        settings: SettingsReader,
+    ) -> None:
+        self._session_factory = session_factory
+        self._publisher = publisher
+        self._settings = settings
+
+    async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None:
+        await run_device_recovery_job(
+            job_id,
+            payload,
+            session_factory=self._session_factory,
+            publisher=self._publisher,
+            settings=self._settings,
+        )
+
+
 async def run_device_recovery_job(
     job_id: str,
     payload: dict[str, Any],
