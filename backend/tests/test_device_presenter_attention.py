@@ -9,6 +9,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.services import presenter as device_presenter
 from app.devices.services import state_write_guard
+from app.devices.services.presenter import DevicePresenterService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 
@@ -33,7 +34,7 @@ async def test_serialize_device_includes_needs_attention(db_session: AsyncSessio
     await db_session.commit()
     await db_session.refresh(device)
 
-    payload = await device_presenter.serialize_device(db_session, device, settings=FakeSettingsReader({}))
+    payload = await DevicePresenterService(settings=FakeSettingsReader({})).serialize_device(db_session, device)
     assert payload["needs_attention"] is True
 
 
@@ -62,7 +63,7 @@ async def test_serialize_device_includes_extended_device_info(db_session: AsyncS
     await db_session.commit()
     await db_session.refresh(device)
 
-    payload = await device_presenter.serialize_device(db_session, device, settings=FakeSettingsReader({}))
+    payload = await DevicePresenterService(settings=FakeSettingsReader({})).serialize_device(db_session, device)
 
     assert payload["model"] == "Fire TV Stick 4K"
     assert payload["model_number"] == "AFTMM"
@@ -133,10 +134,11 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch) 
         appium_node=_node,
         lifecycle_policy_state={"last_action": "recovery_started"},
     )
-    monkeypatch.setattr(device_presenter, "serialize_device", AsyncMock(return_value={"id": "device"}))
+    svc = DevicePresenterService(settings=FakeSettingsReader({}))
+    monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))
     monkeypatch.setattr(device_presenter, "_serialize_orchestration", AsyncMock(return_value={"intents": []}))
 
-    payload = await device_presenter.serialize_device_detail(AsyncMock(), device, settings=FakeSettingsReader({}))
+    payload = await svc.serialize_device_detail(AsyncMock(), device)
 
     assert payload["appium_node"]["port"] == 4723
     assert payload["orchestration"] == {"intents": []}

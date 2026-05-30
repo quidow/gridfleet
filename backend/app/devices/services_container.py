@@ -14,10 +14,13 @@ if TYPE_CHECKING:
         BulkOperationsProtocol,
         DataCleanupProtocol,
         DeviceGroupsProtocol,
+        DevicePresenterProtocol,
         DeviceStateWriter,
         FleetCapacityProtocol,
         MaintenanceProtocol,
+        PortabilityExportProtocol,
         PropertyRefreshProtocol,
+        TestDataProtocol,
     )
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
@@ -32,6 +35,9 @@ class DeviceServices:
     groups: DeviceGroupsProtocol
     maintenance: MaintenanceProtocol
     bulk: BulkOperationsProtocol
+    presenter: DevicePresenterProtocol
+    test_data: TestDataProtocol
+    portability_export: PortabilityExportProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

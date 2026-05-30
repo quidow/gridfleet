@@ -104,3 +104,8 @@ class PackDiscoveryProtocol(Protocol):
         remove_identity_values: list[str],
         discovery_result: DiscoveryResult,
     ) -> DiscoveryConfirmResult: ...
+
+
+@runtime_checkable
+class DeviceSerializer(Protocol):
+    async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]: ...

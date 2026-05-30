@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -343,11 +343,17 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         "id": str(group_id),
         "devices": [],
     }
-    with patch("app.devices.routers.groups.device_presenter.serialize_device", new=AsyncMock(return_value={})):
-        assert await device_groups.get_group(group_id, db=db, device_services=ds_create) == {
-            "id": str(group_id),
-            "devices": [],
-        }
+    ds_create_with_presenter = SimpleNamespace(
+        groups=SimpleNamespace(
+            create_group=AsyncMock(return_value=SimpleNamespace(id=group_id)),
+            get_group=AsyncMock(return_value={"id": str(group_id), "devices": []}),
+        ),
+        presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
+    )
+    assert await device_groups.get_group(group_id, db=db, device_services=ds_create_with_presenter) == {
+        "id": str(group_id),
+        "devices": [],
+    }
 
     ds_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
@@ -432,6 +438,12 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     assert filters.tags == {"pool": "smoke"}
 
     _dev_ss = SimpleNamespace(service=FakeSettingsReader({}))
+    _mock_ds = SimpleNamespace(
+        presenter=SimpleNamespace(
+            serialize_device=AsyncMock(return_value={"id": str(device_id)}),
+            serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
+        )
+    )
     monkeypatch.setattr(devices_core.device_service, "list_devices_paginated", AsyncMock(return_value=([device], 1)))
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
     monkeypatch.setattr(devices_core.device_health, "build_public_summary", lambda device: {"healthy": True})
@@ -440,33 +452,34 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         "load_platform_label_map",
         AsyncMock(return_value={("pack", "platform"): "Android"}),
     )
-    monkeypatch.setattr(
-        devices_core.device_presenter, "serialize_device", AsyncMock(return_value={"id": str(device_id)})
+    listed = await devices_core.list_devices(
+        filters, limit=10, db=db, settings_services=_dev_ss, device_services=_mock_ds
     )
-    listed = await devices_core.list_devices(filters, limit=10, db=db, settings_services=_dev_ss)
     assert listed["total"] == 1
 
     monkeypatch.setattr(devices_core.device_service, "list_devices_by_filters", AsyncMock(return_value=[device]))
-    listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db, settings_services=_dev_ss)
+    listed_plain = await devices_core.list_devices(
+        filters, limit=None, offset=None, db=db, settings_services=_dev_ss, device_services=_mock_ds
+    )
     assert listed_plain == [{"id": str(device_id)}]
 
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(HTTPException):
-        await devices_core.get_device_by_connection_target("missing", db=db, settings_services=_dev_ss)
+        await devices_core.get_device_by_connection_target("missing", db=db, device_services=_mock_ds)
 
     monkeypatch.setattr(
         devices_core.device_service, "update_device", AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
     )
     with pytest.raises(HTTPException) as conflict:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert conflict.value.status_code == 409
     monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(side_effect=ValueError("bad")))
     with pytest.raises(HTTPException) as invalid:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert invalid.value.status_code == 422
     monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as missing:
-        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, settings_services=_dev_ss)
+        await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert missing.value.status_code == 404
 
     monkeypatch.setattr(devices_core.device_service, "delete_device", AsyncMock(return_value=False))
@@ -482,18 +495,12 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     db.execute = AsyncMock(return_value=found_result)
     monkeypatch.setattr(devices_core.platform_label_service, "load_platform_label", AsyncMock(return_value="Android"))
-    monkeypatch.setattr(
-        devices_core.device_presenter, "serialize_device", AsyncMock(return_value={"id": str(device_id)})
-    )
-    assert await devices_core.get_device_by_connection_target("target", db=db, settings_services=_dev_ss) == {
+    assert await devices_core.get_device_by_connection_target("target", db=db, device_services=_mock_ds) == {
         "id": str(device_id)
     }
 
     monkeypatch.setattr(devices_core, "get_device_or_404", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        devices_core.device_presenter, "serialize_device_detail", AsyncMock(return_value={"detail": str(device_id)})
-    )
-    assert await devices_core.get_device(device_id, db=db, settings_services=_dev_ss) == {"detail": str(device_id)}
+    assert await devices_core.get_device(device_id, db=db, device_services=_mock_ds) == {"detail": str(device_id)}
     monkeypatch.setattr(
         devices_core.capability_service, "get_device_capabilities", AsyncMock(return_value={"caps": True})
     )

@@ -29,7 +29,6 @@ from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
 from app.devices.services import health as device_health_service
 from app.devices.services import identity, lifecycle_policy
 from app.devices.services import intent as intent_service
-from app.devices.services import presenter as device_presenter
 from app.events.dependencies import EventServicesDep
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -55,26 +54,25 @@ async def enter_device_maintenance(
     body: DeviceMaintenanceUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
-    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await device_services.maintenance.enter_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
+    return await device_services.presenter.serialize_device(db, device)
 
 
 @router.post("/{device_id}/maintenance/exit", response_model=DeviceRead)
 async def exit_device_maintenance(
-    device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep, settings_services: SettingsServicesDep
+    device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
         device = await device_services.maintenance.exit_maintenance(db, device)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
+    return await device_services.presenter.serialize_device(db, device)
 
 
 @router.get("/{device_id}/config", response_model=DeviceConfigRead)

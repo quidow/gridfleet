@@ -90,7 +90,7 @@ def test_import_row_status_enum_values() -> None:
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession) -> None:
-    from app.devices.services.portability_export import build_export_bundle
+    from app.devices.services.portability_export import PortabilityExportService
     from tests.helpers import seed_host_and_device
 
     host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
@@ -99,10 +99,10 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
     device.device_config = {"foo": "bar"}
     await db_session.commit()
 
-    bundle = await build_export_bundle(db_session, source_instance="alpha")
+    bundle = await PortabilityExportService().build_export_bundle(db_session)
 
     assert bundle.schema_version == 1
-    assert bundle.source_instance == "alpha"
+    assert bundle.source_instance is None
     assert len(bundle.devices) == 1
     exported = bundle.devices[0]
     assert exported.pack_id == device.pack_id
@@ -124,11 +124,11 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSession) -> None:
-    from app.devices.services.portability_export import build_export_bundle
+    from app.devices.services.portability_export import PortabilityExportService
     from tests.helpers import seed_host_and_device
 
     await seed_host_and_device(db_session, identity="EXPORT-2")
-    bundle = await build_export_bundle(db_session)
+    bundle = await PortabilityExportService().build_export_bundle(db_session)
     exported = bundle.devices[0]
     dumped = exported.model_dump()
     forbidden = {

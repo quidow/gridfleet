@@ -19,7 +19,6 @@ from app.devices.schemas.group import (
     DeviceGroupUpdate,
     GroupMembershipUpdate,
 )
-from app.devices.services import presenter as device_presenter
 
 DEVICE_GROUP_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
 
@@ -54,8 +53,7 @@ async def get_group(group_id: uuid.UUID, db: DbDep, device_services: DeviceServi
 
     payload = dict(group)
     payload["devices"] = [
-        await device_presenter.serialize_device(db, device, settings=device_services.settings)
-        for device in group.get("devices", [])
+        await device_services.presenter.serialize_device(db, device) for device in group.get("devices", [])
     ]
     return payload
 

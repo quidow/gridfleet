@@ -15,9 +15,9 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.protocols import SettingsReader
 from app.core.type_defs import AsyncTaskFactory
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.exceptions import DeviceIdentityConflictError
 from app.devices.services import platform_label as platform_label_service
-from app.devices.services import presenter as device_presenter
 from app.events.dependencies import EventServicesDep
 from app.events.protocols import EventPublisher
 from app.hosts import service as host_service
@@ -244,7 +244,11 @@ async def list_hosts(
 
 @router.get("/{host_id}", response_model=HostDetail)
 async def get_host(
-    host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep, settings_services: SettingsServicesDep
+    host_id: uuid.UUID,
+    db: DbDep,
+    host_services: HostServicesDep,
+    device_services: DeviceServicesDep,
+    settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
     host = await host_services.crud.get_host(db, host_id)
     if host is None:
@@ -256,10 +260,9 @@ async def get_host(
         ((device.pack_id, device.platform_id) for device in host.devices),
     )
     payload["devices"] = [
-        await device_presenter.serialize_device(
+        await device_services.presenter.serialize_device(
             db,
             device,
-            settings=settings_services.service,
             platform_label=label_map.get((device.pack_id, device.platform_id)),
         )
         for device in host.devices

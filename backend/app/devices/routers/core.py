@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.models import Device as DeviceModel
 from app.devices.routers.helpers import get_device_or_404
@@ -28,9 +29,6 @@ from app.devices.services import (
 )
 from app.devices.services import (
     platform_label as platform_label_service,
-)
-from app.devices.services import (
-    presenter as device_presenter,
 )
 from app.devices.services import (
     service as device_service,
@@ -102,6 +100,7 @@ DeviceFiltersDep = Annotated[DeviceQueryFilters, Depends(build_device_query_filt
 async def list_devices(
     filters: DeviceFiltersDep,
     db: DbDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     limit: int | None = Query(None, ge=1, le=500),
     offset: int | None = Query(None, ge=0),
@@ -124,10 +123,9 @@ async def list_devices(
     serialized: list[dict[str, Any]] = []
     for device in devices:
         reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
-        payload = await device_presenter.serialize_device(
+        payload = await device_services.presenter.serialize_device(
             db,
             device,
-            settings=settings_services.service,
             reservation_context=reservation_context,
             health_summary=health_summary_map.get(str(device.id)),
             platform_label=label_map.get((device.pack_id, device.platform_id)),
@@ -145,9 +143,7 @@ async def list_devices(
 
 
 @router.get("/by-connection-target/{target}", response_model=DeviceRead)
-async def get_device_by_connection_target(
-    target: str, db: DbDep, settings_services: SettingsServicesDep
-) -> dict[str, Any]:
+async def get_device_by_connection_target(target: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     result = (
         await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
     ).scalar_one_or_none()
@@ -158,23 +154,20 @@ async def get_device_by_connection_target(
         pack_id=result.pack_id,
         platform_id=result.platform_id,
     )
-    return await device_presenter.serialize_device(
-        db, result, settings=settings_services.service, platform_label=platform_label
-    )
+    return await device_services.presenter.serialize_device(db, result, platform_label=platform_label)
 
 
 @router.get("/{device_id}", response_model=DeviceDetail)
-async def get_device(device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep) -> dict[str, Any]:
+async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db)
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=device.pack_id,
         platform_id=device.platform_id,
     )
-    return await device_presenter.serialize_device_detail(
+    return await device_services.presenter.serialize_device_detail(
         db,
         device,
-        settings=settings_services.service,
         health_summary=device_health.build_public_summary(device),
         platform_label=platform_label,
     )
@@ -188,7 +181,7 @@ async def device_capabilities(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]
 
 @router.patch("/{device_id}", response_model=DeviceRead)
 async def update_device(
-    device_id: uuid.UUID, data: DevicePatch, db: DbDep, settings_services: SettingsServicesDep
+    device_id: uuid.UUID, data: DevicePatch, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     try:
         device = await device_service.update_device(db, device_id, data)
@@ -198,7 +191,7 @@ async def update_device(
         raise HTTPException(status_code=422, detail=str(e)) from e
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    return await device_presenter.serialize_device(db, device, settings=settings_services.service)
+    return await device_services.presenter.serialize_device(db, device)
 
 
 @router.delete("/{device_id}", status_code=204)

@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.devices.models import Device
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import platform_label as platform_label_service
-from app.devices.services import presenter as device_presenter
 from app.devices.services import write as device_write
 from app.devices.services.identity import host_scoped_clause, is_host_scoped_identity, non_host_scoped_clause
 from app.devices.services.identity_conflicts import ensure_device_payload_identity_available
@@ -20,6 +19,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.models import Host
+    from app.packs.protocols import DeviceSerializer
 
 
 class PackDevicesFetcher(Protocol):
@@ -75,11 +75,13 @@ class PackDiscoveryService:
         agent_get_pack_device_properties: PackDevicePropertiesFetcher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
+        serializer: DeviceSerializer,
     ) -> None:
         self._agent_get_pack_devices = agent_get_pack_devices
         self._agent_get_pack_device_properties = agent_get_pack_device_properties
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._serializer = serializer
 
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]:
         raw = await self._agent_get_pack_devices(
@@ -280,9 +282,7 @@ class PackDiscoveryService:
         serialized_added_devices = []
         for device in added_devices:
             await db.refresh(device)
-            serialized_added_devices.append(
-                await device_presenter.serialize_device(db, device, settings=self._settings)
-            )
+            serialized_added_devices.append(await self._serializer.serialize_device(db, device))
 
         return DiscoveryConfirmResult(
             added=added,

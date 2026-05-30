@@ -320,13 +320,15 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     assert exc.value.status_code == 404
 
     with patch.object(devices_core.device_service, "update_device", new=AsyncMock(return_value=object())):
-        with patch.object(devices_core.device_presenter, "serialize_device", new=AsyncMock(return_value={"id": "ok"})):
-            assert await devices_core.update_device(
-                device_id,
-                devices_core.DevicePatch(name="new"),
-                db=object(),
-                settings_services=_mock_settings_svc(FakeSettingsReader({})),
-            ) == {"id": "ok"}
+        mock_ds_update = SimpleNamespace(
+            presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={"id": "ok"}))
+        )
+        assert await devices_core.update_device(
+            device_id,
+            devices_core.DevicePatch(name="new"),
+            db=object(),
+            device_services=mock_ds_update,
+        ) == {"id": "ok"}
 
     info = runs.ReservedDeviceInfo(
         device_id=str(device_id),
@@ -870,29 +872,23 @@ async def test_devices_test_data_router_paths() -> None:
     device = SimpleNamespace(id=device_id)
     payload = SimpleNamespace(root={"token": "abc"})
 
+    fake_test_data_svc = SimpleNamespace(
+        get_device_test_data=AsyncMock(return_value={"a": 1}),
+        replace_device_test_data=AsyncMock(return_value={"token": "abc"}),
+        merge_device_test_data=AsyncMock(return_value={"merged": True}),
+    )
+    fake_ds = SimpleNamespace(test_data=fake_test_data_svc)
     with (
         patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.test_data.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch(
-            "app.devices.routers.test_data.test_data_service.get_device_test_data",
-            new=AsyncMock(return_value={"a": 1}),
-        ),
-        patch(
-            "app.devices.routers.test_data.test_data_service.replace_device_test_data",
-            new=AsyncMock(return_value={"token": "abc"}),
-        ),
-        patch(
-            "app.devices.routers.test_data.test_data_service.merge_device_test_data",
-            new=AsyncMock(return_value={"merged": True}),
-        ),
     ):
-        assert await devices_test_data.get_test_data(device_id, db=object()) == {"a": 1}
-        assert await devices_test_data.replace_test_data(
-            device_id, payload, db=object(), events=SimpleNamespace(publisher=event_bus)
-        ) == {"token": "abc"}  # type: ignore[arg-type]
-        assert await devices_test_data.merge_test_data(
-            device_id, payload, db=object(), events=SimpleNamespace(publisher=event_bus)
-        ) == {"merged": True}  # type: ignore[arg-type]
+        assert await devices_test_data.get_test_data(device_id, db=object(), device_services=fake_ds) == {"a": 1}  # type: ignore[arg-type]
+        assert await devices_test_data.replace_test_data(device_id, payload, db=object(), device_services=fake_ds) == {
+            "token": "abc"
+        }  # type: ignore[arg-type]
+        assert await devices_test_data.merge_test_data(device_id, payload, db=object(), device_services=fake_ds) == {
+            "merged": True
+        }  # type: ignore[arg-type]
 
     audit_log = SimpleNamespace(
         id=uuid.uuid4(),
@@ -901,14 +897,10 @@ async def test_devices_test_data_router_paths() -> None:
         changed_by="admin",
         changed_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
-    with (
-        patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch(
-            "app.devices.routers.test_data.test_data_service.get_test_data_history",
-            new=AsyncMock(return_value=[audit_log]),
-        ),
-    ):
-        history = await devices_test_data.get_history(device_id, db=object())
+    fake_history_svc = SimpleNamespace(get_test_data_history=AsyncMock(return_value=[audit_log]))
+    fake_ds_history = SimpleNamespace(test_data=fake_history_svc)
+    with patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)):
+        history = await devices_test_data.get_history(device_id, db=object(), device_services=fake_ds_history)  # type: ignore[arg-type]
     assert history[0]["changed_at"] == "2026-05-01T00:00:00+00:00"
 
 
@@ -1229,8 +1221,11 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
             await call()
         assert exc.value.status_code == 404
 
+    _fake_ds_none: Any = SimpleNamespace(presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})))
     for call in (
-        lambda: hosts.get_host(host_id, db=object(), host_services=fake_hs_none, settings_services=mock_ss),
+        lambda: hosts.get_host(
+            host_id, db=object(), host_services=fake_hs_none, device_services=_fake_ds_none, settings_services=mock_ss
+        ),
         lambda: hosts.confirm_discovery(
             host_id,
             SimpleNamespace(add_identity_values=[], remove_identity_values=[]),
@@ -1244,15 +1239,19 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         assert exc.value.status_code == 404
 
     fake_hs_host = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=host)))
+    fake_ds_host: Any = SimpleNamespace(
+        presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={"id": str(device.id)}))
+    )
     with (
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
         patch(
             "app.hosts.router.platform_label_service.load_platform_label_map",
             new=AsyncMock(return_value={("pack", "android"): "Android"}),
         ),
-        patch("app.hosts.router.device_presenter.serialize_device", new=AsyncMock(return_value={"id": str(device.id)})),
     ):
-        detail = await hosts.get_host(host_id, db=object(), host_services=fake_hs_host, settings_services=mock_ss)
+        detail = await hosts.get_host(
+            host_id, db=object(), host_services=fake_hs_host, device_services=fake_ds_host, settings_services=mock_ss
+        )
     assert detail["devices"] == [{"id": str(device.id)}]
 
     fake_hs_diag_none = SimpleNamespace(diagnostics=SimpleNamespace(get_host_diagnostics=AsyncMock(return_value=None)))
@@ -1382,19 +1381,14 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
     device = _control_device(id=device_id)
     serialized = {"id": str(device_id)}
 
-    _dev_ctrl_ss = _mock_settings_svc(FakeSettingsReader({}))
     for method_name, call_fn in (
         (
             "enter_maintenance",
-            lambda ds: devices_control.enter_device_maintenance(
-                device_id, object(), db=object(), device_services=ds, settings_services=_dev_ctrl_ss
-            ),
+            lambda ds: devices_control.enter_device_maintenance(device_id, object(), db=object(), device_services=ds),
         ),
         (
             "exit_maintenance",
-            lambda ds: devices_control.exit_device_maintenance(
-                device_id, db=object(), device_services=ds, settings_services=_dev_ctrl_ss
-            ),
+            lambda ds: devices_control.exit_device_maintenance(device_id, db=object(), device_services=ds),
         ),
     ):
         mock_maintenance = AsyncMock(**{method_name: AsyncMock(side_effect=ValueError("bad"))})
@@ -1405,13 +1399,11 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         assert exc.value.status_code == 409
 
         mock_maintenance_ok = AsyncMock(**{method_name: AsyncMock(return_value=device)})
-        device_services_ok = SimpleNamespace(maintenance=mock_maintenance_ok)
-        with (
-            patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-            patch(
-                "app.devices.routers.control.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)
-            ),
-        ):
+        device_services_ok = SimpleNamespace(
+            maintenance=mock_maintenance_ok,
+            presenter=SimpleNamespace(serialize_device=AsyncMock(return_value=serialized)),
+        )
+        with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
             assert await call_fn(device_services_ok) == serialized
 
     config = {"env": {"A": "B"}}
@@ -2608,13 +2600,14 @@ async def test_devices_core_router_branches() -> None:
             new=AsyncMock(return_value={("pack", "android"): "Android"}),
         ),
         patch("app.devices.routers.core.run_service.get_reservation_context_for_device", new=Mock(return_value=None)),
-        patch("app.devices.routers.core.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
     ):
+        mock_ds_list = SimpleNamespace(presenter=SimpleNamespace(serialize_device=AsyncMock(return_value=serialized)))
         listed = await devices_core.list_devices(
             filters=filters,
             limit=10,
             offset=None,
             db=object(),
+            device_services=mock_ds_list,
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
         )
     assert listed == {"items": [serialized], "total": 1, "limit": 10, "offset": 0}
@@ -2625,7 +2618,7 @@ async def test_devices_core_router_branches() -> None:
                 device_id,
                 data=devices_core.DevicePatch(),
                 db=object(),
-                settings_services=_mock_settings_svc(FakeSettingsReader({})),
+                device_services=SimpleNamespace(presenter=SimpleNamespace()),
             )
     assert exc.value.status_code == 404
 
