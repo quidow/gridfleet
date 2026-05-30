@@ -154,7 +154,7 @@ class BulkOperationsService:
         self._maintenance = maintenance
 
     async def bulk_start_nodes(
-        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
     ) -> dict[str, Any]:
         return await _run_per_device_node_action(
             db,
@@ -166,7 +166,7 @@ class BulkOperationsService:
         )
 
     async def bulk_stop_nodes(
-        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
     ) -> dict[str, Any]:
         return await _run_per_device_node_action(
             db,
@@ -178,7 +178,7 @@ class BulkOperationsService:
         )
 
     async def bulk_restart_nodes(
-        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
     ) -> dict[str, Any]:
         return await _run_per_device_node_action(
             db,
@@ -307,7 +307,7 @@ class BulkOperationsService:
         return _result(len(devices), succeeded, errors)
 
     async def bulk_reconnect(
-        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
     ) -> dict[str, Any]:
         """Reconnect network-connected ADB devices."""
         devices = await _load_devices(db, device_ids)
