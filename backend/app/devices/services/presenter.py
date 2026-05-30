@@ -45,11 +45,41 @@ class DevicePresenterService:
     def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings
 
-    async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]:
-        return await serialize_device(db, device, settings=self._settings)
+    async def serialize_device(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
+        health_summary: dict[str, Any] | None = None,
+        platform_label: str | None = None,
+    ) -> dict[str, Any]:
+        return await serialize_device(
+            db,
+            device,
+            settings=self._settings,
+            reservation_context=reservation_context,
+            health_summary=health_summary,
+            platform_label=platform_label,
+        )
 
-    async def serialize_device_detail(self, db: AsyncSession, device: Device) -> dict[str, Any]:
-        return await serialize_device_detail(db, device, settings=self._settings)
+    async def serialize_device_detail(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
+        health_summary: dict[str, Any] | None = None,
+        platform_label: str | None = None,
+    ) -> dict[str, Any]:
+        return await serialize_device_detail(
+            db,
+            device,
+            settings=self._settings,
+            reservation_context=reservation_context,
+            health_summary=health_summary,
+            platform_label=platform_label,
+        )
 
 
 def build_reservation_read(

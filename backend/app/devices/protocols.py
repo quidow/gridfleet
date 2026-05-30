@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     from app.analytics.models import AnalyticsCapacitySnapshot
     from app.analytics.schemas import FleetCapacityTimeline
-    from app.devices.models import Device, DeviceGroup, DeviceHold, DeviceOperationalState
+    from app.devices.models import Device, DeviceGroup, DeviceHold, DeviceOperationalState, DeviceReservation
     from app.devices.models.test_data_audit import DeviceTestDataAuditLog
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.devices.schemas.portability import ExportBundle
@@ -136,8 +136,24 @@ class BulkOperationsProtocol(Protocol):
 
 @runtime_checkable
 class DevicePresenterProtocol(Protocol):
-    async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]: ...
-    async def serialize_device_detail(self, db: AsyncSession, device: Device) -> dict[str, Any]: ...
+    async def serialize_device(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reservation_context: tuple[Any | None, DeviceReservation | None] | None = ...,
+        health_summary: dict[str, Any] | None = ...,
+        platform_label: str | None = ...,
+    ) -> dict[str, Any]: ...
+    async def serialize_device_detail(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reservation_context: tuple[Any | None, DeviceReservation | None] | None = ...,
+        health_summary: dict[str, Any] | None = ...,
+        platform_label: str | None = ...,
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable
