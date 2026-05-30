@@ -27,3 +27,8 @@ class DurableJobProtocol(Protocol):
 @runtime_checkable
 class VerificationJobRunner(Protocol):
     async def run_persisted_verification_job(self, job_id: str, request: dict[str, Any]) -> None: ...
+
+
+@runtime_checkable
+class RecoveryJobRunner(Protocol):
+    async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None: ...
