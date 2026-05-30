@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 
     from app.analytics.models import AnalyticsCapacitySnapshot
     from app.analytics.schemas import FleetCapacityTimeline
+    from app.core.type_defs import SessionFactory
     from app.devices.models import Device, DeviceGroup, DeviceHold, DeviceOperationalState, DeviceReservation
     from app.devices.models.test_data_audit import DeviceTestDataAuditLog
+    from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.devices.schemas.portability import ExportBundle
     from app.events.catalog import EventSeverity
@@ -173,3 +175,17 @@ class TestDataProtocol(Protocol):
 @runtime_checkable
 class PortabilityExportProtocol(Protocol):
     async def build_export_bundle(self, db: AsyncSession) -> ExportBundle: ...
+
+
+@runtime_checkable
+class VerificationProtocol(Protocol):
+    async def start_verification_job(
+        self, data: DeviceVerificationCreate, session_factory: SessionFactory = ...
+    ) -> dict[str, Any]: ...
+    async def start_existing_device_verification_job(
+        self, device_id: uuid.UUID, data: DeviceVerificationUpdate, session_factory: SessionFactory = ...
+    ) -> dict[str, Any]: ...
+    async def get_verification_job(
+        self, job_id: str, session_factory: SessionFactory = ...
+    ) -> dict[str, Any] | None: ...
+    async def clear_verification_jobs(self, session_factory: SessionFactory = ...) -> None: ...
