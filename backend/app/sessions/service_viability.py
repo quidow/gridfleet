@@ -26,7 +26,7 @@ from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -38,6 +38,7 @@ __all__ = [
     "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityLoop",
+    "SessionViabilityService",
     "_check_due_devices",
     "_extract_session_error",
     "_format_http_error",
@@ -90,6 +91,73 @@ async def close() -> None:
     if _grid_probe_client is not None and not _grid_probe_client.is_closed:
         await _grid_probe_client.aclose()
     _grid_probe_client = None
+
+
+class SessionViabilityService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._session_factory = session_factory
+        self._health_failure_handler: HealthFailureHandler | None = None
+        self._grid_probe_client: httpx.AsyncClient | None = None
+
+    def configure_health_failure_handler(self, handler: HealthFailureHandler | None) -> None:
+        self._health_failure_handler = handler
+
+    def _get_grid_probe_client(self) -> httpx.AsyncClient:
+        if self._grid_probe_client is None or self._grid_probe_client.is_closed:
+            self._grid_probe_client = httpx.AsyncClient()
+        return self._grid_probe_client
+
+    async def close(self) -> None:
+        if self._grid_probe_client is not None and not self._grid_probe_client.is_closed:
+            await self._grid_probe_client.aclose()
+        self._grid_probe_client = None
+
+    async def get_session_viability(self, db: AsyncSession, device: Device) -> dict[str, Any] | None:
+        return await get_session_viability(db, device)
+
+    async def record_session_viability_result(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        status: str,
+        error: str | None = None,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]:
+        return await record_session_viability_result(
+            db, device, status=status, error=error, checked_by=checked_by, publisher=self._publisher
+        )
+
+    async def probe_session_via_grid(
+        self,
+        capabilities: dict[str, Any],
+        timeout_sec: int,
+        *,
+        grid_url: str | None = None,
+    ) -> tuple[bool, str | None]:
+        return await probe_session_via_grid(capabilities, timeout_sec, settings=self._settings, grid_url=grid_url)
+
+    async def run_session_viability_probe(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]:
+        return await run_session_viability_probe(
+            db, device, checked_by=checked_by, settings=self._settings, publisher=self._publisher
+        )
+
+    async def check_due_devices(self, db: AsyncSession) -> None:
+        return await _check_due_devices(db, settings=self._settings, publisher=self._publisher)
 
 
 class HealthFailureHandler(Protocol):
