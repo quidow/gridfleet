@@ -156,13 +156,18 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     db_session.add_all([verification, recovery])
     await db_session.commit()
 
-    service = _make_service(db_session)
-    with patch(
-        "app.jobs.queue.run_persisted_verification_job",
-        new=AsyncMock(),
-    ) as verification_runner:
-        assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
-    verification_runner.assert_awaited_once()
+    sf = _session_factory(db_session)
+    mock_verification_runner = AsyncMock()
+    mock_verification_runner.run_persisted_verification_job = AsyncMock()
+    service = DurableJobService(
+        session_factory=sf,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
+        verification_runner=mock_verification_runner,
+    )
+    assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
+    mock_verification_runner.run_persisted_verification_job.assert_awaited_once()
 
     with patch(
         "app.jobs.queue.run_device_recovery_job",

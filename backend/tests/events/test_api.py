@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from contextlib import suppress
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, patch
 
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
 from app.devices.routers.verification import stream_device_verification_job_events
+from app.devices.services.verification import VerificationService
 from app.devices.services.verification_job_state import new_job
 from app.events.router import event_stream
 from app.events.services_container import EventServices
@@ -158,6 +160,7 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
         event_services=event_services,
+        device_services=SimpleNamespace(verification=VerificationService()),
     )
     iterator = _event_stream_iterator(response.body_iterator)
 
@@ -218,6 +221,7 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
         event_services=event_services,
+        device_services=SimpleNamespace(verification=VerificationService()),
     )
     iterator = _event_stream_iterator(response.body_iterator)
 

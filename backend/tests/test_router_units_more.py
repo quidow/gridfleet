@@ -475,21 +475,21 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         subscriber=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock())
     )
 
-    monkeypatch.setattr(
-        devices_verification_router.device_verification,
-        "get_verification_job",
-        AsyncMock(return_value=None),
+    mock_device_services_none = SimpleNamespace(
+        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.stream_device_verification_job_events(
-            "missing", request, db=SimpleNamespace(bind=None), event_services=mock_event_services
+            "missing",
+            request,
+            db=SimpleNamespace(bind=None),
+            event_services=mock_event_services,
+            device_services=mock_device_services_none,
         )
     assert exc.value.status_code == 404
 
-    monkeypatch.setattr(
-        devices_verification_router.device_verification,
-        "get_verification_job",
-        AsyncMock(return_value=initial_job),
+    mock_device_services = SimpleNamespace(
+        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=initial_job))
     )
 
     response = await devices_verification_router.stream_device_verification_job_events(
@@ -497,6 +497,7 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         request,
         db=SimpleNamespace(bind=None),
         event_services=mock_event_services,
+        device_services=mock_device_services,
     )
     assert (await response.body_iterator.__anext__())["event"] == "device.verification.updated"
     with pytest.raises(StopAsyncIteration):
@@ -555,28 +556,31 @@ async def test_plugins_router_missing_host_and_plugin_paths() -> None:
 
 
 async def test_device_verification_router_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        devices_verification_router.device_verification,
-        "start_verification_job",
-        AsyncMock(side_effect=PackUnavailableError("pack")),
-    )
     db = SimpleNamespace(bind=None)
+    mock_device_services_pack_error = SimpleNamespace(
+        verification=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("pack")))
+    )
     with pytest.raises(HTTPException) as caught:
-        await devices_verification_router.create_device_verification_job(Mock(), db=db)
+        await devices_verification_router.create_device_verification_job(
+            Mock(), db=db, device_services=mock_device_services_pack_error
+        )
     assert caught.value.status_code == 422
 
     monkeypatch.setattr(devices_verification_router.device_service, "get_device", AsyncMock(return_value=None))
+    mock_device_services_any = SimpleNamespace(verification=SimpleNamespace())
     with pytest.raises(HTTPException) as caught:
-        await devices_verification_router.create_existing_device_verification_job(uuid.uuid4(), Mock(), db=db)
+        await devices_verification_router.create_existing_device_verification_job(
+            uuid.uuid4(), Mock(), db=db, device_services=mock_device_services_any
+        )
     assert caught.value.status_code == 404
 
-    monkeypatch.setattr(
-        devices_verification_router.device_verification,
-        "get_verification_job",
-        AsyncMock(return_value=None),
+    mock_device_services_no_job = SimpleNamespace(
+        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException) as caught:
-        await devices_verification_router.get_device_verification_job("missing", db=db)
+        await devices_verification_router.get_device_verification_job(
+            "missing", db=db, device_services=mock_device_services_no_job
+        )
     assert caught.value.status_code == 404
 
 
@@ -2672,22 +2676,24 @@ async def test_devices_verification_router_error_and_success_branches(db_session
         name="Router Verify",
         host_id=uuid.uuid4(),
     )
-    with patch.object(
-        devices_verification_router.device_verification,
-        "start_verification_job",
-        new=AsyncMock(side_effect=PackUnavailableError("missing")),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await devices_verification_router.create_device_verification_job(create_payload, db=db_session)
+    mock_device_services_pack_error = SimpleNamespace(
+        verification=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("missing")))
+    )
+    with pytest.raises(HTTPException) as exc:
+        await devices_verification_router.create_device_verification_job(
+            create_payload, db=db_session, device_services=mock_device_services_pack_error
+        )
     assert exc.value.status_code == 422
 
     device_id = uuid.uuid4()
+    mock_device_services_any = SimpleNamespace(verification=SimpleNamespace())
     with patch.object(devices_verification_router.device_service, "get_device", new=AsyncMock(return_value=None)):
         with pytest.raises(HTTPException) as exc:
             await devices_verification_router.create_existing_device_verification_job(
                 device_id,
                 DeviceVerificationUpdate(name="verify", host_id=uuid.uuid4()),
                 db=db_session,
+                device_services=mock_device_services_any,
             )
     assert exc.value.status_code == 404
 
@@ -2699,47 +2705,41 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
     mock_event_services = SimpleNamespace(
         subscriber=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
     )
-    with patch.object(
-        devices_verification_router.device_verification,
-        "get_verification_job",
-        new=AsyncMock(return_value=job),
-    ):
-        response = await devices_verification_router.stream_device_verification_job_events(
-            "job-stream",
-            request,  # type: ignore[arg-type]
-            db=db_session,
-            event_services=mock_event_services,
-        )
-        first = await response.body_iterator.__anext__()
-        await response.body_iterator.aclose()
+    mock_ds_terminal = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=job)))
+    response = await devices_verification_router.stream_device_verification_job_events(
+        "job-stream",
+        request,  # type: ignore[arg-type]
+        db=db_session,
+        event_services=mock_event_services,
+        device_services=mock_ds_terminal,
+    )
+    first = await response.body_iterator.__anext__()
+    await response.body_iterator.aclose()
 
     assert first["event"] == "device.verification.updated"
     unsubscribe.assert_called_once()
 
     device_id = uuid.uuid4()
-    with (
-        patch.object(devices_verification_router.device_service, "get_device", new=AsyncMock(return_value=object())),
-        patch.object(
-            devices_verification_router.device_verification,
-            "start_existing_device_verification_job",
-            new=AsyncMock(return_value={"id": "job", "status": "queued"}),
-        ),
-    ):
+    mock_ds_existing = SimpleNamespace(
+        verification=SimpleNamespace(
+            start_existing_device_verification_job=AsyncMock(return_value={"id": "job", "status": "queued"})
+        )
+    )
+    with patch.object(devices_verification_router.device_service, "get_device", new=AsyncMock(return_value=object())):
         assert (
             await devices_verification_router.create_existing_device_verification_job(
                 device_id,
                 DeviceVerificationUpdate(name="verify", host_id=uuid.uuid4()),
                 db=db_session,
+                device_services=mock_ds_existing,
             )
         )["id"] == "job"
 
-    with patch.object(
-        devices_verification_router.device_verification,
-        "get_verification_job",
-        new=AsyncMock(return_value=None),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            await devices_verification_router.get_device_verification_job("missing", db=db_session)
+    mock_ds_no_job = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))
+    with pytest.raises(HTTPException) as exc:
+        await devices_verification_router.get_device_verification_job(
+            "missing", db=db_session, device_services=mock_ds_no_job
+        )
     assert exc.value.status_code == 404
 
 
