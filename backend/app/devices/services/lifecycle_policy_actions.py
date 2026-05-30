@@ -48,6 +48,81 @@ if TYPE_CHECKING:
     from app.runs.models import TestRun
 
 
+class LifecyclePolicyActionsService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def complete_auto_stop(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        return await complete_auto_stop(
+            db, device, next_state, reason=reason, source=source, detail=detail, publisher=self._publisher
+        )
+
+    async def handle_node_crash(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> None:
+        return await handle_node_crash(db, device, source=source, reason=reason, publisher=self._publisher)
+
+    async def exclude_run_if_needed(
+        self, db: AsyncSession, device: Device, *, reason: str, source: str
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        return await exclude_run_if_needed(db, device, reason=reason, source=source)
+
+    async def restore_run_if_needed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        run: TestRun | None,
+        entry: DeviceReservation | None,
+        *,
+        reason: str,
+        source: str,
+    ) -> tuple[TestRun | None, DeviceReservation | None]:
+        return await restore_run_if_needed(db, device, run, entry, reason=reason, source=source)
+
+    async def record_recovery_suppressed(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        source: str,
+        reason: str,
+        suppression_reason: str,
+        run: TestRun | None,
+    ) -> bool:
+        return await record_recovery_suppressed(
+            db, device, next_state, source=source, reason=reason, suppression_reason=suppression_reason, run=run
+        )
+
+    async def record_auto_stopped_incident(
+        self,
+        db: AsyncSession,
+        device: Device,
+        next_state: dict[str, Any],
+        *,
+        run: TestRun | None,
+        reason: str,
+        source: str,
+        detail: str,
+    ) -> None:
+        return await record_auto_stopped_incident(
+            db, device, next_state, run=run, reason=reason, source=source, detail=detail
+        )
+
+    async def record_ci_preparation_failed(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> None:
+        return await record_ci_preparation_failed(db, device, reason=reason, source=source)
+
+    async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
+        return await has_running_client_session(db, device_id)
+
+
 async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
 

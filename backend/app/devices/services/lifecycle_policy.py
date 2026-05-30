@@ -29,6 +29,7 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_policy_actions import (
+    LifecyclePolicyActionsService,
     complete_auto_stop,
     has_running_client_session,
     record_auto_stopped_incident,
@@ -79,6 +80,72 @@ _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusio
 
 build_lifecycle_policy = lifecycle_policy_summary.build_lifecycle_policy
 build_lifecycle_policy_summary = lifecycle_policy_summary.build_lifecycle_policy_summary
+
+
+class LifecyclePolicyService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        actions: LifecyclePolicyActionsService,
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._actions = actions
+
+    async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
+        return await attempt_auto_recovery(
+            db, device, source=source, reason=reason, settings=self._settings, publisher=self._publisher
+        )
+
+    async def handle_health_failure(
+        self, db: AsyncSession, device: Device, *, source: str, reason: str, publisher: EventPublisher
+    ) -> str:
+        return await handle_health_failure(db, device, source=source, reason=reason, publisher=publisher)
+
+    async def handle_session_finished(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
+        return await handle_session_finished(db, device, publisher=self._publisher)
+
+    async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
+        return await complete_deferred_stop_if_session_ended(db, device, publisher=self._publisher)
+
+    async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None:
+        return await note_connectivity_loss(db, device, reason=reason)
+
+    async def clear_pending_auto_stop_on_recovery(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        source: str,
+        reason: str,
+        action: str | None = None,
+        record_incident: bool = True,
+    ) -> bool:
+        return await clear_pending_auto_stop_on_recovery(
+            db, device, source=source, reason=reason, action=action, record_incident=record_incident
+        )
+
+    async def record_control_action(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        action: str,
+        failure_source: str | None = None,
+        failure_reason: str | None = None,
+        recovery_suppressed_reason: str | None = None,
+    ) -> None:
+        return await record_control_action(
+            db,
+            device,
+            action=action,
+            failure_source=failure_source,
+            failure_reason=failure_reason,
+            recovery_suppressed_reason=recovery_suppressed_reason,
+        )
+
 
 RECOVERY_PROBE_ATTEMPTS = 3
 RECOVERY_PROBE_RETRY_DELAY_SEC = 10
