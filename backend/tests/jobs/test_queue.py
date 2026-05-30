@@ -9,6 +9,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.jobs.protocols import DurableJobProtocol
@@ -22,11 +25,22 @@ def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSessio
 
 
 def _make_service(db_session: AsyncSession) -> DurableJobService:
+    sf = _session_factory(db_session)
     return DurableJobService(
-        session_factory=_session_factory(db_session),
+        session_factory=sf,
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=AsyncMock(),
+        verification_runner=VerificationRunnerService(
+            session_factory=sf,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
+            preparation=VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()),
+            execution=VerificationExecutionService(
+                publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()
+            ),
+        ),
     )
 
 
@@ -142,13 +156,18 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
     db_session.add_all([verification, recovery])
     await db_session.commit()
 
-    service = _make_service(db_session)
-    with patch(
-        "app.jobs.queue.run_persisted_verification_job",
-        new=AsyncMock(),
-    ) as verification_runner:
-        assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
-    verification_runner.assert_awaited_once()
+    sf = _session_factory(db_session)
+    mock_verification_runner = AsyncMock()
+    mock_verification_runner.run_persisted_verification_job = AsyncMock()
+    service = DurableJobService(
+        session_factory=sf,
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
+        verification_runner=mock_verification_runner,
+    )
+    assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
+    mock_verification_runner.run_persisted_verification_job.assert_awaited_once()
 
     with patch(
         "app.jobs.queue.run_device_recovery_job",

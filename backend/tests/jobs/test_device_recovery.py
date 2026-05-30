@@ -13,6 +13,9 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
@@ -77,11 +80,22 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
         "app.devices.services.lifecycle_policy.attempt_auto_recovery",
         new=AsyncMock(return_value=True),
     ) as recover:
+        _sf = _session_factory(db_session)
         worked = await DurableJobService(
-            session_factory=_session_factory(db_session),
+            session_factory=_sf,
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=AsyncMock(),
+            verification_runner=VerificationRunnerService(
+                session_factory=_sf,
+                publisher=AsyncMock(),
+                settings=settings_service,
+                circuit_breaker=AsyncMock(),
+                preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+                execution=VerificationExecutionService(
+                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+                ),
+            ),
         ).run_pending_once()
 
     assert worked is True
@@ -164,11 +178,22 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
             },
         ),
     ):
+        _sf = _session_factory(db_session)
         worked = await DurableJobService(
-            session_factory=_session_factory(db_session),
+            session_factory=_sf,
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=AsyncMock(),
+            verification_runner=VerificationRunnerService(
+                session_factory=_sf,
+                publisher=AsyncMock(),
+                settings=settings_service,
+                circuit_breaker=AsyncMock(),
+                preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+                execution=VerificationExecutionService(
+                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+                ),
+            ),
         ).run_pending_once()
 
     assert worked is True
@@ -204,11 +229,22 @@ async def test_device_recovery_job_completed_when_device_missing(
         max_attempts=1,
     )
 
+    _sf = _session_factory(db_session)
     worked = await DurableJobService(
-        session_factory=_session_factory(db_session),
+        session_factory=_sf,
         publisher=AsyncMock(),
         settings=settings_service,
         circuit_breaker=AsyncMock(),
+        verification_runner=VerificationRunnerService(
+            session_factory=_sf,
+            publisher=AsyncMock(),
+            settings=settings_service,
+            circuit_breaker=AsyncMock(),
+            preparation=VerificationPreparationService(settings=settings_service, circuit_breaker=AsyncMock()),
+            execution=VerificationExecutionService(
+                publisher=AsyncMock(), settings=settings_service, circuit_breaker=AsyncMock()
+            ),
+        ),
     ).run_pending_once()
 
     assert worked is True

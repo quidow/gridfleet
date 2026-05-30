@@ -17,8 +17,10 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.verification import clear_verification_jobs
-from app.devices.services.verification_execution import _health_failure_detail
+from app.devices.services.verification import VerificationService
+from app.devices.services.verification_execution import VerificationExecutionService, _health_failure_detail
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
@@ -60,9 +62,9 @@ HOST_PAYLOAD = {
 async def reset_verification_jobs(db_session: AsyncSession) -> AsyncGenerator[None]:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     await seed_test_packs(db_session)
-    await clear_verification_jobs(session_factory=session_factory)
+    await VerificationService().clear_verification_jobs(session_factory=session_factory)
     yield
-    await clear_verification_jobs(session_factory=session_factory)
+    await VerificationService().clear_verification_jobs(session_factory=session_factory)
 
 
 @pytest.fixture(autouse=True)
@@ -126,6 +128,18 @@ async def _wait_for_job(
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
+            verification_runner=VerificationRunnerService(
+                session_factory=session_factory,
+                publisher=AsyncMock(),
+                settings=settings_service,
+                circuit_breaker=_noop_circuit_breaker(),
+                preparation=VerificationPreparationService(
+                    settings=settings_service, circuit_breaker=_noop_circuit_breaker()
+                ),
+                execution=VerificationExecutionService(
+                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=_noop_circuit_breaker()
+                ),
+            ),
         ).run_pending_once()
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
@@ -804,11 +818,7 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
             "app.devices.services.verification_execution.wait_for_node_running",
             new=AsyncMock(return_value=None),
         ),
-        patch(
-            "app.devices.services.verification_execution.run_device_health",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
+        patch.object(VerificationExecutionService, "run_device_health", new_callable=AsyncMock, return_value=None),
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",
@@ -1468,6 +1478,18 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             publisher=AsyncMock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
+            verification_runner=VerificationRunnerService(
+                session_factory=session_factory,
+                publisher=AsyncMock(),
+                settings=settings_service,
+                circuit_breaker=_noop_circuit_breaker(),
+                preparation=VerificationPreparationService(
+                    settings=settings_service, circuit_breaker=_noop_circuit_breaker()
+                ),
+                execution=VerificationExecutionService(
+                    publisher=AsyncMock(), settings=settings_service, circuit_breaker=_noop_circuit_breaker()
+                ),
+            ),
         ).reset_stale_running_jobs()
         assert recovered == 1
         job = await _wait_for_job(client, job_id, session_factory=session_factory)

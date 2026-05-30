@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.state import ready_operational_state, set_operational_state
-from app.devices.services.verification import clear_verification_jobs
+from app.devices.services.verification import VerificationService
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
@@ -80,7 +80,7 @@ async def test_control_plane_state_helpers_snapshot_and_reset(db_session: AsyncS
     assert await get_connectivity_control_plane_state(db_session) == {"device-1"}
     assert "device-1" in (await get_session_viability_control_plane_state(db_session))["state"]
 
-    await clear_verification_jobs(session_factory=session_factory)
+    await VerificationService().clear_verification_jobs(session_factory=session_factory)
     await reset_connectivity_control_plane_state(db_session)
     await reset_session_viability_control_plane_state(db_session)
 

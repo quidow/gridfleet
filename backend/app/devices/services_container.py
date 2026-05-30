@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         PortabilityExportProtocol,
         PropertyRefreshProtocol,
         TestDataProtocol,
+        VerificationProtocol,
     )
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
@@ -38,6 +39,7 @@ class DeviceServices:
     presenter: DevicePresenterProtocol
     test_data: TestDataProtocol
     portability_export: PortabilityExportProtocol
+    verification: VerificationProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

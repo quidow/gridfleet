@@ -62,6 +62,9 @@ from app.devices.services import (
     write as device_write,
 )
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.events import catalog as event_catalog
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
@@ -334,7 +337,9 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
 
 async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.devices.services import verification_runner as device_verification_runner
+    from app.devices.services.verification_execution import VerificationExecutionService
+    from app.devices.services.verification_preparation import VerificationPreparationService
+    from app.devices.services.verification_runner import VerificationRunnerService
 
     class SessionCtx:
         async def __aenter__(self) -> AsyncMock:
@@ -345,18 +350,21 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    assert (
-        await device_verification_runner._load_persisted_job(str(uuid.uuid4()), SessionCtx, publisher=AsyncMock())
-        is None
+    settings = FakeSettingsReader({})
+    cb = Mock()
+    publisher = AsyncMock()
+    prep = VerificationPreparationService(settings=settings, circuit_breaker=cb)
+    exec_svc = VerificationExecutionService(publisher=publisher, settings=settings, circuit_breaker=cb)
+    runner = VerificationRunnerService(
+        session_factory=SessionCtx,
+        publisher=publisher,
+        settings=settings,
+        circuit_breaker=cb,
+        preparation=prep,
+        execution=exec_svc,
     )
-    await device_verification_runner.run_persisted_verification_job(
-        str(uuid.uuid4()),
-        {"mode": "create"},
-        SessionCtx,
-        publisher=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-    )
+    assert await runner._load_persisted_job(str(uuid.uuid4())) is None
+    await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
 
 
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -827,6 +835,16 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        verification_runner=VerificationRunnerService(
+            session_factory=QueueCtx,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            preparation=VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+            execution=VerificationExecutionService(
+                publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            ),
+        ),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
     assert await service.run_pending_once() is True
