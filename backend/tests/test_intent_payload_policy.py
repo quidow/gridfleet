@@ -71,7 +71,8 @@ async def test_health_failure_intent_payload_shape(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import handle_health_failure
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     device = await create_device(
         db_session,
@@ -88,7 +89,12 @@ async def test_health_failure_intent_payload_shape(
     device.appium_node = node
     await db_session.commit()
 
-    result = await handle_health_failure(
+    _svc = LifecyclePolicyService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=Mock()),
+    )
+    result = await _svc.handle_health_failure(
         db_session,
         device,
         source="device_checks",
