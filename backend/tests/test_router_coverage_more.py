@@ -20,7 +20,6 @@ from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 from app.settings.services_container import SettingsServices
-from tests.fakes import FakeSettingsReader
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:
@@ -437,14 +436,16 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert filters.tags == {"pool": "smoke"}
 
-    _dev_ss = SimpleNamespace(service=FakeSettingsReader({}))
+    _mock_crud = AsyncMock()
+    _mock_crud.list_devices_paginated = AsyncMock(return_value=([device], 1))
+    _mock_crud.list_devices_by_filters = AsyncMock(return_value=[device])
     _mock_ds = SimpleNamespace(
+        crud=_mock_crud,
         presenter=SimpleNamespace(
             serialize_device=AsyncMock(return_value={"id": str(device_id)}),
             serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
-        )
+        ),
     )
-    monkeypatch.setattr(devices_core.device_service, "list_devices_paginated", AsyncMock(return_value=([device], 1)))
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
     monkeypatch.setattr(devices_core.device_health, "build_public_summary", lambda device: {"healthy": True})
     monkeypatch.setattr(
@@ -452,39 +453,32 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         "load_platform_label_map",
         AsyncMock(return_value={("pack", "platform"): "Android"}),
     )
-    listed = await devices_core.list_devices(
-        filters, limit=10, db=db, settings_services=_dev_ss, device_services=_mock_ds
-    )
+    listed = await devices_core.list_devices(filters, limit=10, db=db, device_services=_mock_ds)
     assert listed["total"] == 1
 
-    monkeypatch.setattr(devices_core.device_service, "list_devices_by_filters", AsyncMock(return_value=[device]))
-    listed_plain = await devices_core.list_devices(
-        filters, limit=None, offset=None, db=db, settings_services=_dev_ss, device_services=_mock_ds
-    )
+    listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db, device_services=_mock_ds)
     assert listed_plain == [{"id": str(device_id)}]
 
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     with pytest.raises(HTTPException):
         await devices_core.get_device_by_connection_target("missing", db=db, device_services=_mock_ds)
 
-    monkeypatch.setattr(
-        devices_core.device_service, "update_device", AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
-    )
+    _mock_crud.update_device = AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
     with pytest.raises(HTTPException) as conflict:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert conflict.value.status_code == 409
-    monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(side_effect=ValueError("bad")))
+    _mock_crud.update_device = AsyncMock(side_effect=ValueError("bad"))
     with pytest.raises(HTTPException) as invalid:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert invalid.value.status_code == 422
-    monkeypatch.setattr(devices_core.device_service, "update_device", AsyncMock(return_value=None))
+    _mock_crud.update_device = AsyncMock(return_value=None)
     with pytest.raises(HTTPException) as missing:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert missing.value.status_code == 404
 
-    monkeypatch.setattr(devices_core.device_service, "delete_device", AsyncMock(return_value=False))
+    _mock_crud.delete_device = AsyncMock(return_value=False)
     with pytest.raises(HTTPException):
-        await devices_core.delete_device(device_id, db=db)
+        await devices_core.delete_device(device_id, db=db, device_services=_mock_ds)
 
     found_result = SimpleNamespace(
         scalar_one_or_none=lambda: SimpleNamespace(
@@ -504,15 +498,16 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         devices_core.capability_service, "get_device_capabilities", AsyncMock(return_value={"caps": True})
     )
-    assert await devices_core.device_capabilities(device_id, db=db) == {"caps": True}
-    crud = SimpleNamespace(
+    assert await devices_core.device_capabilities(device_id, db=db, device_services=_mock_ds) == {"caps": True}
+    session_crud = SimpleNamespace(
         get_device_session_outcome_heatmap_rows=AsyncMock(return_value=[(datetime.now(UTC), "passed")])
     )
     heatmap = await devices_core.device_session_outcome_heatmap(
         device_id,
         days=1,
         db=db,
-        session_services=SimpleNamespace(crud=crud),  # type: ignore[arg-type]
+        device_services=_mock_ds,
+        session_services=SimpleNamespace(crud=session_crud),  # type: ignore[arg-type]
     )
     assert heatmap[0].status == "passed"
 
@@ -538,14 +533,16 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
         )
     assert pack_error.value.status_code == 422
 
-    monkeypatch.setattr(devices_verification.device_service, "get_device", AsyncMock(return_value=None))
-    mock_ds_any = SimpleNamespace(verification=SimpleNamespace())
+    mock_ds_none_crud = SimpleNamespace(
+        crud=SimpleNamespace(get_device=AsyncMock(return_value=None)),
+        verification=SimpleNamespace(),
+    )
     with pytest.raises(HTTPException):
         await devices_verification.create_existing_device_verification_job(
             device_id,
             devices_verification.DeviceVerificationUpdate(host_id=uuid.uuid4()),
             db=db,
-            device_services=mock_ds_any,
+            device_services=mock_ds_none_crud,
         )
 
     mock_ds_no_job = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))

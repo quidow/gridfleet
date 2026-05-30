@@ -17,7 +17,6 @@ from app.devices.schemas.device import (
     DeviceVerificationJobRead,
     DeviceVerificationUpdate,
 )
-from app.devices.services import service as device_service
 from app.devices.services.verification_job_state import public_snapshot
 from app.events import Event
 from app.events.dependencies import EventServicesDep
@@ -57,7 +56,7 @@ async def create_existing_device_verification_job(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    device = await device_service.get_device(db, device_id)
+    device = await device_services.crud.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)

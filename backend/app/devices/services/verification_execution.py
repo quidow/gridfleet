@@ -16,7 +16,6 @@ from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services import capability as capability_service
-from app.devices.services import service as device_service
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
@@ -286,6 +285,7 @@ class VerificationExecutionService:
                     job=job,
                     original_fields=original_fields,
                     publisher=self._publisher,
+                    crud=self._crud,
                 )
 
             node, probe_error = await self.run_probe(
@@ -303,9 +303,10 @@ class VerificationExecutionService:
                     node=node,
                     original_fields=original_fields,
                     publisher=self._publisher,
+                    crud=self._crud,
                 )
 
-            return await _finalize_success(db, context, job=job, node=node, publisher=self._publisher)
+            return await _finalize_success(db, context, job=job, node=node, publisher=self._publisher, crud=self._crud)
         except Exception:
             await _finalize_failure(
                 db,
@@ -315,6 +316,7 @@ class VerificationExecutionService:
                 node=node,
                 original_fields=original_fields,
                 publisher=self._publisher,
+                crud=self._crud,
             )
             raise
 
@@ -479,11 +481,12 @@ async def _finalize_success(
     job: dict[str, Any],
     node: AppiumNode | None,
     publisher: EventPublisher,
+    crud: DeviceCrudProtocol,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")
     if context.mode == "update":
-        updated = await device_service.update_device(
+        updated = await crud.update_device(
             db,
             context.save_device_id,
             DeviceVerificationUpdate.model_validate(context.save_payload),
@@ -499,7 +502,7 @@ async def _finalize_success(
         cleanup_error = await _stop_verification_node_if_running(job, db, locked, node)
         if cleanup_error is not None:
             if context.mode == "create":
-                await device_service.delete_device(db, context.save_device_id)
+                await crud.delete_device(db, context.save_device_id)
                 await db.commit()
                 return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
             await _revoke_verification_node_intent(db, locked)
@@ -562,6 +565,7 @@ async def _finalize_failure(
     node: AppiumNode | None = None,
     original_fields: dict[str, Any] | None = None,
     publisher: EventPublisher,
+    crud: DeviceCrudProtocol,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
@@ -569,7 +573,7 @@ async def _finalize_failure(
         # Device deletion cascades to DeviceIntent rows, so no explicit
         # verification intent revoke is needed on the create-mode failure
         # path.
-        await device_service.delete_device(db, context.save_device_id)
+        await crud.delete_device(db, context.save_device_id)
         await db.commit()
         if cleanup_error is not None:
             return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)

@@ -201,10 +201,8 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         "app.devices.services.bulk.device_locking.lock_device",
         AsyncMock(side_effect=lambda _db, device_id, **_: next(d for d in devices if d.id == device_id)),
     )
-    monkeypatch.setattr(
-        "app.devices.services.bulk.delete_device",
-        AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")]),
-    )
+    mock_crud = AsyncMock()
+    mock_crud.delete_device = AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")])
     mock_maintenance = MagicMock()
     mock_maintenance.enter_maintenance = AsyncMock(side_effect=[None, RuntimeError("boom")])
     mock_maintenance.exit_maintenance = AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")])
@@ -216,7 +214,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         settings=_settings_del,
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance,
-        crud=DeviceCrudService(settings=_settings_del),
+        crud=mock_crud,
     )
     deleted = await svc.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
     entered = await svc.bulk_enter_maintenance(db, [device.id for device in devices])

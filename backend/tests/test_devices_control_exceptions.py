@@ -24,6 +24,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -54,6 +55,10 @@ _RESOLVED = SimpleNamespace(lifecycle_actions=[{"id": "reconnect"}])
 
 def _settings_services() -> SimpleNamespace:
     return SimpleNamespace(service=FakeSettingsReader({}))
+
+
+def _device_services() -> SimpleNamespace:
+    return SimpleNamespace(crud=AsyncMock())
 
 
 @pytest.mark.db
@@ -122,6 +127,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         result = await devices_control.reconnect_device(
             device.id,
             db=db_session,
+            device_services=SimpleNamespace(crud=DeviceCrudService(settings=FakeSettingsReader({}))),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )
@@ -166,7 +172,11 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
         pytest.raises(HTTPException) as exc,
     ):
         await devices_control.reconnect_device(
-            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+            device_id,
+            db=db,
+            device_services=_device_services(),
+            settings_services=_settings_services(),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -198,7 +208,11 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
         pytest.raises(HTTPException) as exc,
     ):
         await devices_control.reconnect_device(
-            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+            device_id,
+            db=db,
+            device_services=_device_services(),
+            settings_services=_settings_services(),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -233,7 +247,11 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
         pytest.raises(HTTPException) as exc,
     ):
         await devices_control.reconnect_device(
-            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+            device_id,
+            db=db,
+            device_services=_device_services(),
+            settings_services=_settings_services(),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )  # type: ignore[arg-type]
 
     # Must be 400, NOT 502
@@ -265,5 +283,9 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
         await devices_control.reconnect_device(
-            device_id, db=db, settings_services=_settings_services(), agent_comm=SimpleNamespace(circuit_breaker=Mock())
+            device_id,
+            db=db,
+            device_services=_device_services(),
+            settings_services=_settings_services(),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
         )  # type: ignore[arg-type]

@@ -79,9 +79,10 @@ async def exit_device_maintenance(
 async def get_device_config(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     keys: str | None = Query(None, description="Comma-separated list of keys to return"),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     key_list = [k.strip() for k in keys.split(",")] if keys else None
     return await config_service.get_device_config(db, device, keys=key_list)
 
@@ -101,10 +102,11 @@ async def merge_device_config(
 async def get_config_history(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     limit: int = Query(50, le=200),
 ) -> list[dict[str, Any]]:
-    await get_device_or_404(device_id, db)
+    await get_device_or_404(device_id, db, device_services.crud)
     logs = await settings_services.config.get_config_history(db, device_id, limit=limit)
     return [
         {
@@ -120,9 +122,13 @@ async def get_config_history(
 
 @router.get("/{device_id}/health", response_model=DeviceHealthRead)
 async def device_health(
-    device_id: uuid.UUID, db: DbDep, settings_services: SettingsServicesDep, agent_comm: AgentCommServicesDep
+    device_id: uuid.UUID,
+    db: DbDep,
+    device_services: DeviceServicesDep,
+    settings_services: SettingsServicesDep,
+    agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     host = require_management_host(device, action="inspect device health")
 
     result: dict[str, Any] = {"platform": device.platform_id}
@@ -217,10 +223,11 @@ async def device_session_test(
 async def reconnect_device(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
 
     try:
         resolved = await resolve_pack_platform(
@@ -355,11 +362,12 @@ async def device_lifecycle_action(
 async def device_logs(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
     lines: int = Query(100, le=5000),
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     host = require_management_host(device, action="fetch device logs")
 
     node = device.appium_node

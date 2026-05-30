@@ -1,16 +1,23 @@
-import uuid
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
-from app.devices.models import Device
-from app.devices.services import service as device_service
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.models import Device
+    from app.devices.protocols import DeviceCrudProtocol
 
 
-async def get_device_or_404(device_id: uuid.UUID, db: AsyncSession) -> Device:
-    device = await device_service.get_device(db, device_id)
+async def get_device_or_404(device_id: uuid.UUID, db: AsyncSession, crud: DeviceCrudProtocol) -> Device:
+    device = await crud.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     return device

@@ -125,14 +125,15 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
 
     publish = AsyncMock()
     mock_publisher = SimpleNamespace(publish=publish)
-    monkeypatch.setattr(bulk_service, "delete_device", fake_delete)
+    mock_crud_del = AsyncMock()
+    mock_crud_del.delete_device = AsyncMock(side_effect=fake_delete)
     _settings_del2 = FakeSettingsReader({})
     deleted = await BulkOperationsService(
         publisher=mock_publisher,  # type: ignore[arg-type]
         settings=_settings_del2,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_del2),
+        crud=mock_crud_del,
     ).bulk_delete(db, [first.id, second.id])
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"

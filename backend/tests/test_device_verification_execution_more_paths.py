@@ -85,12 +85,13 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     job: dict[str, object] = {"stages": []}
     transient = _device()
     node = SimpleNamespace(observed_running=True)
+    mock_crud = AsyncMock()
+    mock_crud.delete_device = AsyncMock()
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value="cleanup failed"))
-    monkeypatch.setattr(execution.device_service, "delete_device", AsyncMock())
 
     create_context = SimpleNamespace(mode="create", save_device_id=uuid.uuid4(), transient_device=transient)
     outcome = await execution._finalize_failure(
-        db, create_context, error="bad", job=job, node=node, publisher=event_bus
+        db, create_context, error="bad", job=job, node=node, publisher=event_bus, crud=mock_crud
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -111,6 +112,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         job=job,
         original_fields={"name": "original"},
         publisher=event_bus,
+        crud=mock_crud,
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -221,6 +223,7 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
         job={"stages": []},
         node=SimpleNamespace(port=4723, pid=22),
         publisher=event_bus,
+        crud=AsyncMock(),
     )
 
     assert outcome.status == "completed"

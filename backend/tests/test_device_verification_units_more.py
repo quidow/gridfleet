@@ -565,11 +565,11 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     assert target.name == "unchanged"
 
     context.mode = "update"
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.update_device",
-        AsyncMock(return_value=None),
+    mock_crud_none = AsyncMock()
+    mock_crud_none.update_device = AsyncMock(return_value=None)
+    failed = await execution._finalize_success(
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_none
     )
-    failed = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
 
@@ -617,24 +617,28 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         "app.devices.services.verification_execution._stop_verification_node_if_running",
         AsyncMock(return_value="cleanup failed"),
     )
-    monkeypatch.setattr("app.devices.services.verification_execution.device_service.delete_device", AsyncMock())
+    mock_crud_del = AsyncMock()
+    mock_crud_del.delete_device = AsyncMock()
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
 
-    outcome = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
+    outcome = await execution._finalize_success(
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_del
+    )
     assert outcome.status == "failed"
     assert outcome.device_id is None
 
     context.mode = "update"
     context.save_payload = {"name": "updated", "host_id": __import__("uuid").uuid4()}
     context.keep_running_after_verify = False
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_service.update_device", AsyncMock(return_value=locked)
-    )
+    mock_crud_upd = AsyncMock()
+    mock_crud_upd.update_device = AsyncMock(return_value=locked)
     monkeypatch.setattr(
         "app.devices.services.verification_execution.DeviceStateMachine",
         lambda: SimpleNamespace(transition=AsyncMock()),
     )
-    outcome = await execution._finalize_success(db, context, job=_job(), node=None, publisher=event_bus)
+    outcome = await execution._finalize_success(
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_upd
+    )
     assert outcome.status == "failed"
     assert outcome.device_id == str(device_id)
 
@@ -649,7 +653,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         "app.devices.services.verification_execution.session_viability.record_session_viability_result",
         AsyncMock(),
     )
-    outcome = await execution._finalize_success(db, context, job=_job(), node=node, publisher=event_bus)
+    outcome = await execution._finalize_success(
+        db, context, job=_job(), node=node, publisher=event_bus, crud=mock_crud_upd
+    )
     assert outcome.status == "completed"
     execution.set_operational_state.assert_awaited_once()
 
@@ -1124,16 +1130,13 @@ async def test_preparation_validation_conflict_and_update_branches(
         ip_address=None,
         device_config={},
     )
-    monkeypatch.setattr(
-        "app.devices.services.verification_preparation.device_service.get_device", AsyncMock(return_value=existing)
-    )
+    _mock_crud2 = AsyncMock()
+    _mock_crud2.get_device = AsyncMock(return_value=existing)
     monkeypatch.setattr(
         "app.devices.services.verification_preparation.device_write.prepare_device_update_payload_async",
         AsyncMock(side_effect=ValueError("bad update")),
     )
-    _prep_svc2 = VerificationPreparationService(
-        settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=DeviceCrudService(settings=FakeSettingsReader())
-    )
+    _prep_svc2 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=_mock_crud2)
     context, error = await _prep_svc2.validate_update_request(
         _job(),
         db_session,
@@ -1161,9 +1164,9 @@ async def test_preparation_validation_conflict_and_update_branches(
     assert error == "Assigned host was not found"
 
     payload["host_id"] = db_host.id
-    _prep_svc3 = VerificationPreparationService(
-        settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=DeviceCrudService(settings=FakeSettingsReader())
-    )
+    _mock_crud3 = AsyncMock()
+    _mock_crud3.get_device = AsyncMock(return_value=existing)
+    _prep_svc3 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=_mock_crud3)
     _prep_svc3.resolve_host_derived_payload = AsyncMock(return_value="resolution failed")  # type: ignore[method-assign]
     context, error = await _prep_svc3.validate_update_request(
         _job(),
@@ -1179,9 +1182,9 @@ async def test_preparation_validation_conflict_and_update_branches(
         "app.devices.services.verification_preparation.ensure_device_payload_identity_available",
         AsyncMock(side_effect=preparation.DeviceIdentityConflictError("update duplicate")),
     )
-    _prep_svc4 = VerificationPreparationService(
-        settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=DeviceCrudService(settings=FakeSettingsReader())
-    )
+    _mock_crud4 = AsyncMock()
+    _mock_crud4.get_device = AsyncMock(return_value=existing)
+    _prep_svc4 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock(), crud=_mock_crud4)
     _prep_svc4.resolve_host_derived_payload = AsyncMock(return_value=None)  # type: ignore[method-assign]
     context, error = await _prep_svc4.validate_update_request(
         _job(),

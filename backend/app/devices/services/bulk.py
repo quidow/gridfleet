@@ -21,7 +21,6 @@ from app.devices.services.operator_node_lifecycle import (
     request_start,
     request_stop,
 )
-from app.devices.services.service import delete_device
 from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -220,7 +219,7 @@ class BulkOperationsService:
         errors: dict[str, str] = {}
         for device_id in device_ids:
             try:
-                deleted = await delete_device(db, device_id)
+                deleted = await self._crud.delete_device(db, device_id)
                 if not deleted:
                     errors[str(device_id)] = "Device not found"
             except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure

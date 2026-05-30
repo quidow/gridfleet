@@ -403,7 +403,8 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
 
     ready_device = SimpleNamespace(id=uuid.uuid4())
     blocked_device = SimpleNamespace(id=uuid.uuid4())
-    monkeypatch.setattr(main.device_service, "list_devices", AsyncMock(return_value=[ready_device, blocked_device]))
+    mock_crud = AsyncMock()
+    mock_crud.list_devices = AsyncMock(return_value=[ready_device, blocked_device])
     monkeypatch.setattr(
         main,
         "assess_devices_async",
@@ -424,7 +425,7 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
         platform_id="android_mobile",
         count=2,
         db=AsyncMock(),
-        settings_services=SimpleNamespace(service=FakeSettingsReader({})),
+        device_services=SimpleNamespace(crud=mock_crud),
     )
 
     assert availability == {

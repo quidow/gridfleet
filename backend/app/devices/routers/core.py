@@ -30,12 +30,8 @@ from app.devices.services import (
 from app.devices.services import (
     platform_label as platform_label_service,
 )
-from app.devices.services import (
-    service as device_service,
-)
 from app.runs import service as run_service
 from app.sessions.dependencies import SessionServicesDep
-from app.settings.dependencies import SettingsServicesDep
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
@@ -101,17 +97,14 @@ async def list_devices(
     filters: DeviceFiltersDep,
     db: DbDep,
     device_services: DeviceServicesDep,
-    settings_services: SettingsServicesDep,
     limit: int | None = Query(None, ge=1, le=500),
     offset: int | None = Query(None, ge=0),
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if limit is not None:
         effective_offset = offset if offset is not None else 0
-        devices, total = await device_service.list_devices_paginated(
-            db, filters, limit, effective_offset, settings=settings_services.service
-        )
+        devices, total = await device_services.crud.list_devices_paginated(db, filters, limit, effective_offset)
     else:
-        devices = await device_service.list_devices_by_filters(db, filters, settings=settings_services.service)
+        devices = await device_services.crud.list_devices_by_filters(db, filters)
         total = None
 
     reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
@@ -159,7 +152,7 @@ async def get_device_by_connection_target(target: str, db: DbDep, device_service
 
 @router.get("/{device_id}", response_model=DeviceDetail)
 async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=device.pack_id,
@@ -174,8 +167,8 @@ async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceSer
 
 
 @router.get("/{device_id}/capabilities")
-async def device_capabilities(device_id: uuid.UUID, db: DbDep) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db)
+async def device_capabilities(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await capability_service.get_device_capabilities(db, device)
 
 
@@ -184,7 +177,7 @@ async def update_device(
     device_id: uuid.UUID, data: DevicePatch, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     try:
-        device = await device_service.update_device(db, device_id, data)
+        device = await device_services.crud.update_device(db, device_id, data)
     except DeviceIdentityConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
@@ -195,8 +188,8 @@ async def update_device(
 
 
 @router.delete("/{device_id}", status_code=204)
-async def delete_device(device_id: uuid.UUID, db: DbDep) -> None:
-    deleted = await device_service.delete_device(db, device_id)
+async def delete_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> None:
+    deleted = await device_services.crud.delete_device(db, device_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Device not found")
 
@@ -205,9 +198,10 @@ async def delete_device(device_id: uuid.UUID, db: DbDep) -> None:
 async def device_session_outcome_heatmap(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     session_services: SessionServicesDep,
     days: int = Query(90, ge=1, le=90),
 ) -> list[SessionOutcomeHeatmapRow]:
-    await get_device_or_404(device_id, db)
+    await get_device_or_404(device_id, db, device_services.crud)
     rows = await session_services.crud.get_device_session_outcome_heatmap_rows(db, device_id, days=days)
     return [SessionOutcomeHeatmapRow(timestamp=timestamp, status=status) for timestamp, status in rows]

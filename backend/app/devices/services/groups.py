@@ -8,7 +8,6 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters, DeviceQueryFilters
-from app.devices.services import service as device_service
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -25,7 +24,6 @@ if TYPE_CHECKING:
 class DeviceGroupsService:
     def __init__(self, *, publisher: EventPublisher, settings: SettingsReader, crud: DeviceCrudProtocol) -> None:
         self._publisher = publisher
-        self._settings = settings
         self._crud = crud
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
@@ -66,7 +64,7 @@ class DeviceGroupsService:
         output = []
         for group in groups:
             if group.group_type == GroupType.dynamic:
-                count = await _count_dynamic_members(db, group.filters or {}, settings=self._settings)
+                count = await _count_dynamic_members(db, group.filters or {}, crud=self._crud)
             else:
                 count = static_counts.get(group.id, 0)
 
@@ -85,7 +83,7 @@ class DeviceGroupsService:
             return None
 
         if group.group_type == GroupType.dynamic:
-            devices = await _resolve_dynamic_members(db, group.filters or {}, settings=self._settings)
+            devices = await _resolve_dynamic_members(db, group.filters or {}, crud=self._crud)
         else:
             devices = [m.device for m in group.memberships if m.device is not None]
 
@@ -182,7 +180,7 @@ class DeviceGroupsService:
             return []
 
         if group.group_type == GroupType.dynamic:
-            devices = await _resolve_dynamic_members(db, group.filters or {}, settings=self._settings)
+            devices = await _resolve_dynamic_members(db, group.filters or {}, crud=self._crud)
             return [d.id for d in devices]
         else:
             mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group_id)
@@ -195,17 +193,17 @@ def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilt
 
 
 async def _resolve_dynamic_members(
-    db: AsyncSession, filters_payload: dict[str, Any], *, settings: SettingsReader
+    db: AsyncSession, filters_payload: dict[str, Any], *, crud: DeviceCrudProtocol
 ) -> list[Device]:
     filters = _validate_filters(filters_payload)
     query_filters = DeviceQueryFilters(**filters.model_dump(exclude_none=True))
-    return await device_service.list_devices_by_filters(db, query_filters, settings=settings)
+    return await crud.list_devices_by_filters(db, query_filters)
 
 
-async def _count_dynamic_members(db: AsyncSession, filters_payload: dict[str, Any], *, settings: SettingsReader) -> int:
+async def _count_dynamic_members(db: AsyncSession, filters_payload: dict[str, Any], *, crud: DeviceCrudProtocol) -> int:
     filters = _validate_filters(filters_payload)
     query_filters = DeviceQueryFilters(**filters.model_dump(exclude_none=True))
-    return await device_service.count_devices_by_filters(db, query_filters, settings=settings)
+    return await crud.count_devices_by_filters(db, query_filters)
 
 
 def _dump_filters(filters: DeviceGroupFilters | None) -> dict[str, Any] | None:
