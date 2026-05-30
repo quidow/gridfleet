@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import connectivity as device_connectivity
 from app.devices.services import state_write_guard
+from app.devices.services.connectivity import ConnectivityService
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -59,9 +59,9 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(
-                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-                )
+                await ConnectivityService(
+                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                ).check_connectivity(session)
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)
@@ -128,9 +128,9 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(
-                    session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-                )
+                await ConnectivityService(
+                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                ).check_connectivity(session)
 
     async def racer() -> None:
         await asyncio.wait_for(lock_attempted.wait(), timeout=2.0)

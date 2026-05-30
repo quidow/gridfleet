@@ -21,6 +21,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -226,9 +227,9 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         ) as delete_value,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     assert delete_value.await_count == 1
 
@@ -263,9 +264,9 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         ) as update_emulator_state,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     assert any(call.args[2] == "booted" for call in update_emulator_state.await_args_list)
 
@@ -305,6 +306,9 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_fake_crud,
+            connectivity=ConnectivityService(
+                publisher=_fake_publisher, settings=_fake_settings, circuit_breaker=Mock()
+            ),
             publisher=_fake_publisher,
             settings=_fake_settings,
             grid=_fake_grid,
@@ -315,11 +319,12 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
 
     with (
         patch("app.devices.services.connectivity.observe_background_loop", return_value=_Observation()),
-        patch(
-            "app.devices.services.connectivity._check_connectivity",
+        patch.object(
+            ConnectivityService,
+            "check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
-        patch("app.devices.services.connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
+        patch.object(ConnectivityService, "check_expired_cooldowns", new=AsyncMock(return_value=None)),
         patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
@@ -382,8 +387,8 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         patch("app.devices.services.connectivity.assert_current_leader"),
         patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
-        await device_connectivity._check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     assert handle_health_failure_called is False, "handle_health_failure must not be called for already-offline device"

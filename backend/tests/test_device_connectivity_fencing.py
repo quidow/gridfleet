@@ -11,7 +11,7 @@ import pytest
 from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.connectivity import _check_connectivity
+from app.devices.services.connectivity import ConnectivityService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -47,9 +47,9 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
 
 @pytest.mark.db
@@ -103,9 +103,9 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
@@ -169,9 +169,9 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     stop_called.assert_not_called()
     await db_session.refresh(device, attribute_names=["operational_state"])
@@ -234,9 +234,9 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
         ),
         pytest.raises(LeadershipLost),
     ):
-        await _check_connectivity(
-            db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
-        )
+        await ConnectivityService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state

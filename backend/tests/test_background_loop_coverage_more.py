@@ -23,6 +23,7 @@ from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -88,6 +89,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_1,
+            connectivity=ConnectivityService(publisher=_svc_pub_1, settings=_svc_settings_1, circuit_breaker=Mock()),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
@@ -137,6 +139,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_2,
+            connectivity=ConnectivityService(publisher=_svc_pub_2, settings=_svc_settings_2, circuit_breaker=Mock()),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
@@ -215,10 +218,10 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
 async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(device_connectivity, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(device_connectivity, "_check_expired_cooldowns", AsyncMock())
+    monkeypatch.setattr(ConnectivityService, "check_expired_cooldowns", AsyncMock())
     monkeypatch.setattr(
-        device_connectivity,
-        "_check_connectivity",
+        ConnectivityService,
+        "check_connectivity",
         AsyncMock(side_effect=LeadershipLost("stale leader")),
     )
     monkeypatch.setattr(device_connectivity.os, "_exit", Mock(side_effect=SystemExit(70)))
@@ -248,6 +251,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_3,
+            connectivity=ConnectivityService(publisher=_svc_pub_3, settings=_svc_settings_3, circuit_breaker=Mock()),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
@@ -343,6 +347,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_4,
+            connectivity=ConnectivityService(publisher=_svc_pub_4, settings=_svc_settings_4, circuit_breaker=Mock()),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,

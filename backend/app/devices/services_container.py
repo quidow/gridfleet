@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.protocols import (
         BulkOperationsProtocol,
+        ConnectivityProtocol,
         DataCleanupProtocol,
         DeviceCrudProtocol,
         DeviceGroupsProtocol,
@@ -42,6 +43,7 @@ class DeviceServices:
     portability_export: PortabilityExportProtocol
     verification: VerificationProtocol
     crud: DeviceCrudProtocol
+    connectivity: ConnectivityProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol
