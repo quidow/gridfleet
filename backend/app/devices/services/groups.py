@@ -21,6 +21,36 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 
+class DeviceGroupsService:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
+        self._publisher = publisher
+        self._settings = settings
+
+    async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
+        return await create_group(db, data, publisher=self._publisher)
+
+    async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
+        return await list_groups(db, settings=self._settings)
+
+    async def get_group(self, db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | None:
+        return await get_group(db, group_id, settings=self._settings)
+
+    async def update_group(self, db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate) -> DeviceGroup | None:
+        return await update_group(db, group_id, data, publisher=self._publisher)
+
+    async def delete_group(self, db: AsyncSession, group_id: uuid.UUID) -> bool:
+        return await delete_group(db, group_id, publisher=self._publisher)
+
+    async def add_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+        return await add_members(db, group_id, device_ids, publisher=self._publisher)
+
+    async def remove_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
+        return await remove_members(db, group_id, device_ids, publisher=self._publisher)
+
+    async def get_group_device_ids(self, db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
+        return await get_group_device_ids(db, group_id, settings=self._settings)
+
+
 async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventPublisher) -> DeviceGroup:
     group = DeviceGroup(
         name=data.name,

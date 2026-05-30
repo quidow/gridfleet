@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import MaintenanceProtocol
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
 
@@ -137,6 +138,63 @@ async def _run_per_device_node_action(
         severity=_bulk_severity(total, succeeded, failed),
     )
     return _result(len(existing_device_ids), succeeded, errors)
+
+
+class BulkOperationsService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        maintenance: MaintenanceProtocol,
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+        self._maintenance = maintenance
+
+    async def bulk_start_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+    ) -> dict[str, Any]:
+        return await bulk_start_nodes(db, device_ids, caller=caller, publisher=self._publisher, settings=self._settings)
+
+    async def bulk_stop_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+    ) -> dict[str, Any]:
+        return await bulk_stop_nodes(db, device_ids, caller=caller, publisher=self._publisher)
+
+    async def bulk_restart_nodes(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+    ) -> dict[str, Any]:
+        return await bulk_restart_nodes(
+            db, device_ids, caller=caller, publisher=self._publisher, settings=self._settings
+        )
+
+    async def bulk_update_tags(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], tags: dict[str, str], merge: bool = True
+    ) -> dict[str, Any]:
+        return await bulk_update_tags(db, device_ids, tags, merge, publisher=self._publisher)
+
+    async def bulk_delete(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        return await bulk_delete(db, device_ids, publisher=self._publisher)
+
+    async def bulk_enter_maintenance(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        return await bulk_enter_maintenance(db, device_ids, publisher=self._publisher)
+
+    async def bulk_exit_maintenance(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        return await bulk_exit_maintenance(db, device_ids, publisher=self._publisher)
+
+    async def bulk_reconnect(
+        self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "operator"
+    ) -> dict[str, Any]:
+        return await bulk_reconnect(
+            db,
+            device_ids,
+            publisher=self._publisher,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
 
 
 async def bulk_start_nodes(

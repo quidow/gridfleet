@@ -76,6 +76,29 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
     ]
 
 
+class MaintenanceService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def enter_maintenance(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        commit: bool = True,
+        maintenance_reason: str = "Operator entered maintenance",
+    ) -> Device:
+        return await enter_maintenance(
+            db, device, commit=commit, maintenance_reason=maintenance_reason, publisher=self._publisher
+        )
+
+    async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
+        return await exit_maintenance(db, device, commit=commit, publisher=self._publisher)
+
+    async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None:
+        await schedule_device_recovery(db, device_id)
+
+
 async def enter_maintenance(
     db: AsyncSession,
     device: Device,
