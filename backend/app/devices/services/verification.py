@@ -17,6 +17,7 @@ from app.packs.services import platform_resolver as pack_platform_resolver
 assert_runnable = pack_platform_resolver.assert_runnable
 
 __all__ = [
+    "VerificationService",
     "get_verification_job",
     "run_persisted_verification_job",
     "start_existing_device_verification_job",
