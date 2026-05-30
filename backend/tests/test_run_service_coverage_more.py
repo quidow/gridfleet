@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
@@ -45,7 +46,12 @@ _release_svc = RunReleaseService(
     publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
-_failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
+_failure_svc = RunFailureService(
+    publisher=event_bus,
+    settings=_settings,
+    circuit_breaker=_circuit_breaker,
+    maintenance=MaintenanceService(publisher=event_bus),
+)
 
 
 async def test_run_service_include_and_hydration_error_branches(
@@ -401,7 +407,12 @@ async def test_cooldown_device_guard_paths(
             "general.device_cooldown_escalation_threshold": 3,
         }
     )
-    failure_svc = RunFailureService(publisher=event_bus, settings=fake_settings, circuit_breaker=_circuit_breaker)
+    failure_svc = RunFailureService(
+        publisher=event_bus,
+        settings=fake_settings,
+        circuit_breaker=_circuit_breaker,
+        maintenance=MaintenanceService(publisher=event_bus),
+    )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
@@ -586,6 +597,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
             {"general.device_cooldown_max_sec": 60, "general.device_cooldown_escalation_threshold": 1}
         ),
         circuit_breaker=_circuit_breaker,
+        maintenance=MaintenanceService(publisher=event_bus),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5

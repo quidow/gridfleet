@@ -131,5 +131,6 @@ class MaintenanceWriter(Protocol):
         device: Device,
         *,
         commit: bool = ...,
+        allow_reserved: bool = ...,
         maintenance_reason: str = ...,
     ) -> Device: ...

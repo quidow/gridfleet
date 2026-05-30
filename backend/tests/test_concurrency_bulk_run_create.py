@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
@@ -108,7 +109,10 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 device_state=DeviceStateService(publisher=event_bus),
             )
             run_failure = RunFailureService(
-                publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+                publisher=event_bus,
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+                maintenance=MaintenanceService(publisher=event_bus),
             )
             run_query = RunQueryService()
             return RunServices(

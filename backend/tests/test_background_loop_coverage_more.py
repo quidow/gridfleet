@@ -22,8 +22,11 @@ from app.devices.services import (
 from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -58,12 +61,21 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_1 = Mock()
     _svc_pub_1 = AsyncMock()
+    _svc_maint_1 = MaintenanceService(publisher=_svc_pub_1)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_svc_pub_1),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
             data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_svc_pub_1, settings=_svc_settings_1),
+            maintenance=_svc_maint_1,
+            bulk=BulkOperationsService(
+                publisher=_svc_pub_1,
+                settings=_svc_settings_1,
+                circuit_breaker=Mock(),
+                maintenance=_svc_maint_1,
+            ),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
@@ -91,12 +103,21 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_2 = Mock()
     _svc_pub_2 = AsyncMock()
+    _svc_maint_2 = MaintenanceService(publisher=_svc_pub_2)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_svc_pub_2),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_svc_pub_2, settings=_svc_settings_2),
+            maintenance=_svc_maint_2,
+            bulk=BulkOperationsService(
+                publisher=_svc_pub_2,
+                settings=_svc_settings_2,
+                circuit_breaker=Mock(),
+                maintenance=_svc_maint_2,
+            ),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
@@ -186,12 +207,21 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     _svc_settings_3 = FakeSettingsReader({})
     _svc_grid_3 = Mock()
     _svc_pub_3 = AsyncMock()
+    _svc_maint_3 = MaintenanceService(publisher=_svc_pub_3)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_svc_pub_3),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
             data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_svc_pub_3, settings=_svc_settings_3),
+            maintenance=_svc_maint_3,
+            bulk=BulkOperationsService(
+                publisher=_svc_pub_3,
+                settings=_svc_settings_3,
+                circuit_breaker=Mock(),
+                maintenance=_svc_maint_3,
+            ),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
@@ -265,12 +295,21 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     _svc_settings_4 = FakeSettingsReader({})
     _svc_grid_4 = Mock()
     _svc_pub_4 = AsyncMock()
+    _svc_maint_4 = MaintenanceService(publisher=_svc_pub_4)
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_svc_pub_4),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_4),
             data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=_svc_pub_4, settings=_svc_settings_4),
+            maintenance=_svc_maint_4,
+            bulk=BulkOperationsService(
+                publisher=_svc_pub_4,
+                settings=_svc_settings_4,
+                circuit_breaker=Mock(),
+                maintenance=_svc_maint_4,
+            ),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,

@@ -27,8 +27,11 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -133,11 +136,18 @@ def compose_app(
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
+    maintenance_svc = MaintenanceService(publisher=bus)
+    groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc)
+    bulk_svc = BulkOperationsService(
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, maintenance=maintenance_svc
+    )
 
     run_release = RunReleaseService(publisher=bus, settings=settings_svc, grid=grid_svc, device_state=device_state_svc)
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
     run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
-    run_failure = RunFailureService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
+    run_failure = RunFailureService(
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, maintenance=maintenance_svc
+    )
     run_query = RunQueryService()
 
     return AppServices(
@@ -149,6 +159,9 @@ def compose_app(
             fleet_capacity=fleet_capacity_svc,
             data_cleanup=data_cleanup_svc,
             property_refresh=property_refresh_svc,
+            groups=groups_svc,
+            maintenance=maintenance_svc,
+            bulk=bulk_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

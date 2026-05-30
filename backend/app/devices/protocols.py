@@ -103,6 +103,7 @@ class MaintenanceProtocol(Protocol):
         device: Device,
         *,
         commit: bool = ...,
+        allow_reserved: bool = ...,
         maintenance_reason: str = ...,
     ) -> Device: ...
     async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = ...) -> Device: ...

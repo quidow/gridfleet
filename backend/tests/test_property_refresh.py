@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -138,12 +141,21 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     mock_property_refresh_svc = Mock()
     mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
 
+    _pr_maintenance = MaintenanceService(publisher=_pr_publisher)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_pr_publisher),
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,
+            groups=DeviceGroupsService(publisher=_pr_publisher, settings=_pr_settings),
+            maintenance=_pr_maintenance,
+            bulk=BulkOperationsService(
+                publisher=_pr_publisher,
+                settings=_pr_settings,
+                circuit_breaker=Mock(),
+                maintenance=_pr_maintenance,
+            ),
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,

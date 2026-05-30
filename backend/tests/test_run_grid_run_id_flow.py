@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.models import RunState
@@ -33,7 +34,12 @@ _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, gr
 _allocator_svc = RunAllocatorService(
     publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
 )
-_failure_svc = RunFailureService(publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker)
+_failure_svc = RunFailureService(
+    publisher=event_bus,
+    settings=_settings,
+    circuit_breaker=_circuit_breaker,
+    maintenance=MaintenanceService(publisher=event_bus),
+)
 
 if TYPE_CHECKING:
     import uuid

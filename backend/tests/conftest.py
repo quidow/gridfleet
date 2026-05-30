@@ -26,8 +26,11 @@ from app.core.leader import models as _leader_models  # noqa: F401  # Ensure lea
 from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
@@ -364,16 +367,25 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         _grid_svc = GridService(settings=settings_service)
+        _maintenance_svc = MaintenanceService(publisher=test_event_bus)
         return DeviceServices(
             state=DeviceStateService(publisher=test_event_bus),
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
+            groups=DeviceGroupsService(publisher=test_event_bus, settings=settings_service),
+            maintenance=_maintenance_svc,
+            bulk=BulkOperationsService(
+                publisher=test_event_bus,
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+                maintenance=_maintenance_svc,
+            ),
             publisher=test_event_bus,
             settings=settings_service,
             grid=_grid_svc,
             session_factory=sf,
-            circuit_breaker=Mock(),
+            circuit_breaker=test_circuit_breaker,
         )
 
     def override_get_host_services() -> HostServices:
@@ -441,7 +453,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             device_state=DeviceStateService(publisher=test_event_bus),
         )
         run_failure = RunFailureService(
-            publisher=test_event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+            publisher=test_event_bus,
+            settings=settings_service,
+            circuit_breaker=test_circuit_breaker,
+            maintenance=MaintenanceService(publisher=test_event_bus),
         )
         run_query = RunQueryService()
         return RunServices(

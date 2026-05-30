@@ -86,10 +86,16 @@ class MaintenanceService:
         device: Device,
         *,
         commit: bool = True,
+        allow_reserved: bool = False,
         maintenance_reason: str = "Operator entered maintenance",
     ) -> Device:
         return await enter_maintenance(
-            db, device, commit=commit, maintenance_reason=maintenance_reason, publisher=self._publisher
+            db,
+            device,
+            commit=commit,
+            allow_reserved=allow_reserved,
+            maintenance_reason=maintenance_reason,
+            publisher=self._publisher,
         )
 
     async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
