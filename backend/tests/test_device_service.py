@@ -3,8 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationCreate
-from app.devices.services import service as device_service
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -24,7 +25,8 @@ async def test_create_device_persists_initial_operational_state(db_session: Asyn
         host_id=db_host.id,
     )
 
-    device = await device_service.create_device(
+    crud = DeviceCrudService(settings=FakeSettingsReader())
+    device = await crud.create_device(
         db_session,
         data,
         initial_operational_state=DeviceOperationalState.verifying,

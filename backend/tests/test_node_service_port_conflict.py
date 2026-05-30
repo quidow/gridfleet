@@ -29,7 +29,7 @@ async def db_with_pending_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> AsyncGenerator[tuple[AsyncSession, Device]]:
-    from app.devices.services import service as device_service
+    from app.devices.services.service import DeviceCrudService
     from tests.pack.factories import seed_test_packs
 
     await seed_test_packs(db_session)
@@ -45,7 +45,8 @@ async def db_with_pending_device(
         identity_scope="host",
         os_version="14",
     )
-    loaded = await device_service.get_device(db_session, device.id)
+    crud = DeviceCrudService(settings=FakeSettingsReader())
+    loaded = await crud.get_device(db_session, device.id)
     assert loaded is not None
     yield db_session, loaded
 

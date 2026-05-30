@@ -56,9 +56,9 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
         name=identity,
         operational_state=DeviceOperationalState.available,
     )
-    from app.devices.services import service as device_service
+    from app.devices.services.service import DeviceCrudService
 
-    loaded = await device_service.get_device(db_session, device.id)
+    loaded = await DeviceCrudService(settings=FakeSettingsReader()).get_device(db_session, device.id)
     assert loaded is not None
     return loaded
 

@@ -1106,14 +1106,16 @@ async def test_delete_device_clears_connectivity_and_ip_ping_namespaces(
 ) -> None:
     from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
-    from app.devices.services.service import delete_device
+    from app.devices.services.service import DeviceCrudService
+    from tests.fakes import FakeSettingsReader
 
     device = await make_device(connection_type="usb", ip_address="10.0.0.7")
     await control_plane_state_store.set_value(db_session, IP_PING_NAMESPACE, device.identity_value, 2)
     await control_plane_state_store.set_value(db_session, CONNECTIVITY_NAMESPACE, device.identity_value, True)
     await db_session.commit()
 
-    deleted = await delete_device(db_session, device.id)
+    crud = DeviceCrudService(settings=FakeSettingsReader())
+    deleted = await crud.delete_device(db_session, device.id)
     assert deleted is True
 
     ip_ping_counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)

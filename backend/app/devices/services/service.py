@@ -62,12 +62,12 @@ class DeviceCrudService:
         self._settings = settings
 
     async def prepare_device_create_payload(self, db: AsyncSession, data: DeviceVerificationCreate) -> dict[str, Any]:
-        return await prepare_device_create_payload(db, data)
+        return await device_write.prepare_device_create_payload_async(db, data)
 
     async def prepare_device_update_payload(
         self, db: AsyncSession, device: Device, data: DevicePatch | DeviceVerificationUpdate
     ) -> dict[str, Any]:
-        return await prepare_device_update_payload(db, device, data)
+        return await device_write.prepare_device_update_payload_async(db, device, data)
 
     async def create_device(
         self,
@@ -77,9 +77,17 @@ class DeviceCrudService:
         mark_verified: bool = False,
         initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
     ) -> Device:
-        return await create_device(
-            db, data, mark_verified=mark_verified, initial_operational_state=initial_operational_state
-        )
+        payload = await self.prepare_device_create_payload(db, data)
+        if mark_verified:
+            payload["verified_at"] = datetime.now(UTC)
+        payload["operational_state"] = initial_operational_state
+        await ensure_device_payload_identity_available(db, payload)
+        try:
+            return await device_write.create_device_record(db, payload)
+        except IntegrityError:
+            await db.rollback()
+            await ensure_device_payload_identity_available(db, payload)
+            raise
 
     async def list_devices(
         self,
@@ -101,9 +109,7 @@ class DeviceCrudService:
         sort_by: str = "created_at",
         sort_dir: str = "desc",
     ) -> list[Device]:
-        return await list_devices(
-            db,
-            settings=self._settings,
+        filters = DeviceQueryFilters(
             pack_id=pack_id,
             platform_id=platform_id,
             status=status,
@@ -113,27 +119,89 @@ class DeviceCrudService:
             device_type=device_type,
             connection_type=connection_type,
             os_version=os_version,
-            search=search,
             hardware_health_status=hardware_health_status,
             hardware_telemetry_state=hardware_telemetry_state,
+            search=search,
             tags=tags,
             sort_by=sort_by,
             sort_dir=sort_dir,
         )
+        return await self.list_devices_by_filters(db, filters)
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
-        return await list_devices_by_filters(db, filters, settings=self._settings)
+        stmt = _build_device_list_stmt(filters)
+        result = await db.execute(stmt)
+        devices = list(result.scalars().all())
+        if filters.needs_attention is not None:
+            wanted = filters.needs_attention
+            kept: list[Device] = []
+            reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
+            readiness_map = await device_readiness.assess_devices_async(db, devices)
+            for device in devices:
+                reservation_context = run_service.get_reservation_context_for_device(
+                    reservation_map.get(device.id), device.id
+                )
+                readiness = readiness_map[device.id]
+                policy = await lifecycle_policy.build_lifecycle_policy(
+                    db, device, reservation_context=reservation_context
+                )
+                summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
+                health_summary = device_health.build_public_summary(device)
+                if (
+                    device_attention.compute_needs_attention(
+                        summary["state"],
+                        readiness.readiness_state,
+                        health_healthy=(health_summary or {}).get("healthy"),
+                        hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
+                    )
+                    is wanted
+                ):
+                    kept.append(device)
+            devices = kept
+        if filters.hardware_telemetry_state is not None:
+            devices = [
+                device
+                for device in devices
+                if hardware_telemetry.hardware_telemetry_state_for_device(device, settings=self._settings)
+                == filters.hardware_telemetry_state
+            ]
+        return devices
 
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
     ) -> tuple[list[Device], int]:
-        return await list_devices_paginated(db, filters, limit, offset, settings=self._settings)
+        has_post_filters = filters.needs_attention is not None or filters.hardware_telemetry_state is not None
+
+        if has_post_filters:
+            all_devices = await self.list_devices_by_filters(db, filters)
+            total = len(all_devices)
+            page = all_devices[offset : offset + limit]
+            return page, total
+
+        count_result = await db.execute(_build_device_count_stmt(filters))
+        total = int(count_result.scalar() or 0)
+
+        stmt = _build_device_list_stmt(filters).limit(limit).offset(offset)
+        result = await db.execute(stmt)
+        page = list(result.scalars().all())
+        return page, total
 
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
-        return await count_devices_by_filters(db, filters, settings=self._settings)
+        if filters.needs_attention is not None or filters.hardware_telemetry_state is not None:
+            return len(await self.list_devices_by_filters(db, filters))
+
+        result = await db.execute(_build_device_count_stmt(filters))
+        return int(result.scalar() or 0)
 
     async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None:
-        return await get_device(db, device_id)
+        stmt = (
+            select(Device)
+            .where(Device.id == device_id)
+            .options(selectinload(Device.appium_node), selectinload(Device.sessions), selectinload(Device.host))
+            .execution_options(populate_existing=True)
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def update_device(
         self,
@@ -143,85 +211,48 @@ class DeviceCrudService:
         *,
         enforce_patch_contract: bool = True,
     ) -> Device | None:
-        return await update_device(db, device_id, data, enforce_patch_contract=enforce_patch_contract)
+        try:
+            device = await device_locking.lock_device(db, device_id)
+        except NoResultFound:
+            return None
+
+        if enforce_patch_contract:
+            if not isinstance(data, DevicePatch):
+                raise ValueError("PATCH /api/devices/{id} requires the generic device patch contract")
+            device_write.validate_patch_contract(device, data)
+
+        payload = await self.prepare_device_update_payload(db, device, data)
+        await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
+        if device_readiness.payload_requires_reverification(device, payload):
+            device.verified_at = None
+
+        device_write.apply_device_payload(device, payload)
+        try:
+            return await device_write.persist_device_record(db, device)
+        except IntegrityError:
+            await db.rollback()
+            await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
+            raise
 
     async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        return await delete_device(db, device_id)
+        device = await _lock_device_for_delete(db, device_id)
+        if device is None:
+            return False
 
+        # Stop the running Appium node on the agent before deleting
+        if device.appium_node and device.appium_node.observed_running:
+            device = await _stop_running_node_for_delete(db, device, device_id)
+            if device is None:
+                return True
 
-async def prepare_device_create_payload(
-    db: AsyncSession,
-    data: DeviceVerificationCreate,
-) -> dict[str, Any]:
-    return await device_write.prepare_device_create_payload_async(db, data)
+        # Clean up control_plane_state rows keyed by identity_value before deleting
+        # the device row, so the cleanup stays in the same transaction.
+        await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
+        await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
 
-
-async def prepare_device_update_payload(
-    db: AsyncSession,
-    device: Device,
-    data: DeviceVerificationUpdate | DevicePatch,
-) -> dict[str, Any]:
-    return await device_write.prepare_device_update_payload_async(db, device, data)
-
-
-async def create_device(
-    db: AsyncSession,
-    data: DeviceVerificationCreate,
-    *,
-    mark_verified: bool = False,
-    initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
-) -> Device:
-    payload = await prepare_device_create_payload(db, data)
-    if mark_verified:
-        payload["verified_at"] = datetime.now(UTC)
-    payload["operational_state"] = initial_operational_state
-    await ensure_device_payload_identity_available(db, payload)
-    try:
-        return await device_write.create_device_record(db, payload)
-    except IntegrityError:
-        await db.rollback()
-        await ensure_device_payload_identity_available(db, payload)
-        raise
-
-
-async def list_devices(
-    db: AsyncSession,
-    *,
-    settings: SettingsReader,
-    pack_id: str | None = None,
-    platform_id: str | None = None,
-    status: ChipStatus | None = None,
-    host_id: uuid.UUID | None = None,
-    identity_value: str | None = None,
-    connection_target: str | None = None,
-    device_type: DeviceType | None = None,
-    connection_type: ConnectionType | None = None,
-    os_version: str | None = None,
-    search: str | None = None,
-    hardware_health_status: HardwareHealthStatus | None = None,
-    hardware_telemetry_state: HardwareTelemetryState | None = None,
-    tags: dict[str, str] | None = None,
-    sort_by: str = "created_at",
-    sort_dir: str = "desc",
-) -> list[Device]:
-    filters = DeviceQueryFilters(
-        pack_id=pack_id,
-        platform_id=platform_id,
-        status=status,
-        host_id=host_id,
-        identity_value=identity_value,
-        connection_target=connection_target,
-        device_type=device_type,
-        connection_type=connection_type,
-        os_version=os_version,
-        hardware_health_status=hardware_health_status,
-        hardware_telemetry_state=hardware_telemetry_state,
-        search=search,
-        tags=tags,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-    )
-    return await list_devices_by_filters(db, filters, settings=settings)
+        await db.delete(device)
+        await db.commit()
+        return True
 
 
 def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilters) -> DeviceQueryStatement:
@@ -319,126 +350,6 @@ def _build_device_count_stmt(filters: DeviceQueryFilters) -> DeviceCountStatemen
     return cast("DeviceCountStatement", _apply_device_filters(stmt, filters))
 
 
-async def list_devices_by_filters(
-    db: AsyncSession,
-    filters: DeviceQueryFilters,
-    settings: SettingsReader,
-) -> list[Device]:
-    stmt = _build_device_list_stmt(filters)
-    result = await db.execute(stmt)
-    devices = list(result.scalars().all())
-    if filters.needs_attention is not None:
-        wanted = filters.needs_attention
-        kept: list[Device] = []
-        reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
-        readiness_map = await device_readiness.assess_devices_async(db, devices)
-        for device in devices:
-            reservation_context = run_service.get_reservation_context_for_device(
-                reservation_map.get(device.id), device.id
-            )
-            readiness = readiness_map[device.id]
-            policy = await lifecycle_policy.build_lifecycle_policy(db, device, reservation_context=reservation_context)
-            summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
-            health_summary = device_health.build_public_summary(device)
-            if (
-                device_attention.compute_needs_attention(
-                    summary["state"],
-                    readiness.readiness_state,
-                    health_healthy=(health_summary or {}).get("healthy"),
-                    hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
-                )
-                is wanted
-            ):
-                kept.append(device)
-        devices = kept
-    if filters.hardware_telemetry_state is not None:
-        devices = [
-            device
-            for device in devices
-            if hardware_telemetry.hardware_telemetry_state_for_device(device, settings=settings)
-            == filters.hardware_telemetry_state
-        ]
-    return devices
-
-
-async def list_devices_paginated(
-    db: AsyncSession,
-    filters: DeviceQueryFilters,
-    limit: int,
-    offset: int,
-    settings: SettingsReader,
-) -> tuple[list[Device], int]:
-    has_post_filters = filters.needs_attention is not None or filters.hardware_telemetry_state is not None
-
-    if has_post_filters:
-        all_devices = await list_devices_by_filters(db, filters, settings=settings)
-        total = len(all_devices)
-        page = all_devices[offset : offset + limit]
-        return page, total
-
-    count_result = await db.execute(_build_device_count_stmt(filters))
-    total = int(count_result.scalar() or 0)
-
-    stmt = _build_device_list_stmt(filters).limit(limit).offset(offset)
-    result = await db.execute(stmt)
-    page = list(result.scalars().all())
-    return page, total
-
-
-async def count_devices_by_filters(
-    db: AsyncSession,
-    filters: DeviceQueryFilters,
-    settings: SettingsReader,
-) -> int:
-    if filters.needs_attention is not None or filters.hardware_telemetry_state is not None:
-        return len(await list_devices_by_filters(db, filters, settings=settings))
-
-    result = await db.execute(_build_device_count_stmt(filters))
-    return int(result.scalar() or 0)
-
-
-async def get_device(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
-    stmt = (
-        select(Device)
-        .where(Device.id == device_id)
-        .options(selectinload(Device.appium_node), selectinload(Device.sessions), selectinload(Device.host))
-        .execution_options(populate_existing=True)
-    )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def update_device(
-    db: AsyncSession,
-    device_id: uuid.UUID,
-    data: DevicePatch | DeviceVerificationUpdate,
-    *,
-    enforce_patch_contract: bool = True,
-) -> Device | None:
-    try:
-        device = await device_locking.lock_device(db, device_id)
-    except NoResultFound:
-        return None
-
-    if enforce_patch_contract:
-        if not isinstance(data, DevicePatch):
-            raise ValueError("PATCH /api/devices/{id} requires the generic device patch contract")
-        device_write.validate_patch_contract(device, data)
-
-    payload = await prepare_device_update_payload(db, device, data)
-    await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
-    if device_readiness.payload_requires_reverification(device, payload):
-        device.verified_at = None
-
-    device_write.apply_device_payload(device, payload)
-    try:
-        return await device_write.persist_device_record(db, device)
-    except IntegrityError:
-        await db.rollback()
-        await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
-        raise
-
-
 async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
     try:
         return await device_locking.lock_device(db, device_id)
@@ -498,24 +409,3 @@ async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device
             return None
         device = relocked
     return device
-
-
-async def delete_device(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    device = await _lock_device_for_delete(db, device_id)
-    if device is None:
-        return False
-
-    # Stop the running Appium node on the agent before deleting
-    if device.appium_node and device.appium_node.observed_running:
-        device = await _stop_running_node_for_delete(db, device, device_id)
-        if device is None:
-            return True
-
-    # Clean up control_plane_state rows keyed by identity_value before deleting
-    # the device row, so the cleanup stays in the same transaction.
-    await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
-    await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
-
-    await db.delete(device)
-    await db.commit()
-    return True

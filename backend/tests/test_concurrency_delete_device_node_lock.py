@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -52,15 +53,7 @@ async def test_delete_device_locks_row_before_reading_node_state(
     starter_committed = asyncio.Event()
     stop_called = asyncio.Event()
 
-    original_get_device = device_service.get_device
     original_lock_device = device_locking.lock_device
-
-    async def gated_get_device(db: AsyncSession, did: object) -> Device | None:
-        device_row = await original_get_device(db, did)  # type: ignore[arg-type]
-        if did == device_id:
-            delete_read_done.set()
-            await proceed_delete.wait()
-        return device_row
 
     async def gated_lock_device(db: AsyncSession, did: object, **kwargs: object) -> Device:
         locked = await original_lock_device(db, did, **kwargs)  # type: ignore[arg-type]
@@ -82,15 +75,15 @@ async def test_delete_device_locks_row_before_reading_node_state(
 
     async def deleter() -> bool:
         async with db_session_maker() as db:
+            crud = DeviceCrudService(settings=FakeSettingsReader())
             with (
-                patch.object(device_service, "get_device", new=gated_get_device),
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
                     "app.devices.services.service._stop_node",
                     new=observed_stop_node,
                 ),
             ):
-                return await device_service.delete_device(db, device_id)
+                return await crud.delete_device(db, device_id)
 
     async def starter() -> str:
         wait_tasks = [
@@ -197,11 +190,12 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
 
     async def deleter() -> bool:
         async with db_session_maker() as db:
+            crud = DeviceCrudService(settings=FakeSettingsReader())
             with patch(
                 "app.devices.services.service._stop_node",
                 new=observed_stop_node,
             ):
-                return await device_service.delete_device(db, device_id)
+                return await crud.delete_device(db, device_id)
 
     async def starter() -> str:
         await first_stop_committed.wait()

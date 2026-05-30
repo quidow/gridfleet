@@ -9,13 +9,15 @@ from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import service as device_service
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
+from app.devices.services.service import DeviceCrudService
+from tests.fakes import FakeSettingsReader
 
 
 async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.rollback = AsyncMock()
     prepared = {"name": "Device"}
-    monkeypatch.setattr(device_service, "prepare_device_create_payload", AsyncMock(return_value=prepared))
+    monkeypatch.setattr(DeviceCrudService, "prepare_device_create_payload", AsyncMock(return_value=prepared))
     ensure = AsyncMock()
     monkeypatch.setattr(device_service, "ensure_device_payload_identity_available", ensure)
     monkeypatch.setattr(
@@ -24,8 +26,9 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
         AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("dupe"))),
     )
 
+    crud = DeviceCrudService(settings=FakeSettingsReader())
     with pytest.raises(IntegrityError):
-        await device_service.create_device(
+        await crud.create_device(
             db,
             DeviceVerificationCreate(
                 name="Device",
@@ -47,13 +50,14 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     db = MagicMock()
     db.rollback = AsyncMock()
     device_id = uuid.uuid4()
+    crud = DeviceCrudService(settings=FakeSettingsReader())
     monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
-    assert await device_service.update_device(db, device_id, DevicePatch(name="new")) is None
+    assert await crud.update_device(db, device_id, DevicePatch(name="new")) is None
 
     device = SimpleNamespace(id=device_id, verified_at="old")
     monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(return_value=device))
     with pytest.raises(ValueError, match="generic device patch"):
-        await device_service.update_device(
+        await crud.update_device(
             db,
             device_id,
             DeviceVerificationUpdate(host_id=uuid.uuid4()),
@@ -61,7 +65,7 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
         )
 
     monkeypatch.setattr(device_service.device_write, "validate_patch_contract", lambda *args: None)
-    monkeypatch.setattr(device_service, "prepare_device_update_payload", AsyncMock(return_value={"name": "new"}))
+    monkeypatch.setattr(DeviceCrudService, "prepare_device_update_payload", AsyncMock(return_value={"name": "new"}))
     monkeypatch.setattr(device_service, "ensure_device_payload_identity_available", AsyncMock())
     monkeypatch.setattr(device_service.device_readiness, "payload_requires_reverification", lambda *args: True)
     monkeypatch.setattr(device_service.device_write, "apply_device_payload", lambda *args: None)
@@ -72,7 +76,7 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     )
 
     with pytest.raises(IntegrityError):
-        await device_service.update_device(db, device_id, DevicePatch(name="new"))
+        await crud.update_device(db, device_id, DevicePatch(name="new"))
 
     assert device.verified_at is None
     db.rollback.assert_awaited_once()
