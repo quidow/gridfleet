@@ -24,6 +24,26 @@ __all__ = [
 ]
 
 
+class VerificationService:
+    async def start_verification_job(
+        self, data: DeviceVerificationCreate, session_factory: SessionFactory = async_session
+    ) -> dict[str, Any]:
+        return await start_verification_job(data, session_factory=session_factory)
+
+    async def start_existing_device_verification_job(
+        self, device_id: uuid.UUID, data: DeviceVerificationUpdate, session_factory: SessionFactory = async_session
+    ) -> dict[str, Any]:
+        return await start_existing_device_verification_job(device_id, data, session_factory=session_factory)
+
+    async def get_verification_job(
+        self, job_id: str, session_factory: SessionFactory = async_session
+    ) -> dict[str, Any] | None:
+        return await get_verification_job(job_id, session_factory=session_factory)
+
+    async def clear_verification_jobs(self, session_factory: SessionFactory = async_session) -> None:
+        await clear_verification_jobs(session_factory=session_factory)
+
+
 async def start_verification_job(
     data: DeviceVerificationCreate,
     session_factory: SessionFactory = async_session,

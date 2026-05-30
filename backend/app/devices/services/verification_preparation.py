@@ -49,6 +49,65 @@ class PreparedVerificationContext:
     keep_running_after_verify: bool = True
 
 
+class VerificationPreparationService:
+    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+
+    async def validate_create_request(
+        self,
+        job: dict[str, Any],
+        db: AsyncSession,
+        data: DeviceVerificationCreate,
+        *,
+        http_client_factory: AgentClientFactory,
+    ) -> tuple[PreparedVerificationContext | None, str | None]:
+        return await validate_create_request(
+            job,
+            db,
+            data,
+            http_client_factory=http_client_factory,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def validate_update_request(
+        self,
+        job: dict[str, Any],
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        data: DeviceVerificationUpdate,
+        *,
+        http_client_factory: AgentClientFactory,
+    ) -> tuple[PreparedVerificationContext | None, str | None]:
+        return await validate_update_request(
+            job,
+            db,
+            device_id,
+            data,
+            http_client_factory=http_client_factory,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def resolve_host_derived_payload(
+        self,
+        payload: dict[str, Any],
+        host: Host | None,
+        *,
+        http_client_factory: AgentClientFactory,
+        db: AsyncSession | None = None,
+    ) -> str | None:
+        return await resolve_host_derived_payload(
+            payload,
+            host,
+            http_client_factory=http_client_factory,
+            db=db,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+
 def _coerce_payload_enums_in_place(payload: dict[str, Any]) -> None:
     """Coerce device_type / connection_type to enum types in place.
 

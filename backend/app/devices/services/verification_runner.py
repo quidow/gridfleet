@@ -18,9 +18,40 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.services.verification_execution import VerificationExecutionService
+    from app.devices.services.verification_preparation import VerificationPreparationService
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
+
+
+class VerificationRunnerService:
+    def __init__(
+        self,
+        *,
+        session_factory: SessionFactory,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        preparation: VerificationPreparationService,
+        execution: VerificationExecutionService,
+    ) -> None:
+        self._session_factory = session_factory
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+        self._preparation = preparation
+        self._execution = execution
+
+    async def run_persisted_verification_job(self, job_id: str, request: dict[str, Any]) -> None:
+        await run_persisted_verification_job(
+            job_id,
+            request,
+            self._session_factory,
+            publisher=self._publisher,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
 
 
 async def _probe_session_via_gridfleet_marker(

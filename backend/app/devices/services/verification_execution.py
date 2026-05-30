@@ -57,6 +57,64 @@ class VerificationExecutionOutcome:
     device_id: str | None = None
 
 
+class VerificationExecutionService:
+    def __init__(
+        self, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+
+    async def run_device_health(
+        self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
+    ) -> str | None:
+        return await run_device_health(
+            job,
+            device,
+            http_client_factory=http_client_factory,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def stop_existing_managed_node_for_update(
+        self, job: dict[str, Any], db: AsyncSession, context: PreparedVerificationContext
+    ) -> str | None:
+        return await stop_existing_managed_node_for_update(job, db, context)
+
+    async def run_probe(
+        self, job: dict[str, Any], db: AsyncSession, device: Device, *, probe_session_fn: ProbeSessionFn
+    ) -> tuple[AppiumNode | None, str | None]:
+        return await run_probe(
+            job,
+            db,
+            device,
+            probe_session_fn=probe_session_fn,
+            publisher=self._publisher,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+        )
+
+    async def execute_verification_context(
+        self,
+        job: dict[str, Any],
+        db: AsyncSession,
+        context: PreparedVerificationContext,
+        *,
+        http_client_factory: AgentClientFactory,
+        probe_session_fn: ProbeSessionFn,
+    ) -> VerificationExecutionOutcome:
+        return await execute_verification_context(
+            job,
+            db,
+            context,
+            http_client_factory=http_client_factory,
+            probe_session_fn=probe_session_fn,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+            publisher=self._publisher,
+        )
+
+
 def _health_failure_detail(result: dict[str, Any]) -> str:
     detail = result.get("detail")
     if isinstance(detail, str) and detail:
