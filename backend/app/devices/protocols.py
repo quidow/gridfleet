@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
     from datetime import datetime
-    from typing import Any
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
