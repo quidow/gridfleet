@@ -8,7 +8,6 @@ from app.devices.services.verification_job_state import (
     new_job,
     public_snapshot,
 )
-from app.devices.services.verification_runner import run_persisted_verification_job
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
@@ -19,7 +18,6 @@ assert_runnable = pack_platform_resolver.assert_runnable
 __all__ = [
     "VerificationService",
     "get_verification_job",
-    "run_persisted_verification_job",
     "start_existing_device_verification_job",
     "start_verification_job",
 ]

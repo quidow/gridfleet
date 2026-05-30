@@ -13,7 +13,6 @@ from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.services.recovery_job import run_device_recovery_job
 from app.devices.services.verification_job_state import reset_snapshot_for_retry
-from app.devices.services.verification_runner import run_persisted_verification_job
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
@@ -166,14 +165,7 @@ class DurableJobService:
             return False
 
         if row.kind == JOB_KIND_DEVICE_VERIFICATION:
-            await run_persisted_verification_job(
-                str(row.id),
-                row.payload,
-                session_factory=self._session_factory,
-                publisher=self._publisher,
-                settings=self._settings,
-                circuit_breaker=self._circuit_breaker,
-            )
+            await self._verification_runner.run_persisted_verification_job(str(row.id), row.payload)
             return True
 
         if row.kind == JOB_KIND_DEVICE_RECOVERY:
