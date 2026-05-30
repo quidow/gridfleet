@@ -10,11 +10,12 @@ from app.core.errors import AgentCallError, AgentUnreachableError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import state_write_guard
-from app.devices.services import verification as device_verification
 from app.devices.services import verification_execution as execution
 from app.devices.services import verification_preparation as preparation
+from app.devices.services.verification import VerificationService
+from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_job_state import new_job
-from app.devices.services.verification_preparation import PreparedVerificationContext
+from app.devices.services.verification_preparation import PreparedVerificationContext, VerificationPreparationService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -62,7 +63,8 @@ def _device(host: Host | None = None) -> Device:
 
 
 async def test_device_verification_job_lookup_guards() -> None:
-    assert await device_verification.get_verification_job("not-a-uuid", session_factory=AsyncMock()) is None
+    svc = VerificationService()
+    assert await svc.get_verification_job("not-a-uuid", session_factory=AsyncMock()) is None
 
     class Session:
         async def __aenter__(self) -> "Session":
@@ -74,9 +76,7 @@ async def test_device_verification_job_lookup_guards() -> None:
         async def get(self, *_args: object) -> object:
             return SimpleNamespace(kind="other", snapshot={"status": "queued"})
 
-    assert (
-        await device_verification.get_verification_job(str(__import__("uuid").uuid4()), session_factory=Session) is None
-    )
+    assert await svc.get_verification_job(str(__import__("uuid").uuid4()), session_factory=Session) is None
 
 
 async def test_run_device_health_covers_skip_agent_success_and_failure(
@@ -85,12 +85,8 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
 ) -> None:
     monkeypatch.setattr("app.devices.services.verification_job_state.publish", AsyncMock())
     job = _job()
-    assert (
-        await execution.run_device_health(
-            job, _device(None), http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
-        is None
-    )
+    svc = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    assert await svc.run_device_health(job, _device(None), http_client_factory=object) is None
     assert job["current_stage"] == "device_health"
     assert job["stages"][1]["status"] == "skipped"
 
@@ -99,9 +95,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         "app.devices.services.verification_execution.fetch_pack_device_health",
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "down")),
     )
-    detail = await execution.run_device_health(
-        _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-    )
+    detail = await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_device_health(_job(), device, http_client_factory=object)
     assert detail == "Agent health check failed: down"
 
     monkeypatch.setattr(
@@ -109,9 +105,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         AsyncMock(return_value={"healthy": True, "avd_launched": {"serial": "emulator-5554"}}),
     )
     assert (
-        await execution.run_device_health(
-            _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
     assert device.connection_target == "emulator-5554"
@@ -121,9 +117,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         AsyncMock(return_value={"healthy": False, "checks": [{"check_id": "adb_ready", "ok": False, "message": "no"}]}),
     )
     assert (
-        await execution.run_device_health(
-            _job(), device, http_client_factory=object, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).run_device_health(_job(), device, http_client_factory=object)
         == "adb ready failed (no)"
     )
 
@@ -159,21 +155,22 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         "app.devices.services.verification_execution._stop_managed_node_for_verification",
         AsyncMock(side_effect=NodeManagerError("stop failed")),
     )
-    detail = await execution.stop_existing_managed_node_for_update(_job(), db_session, context)
+    detail = await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).stop_existing_managed_node_for_update(_job(), db_session, context)
     assert detail is not None
     assert "stop failed" in detail
 
     monkeypatch.setattr(
         "app.devices.services.verification_execution.start_node", AsyncMock(side_effect=NodeManagerError("no node"))
     )
-    started, error = await execution.run_probe(
+    started, error = await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_probe(
         _job(),
         db_session,
         existing,
         probe_session_fn=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert started is None
     assert error == "no node"
@@ -184,14 +181,13 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     monkeypatch.setattr(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
     )
-    started, error = await execution.run_probe(
+    started, error = await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_probe(
         _job(),
         db_session,
         existing,
         probe_session_fn=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert started is fake_node
     assert error == "Verification node did not reach running state within timeout"
@@ -213,14 +209,13 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         AsyncMock(return_value={"platformName": "Android"}),
     )
     probe_session = AsyncMock(return_value=(False, "probe failed"))
-    started, error = await execution.run_probe(
+    started, error = await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_probe(
         _job(),
         db_session,
         existing,
         probe_session_fn=probe_session,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert started is running_node
     assert error == "probe failed"
@@ -283,14 +278,13 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         raising=False,
     )
 
-    await execution.run_probe(
+    await VerificationExecutionService(
+        publisher=Mock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_probe(
         _job(),
         db_session,
         existing,
         probe_session_fn=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=Mock(),
     )
 
     converge_mock.assert_awaited_once()
@@ -351,14 +345,13 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         return True, None
 
     assert probe_inflight.is_probe_inflight(device_key) is False
-    await execution.run_probe(
+    await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_probe(
         _job(),
         db_session,
         existing,
         probe_session_fn=fake_probe_session,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert seen_inflight == [True]
     assert probe_inflight.is_probe_inflight(device_key) is False
@@ -411,14 +404,13 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         raise RuntimeError("probe blew up")
 
     with pytest.raises(RuntimeError, match="probe blew up"):
-        await execution.run_probe(
+        await VerificationExecutionService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).run_probe(
             _job(),
             db_session,
             existing,
             probe_session_fn=failing_probe_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            publisher=event_bus,
         )
     assert probe_inflight.is_probe_inflight(device_key) is False
 
@@ -545,19 +537,14 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
 
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.stop_existing_managed_node_for_update",
-        AsyncMock(return_value="stop failed"),
-    )
-    outcome = await execution.execute_verification_context(
+    svc = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    svc.stop_existing_managed_node_for_update = AsyncMock(return_value="stop failed")  # type: ignore[method-assign]
+    outcome = await svc.execute_verification_context(
         _job(),
         db,
         context,
         http_client_factory=object,
         probe_session_fn=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        publisher=event_bus,
     )
     assert outcome.status == "failed"
     assert outcome.error == "stop failed"
@@ -633,27 +620,20 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         save_device_id=device_id,
     )
     monkeypatch.setattr(
-        "app.devices.services.verification_execution.stop_existing_managed_node_for_update",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
         "app.devices.services.verification_execution.device_locking.lock_device", AsyncMock(return_value=update_device)
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.run_device_health", AsyncMock(side_effect=RuntimeError("boom"))
     )
     monkeypatch.setattr("app.devices.services.verification_execution._finalize_failure", AsyncMock())
 
+    svc2 = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    svc2.stop_existing_managed_node_for_update = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    svc2.run_device_health = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="boom"):
-        await execution.execute_verification_context(
+        await svc2.execute_verification_context(
             _job(),
             db,
             update_context,
             http_client_factory=object,
             probe_session_fn=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            publisher=event_bus,
         )
 
     assert update_device.name == "new"
@@ -687,9 +667,10 @@ async def test_preparation_resolution_and_validation_error_paths(
         == db_host.id
     )
 
-    assert await preparation.resolve_host_derived_payload(
-        {}, None, http_client_factory=object, db=db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock()
-    ) == ("Assigned host is required")
+    _prep_svc = VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    assert await _prep_svc.resolve_host_derived_payload({}, None, http_client_factory=object, db=db_session) == (
+        "Assigned host is required"
+    )
 
     monkeypatch.setattr(
         "app.devices.services.verification_preparation.resolve_pack_platform",
@@ -714,13 +695,11 @@ async def test_preparation_resolution_and_validation_error_paths(
         "device_type": DeviceType.real_device,
         "connection_type": ConnectionType.network,
     }
-    assert await preparation.resolve_host_derived_payload(
+    assert await _prep_svc.resolve_host_derived_payload(
         payload,
         db_host,
         http_client_factory=object,
         db=db_session,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
     ) == ("serial: bad")
 
     monkeypatch.setattr(
@@ -731,13 +710,11 @@ async def test_preparation_resolution_and_validation_error_paths(
         "app.devices.services.verification_preparation.pack_device_lifecycle_action",
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "404 resolve")),
     )
-    assert await preparation.resolve_host_derived_payload(
+    assert await _prep_svc.resolve_host_derived_payload(
         payload,
         db_host,
         http_client_factory=object,
         db=db_session,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
     ) == ("Device must resolve to a stable identity before save (action: resolve)")
 
     monkeypatch.setattr(
@@ -745,13 +722,11 @@ async def test_preparation_resolution_and_validation_error_paths(
         AsyncMock(return_value={"identity_value": "stable", "connection_target": "10.0.0.1:5555", "name": "Resolved"}),
     )
     assert (
-        await preparation.resolve_host_derived_payload(
+        await _prep_svc.resolve_host_derived_payload(
             payload,
             db_host,
             http_client_factory=object,
             db=db_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
         is None
     )
@@ -769,25 +744,22 @@ async def test_preparation_resolution_and_validation_error_paths(
         os_version="14",
         host_id=__import__("uuid").uuid4(),
     )
-    context, error = await preparation.validate_create_request(
+    _prep_svc2 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    context, error = await _prep_svc2.validate_create_request(
         _job(),
         db_session,
         bad_create,
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Assigned host was not found"
 
-    context, error = await preparation.validate_update_request(
+    context, error = await _prep_svc2.validate_update_request(
         _job(),
         db_session,
         __import__("uuid").uuid4(),
         DeviceVerificationUpdate(name="missing", host_id=db_host.id),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Device was not found"
@@ -813,13 +785,14 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
             )
         ),
     )
+    _prep_svc = VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock())
     for exc in (AgentCallError("10.0.0.1", "down"), LookupError("missing"), TypeError("bad mock")):
         monkeypatch.setattr(
             "app.devices.services.verification_preparation.normalize_pack_device",
             AsyncMock(side_effect=exc),
         )
         assert (
-            await preparation.resolve_host_derived_payload(
+            await _prep_svc.resolve_host_derived_payload(
                 {
                     "pack_id": "pack",
                     "platform_id": "platform",
@@ -831,8 +804,6 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
                 db_host,
                 http_client_factory=object,
                 db=db_session,
-                settings=FakeSettingsReader({}),
-                circuit_breaker=Mock(),
             )
             is None
         )
@@ -842,7 +813,7 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
         AsyncMock(return_value={"field_errors": ["bad"]}),
     )
     assert (
-        await preparation.resolve_host_derived_payload(
+        await _prep_svc.resolve_host_derived_payload(
             {
                 "pack_id": "pack",
                 "platform_id": "platform",
@@ -854,8 +825,6 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
             db_host,
             http_client_factory=object,
             db=db_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
         == "Adapter rejected device input"
     )
@@ -879,20 +848,16 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
         AsyncMock(return_value=dict(payload)),
     )
     monkeypatch.setattr(
-        "app.devices.services.verification_preparation.resolve_host_derived_payload",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
         "app.devices.services.verification_preparation.ensure_device_payload_identity_available",
         AsyncMock(side_effect=preparation.DeviceIdentityConflictError("late duplicate")),
     )
-    context, error = await preparation.validate_create_request(
+    _prep_svc2 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    _prep_svc2.resolve_host_derived_payload = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    context, error = await _prep_svc2.validate_create_request(
         _job(),
         db_session,
         DeviceVerificationCreate(**payload),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "late duplicate"
@@ -901,13 +866,12 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
         "app.devices.services.verification_preparation.device_write.prepare_device_create_payload_async",
         AsyncMock(side_effect=ValueError("bad create")),
     )
-    context, error = await preparation.validate_create_request(
+    _prep_svc3 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    context, error = await _prep_svc3.validate_create_request(
         _job(),
         db_session,
         DeviceVerificationCreate(**payload),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "bad create"
@@ -965,14 +929,13 @@ async def test_preparation_normalization_success_and_resolution_errors(
         AsyncMock(return_value={"identity_value": "resolved-stable"}),
     )
 
+    _prep_svc = VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock())
     assert (
-        await preparation.resolve_host_derived_payload(
+        await _prep_svc.resolve_host_derived_payload(
             payload,
             db_host,
             http_client_factory=object,
             db=db_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
         is None
     )
@@ -990,7 +953,7 @@ async def test_preparation_normalization_success_and_resolution_errors(
         AsyncMock(return_value=None),
     )
     assert (
-        await preparation.resolve_host_derived_payload(
+        await _prep_svc.resolve_host_derived_payload(
             {
                 "pack_id": "pack",
                 "platform_id": "platform",
@@ -1002,8 +965,6 @@ async def test_preparation_normalization_success_and_resolution_errors(
             db_host,
             http_client_factory=object,
             db=db_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
         is None
     )
@@ -1013,7 +974,7 @@ async def test_preparation_normalization_success_and_resolution_errors(
         AsyncMock(side_effect=AgentUnreachableError("10.0.0.20", "agent down")),
     )
     assert (
-        await preparation.resolve_host_derived_payload(
+        await _prep_svc.resolve_host_derived_payload(
             {
                 "pack_id": "pack",
                 "platform_id": "platform",
@@ -1025,8 +986,6 @@ async def test_preparation_normalization_success_and_resolution_errors(
             db_host,
             http_client_factory=object,
             db=db_session,
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
         )
         == "Host resolution failed: agent down"
     )
@@ -1069,20 +1028,16 @@ async def test_preparation_validation_conflict_and_update_branches(
         AsyncMock(return_value=dict(base_payload)),
     )
     monkeypatch.setattr(
-        "app.devices.services.verification_preparation.resolve_host_derived_payload",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
         "app.devices.services.verification_preparation.ensure_device_payload_identity_available",
         AsyncMock(side_effect=preparation.DeviceIdentityConflictError("duplicate")),
     )
-    context, error = await preparation.validate_create_request(
+    _prep_svc = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    _prep_svc.resolve_host_derived_payload = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    context, error = await _prep_svc.validate_create_request(
         _job(),
         db_session,
         DeviceVerificationCreate(**base_payload),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "duplicate"
@@ -1116,14 +1071,13 @@ async def test_preparation_validation_conflict_and_update_branches(
         "app.devices.services.verification_preparation.device_write.prepare_device_update_payload_async",
         AsyncMock(side_effect=ValueError("bad update")),
     )
-    context, error = await preparation.validate_update_request(
+    _prep_svc2 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    context, error = await _prep_svc2.validate_update_request(
         _job(),
         db_session,
         existing.id,
         DeviceVerificationUpdate(name="bad", host_id=existing.host_id),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "bad update"
@@ -1134,51 +1088,41 @@ async def test_preparation_validation_conflict_and_update_branches(
         "app.devices.services.verification_preparation.device_write.prepare_device_update_payload_async",
         AsyncMock(return_value=payload),
     )
-    context, error = await preparation.validate_update_request(
+    context, error = await _prep_svc2.validate_update_request(
         _job(),
         db_session,
         existing.id,
         DeviceVerificationUpdate(name="missing host", host_id=existing.host_id),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "Assigned host was not found"
 
     payload["host_id"] = db_host.id
-    monkeypatch.setattr(
-        "app.devices.services.verification_preparation.resolve_host_derived_payload",
-        AsyncMock(return_value="resolution failed"),
-    )
-    context, error = await preparation.validate_update_request(
+    _prep_svc3 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    _prep_svc3.resolve_host_derived_payload = AsyncMock(return_value="resolution failed")  # type: ignore[method-assign]
+    context, error = await _prep_svc3.validate_update_request(
         _job(),
         db_session,
         existing.id,
         DeviceVerificationUpdate(name="resolution", host_id=existing.host_id),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "resolution failed"
 
     monkeypatch.setattr(
-        "app.devices.services.verification_preparation.resolve_host_derived_payload",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(
         "app.devices.services.verification_preparation.ensure_device_payload_identity_available",
         AsyncMock(side_effect=preparation.DeviceIdentityConflictError("update duplicate")),
     )
-    context, error = await preparation.validate_update_request(
+    _prep_svc4 = VerificationPreparationService(settings=FakeSettingsReader(), circuit_breaker=Mock())
+    _prep_svc4.resolve_host_derived_payload = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    context, error = await _prep_svc4.validate_update_request(
         _job(),
         db_session,
         existing.id,
         DeviceVerificationUpdate(name="duplicate", host_id=existing.host_id),
         http_client_factory=object,
-        settings=FakeSettingsReader(),
-        circuit_breaker=Mock(),
     )
     assert context is None
     assert error == "update duplicate"

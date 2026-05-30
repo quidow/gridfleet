@@ -8,6 +8,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
+from app.devices.services.verification_execution import VerificationExecutionService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -40,9 +41,9 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     device = _device(device_type=DeviceType.emulator, tags={"emulator_headless": "false"})
 
     assert (
-        await execution.run_device_health(
-            job, device, http_client_factory=MagicMock(), settings=settings, circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=settings, circuit_breaker=Mock()
+        ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
     assert device.connection_target == "emulator-5554"
@@ -51,22 +52,22 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     fetch.side_effect = None
     fetch.return_value = {"healthy": False, "checks": [{"check_id": "boot_completed", "ok": False, "message": "no"}]}
     assert (
-        await execution.run_device_health(
-            job, _device(), http_client_factory=MagicMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
 
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
-    assert await execution.run_device_health(
-        job, _device(), http_client_factory=MagicMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
-    ) == ("Agent health check failed: down")
+    assert await VerificationExecutionService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
     assert (
-        await execution.run_device_health(
-            job, no_host, http_client_factory=MagicMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
 
@@ -118,16 +119,14 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     db.commit = AsyncMock()
     job: dict[str, object] = {"stages": []}
     context = SimpleNamespace(save_device_id=None, transient_device=_device(identity_value="missing"))
+    svc = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
     with pytest.raises(NodeManagerError, match="no persisted device id"):
-        await execution.execute_verification_context(
+        await svc.execute_verification_context(
             job,
             db,
             context,
             http_client_factory=MagicMock(),
             probe_session_fn=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            publisher=event_bus,
         )
 
     context = SimpleNamespace(
@@ -137,19 +136,17 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         save_payload={},
         keep_running_after_verify=False,
     )
-    monkeypatch.setattr(execution, "run_device_health", AsyncMock(side_effect=RuntimeError("crash")))
     finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
+    svc2 = VerificationExecutionService(publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+    svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
-        await execution.execute_verification_context(
+        await svc2.execute_verification_context(
             job,
             db,
             context,
             http_client_factory=MagicMock(),
             probe_session_fn=AsyncMock(),
-            settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            publisher=event_bus,
         )
     finalize.assert_awaited_once()
 
@@ -235,9 +232,9 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
 
     device = _device(device_type="real_device", connection_type="usb")
     assert (
-        await execution.run_device_health(
-            job, device, http_client_factory=MagicMock(), settings=settings, circuit_breaker=Mock()
-        )
+        await VerificationExecutionService(
+            publisher=event_bus, settings=settings, circuit_breaker=Mock()
+        ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
     assert fetch.await_args.kwargs["device_type"] == "real_device"

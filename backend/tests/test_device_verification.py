@@ -17,7 +17,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.verification import clear_verification_jobs
+from app.devices.services.verification import VerificationService
 from app.devices.services.verification_execution import VerificationExecutionService, _health_failure_detail
 from app.devices.services.verification_preparation import VerificationPreparationService
 from app.devices.services.verification_runner import VerificationRunnerService
@@ -62,9 +62,9 @@ HOST_PAYLOAD = {
 async def reset_verification_jobs(db_session: AsyncSession) -> AsyncGenerator[None]:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     await seed_test_packs(db_session)
-    await clear_verification_jobs(session_factory=session_factory)
+    await VerificationService().clear_verification_jobs(session_factory=session_factory)
     yield
-    await clear_verification_jobs(session_factory=session_factory)
+    await VerificationService().clear_verification_jobs(session_factory=session_factory)
 
 
 @pytest.fixture(autouse=True)
@@ -818,11 +818,7 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
             "app.devices.services.verification_execution.wait_for_node_running",
             new=AsyncMock(return_value=None),
         ),
-        patch(
-            "app.devices.services.verification_execution.run_device_health",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
+        patch.object(VerificationExecutionService, "run_device_health", new_callable=AsyncMock, return_value=None),
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",

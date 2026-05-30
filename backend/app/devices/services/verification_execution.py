@@ -68,31 +68,169 @@ class VerificationExecutionService:
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
     ) -> str | None:
-        return await run_device_health(
-            job,
-            device,
-            http_client_factory=http_client_factory,
-            settings=self._settings,
-            circuit_breaker=self._circuit_breaker,
-        )
+        if device.host is None:
+            await set_stage(
+                job,
+                "device_health",
+                "skipped",
+                detail="Skipped because no host agent is assigned",
+            )
+            return None
+
+        device_type_str = enum_value(device.device_type)
+        is_virtual = device_type_str in ("emulator", "simulator")
+        running_detail = "Booting virtual device — this may take a few minutes" if is_virtual else None
+        await set_stage(job, "device_health", "running", detail=running_detail)
+        headless = (device.tags or {}).get("emulator_headless", "true") != "false"
+        try:
+            result = await fetch_pack_device_health(
+                device.host.ip,
+                device.host.agent_port,
+                appium_connection_target(device),
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=str(device.device_type) if device.device_type else "real_device",
+                connection_type=str(device.connection_type) if device.connection_type else None,
+                ip_address=device.ip_address,
+                allow_boot=True,
+                headless=headless,
+                http_client_factory=http_client_factory,
+                timeout=_device_health_timeout(device, settings=self._settings),
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+            )
+        except AgentCallError as exc:
+            detail = f"Agent health check failed: {exc}"
+            await set_stage(job, "device_health", "failed", detail=detail)
+            return detail
+
+        if result.get("healthy"):
+            # If the agent auto-launched an AVD and resolved its ADB serial, use the
+            # live serial for this verification run only. The saved device keeps the
+            # stable AVD name so later node starts can launch it again.
+            avd_info = result.get("avd_launched")
+            if isinstance(avd_info, dict) and isinstance(avd_info.get("serial"), str):
+                resolved_serial: str = avd_info["serial"]
+                device.connection_target = resolved_serial
+
+            await set_stage(job, "device_health", "passed", detail="Device health checks passed", data=result)
+            return None
+
+        detail = _health_failure_detail(result)
+        await set_stage(job, "device_health", "failed", detail=detail, data=result)
+        return detail
 
     async def stop_existing_managed_node_for_update(
         self, job: dict[str, Any], db: AsyncSession, context: PreparedVerificationContext
     ) -> str | None:
-        return await stop_existing_managed_node_for_update(job, db, context)
+        if context.mode != "update" or context.existing_device is None:
+            return None
+
+        existing_device = context.existing_device
+        node = existing_device.appium_node
+        if node is None or not node.observed_running:
+            return None
+
+        await set_stage(
+            job,
+            "node_start",
+            "running",
+            detail="Stopping existing managed node before starting updated verification node",
+        )
+        try:
+            await _stop_managed_node_for_verification(db, existing_device)
+        except NodeManagerError as exc:
+            detail = f"Failed to stop existing managed node before verification: {exc}"
+            await set_stage(job, "node_start", "failed", detail=detail)
+            await set_stage(
+                job, "cleanup", "skipped", detail="Existing node stop failed before verification node startup"
+            )
+            return detail
+
+        return None
 
     async def run_probe(
         self, job: dict[str, Any], db: AsyncSession, device: Device, *, probe_session_fn: ProbeSessionFn
     ) -> tuple[AppiumNode | None, str | None]:
-        return await run_probe(
-            job,
-            db,
-            device,
-            probe_session_fn=probe_session_fn,
-            publisher=self._publisher,
-            settings=self._settings,
-            circuit_breaker=self._circuit_breaker,
-        )
+        await set_stage(job, "node_start", "running")
+        await _register_verification_node_intent(db, device, settings=self._settings)
+        await db.commit()
+        try:
+            try:
+                node = await start_node(db, device, caller="verification", settings=self._settings)
+            except NodeManagerError as exc:
+                detail = str(exc)
+                await set_stage(job, "node_start", "failed", detail=detail)
+                await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
+                return None, detail
+
+            # Drive an immediate convergence pass so verification does not have to wait up
+            # to appium_reconciler.interval_sec for the leader loop to start the node.
+            # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
+            if self._publisher is not None:
+                try:
+                    await converge_device_now(
+                        device.id,
+                        publisher=self._publisher,
+                        db=db,
+                        settings=self._settings,
+                        circuit_breaker=self._circuit_breaker,
+                    )
+                except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
+                    logger.warning(
+                        "verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)}
+                    )
+
+            timeout = int(self._settings.get("appium.startup_timeout_sec"))
+            started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
+            if started_node is None:
+                detail = "Verification node did not reach running state within timeout"
+                await set_stage(job, "node_start", "failed", detail=detail)
+                await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
+                return node, detail
+
+            await set_stage(
+                job,
+                "node_start",
+                "passed",
+                detail="Verification node started",
+                data={"port": started_node.port, "pid": started_node.pid},
+            )
+
+            await set_stage(job, "session_probe", "running")
+            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            capabilities = await capability_service.get_device_capabilities(
+                db,
+                device,
+                active_connection_target=started_node.active_connection_target,
+            )
+            # Register the device as inflight for the same reason as the viability
+            # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
+            # creates is otherwise indistinguishable from a real session in the
+            # session_sync loop and would be persisted as a phantom row.
+            device_key = str(device.id)
+            probe_inflight.mark_probe_started(device_key)
+            try:
+                ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+            finally:
+                probe_inflight.mark_probe_finished(device_key)
+            await record_probe_session(
+                db,
+                device=device,
+                attempted_at=datetime.now(UTC),
+                result=grid_probe_response_to_result((ok, error)),
+                source=ProbeSource.verification,
+                capabilities=capabilities,
+            )
+            if ok:
+                await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
+                return started_node, None
+
+            failure = error or "Session probe failed"
+            await set_stage(job, "session_probe", "failed", detail=failure)
+            return started_node, failure
+        finally:
+            await db.commit()
 
     async def execute_verification_context(
         self,
@@ -103,16 +241,75 @@ class VerificationExecutionService:
         http_client_factory: AgentClientFactory,
         probe_session_fn: ProbeSessionFn,
     ) -> VerificationExecutionOutcome:
-        return await execute_verification_context(
-            job,
-            db,
-            context,
-            http_client_factory=http_client_factory,
-            probe_session_fn=probe_session_fn,
-            settings=self._settings,
-            circuit_breaker=self._circuit_breaker,
-            publisher=self._publisher,
-        )
+        device = context.transient_device
+        node: AppiumNode | None = None
+        original_fields: dict[str, Any] | None = None
+        if context.save_device_id is None:
+            raise NodeManagerError(f"Verification device {device.identity_value} has no persisted device id")
+
+        try:
+            if context.mode == "update":
+                existing_stop_error = await self.stop_existing_managed_node_for_update(job, db, context)
+                if existing_stop_error is not None:
+                    return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
+                locked = await device_locking.lock_device(db, context.save_device_id)
+                await DeviceStateMachine().transition(
+                    locked,
+                    TransitionEvent.VERIFICATION_STARTED,
+                    reason="verification",
+                    publisher=self._publisher,
+                )
+                await db.commit()
+                device = locked
+                original_fields = {
+                    key: deepcopy(getattr(device, key))
+                    for key in context.save_payload
+                    if key != "replace_device_config"
+                }
+                for key, value in context.save_payload.items():
+                    if key != "replace_device_config":
+                        setattr(device, key, value)
+
+            health_error = await self.run_device_health(job, device, http_client_factory=http_client_factory)
+            if health_error is not None:
+                return await _finalize_failure(
+                    db,
+                    context,
+                    error=health_error,
+                    job=job,
+                    original_fields=original_fields,
+                    publisher=self._publisher,
+                )
+
+            node, probe_error = await self.run_probe(
+                job,
+                db,
+                device,
+                probe_session_fn=probe_session_fn,
+            )
+            if probe_error is not None:
+                return await _finalize_failure(
+                    db,
+                    context,
+                    error=probe_error,
+                    job=job,
+                    node=node,
+                    original_fields=original_fields,
+                    publisher=self._publisher,
+                )
+
+            return await _finalize_success(db, context, job=job, node=node, publisher=self._publisher)
+        except Exception:
+            await _finalize_failure(
+                db,
+                context,
+                error="Verification crashed unexpectedly",
+                job=job,
+                node=node,
+                original_fields=original_fields,
+                publisher=self._publisher,
+            )
+            raise
 
 
 def _health_failure_detail(result: dict[str, Any]) -> str:
@@ -138,67 +335,6 @@ def _device_health_timeout(device: Device, *, settings: SettingsReader) -> float
     return 10
 
 
-async def run_device_health(
-    job: dict[str, Any],
-    device: Device,
-    *,
-    http_client_factory: AgentClientFactory,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> str | None:
-    if device.host is None:
-        await set_stage(
-            job,
-            "device_health",
-            "skipped",
-            detail="Skipped because no host agent is assigned",
-        )
-        return None
-
-    device_type_str = enum_value(device.device_type)
-    is_virtual = device_type_str in ("emulator", "simulator")
-    running_detail = "Booting virtual device — this may take a few minutes" if is_virtual else None
-    await set_stage(job, "device_health", "running", detail=running_detail)
-    headless = (device.tags or {}).get("emulator_headless", "true") != "false"
-    try:
-        result = await fetch_pack_device_health(
-            device.host.ip,
-            device.host.agent_port,
-            appium_connection_target(device),
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=str(device.device_type) if device.device_type else "real_device",
-            connection_type=str(device.connection_type) if device.connection_type else None,
-            ip_address=device.ip_address,
-            allow_boot=True,
-            headless=headless,
-            http_client_factory=http_client_factory,
-            timeout=_device_health_timeout(device, settings=settings),
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
-    except AgentCallError as exc:
-        detail = f"Agent health check failed: {exc}"
-        await set_stage(job, "device_health", "failed", detail=detail)
-        return detail
-
-    if result.get("healthy"):
-        # If the agent auto-launched an AVD and resolved its ADB serial, use the
-        # live serial for this verification run only. The saved device keeps the
-        # stable AVD name so later node starts can launch it again.
-        avd_info = result.get("avd_launched")
-        if isinstance(avd_info, dict) and isinstance(avd_info.get("serial"), str):
-            resolved_serial: str = avd_info["serial"]
-            device.connection_target = resolved_serial
-
-        await set_stage(job, "device_health", "passed", detail="Device health checks passed", data=result)
-        return None
-
-    detail = _health_failure_detail(result)
-    await set_stage(job, "device_health", "failed", detail=detail, data=result)
-    return detail
-
-
 async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) -> AppiumNode:
     """Write stopped desired state for verification update path."""
     node: AppiumNode | None = device.appium_node
@@ -215,36 +351,6 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     await db.commit()
     await db.refresh(node)
     return node
-
-
-async def stop_existing_managed_node_for_update(
-    job: dict[str, Any],
-    db: AsyncSession,
-    context: PreparedVerificationContext,
-) -> str | None:
-    if context.mode != "update" or context.existing_device is None:
-        return None
-
-    existing_device = context.existing_device
-    node = existing_device.appium_node
-    if node is None or not node.observed_running:
-        return None
-
-    await set_stage(
-        job,
-        "node_start",
-        "running",
-        detail="Stopping existing managed node before starting updated verification node",
-    )
-    try:
-        await _stop_managed_node_for_verification(db, existing_device)
-    except NodeManagerError as exc:
-        detail = f"Failed to stop existing managed node before verification: {exc}"
-        await set_stage(job, "node_start", "failed", detail=detail)
-        await set_stage(job, "cleanup", "skipped", detail="Existing node stop failed before verification node startup")
-        return detail
-
-    return None
 
 
 def _verification_intent_source(device_id: uuid.UUID) -> str:
@@ -301,91 +407,6 @@ async def _revoke_verification_node_intent(db: AsyncSession, device: Device) -> 
         sources=[_verification_intent_source(device.id)],
         reason="verification probe completed",
     )
-
-
-async def run_probe(
-    job: dict[str, Any],
-    db: AsyncSession,
-    device: Device,
-    *,
-    probe_session_fn: ProbeSessionFn,
-    publisher: EventPublisher,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> tuple[AppiumNode | None, str | None]:
-    await set_stage(job, "node_start", "running")
-    await _register_verification_node_intent(db, device, settings=settings)
-    await db.commit()
-    try:
-        try:
-            node = await start_node(db, device, caller="verification", settings=settings)
-        except NodeManagerError as exc:
-            detail = str(exc)
-            await set_stage(job, "node_start", "failed", detail=detail)
-            await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
-            return None, detail
-
-        # Drive an immediate convergence pass so verification does not have to wait up
-        # to appium_reconciler.interval_sec for the leader loop to start the node.
-        # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
-        if publisher is not None:
-            try:
-                await converge_device_now(
-                    device.id, publisher=publisher, db=db, settings=settings, circuit_breaker=circuit_breaker
-                )
-            except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
-                logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
-
-        timeout = int(settings.get("appium.startup_timeout_sec"))
-        started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
-        if started_node is None:
-            detail = "Verification node did not reach running state within timeout"
-            await set_stage(job, "node_start", "failed", detail=detail)
-            await set_stage(job, "cleanup", "skipped", detail="Node startup failed before cleanup was needed")
-            return node, detail
-
-        await set_stage(
-            job,
-            "node_start",
-            "passed",
-            detail="Verification node started",
-            data={"port": started_node.port, "pid": started_node.pid},
-        )
-
-        await set_stage(job, "session_probe", "running")
-        timeout_sec = int(settings.get("general.session_viability_timeout_sec"))
-        capabilities = await capability_service.get_device_capabilities(
-            db,
-            device,
-            active_connection_target=started_node.active_connection_target,
-        )
-        # Register the device as inflight for the same reason as the viability
-        # probe (see ``app.sessions.probe_inflight``): the Grid slot the probe
-        # creates is otherwise indistinguishable from a real session in the
-        # session_sync loop and would be persisted as a phantom row.
-        device_key = str(device.id)
-        probe_inflight.mark_probe_started(device_key)
-        try:
-            ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
-        finally:
-            probe_inflight.mark_probe_finished(device_key)
-        await record_probe_session(
-            db,
-            device=device,
-            attempted_at=datetime.now(UTC),
-            result=grid_probe_response_to_result((ok, error)),
-            source=ProbeSource.verification,
-            capabilities=capabilities,
-        )
-        if ok:
-            await set_stage(job, "session_probe", "passed", detail="Grid-routed Appium probe session passed")
-            return started_node, None
-
-        failure = error or "Session probe failed"
-        await set_stage(job, "session_probe", "failed", detail=failure)
-        return started_node, failure
-    finally:
-        await db.commit()
 
 
 async def _stop_verification_node_if_running(
@@ -560,82 +581,3 @@ async def _finalize_failure(
     )
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))
-
-
-async def execute_verification_context(
-    job: dict[str, Any],
-    db: AsyncSession,
-    context: PreparedVerificationContext,
-    *,
-    http_client_factory: AgentClientFactory,
-    probe_session_fn: ProbeSessionFn,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher,
-) -> VerificationExecutionOutcome:
-    device = context.transient_device
-    node: AppiumNode | None = None
-    original_fields: dict[str, Any] | None = None
-    if context.save_device_id is None:
-        raise NodeManagerError(f"Verification device {device.identity_value} has no persisted device id")
-
-    try:
-        if context.mode == "update":
-            existing_stop_error = await stop_existing_managed_node_for_update(job, db, context)
-            if existing_stop_error is not None:
-                return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
-            locked = await device_locking.lock_device(db, context.save_device_id)
-            await DeviceStateMachine().transition(
-                locked,
-                TransitionEvent.VERIFICATION_STARTED,
-                reason="verification",
-                publisher=publisher,
-            )
-            await db.commit()
-            device = locked
-            original_fields = {
-                key: deepcopy(getattr(device, key)) for key in context.save_payload if key != "replace_device_config"
-            }
-            for key, value in context.save_payload.items():
-                if key != "replace_device_config":
-                    setattr(device, key, value)
-
-        health_error = await run_device_health(
-            job, device, http_client_factory=http_client_factory, settings=settings, circuit_breaker=circuit_breaker
-        )
-        if health_error is not None:
-            return await _finalize_failure(
-                db,
-                context,
-                error=health_error,
-                job=job,
-                original_fields=original_fields,
-                publisher=publisher,
-            )
-
-        node, probe_error = await run_probe(
-            job,
-            db,
-            device,
-            probe_session_fn=probe_session_fn,
-            publisher=publisher,
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
-        if probe_error is not None:
-            return await _finalize_failure(
-                db, context, error=probe_error, job=job, node=node, original_fields=original_fields, publisher=publisher
-            )
-
-        return await _finalize_success(db, context, job=job, node=node, publisher=publisher)
-    except Exception:
-        await _finalize_failure(
-            db,
-            context,
-            error="Verification crashed unexpectedly",
-            job=job,
-            node=node,
-            original_fields=original_fields,
-            publisher=publisher,
-        )
-        raise

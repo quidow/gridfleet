@@ -17,9 +17,6 @@ assert_runnable = pack_platform_resolver.assert_runnable
 
 __all__ = [
     "VerificationService",
-    "get_verification_job",
-    "start_existing_device_verification_job",
-    "start_verification_job",
 ]
 
 
@@ -27,82 +24,56 @@ class VerificationService:
     async def start_verification_job(
         self, data: DeviceVerificationCreate, session_factory: SessionFactory = async_session
     ) -> dict[str, Any]:
-        return await start_verification_job(data, session_factory=session_factory)
+        # Gate: ensure pack is runnable before creating verification job
+        if data.pack_id is not None and data.platform_id is not None:
+            async with session_factory() as db:
+                await assert_runnable(db, pack_id=data.pack_id, platform_id=data.platform_id)
+
+        job_uuid = uuid.uuid4()
+        async with session_factory() as db:
+            row = await job_queue.create_job(
+                db,
+                kind=JOB_KIND_DEVICE_VERIFICATION,
+                payload={"mode": "create", "data": data.model_dump(mode="json")},
+                snapshot=new_job(str(job_uuid)),
+                max_attempts=1,
+                job_id=job_uuid,
+            )
+        return public_snapshot(row.snapshot)
 
     async def start_existing_device_verification_job(
         self, device_id: uuid.UUID, data: DeviceVerificationUpdate, session_factory: SessionFactory = async_session
     ) -> dict[str, Any]:
-        return await start_existing_device_verification_job(device_id, data, session_factory=session_factory)
+        job_uuid = uuid.uuid4()
+        async with session_factory() as db:
+            row = await job_queue.create_job(
+                db,
+                kind=JOB_KIND_DEVICE_VERIFICATION,
+                payload={
+                    "mode": "update",
+                    "device_id": str(device_id),
+                    "data": data.model_dump(mode="json", exclude_unset=True),
+                },
+                snapshot=new_job(str(job_uuid)),
+                max_attempts=1,
+                job_id=job_uuid,
+            )
+        return public_snapshot(row.snapshot)
 
     async def get_verification_job(
         self, job_id: str, session_factory: SessionFactory = async_session
     ) -> dict[str, Any] | None:
-        return await get_verification_job(job_id, session_factory=session_factory)
+        try:
+            parsed_job_id = uuid.UUID(job_id)
+        except ValueError:
+            return None
+
+        async with session_factory() as db:
+            row = await db.get(Job, parsed_job_id)
+        if row is None or row.kind != JOB_KIND_DEVICE_VERIFICATION:
+            return None
+        return public_snapshot(row.snapshot)
 
     async def clear_verification_jobs(self, session_factory: SessionFactory = async_session) -> None:
-        await clear_verification_jobs(session_factory=session_factory)
-
-
-async def start_verification_job(
-    data: DeviceVerificationCreate,
-    session_factory: SessionFactory = async_session,
-) -> dict[str, Any]:
-    # Gate: ensure pack is runnable before creating verification job
-    if data.pack_id is not None and data.platform_id is not None:
         async with session_factory() as db:
-            await assert_runnable(db, pack_id=data.pack_id, platform_id=data.platform_id)
-
-    job_uuid = uuid.uuid4()
-    async with session_factory() as db:
-        row = await job_queue.create_job(
-            db,
-            kind=JOB_KIND_DEVICE_VERIFICATION,
-            payload={"mode": "create", "data": data.model_dump(mode="json")},
-            snapshot=new_job(str(job_uuid)),
-            max_attempts=1,
-            job_id=job_uuid,
-        )
-    return public_snapshot(row.snapshot)
-
-
-async def start_existing_device_verification_job(
-    device_id: uuid.UUID,
-    data: DeviceVerificationUpdate,
-    session_factory: SessionFactory = async_session,
-) -> dict[str, Any]:
-    job_uuid = uuid.uuid4()
-    async with session_factory() as db:
-        row = await job_queue.create_job(
-            db,
-            kind=JOB_KIND_DEVICE_VERIFICATION,
-            payload={
-                "mode": "update",
-                "device_id": str(device_id),
-                "data": data.model_dump(mode="json", exclude_unset=True),
-            },
-            snapshot=new_job(str(job_uuid)),
-            max_attempts=1,
-            job_id=job_uuid,
-        )
-    return public_snapshot(row.snapshot)
-
-
-async def get_verification_job(
-    job_id: str,
-    session_factory: SessionFactory = async_session,
-) -> dict[str, Any] | None:
-    try:
-        parsed_job_id = uuid.UUID(job_id)
-    except ValueError:
-        return None
-
-    async with session_factory() as db:
-        row = await db.get(Job, parsed_job_id)
-    if row is None or row.kind != JOB_KIND_DEVICE_VERIFICATION:
-        return None
-    return public_snapshot(row.snapshot)
-
-
-async def clear_verification_jobs(session_factory: SessionFactory = async_session) -> None:
-    async with session_factory() as db:
-        await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
+            await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
