@@ -64,7 +64,6 @@ from app.runs.service_reaper import RunReaperLoop
 from app.sessions import router as sessions_router
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
-from app.sessions.service_viability import close as close_session_viability_client
 from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
@@ -264,7 +263,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await bus.shutdown()
         await pool.close()
         await app_services.grid.grid.close()
-        await close_session_viability_client()
+        await app_services.sessions.viability.close()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)
         await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")

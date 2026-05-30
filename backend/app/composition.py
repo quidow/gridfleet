@@ -73,9 +73,9 @@ from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.runs.services_container import RunServices
-from app.sessions import service_viability as session_viability
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
+from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
@@ -152,8 +152,11 @@ def compose_app(
 
     device_state_svc = DeviceStateService(publisher=bus)
     lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus)
-    lifecycle_policy_svc = LifecyclePolicyService(publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc)
-    session_viability.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
+    viability_svc = SessionViabilityService(publisher=bus, settings=settings_svc, session_factory=session_factory)
+    lifecycle_policy_svc = LifecyclePolicyService(
+        publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc, viability=viability_svc
+    )
+    viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
@@ -193,7 +196,7 @@ def compose_app(
         settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
     )
     verification_execution_svc = VerificationExecutionService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc, viability=viability_svc
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -202,6 +205,7 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         preparation=verification_preparation_svc,
         execution=verification_execution_svc,
+        viability=viability_svc,
     )
     recovery_runner_svc = RecoveryJobService(
         session_factory=session_factory,
@@ -253,6 +257,7 @@ def compose_app(
             sync=SessionSyncService(
                 publisher=bus, settings=settings_svc, grid=grid_svc, lifecycle=lifecycle_policy_svc
             ),
+            viability=viability_svc,
             settings=settings_svc,
             grid=grid_svc,
             session_factory=session_factory,

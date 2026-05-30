@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.core.pagination import CursorPage
     from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
     from app.events.catalog import EventSeverity
+    from app.events.protocols import EventPublisher
     from app.sessions.models import Session, SessionStatus
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -123,7 +124,9 @@ class DeviceSessionLifecycle(Protocol):
 
 @runtime_checkable
 class HealthFailureHandler(Protocol):
-    async def __call__(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> object: ...
+    async def __call__(
+        self, db: AsyncSession, device: Device, *, source: str, reason: str, publisher: EventPublisher
+    ) -> object: ...
 
 
 @runtime_checkable

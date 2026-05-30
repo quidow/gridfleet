@@ -459,6 +459,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 grid=GridService(settings=settings_service),
                 lifecycle=_lifecycle_policy_svc,
             ),
+            viability=Mock(),
             settings=settings_service,
             grid=GridService(settings=settings_service),
             session_factory=sf,

@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
-    from app.devices.protocols import DeviceCrudProtocol
+    from app.devices.protocols import DeviceCrudProtocol, SessionViabilityProbe
     from app.devices.services.verification_preparation import PreparedVerificationContext
     from app.events.protocols import EventPublisher
 
@@ -65,11 +65,13 @@ class VerificationExecutionService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
+        viability: SessionViabilityProbe | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
+        self._viability = viability
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory

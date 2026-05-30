@@ -111,6 +111,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
     services = SessionServices(
         crud=Mock(),
         sync=Mock(),
+        viability=Mock(),
         settings=FakeSettingsReader({}),
         grid=Mock(),
         session_factory=_Session,
@@ -131,6 +132,7 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
     services = SessionServices(
         crud=Mock(),
         sync=mock_sync,
+        viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,
@@ -151,6 +153,7 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
     services = SessionServices(
         crud=Mock(),
         sync=mock_sync,
+        viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,
@@ -300,6 +303,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
     services = SessionServices(
         crud=Mock(),
         sync=mock_sync,
+        viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
         grid=Mock(),
         session_factory=_Session,

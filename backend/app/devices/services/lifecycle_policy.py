@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import SessionViabilityProbe
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
 
@@ -79,10 +80,12 @@ class LifecyclePolicyService:
         publisher: EventPublisher,
         settings: SettingsReader,
         actions: LifecyclePolicyActionsService,
+        viability: SessionViabilityProbe | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._actions = actions
+        self._viability = viability
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
         device = await _reload_device(db, device)

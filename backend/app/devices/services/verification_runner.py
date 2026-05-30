@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.protocols import SessionViabilityProbe
     from app.devices.services.verification_execution import VerificationExecutionService
     from app.devices.services.verification_preparation import VerificationPreparationService
     from app.events.protocols import EventPublisher
@@ -33,6 +34,7 @@ class VerificationRunnerService:
         circuit_breaker: CircuitBreakerProtocol,
         preparation: VerificationPreparationService,
         execution: VerificationExecutionService,
+        viability: SessionViabilityProbe | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -40,6 +42,7 @@ class VerificationRunnerService:
         self._circuit_breaker = circuit_breaker
         self._preparation = preparation
         self._execution = execution
+        self._viability = viability
 
     async def _probe_session_via_gridfleet_marker(
         self,
