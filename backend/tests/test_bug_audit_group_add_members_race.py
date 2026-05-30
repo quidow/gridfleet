@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from app.devices.models import DeviceOperationalState
 from app.devices.models.group import DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_host
 from tests.helpers import test_event_bus as event_bus
@@ -82,9 +83,10 @@ async def test_add_members_races_concurrent_duplicate_insert(
         # concurrent duplicate as a benign no-op. Current behavior (bug):
         # the plain ``db.add`` + ``db.commit`` raises IntegrityError.
         try:
-            await DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({})).add_members(
-                db_session, group_id, [device_id]
-            )
+            _settings = FakeSettingsReader({})
+            await DeviceGroupsService(
+                publisher=event_bus, settings=_settings, crud=DeviceCrudService(settings=_settings)
+            ).add_members(db_session, group_id, [device_id])
         except IntegrityError as exc:
             pytest.fail(f"add_members raised IntegrityError on concurrent duplicate insert: {exc}")
     finally:

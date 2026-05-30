@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.devices.protocols import (
         BulkOperationsProtocol,
         DataCleanupProtocol,
+        DeviceCrudProtocol,
         DeviceGroupsProtocol,
         DevicePresenterProtocol,
         DeviceStateWriter,
@@ -40,6 +41,7 @@ class DeviceServices:
     test_data: TestDataProtocol
     portability_export: PortabilityExportProtocol
     verification: VerificationProtocol
+    crud: DeviceCrudProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

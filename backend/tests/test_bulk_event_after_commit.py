@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -18,11 +19,13 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
+    _settings = FakeSettingsReader()
     return BulkOperationsService(
         publisher=event_bus,
-        settings=FakeSettingsReader(),
+        settings=_settings,
         circuit_breaker=MagicMock(),
         maintenance=maintenance or MaintenanceService(publisher=event_bus),
+        crud=DeviceCrudService(settings=_settings),
     )
 
 

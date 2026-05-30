@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import MaintenanceProtocol
+    from app.devices.protocols import DeviceCrudProtocol, MaintenanceProtocol
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
 
@@ -147,11 +147,13 @@ class BulkOperationsService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceProtocol,
+        crud: DeviceCrudProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._maintenance = maintenance
+        self._crud = crud
 
     async def bulk_start_nodes(
         self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"

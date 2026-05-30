@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.device import DeviceVerificationUpdate
 
 
@@ -50,9 +51,12 @@ class PreparedVerificationContext:
 
 
 class VerificationPreparationService:
-    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+    def __init__(
+        self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol, crud: DeviceCrudProtocol
+    ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._crud = crud
 
     async def validate_create_request(
         self,

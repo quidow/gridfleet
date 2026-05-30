@@ -18,6 +18,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
@@ -78,23 +79,26 @@ async def test_run_create_and_maintenance_cannot_overlap(
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _grid_svc = GridService(settings=settings_service)
             _maintenance_svc = MaintenanceService(publisher=event_bus)
+            _crud_svc = DeviceCrudService(settings=settings_service)
             return DeviceServices(
                 state=DeviceStateService(publisher=event_bus),
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
-                groups=DeviceGroupsService(publisher=event_bus, settings=settings_service),
+                groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
                 maintenance=_maintenance_svc,
                 bulk=BulkOperationsService(
                     publisher=event_bus,
                     settings=settings_service,
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
+                    crud=_crud_svc,
                 ),
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
                 verification=VerificationService(),
+                crud=_crud_svc,
                 publisher=event_bus,
                 settings=settings_service,
                 grid=_grid_svc,

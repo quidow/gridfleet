@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -17,7 +18,8 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
 def _svc() -> DeviceGroupsService:
-    return DeviceGroupsService(publisher=event_bus, settings=FakeSettingsReader({}))
+    _settings = FakeSettingsReader({})
+    return DeviceGroupsService(publisher=event_bus, settings=_settings, crud=DeviceCrudService(settings=_settings))
 
 
 async def test_create_group_queues_updated(

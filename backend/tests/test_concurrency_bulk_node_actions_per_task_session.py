@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import bulk as bulk_service
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -108,8 +109,13 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                     await racer_db.rollback()
 
     async def runner() -> dict[str, object]:
+        _settings_runner = FakeSettingsReader({})
         return await BulkOperationsService(
-            publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=MagicMock()
+            publisher=event_bus,
+            settings=_settings_runner,
+            circuit_breaker=MagicMock(),
+            maintenance=MagicMock(),
+            crud=DeviceCrudService(settings=_settings_runner),
         ).bulk_start_nodes(db_session, [device_a_id, device_b_id])
 
     runner_task = asyncio.create_task(runner())

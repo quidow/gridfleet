@@ -28,6 +28,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
@@ -283,24 +284,27 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
     _fake_maintenance = MaintenanceService(publisher=_fake_publisher)
+    _fake_crud = DeviceCrudService(settings=_fake_settings)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             state=DeviceStateService(publisher=_fake_publisher),
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
-            groups=DeviceGroupsService(publisher=_fake_publisher, settings=_fake_settings),
+            groups=DeviceGroupsService(publisher=_fake_publisher, settings=_fake_settings, crud=_fake_crud),
             maintenance=_fake_maintenance,
             bulk=BulkOperationsService(
                 publisher=_fake_publisher,
                 settings=_fake_settings,
                 circuit_breaker=Mock(),
                 maintenance=_fake_maintenance,
+                crud=_fake_crud,
             ),
             presenter=DevicePresenterService(settings=_fake_settings),
             test_data=TestDataService(publisher=_fake_publisher),
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
+            crud=_fake_crud,
             publisher=_fake_publisher,
             settings=_fake_settings,
             grid=_fake_grid,

@@ -8,6 +8,7 @@ from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as device_group_service
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -17,7 +18,8 @@ if TYPE_CHECKING:
 
 
 def _svc(settings: object | None = None) -> DeviceGroupsService:
-    return DeviceGroupsService(publisher=event_bus, settings=settings or FakeSettingsReader({}))
+    _settings = settings or FakeSettingsReader({})
+    return DeviceGroupsService(publisher=event_bus, settings=_settings, crud=DeviceCrudService(settings=_settings))
 
 
 async def test_static_group_membership_counts_and_idempotent_changes(db_session: AsyncSession) -> None:
