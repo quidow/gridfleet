@@ -41,6 +41,17 @@ def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int 
     return max(0, remaining)
 
 
+class DevicePresenterService:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
+    async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]:
+        return await serialize_device(db, device, settings=self._settings)
+
+    async def serialize_device_detail(self, db: AsyncSession, device: Device) -> dict[str, Any]:
+        return await serialize_device_detail(db, device, settings=self._settings)
+
+
 def build_reservation_read(
     reservation: TestRun | None,
     reservation_entry: DeviceReservation | None = None,

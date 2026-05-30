@@ -16,6 +16,29 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 
+class TestDataService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def get_device_test_data(self, db: AsyncSession, device: Device) -> dict[str, Any]:
+        return await get_device_test_data(db, device)
+
+    async def replace_device_test_data(
+        self, db: AsyncSession, device: Device, data: dict[str, Any], *, changed_by: str | None = None
+    ) -> dict[str, Any]:
+        return await replace_device_test_data(db, device, data, changed_by=changed_by, publisher=self._publisher)
+
+    async def merge_device_test_data(
+        self, db: AsyncSession, device: Device, data: dict[str, Any], *, changed_by: str | None = None
+    ) -> dict[str, Any]:
+        return await merge_device_test_data(db, device, data, changed_by=changed_by, publisher=self._publisher)
+
+    async def get_test_data_history(
+        self, db: AsyncSession, device_id: uuid.UUID, *, limit: int = 50
+    ) -> list[DeviceTestDataAuditLog]:
+        return await get_test_data_history(db, device_id, limit=limit)
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     result = copy.deepcopy(base)
     for key, value in override.items():

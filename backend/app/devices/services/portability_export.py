@@ -21,6 +21,11 @@ from app.devices.schemas.portability import (
 )
 
 
+class PortabilityExportService:
+    async def build_export_bundle(self, db: AsyncSession) -> ExportBundle:
+        return await build_export_bundle(db)
+
+
 def _exported_device(d: Device) -> ExportedDevice:
     host = d.host
     if host is None:
