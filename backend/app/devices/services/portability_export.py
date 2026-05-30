@@ -23,7 +23,16 @@ from app.devices.schemas.portability import (
 
 class PortabilityExportService:
     async def build_export_bundle(self, db: AsyncSession) -> ExportBundle:
-        return await build_export_bundle(db)
+        stmt = select(Device).options(selectinload(Device.host)).order_by(Device.created_at.asc())
+        result = await db.execute(stmt)
+        devices = result.scalars().all()
+        exported = [_exported_device(d) for d in devices]
+        return ExportBundle(
+            schema_version=SCHEMA_VERSION,
+            exported_at=datetime.now(UTC),
+            source_instance=None,
+            devices=exported,
+        )
 
 
 def _exported_device(d: Device) -> ExportedDevice:
@@ -47,21 +56,4 @@ def _exported_device(d: Device) -> ExportedDevice:
         device_config=dict(d.device_config or {}),
         test_data=dict(d.test_data or {}),
         original_host=OriginalHost(hostname=host.hostname, host_id=host.id),
-    )
-
-
-async def build_export_bundle(
-    session: AsyncSession,
-    *,
-    source_instance: str | None = None,
-) -> ExportBundle:
-    stmt = select(Device).options(selectinload(Device.host)).order_by(Device.created_at.asc())
-    result = await session.execute(stmt)
-    devices = result.scalars().all()
-    exported = [_exported_device(d) for d in devices]
-    return ExportBundle(
-        schema_version=SCHEMA_VERSION,
-        exported_at=datetime.now(UTC),
-        source_instance=source_instance,
-        devices=exported,
     )

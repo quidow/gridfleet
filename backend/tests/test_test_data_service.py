@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceTestDataAuditLog
-from app.devices.services import test_data as test_data_service
+from app.devices.services.test_data import TestDataService
 from app.hosts.models import Host
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -21,9 +21,8 @@ async def test_replace_test_data_overwrites_and_logs(db_session: AsyncSession, d
     )
     await db_session.flush()
 
-    result = await test_data_service.replace_device_test_data(
-        db_session, device, {"new": True}, changed_by="op", publisher=event_bus
-    )
+    svc = TestDataService(publisher=event_bus)
+    result = await svc.replace_device_test_data(db_session, device, {"new": True}, changed_by="op")
     assert result == {"new": True}
     await db_session.refresh(device)
     assert device.test_data == {"new": True}
@@ -48,9 +47,8 @@ async def test_replace_test_data_does_not_clear_verified_at(db_session: AsyncSes
     await db_session.flush()
     assert device.verified_at is not None
     pre = device.verified_at
-    await test_data_service.replace_device_test_data(
-        db_session, device, {"new": True}, changed_by="op", publisher=event_bus
-    )
+    svc = TestDataService(publisher=event_bus)
+    await svc.replace_device_test_data(db_session, device, {"new": True}, changed_by="op")
     await db_session.refresh(device)
     assert device.verified_at == pre
 
@@ -65,9 +63,8 @@ async def test_merge_test_data_deep_merges(db_session: AsyncSession, db_host: Ho
     )
     await db_session.flush()
 
-    await test_data_service.merge_device_test_data(
-        db_session, device, {"a": {"y": 9}, "c": 3}, changed_by="op", publisher=event_bus
-    )
+    svc = TestDataService(publisher=event_bus)
+    await svc.merge_device_test_data(db_session, device, {"a": {"y": 9}, "c": 3}, changed_by="op")
     await db_session.refresh(device)
     assert device.test_data == {"a": {"x": 1, "y": 9}, "b": 2, "c": 3}
 
@@ -81,7 +78,8 @@ async def test_get_history_returns_descending(db_session: AsyncSession, db_host:
     )
     await db_session.flush()
 
-    await test_data_service.replace_device_test_data(db_session, device, {"v": 1}, changed_by="op", publisher=event_bus)
-    await test_data_service.replace_device_test_data(db_session, device, {"v": 2}, changed_by="op", publisher=event_bus)
-    history = await test_data_service.get_test_data_history(db_session, device.id, limit=10)
+    svc = TestDataService(publisher=event_bus)
+    await svc.replace_device_test_data(db_session, device, {"v": 1}, changed_by="op")
+    await svc.replace_device_test_data(db_session, device, {"v": 2}, changed_by="op")
+    history = await svc.get_test_data_history(db_session, device.id, limit=10)
     assert [h.new_test_data for h in history] == [{"v": 2}, {"v": 1}]

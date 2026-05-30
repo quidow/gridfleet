@@ -772,8 +772,8 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     test_data_db = TestDataDb()
     monkeypatch.setattr(test_data_service, "queue_event_for_session", Mock())
     device = SimpleNamespace(id=uuid.uuid4(), name="device", test_data={"a": 1})
-    assert await test_data_service.replace_device_test_data(
-        test_data_db, device, {"b": 2}, changed_by="operator", publisher=event_bus
+    assert await test_data_service.TestDataService(publisher=event_bus).replace_device_test_data(
+        test_data_db, device, {"b": 2}, changed_by="operator"
     ) == {"b": 2}
 
     host_db = AsyncMock()
