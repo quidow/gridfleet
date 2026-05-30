@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.devices.dependencies import get_device_services
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -99,6 +100,9 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 portability_export=PortabilityExportService(),
                 verification=VerificationService(),
                 crud=_crud_svc,
+                connectivity=ConnectivityService(
+                    publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+                ),
                 publisher=event_bus,
                 settings=settings_service,
                 grid=_grid_svc,

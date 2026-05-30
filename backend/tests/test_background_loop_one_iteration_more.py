@@ -12,6 +12,7 @@ from app.core.leader import keepalive, watcher
 from app.core.leader.advisory import LeadershipLost
 from app.devices.services import fleet_capacity as fleet_capacity
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -193,6 +194,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_fc_crud,
+            connectivity=ConnectivityService(publisher=_fc_publisher, settings=_fc_settings, circuit_breaker=Mock()),
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,

@@ -28,6 +28,7 @@ from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -151,6 +152,7 @@ def compose_app(
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(publisher=bus)
     crud_svc = DeviceCrudService(settings=settings_svc)
+    connectivity_svc = ConnectivityService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
     groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
     bulk_svc = BulkOperationsService(
         publisher=bus,
@@ -201,6 +203,7 @@ def compose_app(
             portability_export=portability_export_svc,
             verification=verification_svc,
             crud=crud_svc,
+            connectivity=connectivity_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

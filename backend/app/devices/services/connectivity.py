@@ -650,15 +650,8 @@ class DeviceConnectivityLoop:
             interval = float(self._services.settings.get("general.device_check_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await _check_expired_cooldowns(
-                        db, settings=self._services.settings, circuit_breaker=self._services.circuit_breaker
-                    )
-                    await _check_connectivity(
-                        db,
-                        settings=self._services.settings,
-                        circuit_breaker=self._services.circuit_breaker,
-                        publisher=self._services.publisher,
-                    )
+                    await self._services.connectivity.check_expired_cooldowns(db)
+                    await self._services.connectivity.check_connectivity(db)
             except LeadershipLost as exc:
                 logger.error(
                     "device_connectivity_loop_leadership_lost",

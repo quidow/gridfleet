@@ -21,6 +21,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import lifecycle_policy
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -305,6 +306,9 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_fake_crud,
+            connectivity=ConnectivityService(
+                publisher=_fake_publisher, settings=_fake_settings, circuit_breaker=Mock()
+            ),
             publisher=_fake_publisher,
             settings=_fake_settings,
             grid=_fake_grid,

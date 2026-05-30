@@ -27,6 +27,7 @@ from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
@@ -393,6 +394,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_crud_svc,
+            connectivity=ConnectivityService(
+                publisher=test_event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+            ),
             publisher=test_event_bus,
             settings=settings_service,
             grid=_grid_svc,
