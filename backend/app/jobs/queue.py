@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.jobs.protocols import DurableJobProtocol, VerificationJobRunner
+    from app.jobs.protocols import DurableJobProtocol, RecoveryJobRunner, VerificationJobRunner
 
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
@@ -90,12 +90,14 @@ class DurableJobService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         verification_runner: VerificationJobRunner,
+        recovery_runner: RecoveryJobRunner,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._verification_runner = verification_runner
+        self._recovery_runner = recovery_runner
 
     async def reset_stale_running_jobs(
         self,

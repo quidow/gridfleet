@@ -36,6 +36,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
@@ -184,6 +185,7 @@ def compose_app(
         preparation=verification_preparation_svc,
         execution=verification_execution_svc,
     )
+    recovery_runner_svc = RecoveryJobService(session_factory=session_factory, publisher=bus, settings=settings_svc)
     verification_svc = VerificationService()
 
     return AppServices(
@@ -293,6 +295,7 @@ def compose_app(
                 settings=settings_svc,
                 circuit_breaker=circuit_breaker,
                 verification_runner=verification_runner_svc,
+                recovery_runner=recovery_runner_svc,
             )
         ),
         webhooks=WebhookDeliveryLoop(session_factory=session_factory),

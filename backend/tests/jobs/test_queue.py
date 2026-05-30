@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_preparation import VerificationPreparationService
@@ -48,6 +49,11 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
             ),
+        ),
+        recovery_runner=RecoveryJobService(
+            session_factory=sf,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
         ),
     )
 
@@ -173,6 +179,11 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         settings=FakeSettingsReader({}),
         circuit_breaker=AsyncMock(),
         verification_runner=mock_verification_runner,
+        recovery_runner=RecoveryJobService(
+            session_factory=sf,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+        ),
     )
     assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
     mock_verification_runner.run_persisted_verification_job.assert_awaited_once()
