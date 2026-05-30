@@ -320,13 +320,15 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     assert exc.value.status_code == 404
 
     with patch.object(devices_core.device_service, "update_device", new=AsyncMock(return_value=object())):
-        with patch.object(devices_core.device_presenter, "serialize_device", new=AsyncMock(return_value={"id": "ok"})):
-            assert await devices_core.update_device(
-                device_id,
-                devices_core.DevicePatch(name="new"),
-                db=object(),
-                settings_services=_mock_settings_svc(FakeSettingsReader({})),
-            ) == {"id": "ok"}
+        mock_ds_update = SimpleNamespace(
+            presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={"id": "ok"}))
+        )
+        assert await devices_core.update_device(
+            device_id,
+            devices_core.DevicePatch(name="new"),
+            db=object(),
+            device_services=mock_ds_update,
+        ) == {"id": "ok"}
 
     info = runs.ReservedDeviceInfo(
         device_id=str(device_id),
@@ -2598,13 +2600,14 @@ async def test_devices_core_router_branches() -> None:
             new=AsyncMock(return_value={("pack", "android"): "Android"}),
         ),
         patch("app.devices.routers.core.run_service.get_reservation_context_for_device", new=Mock(return_value=None)),
-        patch("app.devices.routers.core.device_presenter.serialize_device", new=AsyncMock(return_value=serialized)),
     ):
+        mock_ds_list = SimpleNamespace(presenter=SimpleNamespace(serialize_device=AsyncMock(return_value=serialized)))
         listed = await devices_core.list_devices(
             filters=filters,
             limit=10,
             offset=None,
             db=object(),
+            device_services=mock_ds_list,
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
         )
     assert listed == {"items": [serialized], "total": 1, "limit": 10, "offset": 0}
@@ -2615,7 +2618,7 @@ async def test_devices_core_router_branches() -> None:
                 device_id,
                 data=devices_core.DevicePatch(),
                 db=object(),
-                settings_services=_mock_settings_svc(FakeSettingsReader({})),
+                device_services=SimpleNamespace(presenter=SimpleNamespace()),
             )
     assert exc.value.status_code == 404
 
