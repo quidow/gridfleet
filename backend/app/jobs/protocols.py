@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from app.jobs.kinds import JOB_KIND_DEVICE_VERIFICATION
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from app.jobs.models import Job
 
 STALE_JOB_TIMEOUT = timedelta(minutes=10)
