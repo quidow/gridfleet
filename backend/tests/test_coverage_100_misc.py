@@ -62,6 +62,9 @@ from app.devices.services import (
     write as device_write,
 )
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.events import catalog as event_catalog
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
@@ -827,6 +830,16 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
+        verification_runner=VerificationRunnerService(
+            session_factory=QueueCtx,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            preparation=VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
+            execution=VerificationExecutionService(
+                publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            ),
+        ),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
     assert await service.run_pending_once() is True

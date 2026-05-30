@@ -37,6 +37,10 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -158,6 +162,22 @@ def compose_app(
     )
     run_query = RunQueryService()
 
+    verification_preparation_svc = VerificationPreparationService(
+        settings=settings_svc, circuit_breaker=circuit_breaker
+    )
+    verification_execution_svc = VerificationExecutionService(
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker
+    )
+    verification_runner_svc = VerificationRunnerService(
+        session_factory=session_factory,
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        preparation=verification_preparation_svc,
+        execution=verification_execution_svc,
+    )
+    verification_svc = VerificationService()
+
     return AppServices(
         events=event_services,
         settings=settings_services,
@@ -173,6 +193,7 @@ def compose_app(
             presenter=presenter_svc,
             test_data=test_data_svc,
             portability_export=portability_export_svc,
+            verification=verification_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -261,6 +282,7 @@ def compose_app(
                 publisher=bus,
                 settings=settings_svc,
                 circuit_breaker=circuit_breaker,
+                verification_runner=verification_runner_svc,
             )
         ),
         webhooks=WebhookDeliveryLoop(session_factory=session_factory),

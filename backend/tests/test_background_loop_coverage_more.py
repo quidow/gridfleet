@@ -32,6 +32,7 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
 from tests.fakes import FakeSettingsReader
@@ -82,6 +83,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             presenter=DevicePresenterService(settings=_svc_settings_1),
             test_data=TestDataService(publisher=_svc_pub_1),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
@@ -127,6 +129,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             presenter=DevicePresenterService(settings=_svc_settings_2),
             test_data=TestDataService(publisher=_svc_pub_2),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
@@ -234,6 +237,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             presenter=DevicePresenterService(settings=_svc_settings_3),
             test_data=TestDataService(publisher=_svc_pub_3),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
@@ -325,6 +329,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             presenter=DevicePresenterService(settings=_svc_settings_4),
             test_data=TestDataService(publisher=_svc_pub_4),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,

@@ -30,6 +30,7 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -299,6 +300,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             presenter=DevicePresenterService(settings=_fake_settings),
             test_data=TestDataService(publisher=_fake_publisher),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_fake_publisher,
             settings=_fake_settings,
             grid=_fake_grid,

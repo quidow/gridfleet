@@ -16,6 +16,7 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -162,6 +163,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             presenter=DevicePresenterService(settings=_pr_settings),
             test_data=TestDataService(publisher=_pr_publisher),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,

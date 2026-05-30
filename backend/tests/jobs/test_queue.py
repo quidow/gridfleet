@@ -9,6 +9,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices.services.verification_execution import VerificationExecutionService
+from app.devices.services.verification_preparation import VerificationPreparationService
+from app.devices.services.verification_runner import VerificationRunnerService
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.jobs.protocols import DurableJobProtocol
@@ -22,11 +25,22 @@ def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSessio
 
 
 def _make_service(db_session: AsyncSession) -> DurableJobService:
+    sf = _session_factory(db_session)
     return DurableJobService(
-        session_factory=_session_factory(db_session),
+        session_factory=sf,
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=AsyncMock(),
+        verification_runner=VerificationRunnerService(
+            session_factory=sf,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=AsyncMock(),
+            preparation=VerificationPreparationService(settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()),
+            execution=VerificationExecutionService(
+                publisher=AsyncMock(), settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()
+            ),
+        ),
     )
 
 

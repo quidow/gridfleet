@@ -21,6 +21,7 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.service import HostCrudService
@@ -187,6 +188,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             presenter=DevicePresenterService(settings=_fc_settings),
             test_data=TestDataService(publisher=_fc_publisher),
             portability_export=PortabilityExportService(),
+            verification=VerificationService(),
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,

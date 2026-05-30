@@ -21,6 +21,7 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
+from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
@@ -98,6 +99,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
+                verification=VerificationService(),
                 publisher=event_bus,
                 settings=settings_service,
                 grid=_grid_svc,
