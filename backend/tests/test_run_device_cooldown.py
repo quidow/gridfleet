@@ -514,7 +514,7 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
 
 
 async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSession, default_host_id: str) -> None:
-    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import ConnectivityService
     from app.runs.models import TestRun
 
     device = await create_device_record(
@@ -562,7 +562,9 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await ConnectivityService(
+        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
@@ -636,7 +638,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
 
 async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: AsyncSession, default_host_id: str) -> None:
     """If a device enters maintenance while cooldown is active, expiry must not restart it."""
-    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import ConnectivityService
     from app.hosts.models import Host
 
     host = await db_session.get(Host, default_host_id)
@@ -691,7 +693,9 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         device.hold = DeviceHold.maintenance
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await ConnectivityService(
+        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    ).check_expired_cooldowns(db_session)
 
     # Exclusion should be cleared
     await db_session.refresh(reservation)
@@ -705,7 +709,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
 
 async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSession, default_host_id: str) -> None:
     """Released reservations with stale excluded_until must be ignored."""
-    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import ConnectivityService
 
     device = await create_device_record(
         db_session,
@@ -742,7 +746,9 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
     db_session.add(reservation)
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await ConnectivityService(
+        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    ).check_expired_cooldowns(db_session)
 
     # Stale released row should be untouched
     await db_session.refresh(reservation)

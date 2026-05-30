@@ -14,6 +14,8 @@ from app.devices.services import state_write_guard
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
 from app.core.errors import AgentCallError
@@ -38,6 +40,18 @@ from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+
+
+async def _check_connectivity(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+) -> None:
+    await ConnectivityService(
+        publisher=publisher, settings=settings, circuit_breaker=circuit_breaker
+    ).check_connectivity(db)
 
 
 def _device(
@@ -227,7 +241,7 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
         ) as delete_value,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(
+        await _check_connectivity(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 
@@ -264,7 +278,7 @@ async def test_virtual_device_connectivity_updates_emulator_state(
         ) as update_emulator_state,
         patch("app.devices.services.connectivity.assert_current_leader"),
     ):
-        await device_connectivity._check_connectivity(
+        await _check_connectivity(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 
@@ -319,11 +333,12 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
 
     with (
         patch("app.devices.services.connectivity.observe_background_loop", return_value=_Observation()),
-        patch(
-            "app.devices.services.connectivity._check_connectivity",
+        patch.object(
+            ConnectivityService,
+            "check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
-        patch("app.devices.services.connectivity._check_expired_cooldowns", new=AsyncMock(return_value=None)),
+        patch.object(ConnectivityService, "check_expired_cooldowns", new=AsyncMock(return_value=None)),
         patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
@@ -386,7 +401,7 @@ async def test_connectivity_loop_skips_handle_health_failure_for_offline_device(
         patch("app.devices.services.connectivity.assert_current_leader"),
         patch("app.devices.services.connectivity.lifecycle_policy.handle_health_failure", spy),
     ):
-        await device_connectivity._check_connectivity(
+        await _check_connectivity(
             db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
 

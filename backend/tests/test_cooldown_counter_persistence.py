@@ -243,7 +243,7 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
     across exclusion clears. Only operator-driven ``restore_device_to_run``
     resets it.
     """
-    from app.devices.services.connectivity import _check_expired_cooldowns
+    from app.devices.services.connectivity import ConnectivityService
 
     device = await create_device(db_session, host_id=db_host.id, name="legacy-sweep-no-reset")
     await _seed_node(db_session, device.id)
@@ -258,7 +258,9 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
     reservation.cooldown_count = 2
     await db_session.commit()
 
-    await _check_expired_cooldowns(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await ConnectivityService(
+        publisher=Mock(), settings=FakeSettingsReader(), circuit_breaker=Mock()
+    ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False

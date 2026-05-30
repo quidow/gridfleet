@@ -7,20 +7,35 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
+from app.core.protocols import SettingsReader
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
-    _check_connectivity,
+    ConnectivityService,
     _get_agent_devices,
     _get_lifecycle_state,
 )
+from app.events.protocols import EventPublisher
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import get_connectivity_control_plane_state, track_previously_offline_device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+async def _check_connectivity(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+) -> None:
+    await ConnectivityService(
+        publisher=publisher, settings=settings, circuit_breaker=circuit_breaker
+    ).check_connectivity(db)
 
 
 @pytest.fixture(autouse=True)
@@ -610,9 +625,7 @@ async def test_connectivity_marks_busy_device_offline(
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
 
-    await device_connectivity._check_connectivity(
-        db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
-    )
+    await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock())
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -641,9 +654,7 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
 
-    await device_connectivity._check_connectivity(
-        db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
-    )
+    await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock())
 
     await db_session.refresh(device)
     assert device.hold == DeviceHold.reserved
@@ -701,9 +712,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
 
-    await device_connectivity._check_connectivity(
-        db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock()
-    )
+    await _check_connectivity(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=Mock())
 
     await db_session.refresh(device)
     assert device.hold == DeviceHold.maintenance

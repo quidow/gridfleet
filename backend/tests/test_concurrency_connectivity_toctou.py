@@ -7,16 +7,31 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent_comm.protocols import CircuitBreakerProtocol
+from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import connectivity as device_connectivity
 from app.devices.services import state_write_guard
+from app.devices.services.connectivity import ConnectivityService
+from app.events.protocols import EventPublisher
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
+
+
+async def _check_connectivity(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+) -> None:
+    await ConnectivityService(
+        publisher=publisher, settings=settings, circuit_breaker=circuit_breaker
+    ).check_connectivity(db)
 
 
 async def test_offline_write_skips_when_device_enters_active_state_before_lock(
@@ -59,7 +74,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(
+                await _check_connectivity(
                     session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
                 )
 
@@ -128,7 +143,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
             patch("app.devices.services.connectivity.assert_current_leader"),
         ):
             async with db_session_maker() as session:
-                await device_connectivity._check_connectivity(
+                await _check_connectivity(
                     session, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
                 )
 

@@ -11,13 +11,29 @@ import pytest
 from app.core.leader.advisory import LeadershipLost
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.connectivity import _check_connectivity
+from app.devices.services.connectivity import ConnectivityService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
+
+
+async def _check_connectivity(
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
+) -> None:
+    await ConnectivityService(
+        publisher=publisher, settings=settings, circuit_breaker=circuit_breaker
+    ).check_connectivity(db)
 
 
 @pytest.mark.db

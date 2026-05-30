@@ -218,10 +218,10 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
 async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(device_connectivity, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(device_connectivity, "_check_expired_cooldowns", AsyncMock())
+    monkeypatch.setattr(ConnectivityService, "check_expired_cooldowns", AsyncMock())
     monkeypatch.setattr(
-        device_connectivity,
-        "_check_connectivity",
+        ConnectivityService,
+        "check_connectivity",
         AsyncMock(side_effect=LeadershipLost("stale leader")),
     )
     monkeypatch.setattr(device_connectivity.os, "_exit", Mock(side_effect=SystemExit(70)))
