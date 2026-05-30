@@ -278,49 +278,46 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     group_id = uuid.uuid4()
     device_id = uuid.uuid4()
 
-    _grp_ss = _mock_settings_svc(FakeSettingsReader({}))
-    with patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.update_group(
-                group_id,
-                device_groups.DeviceGroupUpdate(name="new"),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-    assert exc.value.status_code == 404
-    updated_group = SimpleNamespace(id=group_id)
-    with (
-        patch.object(device_groups.device_group_service, "update_group", new=AsyncMock(return_value=updated_group)),
-        patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value={"id": group_id})),
-    ):
-        assert await device_groups.update_group(
+    ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.update_group(
             group_id,
             device_groups.DeviceGroupUpdate(name="new"),
             db=object(),
-            events=SimpleNamespace(publisher=event_bus),
-            settings_services=_grp_ss,
-        ) == {"id": group_id}
+            device_services=ds_update_none,
+        )
+    assert exc.value.status_code == 404
+    updated_group = SimpleNamespace(id=group_id)
+    ds_update_ok = SimpleNamespace(
+        groups=SimpleNamespace(
+            update_group=AsyncMock(return_value=updated_group),
+            get_group=AsyncMock(return_value={"id": group_id}),
+        )
+    )
+    assert await device_groups.update_group(
+        group_id,
+        device_groups.DeviceGroupUpdate(name="new"),
+        db=object(),
+        device_services=ds_update_ok,
+    ) == {"id": group_id}
 
-    with patch.object(device_groups.device_group_service, "get_group", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.add_members(
-                group_id,
-                device_groups.GroupMembershipUpdate(device_ids=[device_id]),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-        assert exc.value.status_code == 404
-        with pytest.raises(HTTPException) as exc:
-            await device_groups.remove_members(
-                group_id,
-                device_groups.GroupMembershipUpdate(device_ids=[device_id]),
-                db=object(),
-                events=SimpleNamespace(publisher=event_bus),
-                settings_services=_grp_ss,
-            )
-        assert exc.value.status_code == 404
+    ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.add_members(
+            group_id,
+            device_groups.GroupMembershipUpdate(device_ids=[device_id]),
+            db=object(),
+            device_services=ds_members_none,
+        )
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        await device_groups.remove_members(
+            group_id,
+            device_groups.GroupMembershipUpdate(device_ids=[device_id]),
+            db=object(),
+            device_services=ds_members_none,
+        )
+    assert exc.value.status_code == 404
 
     with patch.object(devices_core.device_service, "update_device", new=AsyncMock(return_value=object())):
         with patch.object(devices_core.device_presenter, "serialize_device", new=AsyncMock(return_value={"id": "ok"})):
