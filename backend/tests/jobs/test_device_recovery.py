@@ -13,6 +13,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_preparation import VerificationPreparationService
@@ -103,6 +104,11 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                     circuit_breaker=AsyncMock(),
                     crud=DeviceCrudService(settings=settings_service),
                 ),
+            ),
+            recovery_runner=RecoveryJobService(
+                session_factory=_sf,
+                publisher=AsyncMock(),
+                settings=settings_service,
             ),
         ).run_pending_once()
 
@@ -209,6 +215,11 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     crud=DeviceCrudService(settings=settings_service),
                 ),
             ),
+            recovery_runner=RecoveryJobService(
+                session_factory=_sf,
+                publisher=AsyncMock(),
+                settings=settings_service,
+            ),
         ).run_pending_once()
 
     assert worked is True
@@ -266,6 +277,11 @@ async def test_device_recovery_job_completed_when_device_missing(
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=settings_service),
             ),
+        ),
+        recovery_runner=RecoveryJobService(
+            session_factory=_sf,
+            publisher=AsyncMock(),
+            settings=settings_service,
         ),
     ).run_pending_once()
 

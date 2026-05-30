@@ -11,7 +11,6 @@ from sqlalchemy import func, or_, select
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
-from app.devices.services.recovery_job import run_device_recovery_job
 from app.devices.services.verification_job_state import reset_snapshot_for_retry
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.jobs.protocols import DurableJobProtocol, VerificationJobRunner
+    from app.jobs.protocols import DurableJobProtocol, RecoveryJobRunner, VerificationJobRunner
 
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
@@ -90,12 +89,14 @@ class DurableJobService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         verification_runner: VerificationJobRunner,
+        recovery_runner: RecoveryJobRunner,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._verification_runner = verification_runner
+        self._recovery_runner = recovery_runner
 
     async def reset_stale_running_jobs(
         self,
@@ -169,13 +170,7 @@ class DurableJobService:
             return True
 
         if row.kind == JOB_KIND_DEVICE_RECOVERY:
-            await run_device_recovery_job(
-                str(row.id),
-                row.payload,
-                session_factory=self._session_factory,
-                publisher=self._publisher,
-                settings=self._settings,
-            )
+            await self._recovery_runner.run_device_recovery_job(str(row.id), row.payload)
             return True
 
         async with self._session_factory() as db:

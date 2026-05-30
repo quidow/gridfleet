@@ -62,6 +62,7 @@ from app.devices.services import (
     write as device_write,
 )
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
+from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from app.devices.services.verification_preparation import VerificationPreparationService
@@ -819,12 +820,13 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         "attempt_auto_recovery",
         AsyncMock(side_effect=RuntimeError("boom")),
     )
-    await device_recovery_job.run_device_recovery_job(
-        str(uuid.uuid4()),
-        {"device_id": str(uuid.uuid4())},
+    await device_recovery_job.RecoveryJobService(
         session_factory=RecoveryCtx,
         publisher=Mock(),
         settings=FakeSettingsReader({}),
+    ).run_device_recovery_job(
+        str(uuid.uuid4()),
+        {"device_id": str(uuid.uuid4())},
     )
 
     class QueueCtx:
@@ -858,6 +860,11 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 circuit_breaker=Mock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
             ),
+        ),
+        recovery_runner=RecoveryJobService(
+            session_factory=QueueCtx,
+            publisher=AsyncMock(),
+            settings=FakeSettingsReader({}),
         ),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
