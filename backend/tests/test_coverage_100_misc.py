@@ -820,12 +820,13 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         "attempt_auto_recovery",
         AsyncMock(side_effect=RuntimeError("boom")),
     )
-    await device_recovery_job.run_device_recovery_job(
-        str(uuid.uuid4()),
-        {"device_id": str(uuid.uuid4())},
+    await device_recovery_job.RecoveryJobService(
         session_factory=RecoveryCtx,
         publisher=Mock(),
         settings=FakeSettingsReader({}),
+    ).run_device_recovery_job(
+        str(uuid.uuid4()),
+        {"device_id": str(uuid.uuid4())},
     )
 
     class QueueCtx:

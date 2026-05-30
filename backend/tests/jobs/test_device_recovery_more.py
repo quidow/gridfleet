@@ -50,12 +50,13 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
     session = RecoverySession(row)
 
     with patch("app.devices.services.recovery_job.device_locking.lock_device", new=AsyncMock(side_effect=RuntimeError)):
-        await device_recovery_job.run_device_recovery_job(
-            job_id,
-            {"device_id": str(device_id)},
+        await device_recovery_job.RecoveryJobService(
             session_factory=RecoverySessionFactory(session),  # type: ignore[arg-type]
             publisher=Mock(),
             settings=FakeSettingsReader({}),
+        ).run_device_recovery_job(
+            job_id,
+            {"device_id": str(device_id)},
         )
 
     assert row.status == JOB_STATUS_FAILED
@@ -80,12 +81,13 @@ async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ),
     ):
-        await device_recovery_job.run_device_recovery_job(
-            job_id,
-            {"device_id": str(device_id), "source": "manual", "reason": "operator"},
+        await device_recovery_job.RecoveryJobService(
             session_factory=RecoverySessionFactory(first_session, failure_session),  # type: ignore[arg-type]
             publisher=Mock(),
             settings=FakeSettingsReader({}),
+        ).run_device_recovery_job(
+            job_id,
+            {"device_id": str(device_id), "source": "manual", "reason": "operator"},
         )
 
     assert failure_row.status == JOB_STATUS_FAILED

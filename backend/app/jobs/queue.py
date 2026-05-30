@@ -11,7 +11,6 @@ from sqlalchemy import func, or_, select
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
-from app.devices.services.recovery_job import run_device_recovery_job
 from app.devices.services.verification_job_state import reset_snapshot_for_retry
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
@@ -171,13 +170,7 @@ class DurableJobService:
             return True
 
         if row.kind == JOB_KIND_DEVICE_RECOVERY:
-            await run_device_recovery_job(
-                str(row.id),
-                row.payload,
-                session_factory=self._session_factory,
-                publisher=self._publisher,
-                settings=self._settings,
-            )
+            await self._recovery_runner.run_device_recovery_job(str(row.id), row.payload)
             return True
 
         async with self._session_factory() as db:
