@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -54,6 +54,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
             session_factory=sf,
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
+            lifecycle_policy=MagicMock(),
         ),
     )
 

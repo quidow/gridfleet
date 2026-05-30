@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
+    from app.sessions.protocols import DeviceSessionLifecycle
     from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
@@ -125,10 +126,18 @@ async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) 
 
 
 class SessionSyncService:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader, grid: GridServiceProtocol) -> None:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        grid: GridServiceProtocol,
+        lifecycle: DeviceSessionLifecycle,
+    ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._grid = grid
+        self._lifecycle = lifecycle
         self._doorbell: asyncio.Event | None = None  # lazy: created on first access on the running loop
 
     def _get_doorbell(self) -> asyncio.Event:

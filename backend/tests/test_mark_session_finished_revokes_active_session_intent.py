@@ -8,6 +8,7 @@ leaked one intent per session served.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -77,7 +78,9 @@ async def test_mark_session_finished_revokes_active_session_intent(
 
     assert await _intent_exists(db_session, device.id, source), "Precondition: intent must exist before the call"
 
-    crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+    crud = SessionCrudService(
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+    )
     result = await crud.mark_session_finished(db_session, session.session_id)
 
     assert result is not None

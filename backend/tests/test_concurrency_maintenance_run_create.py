@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -101,7 +101,10 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 verification=VerificationService(),
                 crud=_crud_svc,
                 connectivity=ConnectivityService(
-                    publisher=event_bus, settings=settings_service, circuit_breaker=test_circuit_breaker
+                    publisher=event_bus,
+                    settings=settings_service,
+                    circuit_breaker=test_circuit_breaker,
+                    lifecycle_policy=MagicMock(),
                 ),
                 publisher=event_bus,
                 settings=settings_service,
@@ -144,6 +147,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service,
                 grid=grid,
                 device_state=DeviceStateService(publisher=event_bus),
+                deferred_stop=MagicMock(),
             )
             run_lifecycle = RunLifecycleService(
                 publisher=event_bus, settings=settings_service, grid=grid, release=run_release
@@ -158,6 +162,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 maintenance=MaintenanceService(publisher=event_bus),
+                lifecycle_actions=MagicMock(),
             )
             run_query = RunQueryService()
             return RunServices(

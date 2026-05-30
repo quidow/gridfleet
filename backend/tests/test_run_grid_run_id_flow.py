@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -28,7 +29,11 @@ _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=MagicMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 _allocator_svc = RunAllocatorService(
@@ -39,6 +44,7 @@ _failure_svc = RunFailureService(
     settings=_settings,
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
+    lifecycle_actions=MagicMock(),
 )
 
 if TYPE_CHECKING:

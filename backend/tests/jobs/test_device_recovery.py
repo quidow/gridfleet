@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -109,6 +109,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 session_factory=_sf,
                 publisher=AsyncMock(),
                 settings=settings_service,
+                lifecycle_policy=MagicMock(),
             ),
         ).run_pending_once()
 
@@ -219,6 +220,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 session_factory=_sf,
                 publisher=AsyncMock(),
                 settings=settings_service,
+                lifecycle_policy=MagicMock(),
             ),
         ).run_pending_once()
 
@@ -282,6 +284,7 @@ async def test_device_recovery_job_completed_when_device_missing(
             session_factory=_sf,
             publisher=AsyncMock(),
             settings=settings_service,
+            lifecycle_policy=MagicMock(),
         ),
     ).run_pending_once()
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from pydantic import ValidationError
@@ -824,6 +824,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         session_factory=RecoveryCtx,
         publisher=Mock(),
         settings=FakeSettingsReader({}),
+        lifecycle_policy=MagicMock(),
     ).run_device_recovery_job(
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
@@ -865,6 +866,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             session_factory=QueueCtx,
             publisher=AsyncMock(),
             settings=FakeSettingsReader({}),
+            lifecycle_policy=MagicMock(),
         ),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))

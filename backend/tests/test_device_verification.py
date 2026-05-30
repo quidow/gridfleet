@@ -151,6 +151,7 @@ async def _wait_for_job(
                 session_factory=session_factory,
                 publisher=AsyncMock(),
                 settings=settings_service,
+                lifecycle_policy=MagicMock(),
             ),
         ).run_pending_once()
         await asyncio.sleep(0.01)
@@ -1511,6 +1512,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 session_factory=session_factory,
                 publisher=AsyncMock(),
                 settings=settings_service,
+                lifecycle_policy=MagicMock(),
             ),
         ).reset_stale_running_jobs()
         assert recovered == 1

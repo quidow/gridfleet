@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
+    from app.appium_nodes.protocols import DeviceRecoveryControl
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -83,12 +84,14 @@ class NodeHealthService:
         pool: AgentHttpPool,
         circuit_breaker: CircuitBreakerProtocol,
         grid: GridServiceProtocol,
+        recovery_control: DeviceRecoveryControl,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._pool = pool
         self._circuit_breaker = circuit_breaker
         self._grid = grid
+        self._recovery_control = recovery_control
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (

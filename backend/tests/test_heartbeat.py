@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -599,7 +599,12 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     fake_grid.available_node_device_ids = Mock(return_value=None)
     with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
         await NodeHealthService(
-            publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), grid=fake_grid
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            pool=Mock(),
+            circuit_breaker=Mock(),
+            grid=fake_grid,
+            recovery_control=MagicMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)

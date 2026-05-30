@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
     from app.runs.models import TestRun
-    from app.runs.protocols import DeviceStateWriter
+    from app.runs.protocols import DeviceDeferredStop, DeviceStateWriter
 
 import app.devices.services.lifecycle_policy as lifecycle_policy
 from app.devices import locking as device_locking
@@ -41,11 +41,13 @@ class RunReleaseService:
         settings: SettingsReader,
         grid: GridServiceProtocol,
         device_state: DeviceStateWriter,
+        deferred_stop: DeviceDeferredStop,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._grid = grid
         self._device_state = device_state
+        self._deferred_stop = deferred_stop
 
     async def release_devices(
         self,

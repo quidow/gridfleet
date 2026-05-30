@@ -1,7 +1,7 @@
 """Verify device_connectivity availability re-checks after row locks."""
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -60,7 +60,10 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(
-                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    publisher=event_bus,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
+                    lifecycle_policy=MagicMock(),
                 ).check_connectivity(session)
 
     async def racer() -> None:
@@ -129,7 +132,10 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
         ):
             async with db_session_maker() as session:
                 await ConnectivityService(
-                    publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+                    publisher=event_bus,
+                    settings=FakeSettingsReader({}),
+                    circuit_breaker=Mock(),
+                    lifecycle_policy=MagicMock(),
                 ).check_connectivity(session)
 
     async def racer() -> None:

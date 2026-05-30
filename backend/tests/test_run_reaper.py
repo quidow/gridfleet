@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import and_, func, or_, select
@@ -19,7 +19,11 @@ from tests.helpers import test_event_bus as event_bus
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=MagicMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
@@ -214,7 +218,11 @@ async def test_expire_run_deletes_active_grid_session(
     fake_grid.terminate_session = fake_terminate
 
     release = RunReleaseService(
-        publisher=event_bus, settings=_settings, grid=fake_grid, device_state=DeviceStateService(publisher=event_bus)
+        publisher=event_bus,
+        settings=_settings,
+        grid=fake_grid,
+        device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=MagicMock(),
     )
     lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=release)
     await lifecycle.expire_run(db_session, run, "Heartbeat timeout")

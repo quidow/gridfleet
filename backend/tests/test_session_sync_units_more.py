@@ -78,7 +78,9 @@ async def test_sweep_stale_stop_pending_handles_deleted_rows(monkeypatch: pytest
     complete = AsyncMock()
     monkeypatch.setattr(session_sync.lifecycle_policy, "complete_deferred_stop_if_session_ended", complete)
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid())
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=MagicMock()
+    )
     await svc._sweep_stale_stop_pending(db)
 
     complete.assert_awaited_once_with(db, device, publisher=event_bus)
@@ -92,7 +94,9 @@ async def test_sync_sessions_unreachable_grid_still_sweeps(monkeypatch: pytest.M
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     sweep = AsyncMock()
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+    )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", sweep)
     await svc.sync(db)
 
@@ -145,7 +149,9 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+    )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db)
 
@@ -255,7 +261,9 @@ async def test_sync_sessions_new_session_race_and_invalid_capability_branches(
         session_sync.run_service, "get_device_reservation_with_entry", AsyncMock(return_value=(None, None))
     )
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+    )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db)
 
@@ -332,7 +340,9 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
         AsyncMock(return_value=SimpleNamespace(id=device_ids[4], operational_state=DeviceOperationalState.available)),
     )
 
-    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid)
+    svc = SessionSyncService(
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+    )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db)
 

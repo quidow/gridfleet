@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -35,10 +36,12 @@ class RecoveryJobService:
         session_factory: async_sessionmaker[AsyncSession],
         publisher: EventPublisher,
         settings: SettingsReader,
+        lifecycle_policy: LifecyclePolicyService,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
         self._settings = settings
+        self._lifecycle_policy = lifecycle_policy
 
     async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None:
         """Run ``attempt_auto_recovery`` for the device named in ``payload``."""

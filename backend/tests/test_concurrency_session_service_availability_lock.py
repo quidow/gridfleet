@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -77,7 +77,9 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
-            crud = SessionCrudService(publisher=event_bus, device_state=DeviceStateService(publisher=event_bus))
+            crud = SessionCrudService(
+                publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+            )
             await crud.register_session(
                 session,
                 session_id="register-race-session",
@@ -139,7 +141,9 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
 
     async def finish_session() -> None:
         async with db_session_maker() as session:
-            crud = SessionCrudService(publisher=Mock(), device_state=DeviceStateService(publisher=Mock()))
+            crud = SessionCrudService(
+                publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+            )
             await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     await asyncio.gather(

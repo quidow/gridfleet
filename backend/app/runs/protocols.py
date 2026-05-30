@@ -139,7 +139,7 @@ class MaintenanceWriter(Protocol):
 
 @runtime_checkable
 class DeviceDeferredStop(Protocol):
-    async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> None: ...
+    async def complete_deferred_stop_if_session_ended(self, db: AsyncSession, device: Device) -> object: ...
 
 
 @runtime_checkable

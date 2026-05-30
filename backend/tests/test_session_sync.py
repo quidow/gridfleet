@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -28,6 +28,7 @@ def _make_sync_service(grid_data: dict[str, Any] | None = None) -> SessionSyncSe
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid(grid_data if grid_data is not None else _GRID_UP_EMPTY),
+        lifecycle=MagicMock(),
     )
 
 
@@ -47,6 +48,7 @@ async def _sync_sessions_impl(
         publisher=publisher if publisher is not None else AsyncMock(),
         settings=settings if settings is not None else FakeSettingsReader({}),
         grid=grid if grid is not None else make_fake_grid(_GRID_UP_EMPTY),
+        lifecycle=MagicMock(),
     )
     await svc.sync(db)
 
@@ -1233,6 +1235,7 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid(_grid_response([])),
+        lifecycle=MagicMock(),
     )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db_session)
@@ -1421,6 +1424,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
+        lifecycle=MagicMock(),
     )
     await svc.sync(db_session)
 
@@ -1486,6 +1490,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": False}, "error": "connection refused"}),
+        lifecycle=MagicMock(),
     )
     await svc.sync(db_session)
 

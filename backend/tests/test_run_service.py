@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -21,7 +22,11 @@ from tests.helpers import test_event_bus as event_bus
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=MagicMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
@@ -84,7 +89,11 @@ async def test_force_release_clears_stop_pending(
 
     fake_grid = make_fake_grid()
     test_release = RunReleaseService(
-        publisher=event_bus, settings=_settings, grid=fake_grid, device_state=DeviceStateService(publisher=event_bus)
+        publisher=event_bus,
+        settings=_settings,
+        grid=fake_grid,
+        device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=MagicMock(),
     )
     test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
     await test_lifecycle.force_release(db_session, run.id)
@@ -171,7 +180,11 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
 
     fake_grid_2 = make_fake_grid()
     spy_release = SpyReleaseService(
-        publisher=event_bus, settings=_settings, grid=fake_grid_2, device_state=DeviceStateService(publisher=event_bus)
+        publisher=event_bus,
+        settings=_settings,
+        grid=fake_grid_2,
+        device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=MagicMock(),
     )
     spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)
     monkeypatch.setattr(

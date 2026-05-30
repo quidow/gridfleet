@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.exc import NoResultFound
@@ -43,7 +43,11 @@ _grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _query_svc = RunQueryService()
 _release_svc = RunReleaseService(
-    publisher=event_bus, settings=_settings, grid=_grid, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
+    grid=_grid,
+    device_state=DeviceStateService(publisher=event_bus),
+    deferred_stop=MagicMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 _failure_svc = RunFailureService(
@@ -51,6 +55,7 @@ _failure_svc = RunFailureService(
     settings=_settings,
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
+    lifecycle_actions=MagicMock(),
 )
 
 
@@ -412,6 +417,7 @@ async def test_cooldown_device_guard_paths(
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
+        lifecycle_actions=MagicMock(),
     )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -526,6 +532,7 @@ async def test_mark_running_sessions_released_success_path(
         settings=_settings,
         grid=make_fake_grid(),
         device_state=DeviceStateService(publisher=event_bus),
+        deferred_stop=MagicMock(),
     )
     await release_with_fake_grid._mark_running_sessions_released(
         db_session,
@@ -598,6 +605,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         ),
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
+        lifecycle_actions=MagicMock(),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -54,7 +54,12 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
     from app.appium_nodes.services.node_health import NodeHealthService
 
     svc = NodeHealthService(
-        publisher=event_bus, settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), grid=Mock()
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        grid=Mock(),
+        recovery_control=MagicMock(),
     )
     await svc._process_node_health(
         db_session,

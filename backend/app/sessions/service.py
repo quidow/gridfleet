@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import DeviceStateWriter
+    from app.sessions.protocols import DeviceSessionLifecycle, DeviceStateWriter
 
 ready_operational_state = device_state.ready_operational_state
 
@@ -224,9 +224,12 @@ async def _lock_resolved_device_for_session(
 
 
 class SessionCrudService:
-    def __init__(self, *, publisher: EventPublisher, device_state: DeviceStateWriter) -> None:
+    def __init__(
+        self, *, publisher: EventPublisher, device_state: DeviceStateWriter, lifecycle: DeviceSessionLifecycle
+    ) -> None:
         self._publisher = publisher
         self._device_state = device_state
+        self._lifecycle = lifecycle
 
     async def list_sessions(
         self,
