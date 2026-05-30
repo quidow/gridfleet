@@ -274,6 +274,23 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher
     return None
 
 
+class ConnectivityService:
+    def __init__(
+        self, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._circuit_breaker = circuit_breaker
+
+    async def check_connectivity(self, db: AsyncSession) -> None:
+        await _check_connectivity(
+            db, settings=self._settings, circuit_breaker=self._circuit_breaker, publisher=self._publisher
+        )
+
+    async def check_expired_cooldowns(self, db: AsyncSession) -> None:
+        await _check_expired_cooldowns(db, settings=self._settings, circuit_breaker=self._circuit_breaker)
+
+
 async def _check_connectivity(
     db: AsyncSession,
     *,
