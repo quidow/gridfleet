@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import select
@@ -8,9 +9,11 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy_actions import exclude_run_if_needed, restore_run_if_needed
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
+
+_actions = LifecyclePolicyActionsService(publisher=Mock())
 
 
 def _make_device(
@@ -103,7 +106,9 @@ async def test_exclude_run_if_needed_excludes_without_maintenance(
     and cooldown-threshold escalation are allowed to flip the hold."""
     device, _run = device_with_active_run
 
-    returned_run, entry = await exclude_run_if_needed(db_session, device, reason="Undetectable issue", source="test")
+    returned_run, entry = await _actions.exclude_run_if_needed(
+        db_session, device, reason="Undetectable issue", source="test"
+    )
 
     assert returned_run is not None
     assert entry is not None
@@ -125,7 +130,7 @@ async def test_exclude_run_if_needed_no_run_is_noop(
     result = await db_session.execute(stmt)
     device = result.scalar_one()
 
-    returned_run, _entry = await exclude_run_if_needed(db_session, device, reason="No run", source="test")
+    returned_run, _entry = await _actions.exclude_run_if_needed(db_session, device, reason="No run", source="test")
 
     assert returned_run is None
     assert device.operational_state == DeviceOperationalState.available
@@ -138,10 +143,10 @@ async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
 ) -> None:
     device, _run = device_with_active_run
 
-    await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
+    await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
     assert device.hold == DeviceHold.reserved
 
-    await exclude_run_if_needed(db_session, device, reason="First issue", source="test")
+    await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
     assert device.hold == DeviceHold.reserved
 
 
@@ -151,7 +156,7 @@ async def test_exclude_run_if_needed_clears_desired_grid_run_id(
 ) -> None:
     device, _run = device_with_active_run
 
-    await exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
+    await _actions.exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
     await db_session.commit()
 
     await db_session.refresh(device, ["appium_node"])
@@ -164,7 +169,9 @@ async def test_restore_run_if_needed_restores_desired_grid_run_id(
     device_with_active_run: tuple[Device, TestRun],
 ) -> None:
     device, run = device_with_active_run
-    returned_run, entry = await exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
+    returned_run, entry = await _actions.exclude_run_if_needed(
+        db_session, device, reason="Node health failed", source="test"
+    )
     assert returned_run is not None
     assert entry is not None
     await db_session.refresh(device, ["appium_node"])
@@ -172,7 +179,7 @@ async def test_restore_run_if_needed_restores_desired_grid_run_id(
     device.appium_node.desired_grid_run_id = None
     await db_session.commit()
 
-    restored_run, restored_entry = await restore_run_if_needed(
+    restored_run, restored_entry = await _actions.restore_run_if_needed(
         db_session,
         device,
         returned_run,

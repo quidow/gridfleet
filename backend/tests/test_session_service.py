@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import LifecyclePolicyService, handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.state import DeviceStateService, set_hold, set_operational_state
 from app.hosts.models import Host
@@ -186,7 +186,7 @@ async def test_update_session_status_clears_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
     )
     assert result == "deferred"
@@ -310,7 +310,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     db_session.add(running)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
     )
     assert result == "deferred"
@@ -379,7 +379,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB hung", publisher=Mock()
     )
     assert result == "deferred"

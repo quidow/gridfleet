@@ -154,14 +154,20 @@ async def test_attempt_auto_recovery_forwards_publisher_to_recovery_probe(
         captured["publisher"] = publisher
         return {"status": "passed"}
 
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+
+    svc = LifecyclePolicyService(
+        publisher=publisher,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=publisher),
+    )
     with patch.object(lifecycle_policy, "_run_recovery_probe", new=_capture):
-        await lifecycle_policy.attempt_auto_recovery(
+        await svc.attempt_auto_recovery(
             db_session,
             device,
             source="connectivity",
             reason="test",
-            settings=FakeSettingsReader({}),
-            publisher=publisher,
         )
 
     assert captured.get("publisher") is publisher

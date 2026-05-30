@@ -15,7 +15,8 @@ import pytest
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import attempt_auto_recovery
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.review import clear_review_required, mark_review_required
 from tests.fakes import FakeSettingsReader
@@ -244,6 +245,11 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     device = await _make_offline_verified_device(db_session, db_host, "review-promotion")
 
     settings = FakeSettingsReader(_settings_stub(threshold))
+    svc = LifecyclePolicyService(
+        publisher=Mock(),
+        settings=settings,
+        actions=LifecyclePolicyActionsService(publisher=Mock()),
+    )
     with (
         patch(
             "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
@@ -253,9 +259,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     ):
         # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
         # which is below the threshold of 2, so no promotion yet.
-        first = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="r1", settings=settings, publisher=Mock()
-        )
+        first = await svc.attempt_auto_recovery(db_session, device, source="device_checks", reason="r1")
         await db_session.refresh(device)
         assert first is False
         assert device.review_required is False
@@ -273,9 +277,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         await db_session.commit()
 
         # Attempt #2 — counter crosses threshold, device gets shelved.
-        second = await attempt_auto_recovery(
-            db_session, device, source="device_checks", reason="r2", settings=settings, publisher=Mock()
-        )
+        second = await svc.attempt_auto_recovery(db_session, device, source="device_checks", reason="r2")
         await db_session.refresh(device)
         assert second is False
         assert device.review_required is True
@@ -293,15 +295,18 @@ async def test_review_required_short_circuits_auto_recovery(
     await mark_review_required(db_session, device, reason="shelved earlier", source="session_viability")
     await db_session.commit()
 
+    svc = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(_settings_stub(5)),
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    )
     probe = AsyncMock()
     with patch("app.sessions.service_viability.run_session_viability_probe", new=probe):
-        recovered = await attempt_auto_recovery(
+        recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="ignored",
-            settings=FakeSettingsReader(_settings_stub(5)),
-            publisher=event_bus,
         )
 
     assert recovered is False

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import LifecyclePolicyService, handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
@@ -82,17 +82,17 @@ async def test_force_release_clears_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
-    )
-    assert result == "deferred"
-
-    fake_grid = make_fake_grid()
     real_deferred_stop = LifecyclePolicyService(
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(publisher=event_bus),
     )
+    result = await real_deferred_stop.handle_health_failure(
+        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+    )
+    assert result == "deferred"
+
+    fake_grid = make_fake_grid()
     test_release = RunReleaseService(
         publisher=event_bus,
         settings=_settings,

@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import attempt_auto_recovery, build_lifecycle_policy
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
@@ -101,13 +103,15 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await LifecyclePolicyService(
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            actions=LifecyclePolicyActionsService(publisher=event_bus),
+        ).attempt_auto_recovery(
             db_session,
             device,
             source="device_checks",
             reason="Reconnected",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     await db_session.refresh(device)
@@ -172,13 +176,15 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     db_session.add(live_session)
     await db_session.commit()
 
-    recovered = await attempt_auto_recovery(
+    recovered = await LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+    ).attempt_auto_recovery(
         db_session,
         device,
         source="device_checks",
         reason="Reconnected",
-        settings=FakeSettingsReader({}),
-        publisher=event_bus,
     )
 
     await db_session.refresh(device)

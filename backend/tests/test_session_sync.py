@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import LifecyclePolicyService, handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
@@ -1094,7 +1094,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     db_session.add_all([run, session])
     await db_session.commit()
 
-    await handle_health_failure(
+    await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
     )
 
@@ -1159,7 +1159,9 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     await db_session.commit()
 
     # Defer a stop (simulates an earlier transient failure during this session).
-    await handle_health_failure(db_session, device, source="node_health", reason="Probe failed", publisher=event_bus)
+    await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
+        db_session, device, source="node_health", reason="Probe failed", publisher=event_bus
+    )
 
     # Health later recovers - seed derived health to healthy. Recovery wiring
     # would normally clear stop_pending here, but this test exercises the
@@ -1395,8 +1397,6 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.devices.services.lifecycle_policy import handle_health_failure
-
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -1422,7 +1422,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
     )
     assert result == "deferred"
@@ -1486,7 +1486,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
     db_session.add(session)
     await db_session.commit()
 
-    result = await handle_health_failure(
+    result = await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
         db_session, device, source="device_checks", reason="ADB hung", publisher=event_bus
     )
     assert result == "deferred"

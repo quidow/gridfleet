@@ -273,7 +273,8 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import attempt_auto_recovery
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     device = await create_device(
         db_session,
@@ -301,13 +302,15 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
             },
         ),
     ):
-        recovered = await attempt_auto_recovery(
+        recovered = await LifecyclePolicyService(
+            publisher=event_bus,
+            settings=FakeSettingsReader({}),
+            actions=LifecyclePolicyActionsService(publisher=event_bus),
+        ).attempt_auto_recovery(
             db_session,
             device,
             source="device_connectivity",
             reason="Node went offline",
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
     assert recovered is True, "attempt_auto_recovery must return True for a fully-configured offline device"
 
