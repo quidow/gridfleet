@@ -27,203 +27,165 @@ class DeviceGroupsService:
         self._settings = settings
 
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> DeviceGroup:
-        return await create_group(db, data, publisher=self._publisher)
+        group = DeviceGroup(
+            name=data.name,
+            description=data.description,
+            group_type=GroupType(data.group_type),
+            filters=_dump_filters(data.filters),
+        )
+        db.add(group)
+        await db.flush()
+        queue_event_for_session(
+            db,
+            "device_group.updated",
+            {"group_id": str(group.id), "action": "created"},
+            publisher=self._publisher,
+        )
+        await db.commit()
+        await db.refresh(group)
+        return group
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
-        return await list_groups(db, settings=self._settings)
+        stmt = select(DeviceGroup).order_by(DeviceGroup.name)
+        result = await db.execute(stmt)
+        groups = list(result.scalars().all())
+
+        static_group_ids = [group.id for group in groups if group.group_type == GroupType.static]
+        static_counts: dict[uuid.UUID, int] = {}
+        if static_group_ids:
+            count_stmt = (
+                select(DeviceGroupMembership.group_id, func.count(DeviceGroupMembership.device_id))
+                .where(DeviceGroupMembership.group_id.in_(static_group_ids))
+                .group_by(DeviceGroupMembership.group_id)
+            )
+            count_result = await db.execute(count_stmt)
+            static_counts = {group_id: int(count or 0) for group_id, count in count_result.all()}
+
+        output = []
+        for group in groups:
+            if group.group_type == GroupType.dynamic:
+                count = await _count_dynamic_members(db, group.filters or {}, settings=self._settings)
+            else:
+                count = static_counts.get(group.id, 0)
+
+            output.append(_serialize_group(group, device_count=count))
+        return output
 
     async def get_group(self, db: AsyncSession, group_id: uuid.UUID) -> dict[str, Any] | None:
-        return await get_group(db, group_id, settings=self._settings)
+        stmt = (
+            select(DeviceGroup)
+            .where(DeviceGroup.id == group_id)
+            .options(selectinload(DeviceGroup.memberships).selectinload(DeviceGroupMembership.device))
+        )
+        result = await db.execute(stmt)
+        group = result.scalar_one_or_none()
+        if group is None:
+            return None
+
+        if group.group_type == GroupType.dynamic:
+            devices = await _resolve_dynamic_members(db, group.filters or {}, settings=self._settings)
+        else:
+            devices = [m.device for m in group.memberships if m.device is not None]
+
+        return {
+            **_serialize_group(group, device_count=len(devices)),
+            "devices": devices,
+        }
 
     async def update_group(self, db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate) -> DeviceGroup | None:
-        return await update_group(db, group_id, data, publisher=self._publisher)
+        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
+        result = await db.execute(stmt)
+        group = result.scalar_one_or_none()
+        if group is None:
+            return None
+        updates = data.model_dump(exclude_unset=True)
+        if "filters" in updates:
+            group.filters = _dump_filters(data.filters)
+            updates.pop("filters")
+        for field, value in updates.items():
+            setattr(group, field, value)
+        queue_event_for_session(
+            db,
+            "device_group.updated",
+            {"group_id": str(group.id), "action": "updated"},
+            publisher=self._publisher,
+        )
+        await db.commit()
+        await db.refresh(group)
+        return group
 
     async def delete_group(self, db: AsyncSession, group_id: uuid.UUID) -> bool:
-        return await delete_group(db, group_id, publisher=self._publisher)
+        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
+        result = await db.execute(stmt)
+        group = result.scalar_one_or_none()
+        if group is None:
+            return False
+        await db.delete(group)
+        queue_event_for_session(
+            db,
+            "device_group.updated",
+            {"group_id": str(group_id), "action": "deleted"},
+            publisher=self._publisher,
+        )
+        await db.commit()
+        return True
 
     async def add_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
-        return await add_members(db, group_id, device_ids, publisher=self._publisher)
+        if not device_ids:
+            return 0
+        # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
+        # adding the same (group_id, device_id) degrades to a benign no-op
+        # instead of surfacing as IntegrityError on the unique constraint. The
+        # previous SELECT-then-add pattern was a TOCTOU between the unlocked
+        # exists check and the subsequent insert.
+        stmt = (
+            pg_insert(DeviceGroupMembership)
+            .values([{"group_id": group_id, "device_id": device_id} for device_id in device_ids])
+            .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
+            .returning(DeviceGroupMembership.device_id)
+        )
+        result = await db.execute(stmt)
+        added = len(result.scalars().all())
+        if added:
+            queue_event_for_session(
+                db,
+                "device_group.members_changed",
+                {"group_id": str(group_id), "added": added},
+                publisher=self._publisher,
+            )
+        await db.commit()
+        return added
 
     async def remove_members(self, db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID]) -> int:
-        return await remove_members(db, group_id, device_ids, publisher=self._publisher)
+        stmt = delete(DeviceGroupMembership).where(
+            DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
+        )
+        result = await db.execute(stmt)
+        removed = int(getattr(result, "rowcount", 0) or 0)
+        if removed:
+            queue_event_for_session(
+                db,
+                "device_group.members_changed",
+                {"group_id": str(group_id), "removed": removed},
+                publisher=self._publisher,
+            )
+        await db.commit()
+        return removed
 
     async def get_group_device_ids(self, db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
-        return await get_group_device_ids(db, group_id, settings=self._settings)
+        stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
+        result = await db.execute(stmt)
+        group = result.scalar_one_or_none()
+        if group is None:
+            return []
 
-
-async def create_group(db: AsyncSession, data: DeviceGroupCreate, *, publisher: EventPublisher) -> DeviceGroup:
-    group = DeviceGroup(
-        name=data.name,
-        description=data.description,
-        group_type=GroupType(data.group_type),
-        filters=_dump_filters(data.filters),
-    )
-    db.add(group)
-    await db.flush()
-    queue_event_for_session(
-        db,
-        "device_group.updated",
-        {"group_id": str(group.id), "action": "created"},
-        publisher=publisher,
-    )
-    await db.commit()
-    await db.refresh(group)
-    return group
-
-
-async def list_groups(db: AsyncSession, *, settings: SettingsReader) -> list[dict[str, Any]]:
-    stmt = select(DeviceGroup).order_by(DeviceGroup.name)
-    result = await db.execute(stmt)
-    groups = list(result.scalars().all())
-
-    static_group_ids = [group.id for group in groups if group.group_type == GroupType.static]
-    static_counts: dict[uuid.UUID, int] = {}
-    if static_group_ids:
-        count_stmt = (
-            select(DeviceGroupMembership.group_id, func.count(DeviceGroupMembership.device_id))
-            .where(DeviceGroupMembership.group_id.in_(static_group_ids))
-            .group_by(DeviceGroupMembership.group_id)
-        )
-        count_result = await db.execute(count_stmt)
-        static_counts = {group_id: int(count or 0) for group_id, count in count_result.all()}
-
-    output = []
-    for group in groups:
         if group.group_type == GroupType.dynamic:
-            count = await _count_dynamic_members(db, group.filters or {}, settings=settings)
+            devices = await _resolve_dynamic_members(db, group.filters or {}, settings=self._settings)
+            return [d.id for d in devices]
         else:
-            count = static_counts.get(group.id, 0)
-
-        output.append(_serialize_group(group, device_count=count))
-    return output
-
-
-async def get_group(db: AsyncSession, group_id: uuid.UUID, *, settings: SettingsReader) -> dict[str, Any] | None:
-    stmt = (
-        select(DeviceGroup)
-        .where(DeviceGroup.id == group_id)
-        .options(selectinload(DeviceGroup.memberships).selectinload(DeviceGroupMembership.device))
-    )
-    result = await db.execute(stmt)
-    group = result.scalar_one_or_none()
-    if group is None:
-        return None
-
-    if group.group_type == GroupType.dynamic:
-        devices = await _resolve_dynamic_members(db, group.filters or {}, settings=settings)
-    else:
-        devices = [m.device for m in group.memberships if m.device is not None]
-
-    return {
-        **_serialize_group(group, device_count=len(devices)),
-        "devices": devices,
-    }
-
-
-async def update_group(
-    db: AsyncSession, group_id: uuid.UUID, data: DeviceGroupUpdate, *, publisher: EventPublisher
-) -> DeviceGroup | None:
-    stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-    result = await db.execute(stmt)
-    group = result.scalar_one_or_none()
-    if group is None:
-        return None
-    updates = data.model_dump(exclude_unset=True)
-    if "filters" in updates:
-        group.filters = _dump_filters(data.filters)
-        updates.pop("filters")
-    for field, value in updates.items():
-        setattr(group, field, value)
-    queue_event_for_session(
-        db,
-        "device_group.updated",
-        {"group_id": str(group.id), "action": "updated"},
-        publisher=publisher,
-    )
-    await db.commit()
-    await db.refresh(group)
-    return group
-
-
-async def delete_group(db: AsyncSession, group_id: uuid.UUID, *, publisher: EventPublisher) -> bool:
-    stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-    result = await db.execute(stmt)
-    group = result.scalar_one_or_none()
-    if group is None:
-        return False
-    await db.delete(group)
-    queue_event_for_session(
-        db,
-        "device_group.updated",
-        {"group_id": str(group_id), "action": "deleted"},
-        publisher=publisher,
-    )
-    await db.commit()
-    return True
-
-
-async def add_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventPublisher
-) -> int:
-    if not device_ids:
-        return 0
-    # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
-    # adding the same (group_id, device_id) degrades to a benign no-op
-    # instead of surfacing as IntegrityError on the unique constraint. The
-    # previous SELECT-then-add pattern was a TOCTOU between the unlocked
-    # exists check and the subsequent insert.
-    stmt = (
-        pg_insert(DeviceGroupMembership)
-        .values([{"group_id": group_id, "device_id": device_id} for device_id in device_ids])
-        .on_conflict_do_nothing(index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id])
-        .returning(DeviceGroupMembership.device_id)
-    )
-    result = await db.execute(stmt)
-    added = len(result.scalars().all())
-    if added:
-        queue_event_for_session(
-            db,
-            "device_group.members_changed",
-            {"group_id": str(group_id), "added": added},
-            publisher=publisher,
-        )
-    await db.commit()
-    return added
-
-
-async def remove_members(
-    db: AsyncSession, group_id: uuid.UUID, device_ids: list[uuid.UUID], *, publisher: EventPublisher
-) -> int:
-    stmt = delete(DeviceGroupMembership).where(
-        DeviceGroupMembership.group_id == group_id, DeviceGroupMembership.device_id.in_(device_ids)
-    )
-    result = await db.execute(stmt)
-    removed = int(getattr(result, "rowcount", 0) or 0)
-    if removed:
-        queue_event_for_session(
-            db,
-            "device_group.members_changed",
-            {"group_id": str(group_id), "removed": removed},
-            publisher=publisher,
-        )
-    await db.commit()
-    return removed
-
-
-async def get_group_device_ids(db: AsyncSession, group_id: uuid.UUID, *, settings: SettingsReader) -> list[uuid.UUID]:
-    stmt = select(DeviceGroup).where(DeviceGroup.id == group_id)
-    result = await db.execute(stmt)
-    group = result.scalar_one_or_none()
-    if group is None:
-        return []
-
-    if group.group_type == GroupType.dynamic:
-        devices = await _resolve_dynamic_members(db, group.filters or {}, settings=settings)
-        return [d.id for d in devices]
-    else:
-        mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group_id)
-        mem_result = await db.execute(mem_stmt)
-        return [row[0] for row in mem_result.all()]
+            mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group_id)
+            mem_result = await db.execute(mem_stmt)
+            return [row[0] for row in mem_result.all()]
 
 
 def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilters:

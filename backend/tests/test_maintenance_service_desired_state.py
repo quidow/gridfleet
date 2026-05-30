@@ -45,9 +45,10 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     await db_session.refresh(device, attribute_names=["appium_node"])
 
     from app.devices.services import maintenance as maintenance_service
+    from app.devices.services.maintenance import MaintenanceService
 
-    monkeypatch.setattr(maintenance_service, "schedule_device_recovery", AsyncMock())
-    await maintenance_service.exit_maintenance(db_session, device, publisher=Mock())
+    monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", AsyncMock())
+    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
 
     events = (
         (
@@ -86,9 +87,9 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     await db_session.commit()
     await db_session.refresh(device, attribute_names=["appium_node"])
 
-    from app.devices.services import maintenance as maintenance_service
+    from app.devices.services.maintenance import MaintenanceService
 
-    await maintenance_service.enter_maintenance(db_session, device, publisher=Mock())
+    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, device)
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped

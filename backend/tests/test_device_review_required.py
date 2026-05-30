@@ -16,7 +16,7 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import attempt_auto_recovery
-from app.devices.services.maintenance import enter_maintenance, exit_maintenance
+from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.review import clear_review_required, mark_review_required
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
@@ -108,7 +108,7 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await exit_maintenance(db_session, device, publisher=Mock())
+    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -128,7 +128,7 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await enter_maintenance(db_session, device, publisher=Mock())
+    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is True
 

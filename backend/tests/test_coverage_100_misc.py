@@ -717,11 +717,18 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     group_db.execute = AsyncMock(
         side_effect=[GroupListResult([static_group]), SimpleNamespace(all=lambda: [(static_group.id, 2)])]
     )
-    listed = await device_group_service.list_groups(group_db, settings=FakeSettingsReader({}))
+    listed = await device_group_service.DeviceGroupsService(
+        publisher=event_bus, settings=FakeSettingsReader({})
+    ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
     missing_group_db.execute = AsyncMock(return_value=GroupListResult(None))
-    assert await device_group_service.delete_group(missing_group_db, uuid.uuid4(), publisher=event_bus) is False
+    assert (
+        await device_group_service.DeviceGroupsService(
+            publisher=event_bus, settings=FakeSettingsReader({})
+        ).delete_group(missing_group_db, uuid.uuid4())
+        is False
+    )
 
     assert device_write._is_transport_identity(identity_value="10.0.0.1:5555", connection_target=None, ip_address=None)
     assert device_write._is_transport_identity(identity_value="10.0.0.1", connection_target=None, ip_address=None)

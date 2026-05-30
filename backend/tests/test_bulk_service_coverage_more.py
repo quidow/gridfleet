@@ -8,6 +8,7 @@ from sqlalchemy.exc import NoResultFound
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
+from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.operator_node_lifecycle import operator_stop_sources
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -39,6 +40,20 @@ def _device(**overrides: object) -> SimpleNamespace:
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def _svc(
+    *,
+    maintenance: object | None = None,
+    settings: object | None = None,
+    circuit_breaker: object | None = None,
+) -> BulkOperationsService:
+    return BulkOperationsService(
+        publisher=event_bus,
+        settings=settings or FakeSettingsReader({}),
+        circuit_breaker=circuit_breaker or MagicMock(),
+        maintenance=maintenance or MagicMock(),
+    )
 
 
 async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -92,9 +107,7 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[first, second]))
     monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
 
-    result = await bulk_service.bulk_update_tags(
-        db, [first.id, second.id], {"new": "tag"}, merge=False, publisher=event_bus
-    )
+    result = await _svc().bulk_update_tags(db, [first.id, second.id], {"new": "tag"}, merge=False)
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
     assert first.tags == {"new": "tag"}
     assert db.commit.await_count == 1
@@ -110,7 +123,12 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
     publish = AsyncMock()
     mock_publisher = SimpleNamespace(publish=publish)
     monkeypatch.setattr(bulk_service, "delete_device", fake_delete)
-    deleted = await bulk_service.bulk_delete(db, [first.id, second.id], publisher=mock_publisher)
+    deleted = await BulkOperationsService(
+        publisher=mock_publisher,  # type: ignore[arg-type]
+        settings=FakeSettingsReader({}),
+        circuit_breaker=MagicMock(),
+        maintenance=MagicMock(),
+    ).bulk_delete(db, [first.id, second.id])
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"
     assert deleted["errors"][str(second.id)] == "delete boom"
@@ -142,12 +160,9 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         return {"success": True}
 
     monkeypatch.setattr(bulk_service, "pack_device_lifecycle_action", fake_lifecycle_action)
-    reconnect = await bulk_service.bulk_reconnect(
+    reconnect = await _svc().bulk_reconnect(
         db,
         [eligible.id, unsupported.id, failed.id],
-        publisher=event_bus,
-        settings=FakeSettingsReader(),
-        circuit_breaker=MagicMock(),
     )
     assert reconnect["total"] == 3
     assert reconnect["succeeded"] == 1
@@ -157,24 +172,30 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     success = _device()
     failure = _device()
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
-    monkeypatch.setattr(
-        bulk_service, "exit_maintenance", AsyncMock(side_effect=[None, ValueError("not in maintenance")])
-    )
-    monkeypatch.setattr(bulk_service, "schedule_device_recovery", AsyncMock(side_effect=RuntimeError("queue down")))
     monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
-    exited = await bulk_service.bulk_exit_maintenance(db, [success.id, failure.id], publisher=event_bus)
+
+    mock_maintenance = MagicMock()
+    mock_maintenance.exit_maintenance = AsyncMock(side_effect=[None, ValueError("not in maintenance")])
+    mock_maintenance.schedule_device_recovery = AsyncMock(side_effect=RuntimeError("queue down"))
+    exited = await BulkOperationsService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=mock_maintenance
+    ).bulk_exit_maintenance(db, [success.id, failure.id])
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure.id)] == "not in maintenance"
+
+    mock_maintenance2 = MagicMock()
 
     async def fake_enter(_db: object, device: object, *, commit: bool, **kwargs: object) -> object:
         if device is failure:
             raise RuntimeError("enter failed")
         return device
 
+    mock_maintenance2.enter_maintenance = fake_enter
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
     monkeypatch.setattr(bulk_service.device_locking, "lock_device", AsyncMock(side_effect=[success, failure]))
-    monkeypatch.setattr(bulk_service, "enter_maintenance", fake_enter)
-    entered = await bulk_service.bulk_enter_maintenance(db, [success.id, failure.id], publisher=event_bus)
+    entered = await BulkOperationsService(
+        publisher=event_bus, settings=FakeSettingsReader({}), circuit_breaker=MagicMock(), maintenance=mock_maintenance2
+    ).bulk_enter_maintenance(db, [success.id, failure.id])
     assert entered["succeeded"] == 1
     assert entered["errors"][str(failure.id)] == "enter failed"
 

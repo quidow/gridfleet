@@ -89,117 +89,88 @@ class MaintenanceService:
         allow_reserved: bool = False,
         maintenance_reason: str = "Operator entered maintenance",
     ) -> Device:
-        return await enter_maintenance(
-            db,
+        if not allow_reserved and device.hold == DeviceHold.reserved:
+            raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
+
+        await _MACHINE.transition(
             device,
-            commit=commit,
-            allow_reserved=allow_reserved,
-            maintenance_reason=maintenance_reason,
+            TransitionEvent.MAINTENANCE_ENTERED,
+            reason=maintenance_reason,
             publisher=self._publisher,
         )
 
+        set_maintenance_reason(device, maintenance_reason)
+
+        await register_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            intents=_maintenance_intents(device.id),
+            reason=maintenance_reason,
+        )
+
+        if commit:
+            await db.commit()
+            await db.refresh(device)
+        return device
+
     async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
-        return await exit_maintenance(db, device, commit=commit, publisher=self._publisher)
+        if device.hold != DeviceHold.maintenance:
+            raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
+
+        await _MACHINE.transition(
+            device,
+            TransitionEvent.MAINTENANCE_EXITED,
+            reason="Operator exited maintenance",
+            publisher=self._publisher,
+        )
+        clear_maintenance_recovery_suppression(device)
+        clear_maintenance_reason(device)
+        # Maintenance exit is a sanctioned "give it another chance" signal —
+        # clear the review-shelving flag so the recovery loop picks the device
+        # back up.
+        from app.devices.services.review import clear_review_required  # noqa: PLC0415
+
+        await clear_review_required(
+            db,
+            device,
+            reason="Operator exited maintenance",
+            source="exit_maintenance",
+        )
+
+        await revoke_intents_and_reconcile(
+            db,
+            device_id=device.id,
+            sources=_maintenance_sources(device.id),
+            reason="Operator exited maintenance",
+        )
+
+        if commit:
+            await db.commit()
+            await db.refresh(device)
+            # D3: schedule recovery so the operator does not see an idle offline
+            # device while waiting for the next device_connectivity_loop tick.
+            # Bulk callers pass commit=False and enqueue their own jobs after
+            # their own final commit, to avoid create_job committing mid-loop.
+            # Enqueue failure must not raise back to the operator after the
+            # state mutation already committed — the device_connectivity_loop
+            # remains the fallback path.
+            try:
+                await _schedule_device_recovery(db, device.id)
+            except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
+                logger.warning(
+                    "exit_maintenance: failed to enqueue recovery job for %s; "
+                    "device_connectivity_loop will pick it up on the next tick",
+                    device.id,
+                    exc_info=True,
+                )
+
+        return device
 
     async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None:
-        await schedule_device_recovery(db, device_id)
+        await _schedule_device_recovery(db, device_id)
 
 
-async def enter_maintenance(
-    db: AsyncSession,
-    device: Device,
-    *,
-    commit: bool = True,
-    allow_reserved: bool = False,
-    maintenance_reason: str = "Operator entered maintenance",
-    publisher: EventPublisher,
-) -> Device:
-    if not allow_reserved and device.hold == DeviceHold.reserved:
-        raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
-
-    await _MACHINE.transition(
-        device,
-        TransitionEvent.MAINTENANCE_ENTERED,
-        reason=maintenance_reason,
-        publisher=publisher,
-    )
-
-    set_maintenance_reason(device, maintenance_reason)
-
-    await register_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        intents=_maintenance_intents(device.id),
-        reason=maintenance_reason,
-    )
-
-    if commit:
-        await db.commit()
-        await db.refresh(device)
-    return device
-
-
-async def exit_maintenance(
-    db: AsyncSession,
-    device: Device,
-    *,
-    commit: bool = True,
-    publisher: EventPublisher,
-) -> Device:
-    if device.hold != DeviceHold.maintenance:
-        raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
-
-    await _MACHINE.transition(
-        device,
-        TransitionEvent.MAINTENANCE_EXITED,
-        reason="Operator exited maintenance",
-        publisher=publisher,
-    )
-    clear_maintenance_recovery_suppression(device)
-    clear_maintenance_reason(device)
-    # Maintenance exit is a sanctioned "give it another chance" signal —
-    # clear the review-shelving flag so the recovery loop picks the device
-    # back up.
-    from app.devices.services.review import clear_review_required  # noqa: PLC0415
-
-    await clear_review_required(
-        db,
-        device,
-        reason="Operator exited maintenance",
-        source="exit_maintenance",
-    )
-
-    await revoke_intents_and_reconcile(
-        db,
-        device_id=device.id,
-        sources=_maintenance_sources(device.id),
-        reason="Operator exited maintenance",
-    )
-
-    if commit:
-        await db.commit()
-        await db.refresh(device)
-        # D3: schedule recovery so the operator does not see an idle offline
-        # device while waiting for the next device_connectivity_loop tick.
-        # Bulk callers pass commit=False and enqueue their own jobs after
-        # their own final commit, to avoid create_job committing mid-loop.
-        # Enqueue failure must not raise back to the operator after the
-        # state mutation already committed — the device_connectivity_loop
-        # remains the fallback path.
-        try:
-            await schedule_device_recovery(db, device.id)
-        except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
-            logger.warning(
-                "exit_maintenance: failed to enqueue recovery job for %s; "
-                "device_connectivity_loop will pick it up on the next tick",
-                device.id,
-                exc_info=True,
-            )
-
-    return device
-
-
-async def schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> None:
+async def _schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> None:
     """Enqueue a one-shot device_recovery job for the given device.
 
     Creates and commits one row in the durable job queue. Safe to call

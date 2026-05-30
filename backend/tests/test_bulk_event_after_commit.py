@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.devices.services import bulk as bulk_service
+from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.maintenance import MaintenanceService
+from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
+    return BulkOperationsService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(),
+        circuit_breaker=MagicMock(),
+        maintenance=maintenance or MaintenanceService(publisher=event_bus),
+    )
 
 
 async def test_bulk_update_tags_queues_summary(
@@ -21,7 +33,7 @@ async def test_bulk_update_tags_queues_summary(
     _, device = await seed_host_and_device(db_session, identity="bulk-tags-1")
     event_bus_capture.clear()
 
-    await bulk_service.bulk_update_tags(db_session, [device.id], {"suite": "contract"}, publisher=event_bus)
+    await _svc().bulk_update_tags(db_session, [device.id], {"suite": "contract"})
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
@@ -36,7 +48,7 @@ async def test_bulk_enter_maintenance_queues_summary(
     _, device = await seed_host_and_device(db_session, identity="bulk-enter-maint-1")
     event_bus_capture.clear()
 
-    await bulk_service.bulk_enter_maintenance(db_session, [device.id], publisher=event_bus)
+    await _svc().bulk_enter_maintenance(db_session, [device.id])
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
@@ -49,10 +61,10 @@ async def test_bulk_exit_maintenance_queues_summary(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="bulk-exit-maint-1")
-    await bulk_service.bulk_enter_maintenance(db_session, [device.id], publisher=event_bus)
+    await _svc().bulk_enter_maintenance(db_session, [device.id])
     event_bus_capture.clear()
 
-    await bulk_service.bulk_exit_maintenance(db_session, [device.id], publisher=event_bus)
+    await _svc().bulk_exit_maintenance(db_session, [device.id])
     await settle_after_commit_tasks()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
