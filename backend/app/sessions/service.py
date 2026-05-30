@@ -13,7 +13,6 @@ from app.appium_nodes.models import AppiumNode
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import lifecycle_policy
 from app.devices.services import state as device_state
 from app.devices.services.intent import revoke_intents_and_reconcile
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -524,7 +523,7 @@ class SessionCrudService:
         await db.commit()
         await db.refresh(session)
         if device is not None:
-            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=self._publisher)
+            await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
         return session
 
     async def mark_session_finished(self, db: AsyncSession, session_id: str) -> Session | None:
@@ -575,7 +574,7 @@ class SessionCrudService:
                 await db.commit()
                 return session
 
-            await lifecycle_policy.handle_session_finished(db, device, publisher=self._publisher)
+            await self._lifecycle.handle_session_finished(db, device)
 
         # mark_session_finished owns persistence of ended_at. handle_session_finished
         # commits only on its terminal branches (CLEARED_RECOVERED, AUTO_STOPPED);
@@ -673,8 +672,6 @@ class SessionCrudService:
             queue_session_ended_event(db, session, device=event_device, publisher=self._publisher)
         await db.commit()
         if deferred_stop_target is not None:
-            await lifecycle_policy.complete_deferred_stop_if_session_ended(
-                db, deferred_stop_target, publisher=self._publisher
-            )
+            await self._lifecycle.complete_deferred_stop_if_session_ended(db, deferred_stop_target)
         await db.refresh(session)
         return session

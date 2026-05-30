@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -305,7 +305,7 @@ async def test_forced_release_registers_run_active_precondition(
         settings=FakeSettingsReader({}),
         grid=_AsyncMock(),
         device_state=_DeviceStateService(publisher=_pub),
-        deferred_stop=MagicMock(),
+        deferred_stop=_AsyncMock(),
     )
     await _release_svc.clear_desired_grid_run_id_for_run(
         db_session,
@@ -408,7 +408,7 @@ async def test_node_health_registers_node_running_precondition(
         pool=Mock(),
         circuit_breaker=Mock(),
         grid=Mock(),
-        recovery_control=MagicMock(),
+        recovery_control=AsyncMock(),
     )
     await svc._attempt_node_restart(db_session, device=device)
 

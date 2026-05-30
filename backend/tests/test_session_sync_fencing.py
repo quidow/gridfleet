@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -26,7 +26,7 @@ _GRID_UP_EMPTY: dict[str, object] = {"value": {"ready": True, "nodes": []}}
 
 async def _sync_sessions(db: AsyncSession) -> None:
     svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(_GRID_UP_EMPTY), lifecycle=MagicMock()
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(_GRID_UP_EMPTY), lifecycle=AsyncMock()
     )
     await svc.sync(db)
 
@@ -49,7 +49,7 @@ async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
-            lifecycle=MagicMock(),
+            lifecycle=AsyncMock(),
         )
         await svc.sync(db_session)
 
@@ -108,7 +108,7 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
-            lifecycle=MagicMock(),
+            lifecycle=AsyncMock(),
         )
         await svc.sync(db_session)
 

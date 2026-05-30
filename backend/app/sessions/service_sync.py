@@ -367,7 +367,7 @@ class SessionSyncService:
             device = dev_result.scalar_one_or_none()
             if device is None:
                 continue
-            outcome = await lifecycle_policy.handle_session_finished(db, device, publisher=self._publisher)
+            outcome = await self._lifecycle.handle_session_finished(db, device)
             if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
                 continue
             if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
@@ -436,7 +436,7 @@ class SessionSyncService:
             device = await db.get(Device, device_id)
             if device is None:
                 continue
-            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=self._publisher)
+            await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
 
     async def _hydrate_orphan_session_row(self, db: AsyncSession, sid: str, info: dict[str, Any]) -> None:
         """Bind a device-less ``Session`` row to its Device and fire the busy

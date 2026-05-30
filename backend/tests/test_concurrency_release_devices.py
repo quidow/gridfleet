@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -25,7 +25,7 @@ _release_svc = RunReleaseService(
     settings=_settings,
     grid=_grid,
     device_state=DeviceStateService(publisher=event_bus),
-    deferred_stop=MagicMock(),
+    deferred_stop=AsyncMock(),
 )
 
 pytestmark = pytest.mark.asyncio

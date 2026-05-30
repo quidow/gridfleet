@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import and_, func, or_, select
@@ -23,7 +23,7 @@ _release_svc = RunReleaseService(
     settings=_settings,
     grid=_grid,
     device_state=DeviceStateService(publisher=event_bus),
-    deferred_stop=MagicMock(),
+    deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 
@@ -222,7 +222,7 @@ async def test_expire_run_deletes_active_grid_session(
         settings=_settings,
         grid=fake_grid,
         device_state=DeviceStateService(publisher=event_bus),
-        deferred_stop=MagicMock(),
+        deferred_stop=AsyncMock(),
     )
     lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=release)
     await lifecycle.expire_run(db_session, run, "Heartbeat timeout")

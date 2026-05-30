@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from httpx import AsyncClient  # noqa: TC002
@@ -566,7 +566,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         publisher=Mock(),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        lifecycle_policy=MagicMock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)
@@ -700,7 +700,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         publisher=Mock(),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        lifecycle_policy=MagicMock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Exclusion should be cleared
@@ -756,7 +756,7 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
         publisher=Mock(),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        lifecycle_policy=MagicMock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Stale released row should be untouched

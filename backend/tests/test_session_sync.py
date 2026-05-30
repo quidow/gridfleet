@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService, handle_health_failure
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
@@ -23,12 +24,22 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 _GRID_UP_EMPTY: dict[str, Any] = {"value": {"ready": True, "nodes": []}}
 
 
+def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
+    """Return a real LifecyclePolicyService for tests that need actual DB mutations."""
+    pub = publisher if publisher is not None else event_bus
+    return LifecyclePolicyService(
+        publisher=pub,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=pub),
+    )
+
+
 def _make_sync_service(grid_data: dict[str, Any] | None = None) -> SessionSyncService:
     return SessionSyncService(
         publisher=AsyncMock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid(grid_data if grid_data is not None else _GRID_UP_EMPTY),
-        lifecycle=MagicMock(),
+        lifecycle=AsyncMock(),
     )
 
 
@@ -43,12 +54,13 @@ async def _sync_sessions_impl(
     settings: object = None,
     publisher: object = None,
     grid: object = None,
+    lifecycle: object = None,
 ) -> None:
     svc = SessionSyncService(
         publisher=publisher if publisher is not None else AsyncMock(),
         settings=settings if settings is not None else FakeSettingsReader({}),
         grid=grid if grid is not None else make_fake_grid(_GRID_UP_EMPTY),
-        lifecycle=MagicMock(),
+        lifecycle=lifecycle if lifecycle is not None else AsyncMock(),
     )
     await svc.sync(db)
 
@@ -1087,7 +1099,11 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     )
 
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
+        db_session,
+        settings=FakeSettingsReader({}),
+        publisher=AsyncMock(),
+        grid=make_fake_grid(_grid_response([])),
+        lifecycle=_make_real_lifecycle(),
     )
 
     await db_session.refresh(device)
@@ -1161,7 +1177,11 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
 
     # Session ends — Grid no longer reports it.
     await _sync_sessions_impl(
-        db_session, settings=FakeSettingsReader({}), publisher=AsyncMock(), grid=make_fake_grid(_grid_response([]))
+        db_session,
+        settings=FakeSettingsReader({}),
+        publisher=AsyncMock(),
+        grid=make_fake_grid(_grid_response([])),
+        lifecycle=_make_real_lifecycle(),
     )
 
     await db_session.refresh(device)
@@ -1182,8 +1202,6 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     no-deferred-stop devices without doing the locked Session check, so the
     restore guard performs its own locked recheck.
     """
-    from app.sessions import service_sync as session_sync
-
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -1211,31 +1229,28 @@ async def test_sync_does_not_restore_busy_when_fresh_session_inserted_after_prec
     db_session.add(old_session)
     await db_session.commit()
 
-    real_handle = session_sync.lifecycle_policy.handle_session_finished
+    real_lifecycle = _make_real_lifecycle()
+    real_handle = real_lifecycle.handle_session_finished
 
-    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device, **kwargs: object) -> object:
+    async def _handle_then_insert_fresh(db: AsyncSession, dev: Device) -> object:
         # Simulate: between the outer running-set probe and the restore guard,
         # a fresh client session is inserted (e.g. a new POST /api/sessions
         # arriving on a different worker). The new session is committed so
         # the locked recheck inside the restore guard observes it.
-        outcome = await real_handle(db, dev, **kwargs)
+        outcome = await real_handle(db, dev)
         new_session = Session(session_id="sess-new-fresh", device_id=dev.id, status=SessionStatus.running)
         db.add(new_session)
         await db.commit()
         return outcome
 
-    monkeypatch.setattr(
-        session_sync.lifecycle_policy,
-        "handle_session_finished",
-        _handle_then_insert_fresh,
-    )
+    real_lifecycle.handle_session_finished = _handle_then_insert_fresh  # type: ignore[method-assign]
 
     # Old session leaves the Grid (not in active map), triggering ended-session processing.
     svc = SessionSyncService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid(_grid_response([])),
-        lifecycle=MagicMock(),
+        lifecycle=real_lifecycle,
     )
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db_session)
@@ -1424,7 +1439,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
-        lifecycle=MagicMock(),
+        lifecycle=_make_real_lifecycle(),
     )
     await svc.sync(db_session)
 
@@ -1490,7 +1505,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         grid=make_fake_grid({"value": {"ready": False}, "error": "connection refused"}),
-        lifecycle=MagicMock(),
+        lifecycle=_make_real_lifecycle(),
     )
     await svc.sync(db_session)
 

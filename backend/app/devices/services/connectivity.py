@@ -19,7 +19,6 @@ from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy as lifecycle_policy
 from app.devices.services.intent import register_intents_and_reconcile
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
@@ -379,7 +378,7 @@ class ConnectivityService:
                                 publisher=self._publisher,
                             )
                             if not was_offline:
-                                await lifecycle_policy.handle_health_failure(
+                                await self._lifecycle_policy.handle_health_failure(
                                     db,
                                     device,
                                     source="device_checks",
@@ -421,7 +420,7 @@ class ConnectivityService:
                             CONNECTIVITY_NAMESPACE,
                             device.identity_value,
                         )
-                        restored = await lifecycle_policy.attempt_auto_recovery(
+                        restored = await self._lifecycle_policy.attempt_auto_recovery(
                             db,
                             device,
                             source="device_checks",
@@ -430,8 +429,6 @@ class ConnectivityService:
                                 if previously_offline
                                 else "Startup recovery after healthy reconnect"
                             ),
-                            settings=self._settings,
-                            publisher=self._publisher,
                         )
                         if restored:
                             await control_plane_state_store.delete_value(
@@ -514,7 +511,7 @@ class ConnectivityService:
                                         CONNECTIVITY_NAMESPACE,
                                         device.identity_value,
                                     )
-                                    restored = await lifecycle_policy.attempt_auto_recovery(
+                                    restored = await self._lifecycle_policy.attempt_auto_recovery(
                                         db,
                                         device,
                                         source="device_checks",
@@ -523,8 +520,6 @@ class ConnectivityService:
                                             if previously_offline
                                             else "Startup recovery after healthy endpoint check"
                                         ),
-                                        settings=self._settings,
-                                        publisher=self._publisher,
                                     )
                                     if restored:
                                         await control_plane_state_store.delete_value(
@@ -571,7 +566,7 @@ class ConnectivityService:
                                 reason="Device disconnected",
                                 publisher=self._publisher,
                             )
-                            await lifecycle_policy.note_connectivity_loss(
+                            await self._lifecycle_policy.note_connectivity_loss(
                                 db, locked_device, reason="Device disconnected"
                             )
                             await control_plane_state_store.set_value(
@@ -601,7 +596,9 @@ class ConnectivityService:
                             reason="Device disconnected",
                             publisher=self._publisher,
                         )
-                        await lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+                        await self._lifecycle_policy.note_connectivity_loss(
+                            db, locked_device, reason="Device disconnected"
+                        )
                         await control_plane_state_store.set_value(
                             db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
                         )

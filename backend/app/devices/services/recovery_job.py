@@ -11,7 +11,6 @@ from sqlalchemy.exc import NoResultFound
 
 from app.core.observability import get_logger
 from app.devices import locking as device_locking
-from app.devices.services import lifecycle_policy
 from app.jobs import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
 from app.jobs.models import Job
 
@@ -83,9 +82,7 @@ class RecoveryJobService:
                         await db.commit()
                     return
 
-                await lifecycle_policy.attempt_auto_recovery(
-                    db, device, source=source, reason=reason, settings=self._settings, publisher=self._publisher
-                )
+                await self._lifecycle_policy.attempt_auto_recovery(db, device, source=source, reason=reason)
 
                 # Re-load the job row in this session since attempt_auto_recovery
                 # commits multiple times internally, expiring the row.

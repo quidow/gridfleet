@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import json
 import socket
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -72,7 +72,7 @@ async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.M
     monkeypatch.setattr(grid_settings, "event_bus_subscribe_url", f"tcp://{HUB_HOST}:{HUB_XPUB_PORT}")
 
     waker = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=MagicMock()
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=AsyncMock()
     )
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(

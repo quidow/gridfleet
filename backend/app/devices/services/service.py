@@ -32,7 +32,7 @@ from app.devices.schemas.device import (
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
 from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
@@ -142,10 +142,10 @@ class DeviceCrudService:
                     reservation_map.get(device.id), device.id
                 )
                 readiness = readiness_map[device.id]
-                policy = await lifecycle_policy.build_lifecycle_policy(
+                policy = await lifecycle_policy_summary.build_lifecycle_policy(
                     db, device, reservation_context=reservation_context
                 )
-                summary = lifecycle_policy.build_lifecycle_policy_summary(policy)
+                summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
                 health_summary = device_health.build_public_summary(device)
                 if (
                     device_attention.compute_needs_attention(

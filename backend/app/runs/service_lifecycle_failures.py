@@ -9,7 +9,6 @@ from sqlalchemy.orm import selectinload
 
 import app.devices.services.health as device_health
 import app.devices.services.lifecycle_incidents as lifecycle_incident_service
-import app.devices.services.lifecycle_policy_actions as lifecycle_policy_actions
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
@@ -141,7 +140,7 @@ class RunFailureService:
         run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
         assert run is not None
 
-        await lifecycle_policy_actions.record_ci_preparation_failed(
+        await self._lifecycle_actions.record_ci_preparation_failed(
             db,
             device,
             reason=reason,
@@ -278,7 +277,7 @@ class RunFailureService:
         run_for_event = await db.execute(select(TestRun).where(TestRun.id == run_id))
         run_obj = run_for_event.scalar_one()
 
-        await lifecycle_policy_actions.exclude_run_if_needed(
+        await self._lifecycle_actions.exclude_run_if_needed(
             db,
             device,
             reason=(

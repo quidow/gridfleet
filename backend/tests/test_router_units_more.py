@@ -1626,7 +1626,10 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch("app.devices.routers.control.fetch_appium_status", new=AsyncMock(return_value={"running": False})),
         patch("app.devices.routers.control.fetch_pack_device_health", new=AsyncMock(return_value={"healthy": True})),
         patch("app.devices.routers.control.session_viability.get_session_viability", new=AsyncMock(return_value=None)),
-        patch("app.devices.routers.control.lifecycle_policy.build_lifecycle_policy", new=AsyncMock(return_value={})),
+        patch(
+            "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
+            new=AsyncMock(return_value={}),
+        ),
     ):
         health = await devices_control.device_health(
             device_id,
@@ -2823,7 +2826,9 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             "get_session_viability",
             new=AsyncMock(return_value={"status": "failed"}),
         ),
-        patch.object(devices_control.lifecycle_policy, "build_lifecycle_policy", new=AsyncMock(return_value={})),
+        patch.object(
+            devices_control.lifecycle_policy_summary, "build_lifecycle_policy", new=AsyncMock(return_value={})
+        ),
     ):
         health = await devices_control.device_health(
             device_id,

@@ -19,7 +19,7 @@ import zmq.asyncio
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 from app.grid import event_bus_loop
 from app.grid.services_container import GridServices
@@ -68,7 +68,7 @@ async def test_subscriber_loop_wakes_session_sync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     waker = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=MagicMock()
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=AsyncMock()
     )
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(

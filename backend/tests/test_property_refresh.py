@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -170,7 +170,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             verification=VerificationService(),
             crud=_pr_crud,
             connectivity=ConnectivityService(
-                publisher=_pr_publisher, settings=_pr_settings, circuit_breaker=Mock(), lifecycle_policy=MagicMock()
+                publisher=_pr_publisher, settings=_pr_settings, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,

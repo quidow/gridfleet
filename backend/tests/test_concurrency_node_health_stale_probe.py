@@ -1,7 +1,7 @@
 """Verify node_health skips stale probe results after node changes."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -81,7 +81,7 @@ async def _run_node_health_with_gate(
                 pool=Mock(),
                 circuit_breaker=Mock(),
                 grid=fake_grid,
-                recovery_control=MagicMock(),
+                recovery_control=AsyncMock(),
             ).check_nodes(session)
 
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import NoResultFound
@@ -15,7 +15,6 @@ from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service as run_service
-from app.runs import service_lifecycle_release as run_lifecycle_release
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo
 from app.runs.service_allocator import (
@@ -47,7 +46,7 @@ _release_svc = RunReleaseService(
     settings=_settings,
     grid=_grid,
     device_state=DeviceStateService(publisher=event_bus),
-    deferred_stop=MagicMock(),
+    deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 _failure_svc = RunFailureService(
@@ -55,7 +54,7 @@ _failure_svc = RunFailureService(
     settings=_settings,
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
-    lifecycle_actions=MagicMock(),
+    lifecycle_actions=AsyncMock(),
 )
 
 
@@ -417,7 +416,7 @@ async def test_cooldown_device_guard_paths(
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
-        lifecycle_actions=MagicMock(),
+        lifecycle_actions=AsyncMock(),
     )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -532,7 +531,7 @@ async def test_mark_running_sessions_released_success_path(
         settings=_settings,
         grid=make_fake_grid(),
         device_state=DeviceStateService(publisher=event_bus),
-        deferred_stop=MagicMock(),
+        deferred_stop=AsyncMock(),
     )
     await release_with_fake_grid._mark_running_sessions_released(
         db_session,
@@ -581,7 +580,6 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     )
 
     monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.record_ci_preparation_failed", AsyncMock())
     monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_health.update_device_checks", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -597,7 +595,6 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_policy_actions.exclude_run_if_needed", AsyncMock())
     escalate_failure_svc = RunFailureService(
         publisher=event_bus,
         settings=FakeSettingsReader(
@@ -605,7 +602,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         ),
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
-        lifecycle_actions=MagicMock(),
+        lifecycle_actions=AsyncMock(),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5
@@ -777,9 +774,9 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
         async def get(self, *_args: object, **_kwargs: object) -> object | None:
             return None
 
-    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.lifecycle_policy.complete_deferred_stop_if_session_ended", AsyncMock())
     await _release_svc.complete_deferred_stops_post_commit(DeferredSession(), [missing_device_id])  # type: ignore[arg-type]
-    run_lifecycle_release.lifecycle_policy.complete_deferred_stop_if_session_ended.assert_not_awaited()
+    # The deferred_stop mock should not be called for a missing device
+    _release_svc._deferred_stop.complete_deferred_stop_if_session_ended.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
@@ -43,7 +43,7 @@ async def test_session_started_queues_after_commit(
     _, device = await seed_host_and_device(db_session, identity="session-start-1")
     event_bus_capture.clear()
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     await crud.register_session(
         db_session,
@@ -67,7 +67,7 @@ async def test_session_ended_queues_after_status_update(
     _, device = await seed_host_and_device(db_session, identity="session-end-1")
     event_bus_capture.clear()
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     await crud.register_session(
         db_session,

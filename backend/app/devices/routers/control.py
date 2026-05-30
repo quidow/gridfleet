@@ -27,7 +27,7 @@ from app.devices.schemas.device import (
 )
 from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
 from app.devices.services import health as device_health_service
-from app.devices.services import identity, lifecycle_policy
+from app.devices.services import identity, lifecycle_policy_summary
 from app.devices.services import intent as intent_service
 from app.events.dependencies import EventServicesDep
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -189,7 +189,7 @@ async def device_health(
     session_viability_failed = (
         result["session_viability"] is not None and result["session_viability"].get("status") == "failed"
     )
-    result["lifecycle_policy"] = await lifecycle_policy.build_lifecycle_policy(db, device)
+    result["lifecycle_policy"] = await lifecycle_policy_summary.build_lifecycle_policy(db, device)
     result["healthy"] = (
         result["device_checks"].get("healthy", False)
         and not session_viability_failed

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from app.runs.models import TestRun
     from app.runs.protocols import DeviceDeferredStop, DeviceStateWriter
 
-import app.devices.services.lifecycle_policy as lifecycle_policy
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
@@ -184,7 +183,7 @@ class RunReleaseService:
             device = await db.get(Device, device_id)
             if device is None:
                 continue
-            await lifecycle_policy.complete_deferred_stop_if_session_ended(db, device, publisher=self._publisher)
+            await self._deferred_stop.complete_deferred_stop_if_session_ended(db, device)
 
     async def _mark_running_sessions_released(
         self,

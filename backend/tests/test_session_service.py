@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy import handle_health_failure
+from app.devices.services.lifecycle_policy import LifecyclePolicyService, handle_health_failure
+from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.state import DeviceStateService, set_hold, set_operational_state
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
@@ -19,6 +20,18 @@ from tests.helpers import create_device_record, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+from tests.fakes import FakeSettingsReader  # noqa: E402
+
+
+def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
+    """Return a real LifecyclePolicyService for tests that need actual DB mutations."""
+    pub = publisher if publisher is not None else event_bus
+    return LifecyclePolicyService(
+        publisher=pub,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=pub),
+    )
 
 
 @pytest.fixture
@@ -61,7 +74,7 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
     )
     updated = await crud.update_session_status(db_session, "android-sess-1", SessionStatus.passed)
 
@@ -96,7 +109,7 @@ async def test_update_session_status_preserves_busy_when_another_session_is_runn
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     updated = await crud.update_session_status(db_session, "sess-a", SessionStatus.failed)
 
@@ -130,7 +143,7 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
     )
     updated = await crud.update_session_status(db_session, "reserved-sess", SessionStatus.error)
 
@@ -182,7 +195,7 @@ async def test_update_session_status_clears_stop_pending(
     assert device.lifecycle_policy_state["stop_pending"] is True
 
     crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=_make_real_lifecycle()
     )
     updated = await crud.update_session_status(db_session, "sess-stuck-stop-1", SessionStatus.passed)
     assert updated is not None
@@ -217,7 +230,7 @@ async def test_register_session_does_not_attach_run_id_when_run_is_preparing(
     run = await create_reserved_run(db_session, name="Prep Phase Run", devices=[device], state=RunState.preparing)
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     registered = await crud.register_session(
         db_session,
@@ -253,7 +266,7 @@ async def test_register_session_attaches_run_id_when_run_is_active(
     run = await create_reserved_run(db_session, name="Active Phase Run", devices=[device], state=RunState.active)
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     registered = await crud.register_session(
         db_session,
@@ -309,7 +322,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=_make_real_lifecycle()
     )
     await crud.register_session(
         db_session,
@@ -379,7 +392,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=_make_real_lifecycle()
     )
     updated = await crud.update_session_status(db_session, "sess-stuck-stop-non-busy", SessionStatus.passed)
     assert updated is not None
@@ -414,7 +427,7 @@ async def test_register_session_running_returns_existing_on_conflict(
     await db_session.commit()
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     first = await crud.register_session(
         db_session,
@@ -499,7 +512,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     event_bus_capture.clear()
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     updated = await crud.update_session_status(db_session, "flap-sess", SessionStatus.passed)
     await settle_after_commit_tasks()
@@ -591,7 +604,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     event_bus_capture.clear()
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     updated = await crud.update_session_status(db_session, "stop-inflight-sess", SessionStatus.passed)
     await settle_after_commit_tasks()

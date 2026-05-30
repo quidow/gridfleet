@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -604,7 +604,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
             pool=Mock(),
             circuit_breaker=Mock(),
             grid=fake_grid,
-            recovery_control=MagicMock(),
+            recovery_control=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)

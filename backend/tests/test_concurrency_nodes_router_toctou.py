@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -78,7 +78,7 @@ async def test_start_node_locks_device_before_reservation_check(
             settings=settings_service,
             grid=grid,
             device_state=DeviceStateService(publisher=event_bus),
-            deferred_stop=MagicMock(),
+            deferred_stop=AsyncMock(),
         )
         run_lifecycle = RunLifecycleService(
             publisher=event_bus, settings=settings_service, grid=grid, release=run_release
@@ -93,7 +93,7 @@ async def test_start_node_locks_device_before_reservation_check(
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(publisher=event_bus),
-            lifecycle_actions=MagicMock(),
+            lifecycle_actions=AsyncMock(),
         )
         run_query = RunQueryService()
         return RunServices(

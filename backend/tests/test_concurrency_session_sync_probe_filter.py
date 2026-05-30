@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -76,7 +76,7 @@ async def test_session_sync_does_not_persist_probe_sessions(
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
     svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
     )
     await svc.sync(db_session)
 
@@ -130,7 +130,7 @@ async def test_session_sync_does_persist_real_session(
     fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
 
     svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=MagicMock()
+        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
     )
     await svc.sync(db_session)
 

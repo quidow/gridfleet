@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -70,7 +70,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     pool=Mock(),
                     circuit_breaker=Mock(),
                     grid=Mock(),
-                    recovery_control=MagicMock(),
+                    recovery_control=AsyncMock(),
                 )._process_node_health(
                     session,
                     locked_device.appium_node,

@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -1061,7 +1061,7 @@ async def test_sessions_straddle_active_signal_boundary(
     run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
 
     crud = SessionCrudService(
-        publisher=event_bus, device_state=_DeviceStateService(publisher=event_bus), lifecycle=MagicMock()
+        publisher=event_bus, device_state=_DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
     )
     prep_session = await crud.register_session(
         db_session,
@@ -1072,7 +1072,7 @@ async def test_sessions_straddle_active_signal_boundary(
     assert prep_session.run_id is None
 
     crud_mock = SessionCrudService(
-        publisher=Mock(), device_state=_DeviceStateService(publisher=Mock()), lifecycle=MagicMock()
+        publisher=Mock(), device_state=_DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
     )
     await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
@@ -1081,7 +1081,7 @@ async def test_sessions_straddle_active_signal_boundary(
         settings=_settings,
         grid=GridService(settings=_settings),
         device_state=_DeviceStateService(publisher=event_bus),
-        deferred_stop=MagicMock(),
+        deferred_stop=AsyncMock(),
     )
     _lifecycle = RunLifecycleService(
         publisher=event_bus, settings=_settings, grid=GridService(settings=_settings), release=_release

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -173,7 +173,7 @@ async def test_cooldown_intent_payload_shape(
         settings=_test_settings,
         circuit_breaker=_test_cb,
         maintenance=MaintenanceService(publisher=event_bus),
-        lifecycle_actions=MagicMock(),
+        lifecycle_actions=AsyncMock(),
     )
     cooldown_reason = "flaky connection detected"
     _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(

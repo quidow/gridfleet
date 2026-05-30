@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -37,7 +37,7 @@ _failure_svc = RunFailureService(
     settings=_settings,
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
-    lifecycle_actions=MagicMock(),
+    lifecycle_actions=AsyncMock(),
 )
 
 if TYPE_CHECKING:
@@ -263,7 +263,7 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
         publisher=Mock(),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        lifecycle_policy=MagicMock(),
+        lifecycle_policy=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)

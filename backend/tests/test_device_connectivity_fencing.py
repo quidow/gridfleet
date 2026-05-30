@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -51,7 +51,7 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            lifecycle_policy=MagicMock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
 
@@ -110,7 +110,7 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            lifecycle_policy=MagicMock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
@@ -179,7 +179,7 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            lifecycle_policy=MagicMock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
     stop_called.assert_not_called()
@@ -247,7 +247,7 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            lifecycle_policy=MagicMock(),
+            lifecycle_policy=AsyncMock(),
         ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
