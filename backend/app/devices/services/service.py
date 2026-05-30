@@ -57,6 +57,98 @@ DeviceCountStatement = Select[tuple[int]]
 DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
 
 
+class DeviceCrudService:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
+    async def prepare_device_create_payload(self, db: AsyncSession, data: DeviceVerificationCreate) -> dict[str, Any]:
+        return await prepare_device_create_payload(db, data)
+
+    async def prepare_device_update_payload(
+        self, db: AsyncSession, device: Device, data: DevicePatch | DeviceVerificationUpdate
+    ) -> dict[str, Any]:
+        return await prepare_device_update_payload(db, device, data)
+
+    async def create_device(
+        self,
+        db: AsyncSession,
+        data: DeviceVerificationCreate,
+        *,
+        mark_verified: bool = False,
+        initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
+    ) -> Device:
+        return await create_device(
+            db, data, mark_verified=mark_verified, initial_operational_state=initial_operational_state
+        )
+
+    async def list_devices(
+        self,
+        db: AsyncSession,
+        *,
+        pack_id: str | None = None,
+        platform_id: str | None = None,
+        status: ChipStatus | None = None,
+        host_id: uuid.UUID | None = None,
+        identity_value: str | None = None,
+        connection_target: str | None = None,
+        device_type: DeviceType | None = None,
+        connection_type: ConnectionType | None = None,
+        os_version: str | None = None,
+        search: str | None = None,
+        hardware_health_status: HardwareHealthStatus | None = None,
+        hardware_telemetry_state: HardwareTelemetryState | None = None,
+        tags: dict[str, str] | None = None,
+        sort_by: str = "created_at",
+        sort_dir: str = "desc",
+    ) -> list[Device]:
+        return await list_devices(
+            db,
+            settings=self._settings,
+            pack_id=pack_id,
+            platform_id=platform_id,
+            status=status,
+            host_id=host_id,
+            identity_value=identity_value,
+            connection_target=connection_target,
+            device_type=device_type,
+            connection_type=connection_type,
+            os_version=os_version,
+            search=search,
+            hardware_health_status=hardware_health_status,
+            hardware_telemetry_state=hardware_telemetry_state,
+            tags=tags,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+        )
+
+    async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
+        return await list_devices_by_filters(db, filters, settings=self._settings)
+
+    async def list_devices_paginated(
+        self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
+    ) -> tuple[list[Device], int]:
+        return await list_devices_paginated(db, filters, limit, offset, settings=self._settings)
+
+    async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
+        return await count_devices_by_filters(db, filters, settings=self._settings)
+
+    async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None:
+        return await get_device(db, device_id)
+
+    async def update_device(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        data: DevicePatch | DeviceVerificationUpdate,
+        *,
+        enforce_patch_contract: bool = True,
+    ) -> Device | None:
+        return await update_device(db, device_id, data, enforce_patch_contract=enforce_patch_contract)
+
+    async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
+        return await delete_device(db, device_id)
+
+
 async def prepare_device_create_payload(
     db: AsyncSession,
     data: DeviceVerificationCreate,
