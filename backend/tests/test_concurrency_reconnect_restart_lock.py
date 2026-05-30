@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.routers import control as devices_control
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -77,6 +78,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
             await devices_control.reconnect_device(
                 device_id,
                 db=session,
+                device_services=SimpleNamespace(crud=DeviceCrudService(settings=FakeSettingsReader({}))),
                 settings_services=SimpleNamespace(service=FakeSettingsReader({})),
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             )
