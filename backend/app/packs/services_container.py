@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.packs.protocols import (
         FeatureProtocol,
         PackCatalogProtocol,
+        PackDiscoveryProtocol,
         PackLifecycleProtocol,
         PackReleaseProtocol,
         PackStatusProtocol,
@@ -27,6 +28,7 @@ class PackServices:
     status: PackStatusProtocol
     lifecycle: PackLifecycleProtocol
     feature: FeatureProtocol
+    discovery: PackDiscoveryProtocol
     storage: PackStorageService
     publisher: EventPublisher
     circuit_breaker: CircuitBreakerProtocol

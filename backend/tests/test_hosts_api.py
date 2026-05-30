@@ -653,7 +653,7 @@ async def test_host_discovery_returns_pack_shaped_candidates(
             ],
         }
 
-    monkeypatch.setattr("app.hosts.router.get_pack_devices", fake_pack_devices)
+    monkeypatch.setattr("app.agent_comm.operations.get_pack_devices", fake_pack_devices)
 
     resp = await client.post(f"/api/hosts/{db_host.id}/discover")
     assert resp.status_code == 200

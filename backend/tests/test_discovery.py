@@ -67,7 +67,7 @@ ANDROID_AVD_PACK_RESPONSE: dict[str, Any] = {
 
 
 def _patch_pack_devices(response: dict[str, Any]) -> object:
-    return patch("app.hosts.router.get_pack_devices", new=AsyncMock(return_value=response))
+    return patch("app.agent_comm.operations.get_pack_devices", new=AsyncMock(return_value=response))
 
 
 async def test_discover_devices(client: AsyncClient) -> None:
@@ -426,7 +426,7 @@ async def test_discover_agent_unreachable(client: AsyncClient) -> None:
     host = (await client.post("/api/hosts", json=HOST_PAYLOAD)).json()
 
     with patch(
-        "app.hosts.router.get_pack_devices",
+        "app.agent_comm.operations.get_pack_devices",
         new=AsyncMock(side_effect=AgentUnreachableError(host["ip"], "Connection refused")),
     ):
         resp = await client.post(f"/api/hosts/{host['id']}/discover")

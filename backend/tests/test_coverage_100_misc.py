@@ -89,6 +89,7 @@ from app.packs.services import (
 from app.packs.services import (
     storage as pack_storage_service,
 )
+from app.packs.services.discovery import PackDiscoveryService as _PackDiscoveryService
 from app.packs.services.feature_dispatch import FeatureService as PackFeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.service import PackCatalogService
@@ -578,12 +579,14 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         pack_discovery_service.platform_label_service, "load_platform_label_map", AsyncMock(return_value={})
     )
-    result = await pack_discovery_service.discover_devices(
-        discovery_db,
-        SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
+    result = await _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
+        agent_get_pack_device_properties=AsyncMock(return_value=None),
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
+    ).discover_devices(
+        discovery_db,
+        SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
     )
     assert result.new_devices == []
 

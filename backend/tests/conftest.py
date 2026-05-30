@@ -14,6 +14,7 @@ from sqlalchemy import NullPool, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from app.agent_comm import operations as agent_operations
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.dependencies import get_agent_comm_services
 from app.agent_comm.http_pool import AgentHttpPool
@@ -27,6 +28,7 @@ from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
@@ -45,6 +47,7 @@ from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
+from app.packs.services.discovery import PackDiscoveryService
 from app.packs.services.feature_dispatch import FeatureService
 from app.packs.services.lifecycle import PackLifecycleService
 from app.packs.services.release import PackReleaseService
@@ -365,6 +368,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             state=DeviceStateService(publisher=test_event_bus),
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=test_event_bus,
             settings=settings_service,
             grid=_grid_svc,
@@ -471,6 +475,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             status=PackStatusService(feature=feature),
             lifecycle=lifecycle,
             feature=feature,
+            discovery=PackDiscoveryService(
+                agent_get_pack_devices=agent_operations.get_pack_devices,
+                agent_get_pack_device_properties=agent_operations.get_pack_device_properties,
+                settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
+            ),
             storage=storage,
             publisher=test_event_bus,
             circuit_breaker=test_circuit_breaker,

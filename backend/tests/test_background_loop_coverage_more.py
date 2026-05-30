@@ -24,6 +24,7 @@ from app.devices.services import (
 )
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
+from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import DeviceStateService
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
@@ -62,6 +63,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             state=DeviceStateService(publisher=_svc_pub_1),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
             data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
@@ -94,6 +96,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             state=DeviceStateService(publisher=_svc_pub_2),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
@@ -188,6 +191,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             state=DeviceStateService(publisher=_svc_pub_3),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
             data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
@@ -266,6 +270,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             state=DeviceStateService(publisher=_svc_pub_4),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_4),
             data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
+            property_refresh=PropertyRefreshService(discovery=Mock()),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,
