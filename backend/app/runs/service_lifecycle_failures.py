@@ -24,7 +24,6 @@ from app.devices.services.intent_types import (
     RunActivePrecondition,
 )
 from app.runs.models import TERMINAL_STATES, TestRun
-from app.runs.service import exclude_device_from_run
 from app.runs.service_reservation import get_reservation_entry_for_device, get_run
 
 if TYPE_CHECKING:
@@ -136,7 +135,9 @@ class RunFailureService:
         except NoResultFound:
             raise ValueError("Device not found") from None
 
-        run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        run = await self._reservation.exclude_device_from_run(
+            db, device.id, reason=reason, revoke_run_intents=True, commit=False
+        )
         assert run is not None
 
         await self._lifecycle_actions.record_ci_preparation_failed(
