@@ -28,12 +28,9 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 __all__ = [
-    "apply_node_state_transition",
+    "DeviceHealthService",
     "build_public_summary",
     "device_allows_allocation",
-    "update_device_checks",
-    "update_emulator_state",
-    "update_session_viability",
 ]
 
 
@@ -116,104 +113,40 @@ async def _restore_available_for_healthy_signal(
     )
 
 
-async def update_device_checks(
-    db: AsyncSession,
-    device: Device,
-    *,
-    healthy: bool,
-    summary: str,
-    publisher: EventPublisher,
-) -> None:
-    locked = await _lock(db, device)
-    if locked is None:
-        return
-    previous = build_public_summary(locked)
-    locked.device_checks_healthy = healthy
-    locked.device_checks_summary = summary
-    locked.device_checks_checked_at = _now()
-    await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary, publisher=publisher)
-    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
-    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
-
-
-async def update_session_viability(
-    db: AsyncSession,
-    device: Device,
-    *,
-    status: str | None,
-    error: str | None,
-    publisher: EventPublisher,
-) -> None:
-    locked = await _lock(db, device)
-    if locked is None:
-        return
-    previous = build_public_summary(locked)
-    locked.session_viability_status = status
-    locked.session_viability_error = error
-    locked.session_viability_checked_at = _now()
-    await _mark_offline_for_failed_signal(
-        locked,
-        failed=status == "failed",
-        reason=error or "Session viability failed",
-        publisher=publisher,
-    )
-    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
-    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
-
-
-async def apply_node_state_transition(
-    db: AsyncSession,
-    device: Device,
-    *,
-    health_running: bool | None = None,
-    health_state: str | None = None,
-    mark_offline: bool = True,
-    reason: str | None = None,
-    publisher: EventPublisher,
-) -> None:
-    locked = await _lock(db, device)
-    if locked is None:
-        return
-    locked_node = await appium_node_locking.lock_appium_node_for_device(db, locked.id)
-    if locked_node is None:
-        return
-
-    locked.appium_node = locked_node
-    previous = build_public_summary(locked)
-
-    locked_node.health_running = health_running
-    locked_node.health_state = health_state
-    locked_node.last_health_checked_at = _now()
-
-    if mark_offline:
-        await _mark_offline_for_failed_signal(
-            locked,
-            failed=not node_running_signal(locked_node),
-            reason=reason or f"Node: {node_summary_label(locked_node)}",
-            publisher=publisher,
-        )
-    await _restore_available_for_healthy_signal(db, locked, publisher=publisher)
-    _maybe_emit_health_changed(db, locked, previous, publisher=publisher)
-
-
-async def update_emulator_state(db: AsyncSession, device: Device, state: str | None) -> None:
-    locked = await _lock(db, device)
-    if locked is None:
-        return
-    locked.emulator_state = state
-
-
 class DeviceHealthService:
     def __init__(self, *, publisher: EventPublisher) -> None:
         self._publisher = publisher
 
     async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None:
-        await update_device_checks(db, device, healthy=healthy, summary=summary, publisher=self._publisher)
+        locked = await _lock(db, device)
+        if locked is None:
+            return
+        previous = build_public_summary(locked)
+        locked.device_checks_healthy = healthy
+        locked.device_checks_summary = summary
+        locked.device_checks_checked_at = _now()
+        await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary, publisher=self._publisher)
+        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
     ) -> None:
-        await update_session_viability(db, device, status=status, error=error, publisher=self._publisher)
+        locked = await _lock(db, device)
+        if locked is None:
+            return
+        previous = build_public_summary(locked)
+        locked.session_viability_status = status
+        locked.session_viability_error = error
+        locked.session_viability_checked_at = _now()
+        await _mark_offline_for_failed_signal(
+            locked,
+            failed=status == "failed",
+            reason=error or "Session viability failed",
+            publisher=self._publisher,
+        )
+        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def apply_node_state_transition(
         self,
@@ -225,15 +158,32 @@ class DeviceHealthService:
         mark_offline: bool = True,
         reason: str | None = None,
     ) -> None:
-        await apply_node_state_transition(
-            db,
-            device,
-            health_running=health_running,
-            health_state=health_state,
-            mark_offline=mark_offline,
-            reason=reason,
-            publisher=self._publisher,
-        )
+        locked = await _lock(db, device)
+        if locked is None:
+            return
+        locked_node = await appium_node_locking.lock_appium_node_for_device(db, locked.id)
+        if locked_node is None:
+            return
+
+        locked.appium_node = locked_node
+        previous = build_public_summary(locked)
+
+        locked_node.health_running = health_running
+        locked_node.health_state = health_state
+        locked_node.last_health_checked_at = _now()
+
+        if mark_offline:
+            await _mark_offline_for_failed_signal(
+                locked,
+                failed=not node_running_signal(locked_node),
+                reason=reason or f"Node: {node_summary_label(locked_node)}",
+                publisher=self._publisher,
+            )
+        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
-        await update_emulator_state(db, device, state)
+        locked = await _lock(db, device)
+        if locked is None:
+            return
+        locked.emulator_state = state

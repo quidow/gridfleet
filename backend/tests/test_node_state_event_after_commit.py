@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.appium_nodes.services.reconciler_agent import mark_node_started, mark_node_stopped
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
-from app.devices.services import health as health_mod
 from app.devices.services.state import set_hold as _orig_set_hold
 from app.devices.services.state import set_operational_state as _orig_set_op
 from tests.fakes import FakeSettingsReader
@@ -22,14 +21,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 @pytest.fixture(autouse=True)
 def _inject_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Inject publisher into health + state machine so events fire."""
-    _orig_apply = health_mod.apply_node_state_transition
-
-    async def _wrapped_apply(*args: object, **kwargs: object) -> None:
-        kwargs.setdefault("publisher", event_bus)
-        await _orig_apply(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(health_mod, "apply_node_state_transition", _wrapped_apply)
+    """Inject publisher into state machine so events fire."""
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
         kwargs.setdefault("publisher", event_bus)

@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -120,12 +120,11 @@ async def test_availability_excludes_unhealthy_devices(
     await db_session.commit()
     await db_session.refresh(unhealthy)
 
-    await device_health.update_device_checks(
+    await DeviceHealthService(publisher=Mock()).update_device_checks(
         db_session,
         unhealthy,
         healthy=False,
         summary="ADB not responsive",
-        publisher=Mock(),
     )
     await db_session.commit()
 
@@ -180,26 +179,25 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     await db_session.commit()
     await db_session.refresh(device, ["appium_node"])
 
-    await device_health.apply_node_state_transition(
+    await DeviceHealthService(publisher=Mock()).apply_node_state_transition(
         db_session,
         device,
         health_running=False,
         health_state="error",
         mark_offline=True,
-        publisher=Mock(),
     )
     await db_session.commit()
     assert device.operational_state == DeviceOperationalState.offline
 
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=Mock())
-    await device_health.update_session_viability(db_session, device, status="passed", error=None, publisher=Mock())
-    await device_health.apply_node_state_transition(
+    _health_svc = DeviceHealthService(publisher=Mock())
+    await _health_svc.update_device_checks(db_session, device, healthy=True, summary="Healthy")
+    await _health_svc.update_session_viability(db_session, device, status="passed", error=None)
+    await _health_svc.apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
-        publisher=Mock(),
     )
     await db_session.commit()
 

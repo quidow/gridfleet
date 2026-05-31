@@ -727,9 +727,9 @@ async def test_device_detail_surfaces_emulator_state(
     )
     device_id = str(device.id)
 
-    from app.devices.services import health as device_health
+    from app.devices.services.health import DeviceHealthService
 
-    await device_health.update_emulator_state(db_session, device, "running")
+    await DeviceHealthService(publisher=Mock()).update_emulator_state(db_session, device, "running")
     await db_session.commit()
 
     resp = await client.get(f"/api/devices/{device_id}")
@@ -1633,7 +1633,7 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    from app.devices.services import health as device_health
+    from app.devices.services.health import DeviceHealthService
 
     await _create_device(
         db_session,
@@ -1654,8 +1654,8 @@ async def test_needs_attention_filter_includes_unhealthy_devices(
         verified=True,
     )
 
-    await device_health.update_device_checks(
-        db_session, unhealthy, healthy=False, summary="Disconnected", publisher=Mock()
+    await DeviceHealthService(publisher=Mock()).update_device_checks(
+        db_session, unhealthy, healthy=False, summary="Disconnected"
     )
     await db_session.commit()
 

@@ -10,8 +10,8 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
-from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -40,12 +40,11 @@ async def test_health_failure_offline_write_serializes_with_reservation(
     async def health_writer() -> None:
         async with db_session_maker() as session:
             loaded = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
-            await device_health.update_device_checks(
+            await DeviceHealthService(publisher=Mock()).update_device_checks(
                 session,
                 loaded,
                 healthy=False,
                 summary="Disconnected",
-                publisher=Mock(),
             )
             await session.commit()
 
@@ -101,13 +100,12 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
         async with db_session_maker() as session:
             loaded = (await session.execute(select(Device).where(Device.id == device_id))).scalar_one()
             await session.refresh(loaded, ["appium_node"])
-            await device_health.apply_node_state_transition(
+            await DeviceHealthService(publisher=Mock()).apply_node_state_transition(
                 session,
                 loaded,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
-                publisher=Mock(),
             )
             await session.commit()
 

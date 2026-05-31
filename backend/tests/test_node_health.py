@@ -1158,13 +1158,12 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     await db_session.commit()
 
     # Pre-set projected node health to known-healthy.
-    await device_health.apply_node_state_transition(
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
-        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -1398,13 +1397,12 @@ async def test_node_health_recovery_clears_pending_stop(
 
     # Seed prior failure state so recovery branch fires.
     await set_node_health_failure_count(db_session, str(node.id), 1)
-    await device_health.apply_node_state_transition(
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db_session,
         device,
         health_running=False,
         health_state="error",
         mark_offline=False,
-        publisher=event_bus,
     )
     await db_session.commit()
 
