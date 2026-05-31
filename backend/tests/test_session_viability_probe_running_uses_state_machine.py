@@ -17,7 +17,7 @@ from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
-from app.sessions.service_viability import run_session_viability_probe
+from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -73,24 +73,28 @@ async def test_probe_running_busy_mark_writes_device_event_row(
     assert loaded_node is not None
     loaded_device.appium_node = loaded_node
 
+    svc = SessionViabilityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+    )
     with (
         patch(
             "app.sessions.service_viability.capability_service.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
-        patch(
-            "app.sessions.service_viability.probe_session_via_grid",
+        patch.object(
+            svc,
+            "probe_session_via_grid",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),
     ):
-        result = await run_session_viability_probe(
+        result = await svc.run_session_viability_probe(
             db_session,
             loaded_device,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
-            settings=FakeSettingsReader({}),
-            publisher=Mock(),
         )
 
     assert result["status"] == "passed"

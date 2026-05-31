@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.devices.models import DeviceHold, DeviceOperationalState
-from app.sessions.service_viability import run_session_viability_probe
+from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_host
@@ -46,11 +47,14 @@ async def test_recovery_probe_rejects_offline_held_device(
     )
     await db_session.commit()
 
+    svc = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+    )
     with pytest.raises(ValueError, match="only run for available devices"):
-        await run_session_viability_probe(
+        await svc.run_session_viability_probe(
             db_session,
             device,
             checked_by=SessionViabilityCheckedBy.recovery,
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )

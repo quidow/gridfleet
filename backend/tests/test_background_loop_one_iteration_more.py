@@ -105,13 +105,14 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_viability, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_viability, "_check_due_devices", AsyncMock())
     monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    viability_mock = Mock()
+    viability_mock.check_due_devices = AsyncMock()
     services = SessionServices(
         crud=Mock(),
         sync=Mock(),
-        viability=Mock(),
+        viability=viability_mock,
         settings=FakeSettingsReader({}),
         grid=Mock(),
         session_factory=_Session,
@@ -120,7 +121,7 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
     with pytest.raises(asyncio.CancelledError):
         await SessionViabilityLoop(services=services).run()
 
-    session_viability._check_due_devices.assert_awaited_once()
+    viability_mock.check_due_devices.assert_awaited_once()
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:

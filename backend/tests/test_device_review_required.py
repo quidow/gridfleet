@@ -295,20 +295,20 @@ async def test_review_required_short_circuits_auto_recovery(
     await mark_review_required(db_session, device, reason="shelved earlier", source="session_viability")
     await db_session.commit()
 
+    viability_mock = Mock()
+    viability_mock.run_session_viability_probe = AsyncMock()
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
-        viability=Mock(),
+        viability=viability_mock,
     )
-    probe = AsyncMock()
-    with patch("app.sessions.service_viability.run_session_viability_probe", new=probe):
-        recovered = await svc.attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="ignored",
-        )
+    recovered = await svc.attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="ignored",
+    )
 
     assert recovered is False
-    probe.assert_not_awaited()
+    viability_mock.run_session_viability_probe.assert_not_awaited()

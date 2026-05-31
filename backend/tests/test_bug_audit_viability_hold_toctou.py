@@ -25,7 +25,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.sessions import service_viability
-from app.sessions.service_viability import run_session_viability_probe
+from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_host
@@ -99,19 +99,22 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         return locked
 
     probe_mock = AsyncMock(return_value=(True, None))
+    svc = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+    )
 
     with (
         patch.object(service_viability._MACHINE, "transition", side_effect=_spy_transition),
         patch.object(device_locking, "lock_device", side_effect=_flip_hold_then_lock),
-        patch.object(service_viability, "probe_session_via_grid", probe_mock),
+        patch.object(svc, "probe_session_via_grid", probe_mock),
         pytest.raises(ValueError, match="state changed concurrently"),
     ):
-        await run_session_viability_probe(
+        await svc.run_session_viability_probe(
             db_session,
             device,
             checked_by=SessionViabilityCheckedBy.manual,
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
         )
 
     # Fixed behavior: the probe re-checks hold under the lock and raises

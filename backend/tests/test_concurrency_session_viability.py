@@ -14,6 +14,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.sessions import service_viability as session_viability
+from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -72,7 +73,6 @@ async def test_session_viability_restore_handles_external_reservation(
         capabilities: dict[str, Any],
         timeout_sec: int,
         *,
-        settings: FakeSettingsReader,
         grid_url: str | None = None,
     ) -> tuple[bool, str | None]:
         nonlocal observed_grid_url
@@ -87,7 +87,12 @@ async def test_session_viability_restore_handles_external_reservation(
     async def fake_get_caps(*_a: object, **_kw: object) -> dict[str, Any]:
         return {"platformName": "Android"}
 
-    monkeypatch.setattr(session_viability, "probe_session_via_grid", fake_probe)
+    svc = SessionViabilityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        session_factory=db_session_maker,
+    )
+    monkeypatch.setattr(svc, "probe_session_via_grid", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
     monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", fake_get_caps)
 
@@ -99,9 +104,7 @@ async def test_session_viability_restore_handles_external_reservation(
                 .options(selectinload(Device.appium_node), selectinload(Device.host))
             )
             device_obj = (await session.execute(stmt)).scalar_one()
-            await session_viability.run_session_viability_probe(
-                session, device_obj, checked_by="manual", settings=FakeSettingsReader({}), publisher=Mock()
-            )
+            await svc.run_session_viability_probe(session, device_obj, checked_by="manual")
 
     async def reserve_externally() -> None:
         await probe_started.wait()
