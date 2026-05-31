@@ -805,7 +805,7 @@ class ReconcilerAgentService:
     ) -> AppiumNode:
         """Operator-initiated single-device start.
 
-        Routes through ``operator_node_lifecycle.request_start`` so the operator:start
+        Routes through ``self._operator.request_start`` so the operator:start
         intent payload is the single source of truth. Direct ``write_desired_state``
         calls are forbidden in operator code paths.
         """
@@ -824,7 +824,7 @@ class ReconcilerAgentService:
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
     ) -> AppiumNode:
         """Operator-initiated single-device stop. Routes through
-        ``operator_node_lifecycle.request_stop`` so operator:stop intents are the
+        ``self._operator.request_stop`` so operator:stop intents are the
         single source of truth.
         """
         node = cast("AppiumNode | None", device.appium_node)
@@ -840,7 +840,7 @@ class ReconcilerAgentService:
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_restart"
     ) -> AppiumNode:
         """Operator-initiated single-device restart. Routes through
-        ``operator_node_lifecycle.request_restart`` so the operator:start intent
+        ``self._operator.request_restart`` so the operator:start intent
         payload is the single source of truth (with fresh transition_token and
         expires_at on every restart).
         """
