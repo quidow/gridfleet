@@ -95,3 +95,24 @@ async def query_logs(
         for row in rows
     ]
     return AgentLogPage(lines=lines, total=total, has_more=(offset + len(lines)) < total)
+
+
+class AgentLogsService:
+    async def write_batch(self, db: AsyncSession, *, host_id: UUID, batch: AgentLogBatchIngest) -> AgentLogIngestResult:
+        return await write_batch(db, host_id=host_id, batch=batch)
+
+    async def query_logs(
+        self,
+        db: AsyncSession,
+        *,
+        host_id: UUID,
+        levels: list[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        q: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> AgentLogPage:
+        return await query_logs(
+            db, host_id=host_id, levels=levels, since=since, until=until, q=q, limit=limit, offset=offset
+        )

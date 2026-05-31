@@ -50,3 +50,20 @@ async def query_host_events(
         for row in rows
     ]
     return HostEventsPage(events=events, total=total, has_more=(offset + len(events)) < total)
+
+
+class HostEventsService:
+    async def query_host_events(
+        self,
+        db: AsyncSession,
+        *,
+        host_id: UUID,
+        types: list[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> HostEventsPage:
+        return await query_host_events(
+            db, host_id=host_id, types=types, since=since, until=until, limit=limit, offset=offset
+        )
