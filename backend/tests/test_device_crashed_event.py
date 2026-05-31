@@ -77,12 +77,13 @@ async def test_handle_node_crash_queues_device_crashed(
 ) -> None:
     from app.devices import locking as device_locking
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     _, device = await seed_host_and_device(db_session, identity="lifecycle-crash-1")
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
         db_session,
         locked,
         source="connectivity_lost",
@@ -108,6 +109,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     from app.devices import locking as device_locking
     from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     _, device = await seed_host_and_device(
         db_session, identity="already-offline-crash", operational_state=DeviceOperationalState.offline
@@ -115,7 +117,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
         db_session,
         locked,
         source="session_viability",

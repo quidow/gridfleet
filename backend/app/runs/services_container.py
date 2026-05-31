@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         RunLifecycleProtocol,
         RunQueryProtocol,
         RunReleaseProtocol,
+        RunReservationProtocol,
     )
 
 
@@ -24,6 +25,7 @@ class RunServices:
     lifecycle: RunLifecycleProtocol
     release: RunReleaseProtocol
     failure: RunFailureProtocol
+    reservation: RunReservationProtocol
     query: RunQueryProtocol
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]

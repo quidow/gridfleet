@@ -32,7 +32,7 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.events import queue_device_crashed_event
-from app.runs import service_reservation as run_reservation_service
+from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.models import Session, SessionStatus
 
@@ -44,13 +44,15 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
+    from app.devices.protocols import RunReservationWriter
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 
 class LifecyclePolicyActionsService:
-    def __init__(self, *, publisher: EventPublisher) -> None:
+    def __init__(self, *, publisher: EventPublisher, reservation: RunReservationWriter) -> None:
         self._publisher = publisher
+        self._reservation = reservation
 
     async def complete_auto_stop(
         self,
@@ -182,7 +184,7 @@ class LifecyclePolicyActionsService:
             return None, entry
 
         was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-        run = await run_reservation_service.exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             await register_intents_and_reconcile(
@@ -234,7 +236,7 @@ class LifecyclePolicyActionsService:
         ):
             return run, entry
 
-        run = await run_reservation_service.restore_device_to_run(db, device.id, commit=False)
+        run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             await revoke_intents_and_reconcile(

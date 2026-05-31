@@ -25,7 +25,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-import app.runs.service_reservation_lookup as _lookup
+import app.runs.service_reservation as _reservation
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device, create_host
@@ -74,7 +74,7 @@ async def test_exclude_marks_released_reservation_as_excluded(
     device_id = device.id
     reservation_id = reservation.id
 
-    original_get = _lookup._get_device_reservation_with_entry  # type: ignore[attr-defined]
+    original_get = _reservation.get_device_reservation_with_entry
 
     async def _get_then_release(
         db: Any,  # noqa: ANN401
@@ -93,8 +93,10 @@ async def test_exclude_marks_released_reservation_as_excluded(
                 await side.commit()
         return snapshot
 
-    with patch.object(_lookup, "_get_device_reservation_with_entry", side_effect=_get_then_release):
-        await _lookup.exclude_device_from_run(db_session, device_id, reason="test race", commit=True)
+    with patch.object(_reservation, "get_device_reservation_with_entry", side_effect=_get_then_release):
+        await _reservation.RunReservationService().exclude_device_from_run(
+            db_session, device_id, reason="test race", commit=True
+        )
 
     # Re-read the reservation on a fresh session.
     async with db_session_maker() as side:

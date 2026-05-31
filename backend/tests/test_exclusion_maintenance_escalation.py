@@ -12,8 +12,9 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
+from app.runs.service_reservation import RunReservationService
 
-_actions = LifecyclePolicyActionsService(publisher=Mock())
+_actions = LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService())
 
 
 def _make_device(

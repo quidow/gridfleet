@@ -60,7 +60,8 @@ async def test_exclude_device_from_run_updates_entry_without_commit(monkeypatch)
         AsyncMock(return_value=entry),
     )
 
-    result = await run_reservation_service.exclude_device_from_run(FakeSession(), device_id, reason="bad", commit=False)
+    svc = run_reservation_service.RunReservationService()
+    result = await svc.exclude_device_from_run(FakeSession(), device_id, reason="bad", commit=False)
 
     assert result is run
     assert entry.excluded is True
@@ -79,7 +80,8 @@ async def test_exclude_device_from_run_noops_when_already_excluded_for_same_reas
         AsyncMock(return_value=(run, entry)),
     )
 
-    result = await run_reservation_service.exclude_device_from_run(db, uuid.uuid4(), reason="bad")
+    svc = run_reservation_service.RunReservationService()
+    result = await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad")
 
     assert result is run
     assert db.committed is False
@@ -107,7 +109,8 @@ async def test_restore_device_to_run_updates_excluded_entry(monkeypatch) -> None
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
-    result = await run_reservation_service.restore_device_to_run(db, uuid.uuid4())
+    svc = run_reservation_service.RunReservationService()
+    result = await svc.restore_device_to_run(db, uuid.uuid4())
 
     assert result is refreshed
     assert db.committed is True
@@ -124,11 +127,12 @@ async def test_restore_device_to_run_noops_for_temporary_or_active_entries(monke
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, temporary)),
     )
-    assert await run_reservation_service.restore_device_to_run(FakeSession(), uuid.uuid4()) is run
+    svc = run_reservation_service.RunReservationService()
+    assert await svc.restore_device_to_run(FakeSession(), uuid.uuid4()) is run
 
     active = SimpleNamespace(excluded=False, excluded_until=None)
     run_reservation_service.get_device_reservation_with_entry.return_value = (run, active)
-    assert await run_reservation_service.restore_device_to_run(FakeSession(), uuid.uuid4()) is run
+    assert await svc.restore_device_to_run(FakeSession(), uuid.uuid4()) is run
 
 
 async def test_get_run_and_device_reservation_query_result_shapes() -> None:
@@ -175,10 +179,11 @@ async def test_exclude_and_restore_commit_refresh_paths(monkeypatch) -> None:  #
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
-    assert await run_reservation_service.exclude_device_from_run(db, uuid.uuid4(), reason="bad") is refreshed
+    svc = run_reservation_service.RunReservationService()
+    assert await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad") is refreshed
     assert db.committed is True
 
     entry.excluded = True
     db.committed = False
-    assert await run_reservation_service.restore_device_to_run(db, uuid.uuid4()) is refreshed
+    assert await svc.restore_device_to_run(db, uuid.uuid4()) is refreshed
     assert db.committed is True

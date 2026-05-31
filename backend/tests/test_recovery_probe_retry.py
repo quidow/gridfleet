@@ -18,11 +18,12 @@ if TYPE_CHECKING:
 def _make_svc(viability: object) -> object:
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     return LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=viability,  # type: ignore[arg-type]
     )
 
@@ -119,6 +120,7 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
+    from app.runs.service_reservation import RunReservationService
     from tests.helpers import create_device
 
     device = await create_device(db_session, host_id=db_host.id, name="dw-publisher-forward", verified=True)
@@ -146,7 +148,7 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     svc = LifecyclePolicyService(
         publisher=publisher,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=publisher),
+        actions=LifecyclePolicyActionsService(publisher=publisher, reservation=RunReservationService()),
         viability=Mock(),
     )
     with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=_capture_probe):

@@ -561,8 +561,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     reservation_db.execute = AsyncMock(
         return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
     )
-    assert await run_reservation_service.exclude_device_from_run(reservation_db, uuid.uuid4(), reason="r") is None
-    assert await run_reservation_service.restore_device_to_run(reservation_db, uuid.uuid4()) is None
+    svc = run_reservation_service.RunReservationService()
+    assert await svc.exclude_device_from_run(reservation_db, uuid.uuid4(), reason="r") is None
+    assert await svc.restore_device_to_run(reservation_db, uuid.uuid4()) is None
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))

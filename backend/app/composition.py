@@ -72,6 +72,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
+from app.runs.service_reservation import RunReservationService
 from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
@@ -151,7 +152,8 @@ def compose_app(
     )
 
     device_state_svc = DeviceStateService(publisher=bus)
-    lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus)
+    reservation_svc = RunReservationService()
+    lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
     viability_svc = SessionViabilityService(publisher=bus, settings=settings_svc, session_factory=session_factory)
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc, viability=viability_svc
@@ -189,6 +191,7 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         maintenance=maintenance_svc,
         lifecycle_actions=lifecycle_actions_svc,
+        reservation=reservation_svc,
     )
     run_query = RunQueryService()
 
@@ -268,6 +271,7 @@ def compose_app(
             lifecycle=run_lifecycle,
             release=run_release,
             failure=run_failure,
+            reservation=reservation_svc,
             query=run_query,
             settings=settings_svc,
             session_factory=session_factory,

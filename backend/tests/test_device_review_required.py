@@ -19,6 +19,7 @@ from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.review import clear_review_required, mark_review_required
+from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
@@ -135,8 +136,6 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
 
 
 async def test_restore_device_to_run_clears_review_required(db_session: AsyncSession, db_host: Host) -> None:
-    from app.runs import service as run_service
-
     device = await create_device(db_session, host_id=db_host.id, name="review-cleared-on-restore")
     await create_reserved_run(db_session, name="run-for-restore", devices=[device])
 
@@ -158,7 +157,7 @@ async def test_restore_device_to_run_clears_review_required(db_session: AsyncSes
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await run_service.restore_device_to_run(db_session, device.id)
+    await RunReservationService().restore_device_to_run(db_session, device.id)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -250,7 +249,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=settings,
-        actions=LifecyclePolicyActionsService(publisher=Mock()),
+        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=viability,
     )
     with patch(
@@ -300,7 +299,7 @@ async def test_review_required_short_circuits_auto_recovery(
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=viability_mock,
     )
     recovered = await svc.attempt_auto_recovery(

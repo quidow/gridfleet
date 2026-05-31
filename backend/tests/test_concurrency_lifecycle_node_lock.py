@@ -10,6 +10,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import lifecycle_policy_actions, state_write_guard
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
+from app.runs.service_reservation import RunReservationService
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -56,7 +57,8 @@ async def test_handle_node_crash_locks_appium_node(
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
             with patch("app.devices.services.lifecycle_policy_actions.record_event", racing_record_event):
-                await LifecyclePolicyActionsService(publisher=Mock()).handle_node_crash(
+                svc = LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService())
+                await svc.handle_node_crash(
                     session,
                     target,
                     source="test",

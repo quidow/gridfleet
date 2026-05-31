@@ -14,6 +14,7 @@ from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.hosts.models import Host
+from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -104,7 +105,7 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(publisher=event_bus),
+            actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
             viability=viability,
         ).attempt_auto_recovery(
             db_session,
@@ -178,7 +179,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     recovered = await LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
     ).attempt_auto_recovery(
         db_session,

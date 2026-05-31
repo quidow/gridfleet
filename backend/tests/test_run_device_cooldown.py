@@ -584,6 +584,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.hosts.models import Host
+    from app.runs.service_reservation import RunReservationService
 
     host = await db_session.get(Host, default_host_id)
     assert host is not None
@@ -625,7 +626,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     recovered = await LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
     ).attempt_auto_recovery(
         db_session,

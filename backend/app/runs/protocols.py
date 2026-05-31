@@ -161,3 +161,19 @@ class DeviceLifecycleFailureWriter(Protocol):
         reason: str,
         source: str,
     ) -> None: ...
+
+
+@runtime_checkable
+class RunReservationProtocol(Protocol):
+    async def exclude_device_from_run(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        reason: str,
+        revoke_run_intents: bool = ...,
+        commit: bool = ...,
+    ) -> TestRun | None: ...
+    async def restore_device_to_run(
+        self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
+    ) -> TestRun | None: ...

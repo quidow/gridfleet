@@ -24,11 +24,7 @@ from app.devices.services.intent_types import (
     RunActivePrecondition,
 )
 from app.runs.models import TERMINAL_STATES, TestRun
-from app.runs.service_reservation import get_run
-from app.runs.service_reservation_lookup import (
-    exclude_device_from_run,
-    get_reservation_entry_for_device,
-)
+from app.runs.service_reservation import get_reservation_entry_for_device, get_run
 
 if TYPE_CHECKING:
     import uuid
@@ -38,7 +34,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.runs.protocols import DeviceLifecycleFailureWriter, MaintenanceWriter
+    from app.runs.protocols import DeviceLifecycleFailureWriter, MaintenanceWriter, RunReservationProtocol
 
 
 def _cooldown_intents(
@@ -102,12 +98,14 @@ class RunFailureService:
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceWriter,
         lifecycle_actions: DeviceLifecycleFailureWriter,
+        reservation: RunReservationProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._maintenance = maintenance
         self._lifecycle_actions = lifecycle_actions
+        self._reservation = reservation
 
     async def report_preparation_failure(
         self,
@@ -137,7 +135,9 @@ class RunFailureService:
         except NoResultFound:
             raise ValueError("Device not found") from None
 
-        run = await exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        run = await self._reservation.exclude_device_from_run(
+            db, device.id, reason=reason, revoke_run_intents=True, commit=False
+        )
         assert run is not None
 
         await self._lifecycle_actions.record_ci_preparation_failed(
