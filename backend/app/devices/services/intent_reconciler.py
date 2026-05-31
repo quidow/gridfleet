@@ -417,6 +417,13 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
         await _stage_agent_reconfigure(db, node)
     await db.flush()
 
+    try:
+        from app.devices.services.state_derivation import compare_shadow_state  # noqa: PLC0415
+
+        await compare_shadow_state(db, device, now=now)
+    except Exception:  # noqa: BLE001 - shadow comparison must never break reconcile
+        logger.warning("device-state shadow comparison failed for %s", device_id, exc_info=True)
+
 
 async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
     count = await db.scalar(

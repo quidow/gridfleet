@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 SHADOW_STATE_MISMATCH = Counter(
     "gridfleet_device_state_shadow_mismatch_total",
@@ -123,3 +126,42 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
         ready=ready,
         is_reserved=is_reserved,
     )
+
+
+async def compare_shadow_state(db: AsyncSession, device: Device, *, now: datetime) -> bool:
+    """Derive (operational_state, hold), compare to the persisted columns, record divergence.
+
+    Writes NOTHING — observation only. Returns True if either axis diverged.
+
+    The snapshot of persisted values is taken *before* ``gather_device_state_facts``
+    because that function reloads the device row from DB via the same session, which
+    may update the in-memory object's attributes in-place (SQLAlchemy identity map).
+    Comparing against the snapshot preserves the original persisted values for the diff.
+    """
+    persisted_op = device.operational_state
+    persisted_hold = device.hold
+
+    facts = await gather_device_state_facts(db, device, now=now)
+    derived_op = evaluate_operational_state(facts)
+    derived_hold = evaluate_hold(facts)
+
+    mismatched = False
+    if derived_op is not persisted_op:
+        SHADOW_STATE_MISMATCH.labels(axis="operational").inc()
+        mismatched = True
+    if derived_hold is not persisted_hold:
+        SHADOW_STATE_MISMATCH.labels(axis="hold").inc()
+        mismatched = True
+
+    if mismatched:
+        logger.info(
+            "device-state shadow mismatch device_id=%s op(persisted=%s derived=%s) "
+            "hold(persisted=%s derived=%s) facts=%s",
+            device.id,
+            persisted_op.value,
+            derived_op.value,
+            persisted_hold.value if persisted_hold else None,
+            derived_hold.value if derived_hold else None,
+            facts,
+        )
+    return mismatched
