@@ -10,7 +10,6 @@ from app.agent_comm.operations import pack_device_health as fetch_pack_device_he
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
-from app.appium_nodes.services.reconciler import converge_device_now
 from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wait_for_node_running
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
@@ -40,7 +39,12 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
-    from app.devices.protocols import DeviceCapabilityProtocol, DeviceCrudProtocol, SessionViabilityProbe
+    from app.devices.protocols import (
+        DeviceCapabilityProtocol,
+        DeviceCrudProtocol,
+        NodeConvergence,
+        SessionViabilityProbe,
+    )
     from app.devices.services.verification_preparation import PreparedVerificationContext
     from app.events.protocols import EventPublisher
 
@@ -65,6 +69,7 @@ class VerificationExecutionService:
         crud: DeviceCrudProtocol,
         viability: SessionViabilityProbe,
         capability: DeviceCapabilityProtocol,
+        reconciler: NodeConvergence,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -72,6 +77,7 @@ class VerificationExecutionService:
         self._crud = crud
         self._viability = viability
         self._capability = capability
+        self._reconciler = reconciler
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -177,13 +183,7 @@ class VerificationExecutionService:
             # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
             if self._publisher is not None:
                 try:
-                    await converge_device_now(
-                        device.id,
-                        publisher=self._publisher,
-                        db=db,
-                        settings=self._settings,
-                        circuit_breaker=self._circuit_breaker,
-                    )
+                    await self._reconciler.converge_device_now(device.id, db=db)
                 except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
                     logger.warning(
                         "verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)}

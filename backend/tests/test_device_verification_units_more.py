@@ -26,19 +26,6 @@ from tests.helpers import test_event_bus as event_bus
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
-@pytest.fixture(autouse=True)
-def _stub_converge_device_now(monkeypatch: pytest.MonkeyPatch) -> None:
-    # run_probe wraps converge_device_now in a best-effort try/except, but the
-    # real implementation still issues an httpx connect to the test host IP
-    # before the error is swallowed. Stubbing here keeps each run_probe call
-    # from paying the connect-timeout penalty.
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.converge_device_now",
-        AsyncMock(return_value=None),
-        raising=False,
-    )
-
-
 def _job() -> dict[str, object]:
     return new_job("unit-job")
 
@@ -94,6 +81,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     assert await svc.run_device_health(job, _device(None), http_client_factory=object) is None
     assert job["current_stage"] == "device_health"
@@ -111,6 +99,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_device_health(_job(), device, http_client_factory=object)
     assert detail == "Agent health check failed: down"
 
@@ -126,6 +115,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
@@ -143,6 +133,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         == "adb ready failed (no)"
     )
@@ -186,6 +177,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).stop_existing_managed_node_for_update(_job(), db_session, context)
     assert detail is not None
     assert "stop failed" in detail
@@ -200,6 +192,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_probe(
         _job(),
         db_session,
@@ -222,6 +215,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_probe(
         _job(),
         db_session,
@@ -255,6 +249,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_probe(
         _job(),
         db_session,
@@ -316,11 +311,6 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
     )
     converge_mock = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.converge_device_now",
-        converge_mock,
-        raising=False,
-    )
 
     await VerificationExecutionService(
         publisher=Mock(),
@@ -329,6 +319,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=SimpleNamespace(converge_device_now=converge_mock),
     ).run_probe(
         _job(),
         db_session,
@@ -339,7 +330,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     converge_mock.assert_awaited_once()
     call_args = converge_mock.await_args
     assert call_args is not None
-    assert call_args.args[0] == existing.id or call_args.kwargs.get("device_id") == existing.id
+    assert call_args.args[0] == existing.id
 
 
 async def test_run_probe_marks_device_inflight_during_probe_session(
@@ -377,11 +368,6 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         AsyncMock(return_value=running_node),
     )
     monkeypatch.setattr(
-        "app.devices.services.verification_execution.converge_device_now",
-        AsyncMock(return_value=None),
-        raising=False,
-    )
-    monkeypatch.setattr(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
     )
@@ -401,6 +387,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_probe(
         _job(),
         db_session,
@@ -443,11 +430,6 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
         AsyncMock(return_value=running_node),
     )
     monkeypatch.setattr(
-        "app.devices.services.verification_execution.converge_device_now",
-        AsyncMock(return_value=None),
-        raising=False,
-    )
-    monkeypatch.setattr(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
     )
@@ -465,6 +447,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             crud=DeviceCrudService(settings=FakeSettingsReader({})),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_probe(
             _job(),
             db_session,
@@ -603,6 +586,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     svc.stop_existing_managed_node_for_update = AsyncMock(return_value="stop failed")  # type: ignore[method-assign]
     outcome = await svc.execute_verification_context(
@@ -701,6 +685,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         crud=DeviceCrudService(settings=FakeSettingsReader({})),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     svc2.stop_existing_managed_node_for_update = AsyncMock(return_value=None)  # type: ignore[method-assign]
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]

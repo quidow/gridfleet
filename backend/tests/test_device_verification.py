@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
-import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -68,18 +67,6 @@ async def reset_verification_jobs(db_session: AsyncSession) -> AsyncGenerator[No
     await VerificationService().clear_verification_jobs(session_factory=session_factory)
     yield
     await VerificationService().clear_verification_jobs(session_factory=session_factory)
-
-
-@pytest.fixture(autouse=True)
-def _stub_converge_device_now(monkeypatch: pytest.MonkeyPatch) -> None:
-    # run_probe wraps converge_device_now in a best-effort try/except, but the
-    # real call still issues an httpx connect to the test host IP before the
-    # error is swallowed — that's the per-verification-test latency hot spot.
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.converge_device_now",
-        AsyncMock(return_value=None),
-        raising=False,
-    )
 
 
 @pytest_asyncio.fixture
@@ -156,6 +143,7 @@ async def _wait_for_job(
                     crud=DeviceCrudService(settings=settings_service),
                     viability=_viability,
                     capability=DeviceCapabilityService(),
+                    reconciler=AsyncMock(),
                 ),
                 viability=_viability,
             ),
@@ -1458,6 +1446,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     crud=DeviceCrudService(settings=settings_service),
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
+                    reconciler=AsyncMock(),
                 ),
                 viability=_viability2,
             ),

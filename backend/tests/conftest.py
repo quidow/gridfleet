@@ -19,7 +19,12 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.dependencies import get_agent_comm_services
 from app.agent_comm.http_pool import AgentHttpPool
 from app.agent_comm.services_container import AgentCommServices
+from app.appium_nodes.dependencies import get_appium_node_services
+from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
+from app.appium_nodes.services.node_health import NodeHealthService
+from app.appium_nodes.services.reconciler import ReconcilerService
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.leader import models as _leader_models  # noqa: F401  # Ensure leader ORM models are registered.
@@ -571,6 +576,39 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         plugin_svc = PluginService(settings=settings_service, circuit_breaker=test_circuit_breaker)
         return PluginServices(plugin=plugin_svc, session_factory=sf)
 
+    def override_get_appium_node_services() -> AppiumNodeServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        _grid_svc = GridService(settings=settings_service)
+        return AppiumNodeServices(
+            reconciler=ReconcilerService(
+                publisher=test_event_bus,
+                settings=settings_service,
+                pool=test_http_pool,
+                circuit_breaker=test_circuit_breaker,
+                session_factory=sf,
+            ),
+            node_health=NodeHealthService(
+                publisher=test_event_bus,
+                settings=settings_service,
+                pool=test_http_pool,
+                circuit_breaker=test_circuit_breaker,
+                grid=_grid_svc,
+                recovery_control=Mock(),
+            ),
+            heartbeat=HeartbeatService(
+                publisher=test_event_bus,
+                settings=settings_service,
+                pool=test_http_pool,
+                circuit_breaker=test_circuit_breaker,
+                session_factory=sf,
+            ),
+            settings=settings_service,
+            session_factory=sf,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
@@ -582,6 +620,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_grid_services] = override_get_grid_services
     app.dependency_overrides[get_pack_services] = override_get_pack_services
     app.dependency_overrides[get_plugin_services] = override_get_plugin_services
+    app.dependency_overrides[get_appium_node_services] = override_get_appium_node_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

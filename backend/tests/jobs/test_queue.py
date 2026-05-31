@@ -51,6 +51,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
+                reconciler=AsyncMock(),
             ),
             viability=Mock(),
         ),

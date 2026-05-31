@@ -199,6 +199,14 @@ def compose_app(
     )
     run_query = RunQueryService(capability=device_capability_svc)
 
+    reconciler_svc = ReconcilerService(
+        publisher=bus,
+        settings=settings_svc,
+        pool=http_pool,
+        circuit_breaker=circuit_breaker,
+        session_factory=session_factory,
+    )
+
     verification_preparation_svc = VerificationPreparationService(
         settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
     )
@@ -209,6 +217,7 @@ def compose_app(
         crud=crud_svc,
         viability=viability_svc,
         capability=device_capability_svc,
+        reconciler=reconciler_svc,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -308,13 +317,7 @@ def compose_app(
             session_factory=session_factory,
         ),
         appium_nodes=AppiumNodeServices(
-            reconciler=ReconcilerService(
-                publisher=bus,
-                settings=settings_svc,
-                pool=http_pool,
-                circuit_breaker=circuit_breaker,
-                session_factory=session_factory,
-            ),
+            reconciler=reconciler_svc,
             node_health=NodeHealthService(
                 publisher=bus,
                 settings=settings_svc,

@@ -50,6 +50,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             crud=DeviceCrudService(settings=settings),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
@@ -67,6 +68,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             crud=DeviceCrudService(settings=_s2),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
@@ -80,6 +82,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         crud=DeviceCrudService(settings=_s3),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
@@ -92,6 +95,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             crud=DeviceCrudService(settings=_s4),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
@@ -154,6 +158,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         crud=DeviceCrudService(settings=_s5),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     with pytest.raises(NodeManagerError, match="no persisted device id"):
         await svc.execute_verification_context(
@@ -181,6 +186,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         crud=DeviceCrudService(settings=_s6),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
@@ -285,6 +291,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
             crud=DeviceCrudService(settings=settings),
             viability=Mock(),
             capability=DeviceCapabilityService(),
+            reconciler=AsyncMock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
