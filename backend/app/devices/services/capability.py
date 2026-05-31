@@ -111,70 +111,61 @@ async def _get_live_active_connection_target(db: AsyncSession, device: Device) -
     return active_connection_target
 
 
-async def get_device_capabilities(
-    db: AsyncSession,
-    device: Device,
-    *,
-    active_connection_target: str | None = None,
-) -> dict[str, Any]:
-    """Fetch the automation name from the pack catalog and build capabilities for *device*."""
-    automation_name: str | None = None
-    appium_platform_name: str | None = None
-    pack_caps: dict[str, Any] = {}
-    manager_owned = appium_capability_keys.core_manager_owned_cap_keys()
-    resolved = resolve_pack_for_device(device)
-    if resolved is not None:
-        pack_id, platform_id = resolved
-        device_context = build_device_context(device)
-        try:
-            stereotype = await render_stereotype(
-                db,
-                pack_id=pack_id,
-                platform_id=platform_id,
-                device_context=device_context,
-            )
-            automation_name = stereotype.get("appium:automationName")
-            appium_platform_name = stereotype.get("platformName")
-        except LookupError:
-            logger.debug("Stereotype not found for pack=%s platform=%s", pack_id, platform_id, exc_info=True)
-        try:
-            resolved_plat = await resolve_pack_platform(
-                db,
-                pack_id=pack_id,
-                platform_id=platform_id,
-                device_type=device.device_type.value if device.device_type else None,
-            )
-            manager_owned = appium_capability_keys.manager_owned_cap_keys(
-                frozenset(port.capability_name for port in resolved_plat.parallel_resources.ports)
-            )
-            if appium_platform_name is None:
-                appium_platform_name = resolved_plat.appium_platform_name
-            pack_caps.update(render_default_capabilities(resolved_plat, device_context=device_context))
-            pack_caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
-        except LookupError:
-            raise
-    user_caps = appium_capability_keys.sanitize_appium_caps(
-        (device.device_config or {}).get("appium_caps"),
-        manager_owned=manager_owned,
-    )
-    if device.appium_node is None or not device.appium_node.observed_running:
-        live_caps = {}
-    else:
-        live_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)
-    if active_connection_target is None:
-        active_connection_target = await _get_live_active_connection_target(db, device)
-    overlay = {**pack_caps, **user_caps, **live_caps}
-    return build_capabilities(
-        device,
-        automation_name,
-        appium_platform_name=appium_platform_name,
-        session_caps=overlay,
-        active_connection_target=active_connection_target,
-    )
-
-
 class DeviceCapabilityService:
     async def get_device_capabilities(
         self, db: AsyncSession, device: Device, *, active_connection_target: str | None = None
     ) -> dict[str, Any]:
-        return await get_device_capabilities(db, device, active_connection_target=active_connection_target)
+        """Fetch the automation name from the pack catalog and build capabilities for *device*."""
+        automation_name: str | None = None
+        appium_platform_name: str | None = None
+        pack_caps: dict[str, Any] = {}
+        manager_owned = appium_capability_keys.core_manager_owned_cap_keys()
+        resolved = resolve_pack_for_device(device)
+        if resolved is not None:
+            pack_id, platform_id = resolved
+            device_context = build_device_context(device)
+            try:
+                stereotype = await render_stereotype(
+                    db,
+                    pack_id=pack_id,
+                    platform_id=platform_id,
+                    device_context=device_context,
+                )
+                automation_name = stereotype.get("appium:automationName")
+                appium_platform_name = stereotype.get("platformName")
+            except LookupError:
+                logger.debug("Stereotype not found for pack=%s platform=%s", pack_id, platform_id, exc_info=True)
+            try:
+                resolved_plat = await resolve_pack_platform(
+                    db,
+                    pack_id=pack_id,
+                    platform_id=platform_id,
+                    device_type=device.device_type.value if device.device_type else None,
+                )
+                manager_owned = appium_capability_keys.manager_owned_cap_keys(
+                    frozenset(port.capability_name for port in resolved_plat.parallel_resources.ports)
+                )
+                if appium_platform_name is None:
+                    appium_platform_name = resolved_plat.appium_platform_name
+                pack_caps.update(render_default_capabilities(resolved_plat, device_context=device_context))
+                pack_caps.update(render_device_field_capabilities(resolved_plat, device.device_config or {}))
+            except LookupError:
+                raise
+        user_caps = appium_capability_keys.sanitize_appium_caps(
+            (device.device_config or {}).get("appium_caps"),
+            manager_owned=manager_owned,
+        )
+        if device.appium_node is None or not device.appium_node.observed_running:
+            live_caps = {}
+        else:
+            live_caps = await appium_node_resource_service.get_capabilities(db, node_id=device.appium_node.id)
+        if active_connection_target is None:
+            active_connection_target = await _get_live_active_connection_target(db, device)
+        overlay = {**pack_caps, **user_caps, **live_caps}
+        return build_capabilities(
+            device,
+            automation_name,
+            appium_platform_name=appium_platform_name,
+            session_caps=overlay,
+            active_connection_target=active_connection_target,
+        )

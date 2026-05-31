@@ -317,7 +317,7 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
         ),
         patch("app.devices.services.capability.appium_capability_keys.sanitize_appium_caps", return_value={}),
     ):
-        caps = await capability_service.get_device_capabilities(db, device)
+        caps = await capability_service.DeviceCapabilityService().get_device_capabilities(db, device)
 
     assert caps["appium:automationName"] == "UiAutomator2"
     assert caps["appium:systemPort"] == 8200
@@ -338,7 +338,7 @@ async def test_get_device_capabilities_raises_when_pack_platform_is_missing() ->
         ),
     ):
         try:
-            await capability_service.get_device_capabilities(db, device)
+            await capability_service.DeviceCapabilityService().get_device_capabilities(db, device)
         except LookupError:
             return
 
