@@ -267,6 +267,7 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
     services = AppiumNodeServices(
         settings=FakeSettingsReader({}),
         reconciler=reconciler,
+        reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=Mock(),
         session_factory=lambda: Session(),

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
+from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.services import state_write_guard
 from app.main import app
 from tests.helpers import create_device_record, create_host
@@ -76,7 +77,7 @@ async def test_start_node_node_manager_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodeManagerError("simulated start failure")
 
-    monkeypatch.setattr(node_manager, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 400
@@ -95,7 +96,7 @@ async def test_start_node_port_conflict_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodePortConflictError("port already in use")
 
-    monkeypatch.setattr(node_manager, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 400
@@ -115,7 +116,7 @@ async def test_start_node_unexpected_exception_bubbles_to_500(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise RuntimeError("unexpected bug")
 
-    monkeypatch.setattr(node_manager, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
 
     from collections.abc import AsyncGenerator
 
@@ -164,7 +165,7 @@ async def test_stop_node_node_manager_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodeManagerError("simulated stop failure")
 
-    monkeypatch.setattr(node_manager, "stop_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "stop_node", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert resp.status_code == 400

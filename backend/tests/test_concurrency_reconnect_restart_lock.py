@@ -71,7 +71,6 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         return device.appium_node
 
     monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
-    monkeypatch.setattr(devices_control.node_manager, "restart_node", fake_restart_node)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:
@@ -81,6 +80,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
                 device_services=SimpleNamespace(crud=DeviceCrudService(settings=FakeSettingsReader({}))),
                 settings_services=SimpleNamespace(service=FakeSettingsReader({})),
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                appium_services=SimpleNamespace(reconciler_agent=SimpleNamespace(restart_node=fake_restart_node)),
             )
 
     async def enter_maintenance_before_restart() -> None:

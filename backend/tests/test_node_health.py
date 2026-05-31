@@ -1537,6 +1537,7 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
         services=AppiumNodeServices(
             settings=settings,
             reconciler=MagicMock(),
+            reconciler_agent=MagicMock(),
             node_health=node_health_svc,
             heartbeat=MagicMock(),
             session_factory=fake_session,

@@ -205,6 +205,7 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
     services = AppiumNodeServices(
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": 0.01}),
         reconciler=Mock(),
+        reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=heartbeat_svc,
         session_factory=lambda: Session(),
