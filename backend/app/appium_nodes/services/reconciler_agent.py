@@ -9,6 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
 
 import httpx
@@ -53,7 +54,6 @@ from app.devices.services.lifecycle_policy_actions import (
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
-from app.devices.services.operator_node_lifecycle import request_restart, request_start, request_stop
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
@@ -796,8 +796,9 @@ async def _start_for_node(
 
 
 class ReconcilerAgentService:
-    def __init__(self, *, settings: SettingsReader) -> None:
+    def __init__(self, *, settings: SettingsReader, operator: OperatorNodeManager) -> None:
         self._settings = settings
+        self._operator = operator
 
     async def start_node(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
@@ -814,9 +815,7 @@ class ReconcilerAgentService:
         if caller != "verification" and not await is_ready_for_use_async(db, device):
             raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
-        node = await request_start(
-            db, device, caller=caller, reason=f"{caller} start requested", settings=self._settings
-        )
+        node = await self._operator.request_start(db, device, caller=caller, reason=f"{caller} start requested")
         await db.commit()
         await db.refresh(node)
         return node
@@ -832,7 +831,7 @@ class ReconcilerAgentService:
         if not node or not node.observed_running:
             raise NodeManagerError(f"No running node for device {device.id}")
 
-        node = await request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
+        node = await self._operator.request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
         await db.commit()
         await db.refresh(node)
         return node
@@ -848,9 +847,7 @@ class ReconcilerAgentService:
         if not device.appium_node or not device.appium_node.observed_running:
             return await self.start_node(db, device, caller=caller)
 
-        node = await request_restart(
-            db, device, caller=caller, reason=f"{caller} restart requested", settings=self._settings
-        )
+        node = await self._operator.request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
         await db.commit()
         await db.refresh(node)
         return node

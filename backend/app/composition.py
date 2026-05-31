@@ -37,6 +37,7 @@ from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -164,7 +165,8 @@ def compose_app(
     viability_svc = SessionViabilityService(
         publisher=bus, settings=settings_svc, session_factory=session_factory, capability=device_capability_svc
     )
-    reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc)
+    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc)
+    reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc, operator=operator_node_lifecycle_svc)
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus,
         settings=settings_svc,
@@ -188,6 +190,7 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         maintenance=maintenance_svc,
         crud=crud_svc,
+        operator=operator_node_lifecycle_svc,
     )
 
     run_release = RunReleaseService(

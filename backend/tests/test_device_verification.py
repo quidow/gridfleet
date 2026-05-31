@@ -18,6 +18,7 @@ from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification import VerificationService
@@ -148,7 +149,10 @@ async def _wait_for_job(
                     reconciler=AsyncMock(),
                     node_manager=node_manager
                     if node_manager is not None
-                    else ReconcilerAgentService(settings=settings_service),
+                    else ReconcilerAgentService(
+                        settings=settings_service,
+                        operator=OperatorNodeLifecycleService(settings=settings_service),
+                    ),
                 ),
                 viability=_viability,
             ),
@@ -1456,7 +1460,10 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
-                    node_manager=ReconcilerAgentService(settings=settings_service),
+                    node_manager=ReconcilerAgentService(
+                        settings=settings_service,
+                        operator=OperatorNodeLifecycleService(settings=settings_service),
+                    ),
                 ),
                 viability=_viability2,
             ),

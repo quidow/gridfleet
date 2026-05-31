@@ -237,6 +237,7 @@ async def test_operator_start_intent_payload_shape(
     db_host: Host,
 ) -> None:
     from app.devices.services.bulk import _bulk_start_one
+    from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 
     device = await create_device(
         db_session,
@@ -251,7 +252,9 @@ async def test_operator_start_intent_payload_shape(
     # synchronously via device.appium_node.  Without eager loading the attribute
     # access triggers a lazy load in an async context and raises MissingGreenlet.
     device = await device_locking.lock_device(db_session, device.id)
-    await _bulk_start_one(db_session, device, caller="operator", settings=FakeSettingsReader({}))
+    await _bulk_start_one(
+        db_session, device, caller="operator", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
     payload = intent.payload

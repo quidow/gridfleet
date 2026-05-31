@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
@@ -26,6 +27,7 @@ def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
         circuit_breaker=MagicMock(),
         maintenance=maintenance or MaintenanceService(publisher=event_bus),
         crud=DeviceCrudService(settings=_settings),
+        operator=OperatorNodeLifecycleService(settings=_settings),
     )
 
 

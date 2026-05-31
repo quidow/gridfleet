@@ -16,11 +16,6 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.operator_node_lifecycle import (
-    request_restart,
-    request_start,
-    request_stop,
-)
 from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -33,7 +28,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import DeviceCrudProtocol, MaintenanceProtocol
+    from app.devices.protocols import DeviceCrudProtocol, MaintenanceProtocol, OperatorNodeLifecycleProtocol
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
 
@@ -75,22 +70,30 @@ def _result(total: int, succeeded: int, errors: dict[str, str]) -> dict[str, Any
     return {"total": total, "succeeded": succeeded, "failed": total - succeeded, "errors": errors}
 
 
-async def _bulk_start_one(db: AsyncSession, device: Device, caller: str, *, settings: SettingsReader) -> AppiumNode:
-    return await request_start(
-        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested", settings=settings
+async def _bulk_start_one(
+    db: AsyncSession, device: Device, caller: str, *, operator: OperatorNodeLifecycleProtocol
+) -> AppiumNode:
+    return await operator.request_start(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} start requested"
     )
 
 
-async def _bulk_stop_one(db: AsyncSession, device: Device, caller: str) -> AppiumNode:
+async def _bulk_stop_one(
+    db: AsyncSession, device: Device, caller: str, *, operator: OperatorNodeLifecycleProtocol
+) -> AppiumNode:
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    return await request_stop(db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested")
+    return await operator.request_stop(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} stop requested"
+    )
 
 
-async def _bulk_restart_one(db: AsyncSession, device: Device, caller: str, *, settings: SettingsReader) -> AppiumNode:
-    return await request_restart(
-        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested", settings=settings
+async def _bulk_restart_one(
+    db: AsyncSession, device: Device, caller: str, *, operator: OperatorNodeLifecycleProtocol
+) -> AppiumNode:
+    return await operator.request_restart(
+        db, device, caller=cast("DesiredStateCaller", caller), reason=f"{caller} restart requested"
     )
 
 
@@ -147,12 +150,14 @@ class BulkOperationsService:
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceProtocol,
         crud: DeviceCrudProtocol,
+        operator: OperatorNodeLifecycleProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._maintenance = maintenance
         self._crud = crud
+        self._operator = operator
 
     async def bulk_start_nodes(
         self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
@@ -161,7 +166,7 @@ class BulkOperationsService:
             db,
             device_ids,
             operation="start_nodes",
-            action_fn=partial(_bulk_start_one, settings=self._settings),
+            action_fn=partial(_bulk_start_one, operator=self._operator),
             caller=caller,
             publisher=self._publisher,
         )
@@ -173,7 +178,7 @@ class BulkOperationsService:
             db,
             device_ids,
             operation="stop_nodes",
-            action_fn=_bulk_stop_one,
+            action_fn=partial(_bulk_stop_one, operator=self._operator),
             caller=caller,
             publisher=self._publisher,
         )
@@ -185,7 +190,7 @@ class BulkOperationsService:
             db,
             device_ids,
             operation="restart_nodes",
-            action_fn=partial(_bulk_restart_one, settings=self._settings),
+            action_fn=partial(_bulk_restart_one, operator=self._operator),
             caller=caller,
             publisher=self._publisher,
         )

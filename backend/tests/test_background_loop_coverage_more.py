@@ -29,6 +29,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -84,6 +85,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_1,
                 crud=_svc_crud_1,
+                operator=OperatorNodeLifecycleService(settings=_svc_settings_1),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_1),
             test_data=TestDataService(publisher=_svc_pub_1),
@@ -137,6 +139,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_2,
                 crud=_svc_crud_2,
+                operator=OperatorNodeLifecycleService(settings=_svc_settings_2),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_2),
             test_data=TestDataService(publisher=_svc_pub_2),
@@ -255,6 +258,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_3,
                 crud=_svc_crud_3,
+                operator=OperatorNodeLifecycleService(settings=_svc_settings_3),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_3),
             test_data=TestDataService(publisher=_svc_pub_3),
@@ -354,6 +358,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_4,
                 crud=_svc_crud_4,
+                operator=OperatorNodeLifecycleService(settings=_svc_settings_4),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_4),
             test_data=TestDataService(publisher=_svc_pub_4),

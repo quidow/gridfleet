@@ -9,7 +9,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.bulk import BulkOperationsService
-from app.devices.services.operator_node_lifecycle import operator_stop_sources
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService, operator_stop_sources
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -48,6 +48,7 @@ def _svc(
     maintenance: object | None = None,
     settings: object | None = None,
     circuit_breaker: object | None = None,
+    operator: object | None = None,
 ) -> BulkOperationsService:
     _settings = settings or FakeSettingsReader({})
     return BulkOperationsService(
@@ -56,51 +57,56 @@ def _svc(
         circuit_breaker=circuit_breaker or MagicMock(),
         maintenance=maintenance or MagicMock(),
         crud=DeviceCrudService(settings=_settings),
+        operator=operator or OperatorNodeLifecycleService(settings=_settings),  # type: ignore[arg-type]
     )
 
 
-async def test_node_action_helpers_delegate_to_request_functions(monkeypatch: pytest.MonkeyPatch) -> None:
-    """After Task 8, _bulk_*_one are thin wrappers over request_start/stop/restart."""
+async def test_node_action_helpers_delegate_to_operator_service() -> None:
+    """_bulk_*_one are thin wrappers over operator.request_start/stop/restart."""
     db = _db()
     returned_node = SimpleNamespace(observed_running=True, port=4723)
 
-    request_start_mock = AsyncMock(return_value=returned_node)
-    request_stop_mock = AsyncMock(return_value=returned_node)
-    request_restart_mock = AsyncMock(return_value=returned_node)
-    monkeypatch.setattr(bulk_service, "request_start", request_start_mock)
-    monkeypatch.setattr(bulk_service, "request_stop", request_stop_mock)
-    monkeypatch.setattr(bulk_service, "request_restart", request_restart_mock)
+    mock_operator = SimpleNamespace(
+        request_start=AsyncMock(return_value=returned_node),
+        request_stop=AsyncMock(return_value=returned_node),
+        request_restart=AsyncMock(return_value=returned_node),
+    )
 
-    # _bulk_start_one delegates to request_start; commit is the orchestrator's
+    # _bulk_start_one delegates to operator.request_start; commit is the orchestrator's
     # responsibility (_run_per_device_node_action._one commits per-device session).
     device = _device()
-    node = await bulk_service._bulk_start_one(db, device, "operator", settings=FakeSettingsReader({}))
+    node = await bulk_service._bulk_start_one(db, device, "operator", operator=mock_operator)  # type: ignore[arg-type]
     assert node is returned_node
-    request_start_mock.assert_awaited_once()
-    assert request_start_mock.call_args.kwargs["reason"] == "operator start requested"
+    mock_operator.request_start.assert_awaited_once()
+    assert mock_operator.request_start.call_args.kwargs["reason"] == "operator start requested"
     db.commit.assert_not_awaited()
 
     # _bulk_stop_one raises NodeManagerError when node is None or not running
     with pytest.raises(NodeManagerError, match="No running node"):
-        await bulk_service._bulk_stop_one(db, _device(appium_node=None), "operator")
+        await bulk_service._bulk_stop_one(db, _device(appium_node=None), "operator", operator=mock_operator)  # type: ignore[arg-type]
     not_running_node = SimpleNamespace(observed_running=False, port=4723)
     with pytest.raises(NodeManagerError, match="No running node"):
-        await bulk_service._bulk_stop_one(db, _device(appium_node=not_running_node), "operator")
+        await bulk_service._bulk_stop_one(db, _device(appium_node=not_running_node), "operator", operator=mock_operator)  # type: ignore[arg-type]
 
-    # _bulk_stop_one delegates to request_stop when node is running
+    # _bulk_stop_one delegates to operator.request_stop when node is running
     running_node = SimpleNamespace(observed_running=True, port=4723)
-    stopped = await bulk_service._bulk_stop_one(db, _device(appium_node=running_node), "operator")
+    stopped = await bulk_service._bulk_stop_one(
+        db, _device(appium_node=running_node), "operator", operator=mock_operator
+    )  # type: ignore[arg-type]
     assert stopped is returned_node
-    request_stop_mock.assert_awaited_once()
-    assert request_stop_mock.call_args.kwargs["reason"] == "operator stop requested"
+    mock_operator.request_stop.assert_awaited_once()
+    assert mock_operator.request_stop.call_args.kwargs["reason"] == "operator stop requested"
 
-    # _bulk_restart_one delegates to request_restart and commits
+    # _bulk_restart_one delegates to operator.request_restart
     restarted = await bulk_service._bulk_restart_one(
-        db, _device(appium_node=running_node), "operator", settings=FakeSettingsReader({})
+        db,
+        _device(appium_node=running_node),
+        "operator",
+        operator=mock_operator,  # type: ignore[arg-type]
     )
     assert restarted is returned_node
-    request_restart_mock.assert_awaited_once()
-    assert request_restart_mock.call_args.kwargs["reason"] == "operator restart requested"
+    mock_operator.request_restart.assert_awaited_once()
+    assert mock_operator.request_restart.call_args.kwargs["reason"] == "operator restart requested"
 
 
 async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,6 +140,7 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=mock_crud_del,
+        operator=OperatorNodeLifecycleService(settings=_settings_del2),
     ).bulk_delete(db, [first.id, second.id])
     assert deleted["failed"] == 2
     assert deleted["errors"][str(first.id)] == "Device not found"
@@ -190,6 +197,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance,
         crud=DeviceCrudService(settings=_settings_exit2),
+        operator=OperatorNodeLifecycleService(settings=_settings_exit2),
     ).bulk_exit_maintenance(db, [success.id, failure.id])
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure.id)] == "not in maintenance"
@@ -211,6 +219,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance2,
         crud=DeviceCrudService(settings=_settings_enter2),
+        operator=OperatorNodeLifecycleService(settings=_settings_enter2),
     ).bulk_enter_maintenance(db, [success.id, failure.id])
     assert entered["succeeded"] == 1
     assert entered["errors"][str(failure.id)] == "enter failed"
