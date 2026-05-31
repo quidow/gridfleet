@@ -36,7 +36,7 @@ from tests.helpers import test_event_bus as event_bus
 
 RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
 RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
-RUN_LOOKUP_MODULE = "app.runs.service_reservation_lookup"
+RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
