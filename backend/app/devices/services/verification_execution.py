@@ -378,8 +378,13 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     return node
 
 
-def _verification_intent_source(device_id: uuid.UUID) -> str:
+def verification_intent_source(device_id: uuid.UUID) -> str:
+    """Return the ``source`` key used for verification intents on *device_id*."""
     return f"verification:{device_id}"
+
+
+# Keep the private alias for internal callers; new code should use the public name.
+_verification_intent_source = verification_intent_source
 
 
 async def _register_verification_node_intent(db: AsyncSession, device: Device, *, settings: SettingsReader) -> None:

@@ -1,13 +1,20 @@
+from datetime import UTC, datetime
+
 import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.devices.services.state_derivation import (
     DeviceStateFacts,
     evaluate_hold,
     evaluate_operational_state,
+    gather_device_state_facts,
 )
+from tests.helpers import create_device_record, create_host
+from tests.pack.factories import seed_test_packs
 
-_ALL_FALSE = dict(
+_BASELINE = dict(
     has_running_session=False,
     has_verification_lease=False,
     in_maintenance=False,
@@ -18,7 +25,7 @@ _ALL_FALSE = dict(
 
 
 def _facts(**overrides: bool) -> DeviceStateFacts:
-    return DeviceStateFacts(**{**_ALL_FALSE, **overrides})
+    return DeviceStateFacts(**{**_BASELINE, **overrides})
 
 
 @pytest.mark.parametrize(
@@ -54,3 +61,31 @@ def test_evaluate_operational_state(facts: DeviceStateFacts, expected: DeviceOpe
 )
 def test_evaluate_hold(facts: DeviceStateFacts, expected: DeviceHold | None) -> None:
     assert evaluate_hold(facts) is expected
+
+
+@pytest.mark.db
+async def test_gather_facts_available_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """gather_device_state_facts returns the right fact-bag for a healthy, available device."""
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="facts-avail-01",
+        name="Facts Available Device",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+
+    facts = await gather_device_state_facts(db_session, device, now=datetime.now(UTC))
+
+    assert facts.has_running_session is False
+    assert facts.has_verification_lease is False
+    assert facts.in_maintenance is False
+    assert facts.stop_in_flight is False
+    assert facts.is_reserved is False
+    assert facts.ready is True
+    assert evaluate_operational_state(facts) is DeviceOperationalState.available
