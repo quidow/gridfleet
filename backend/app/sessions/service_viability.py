@@ -168,7 +168,6 @@ class HealthFailureHandler(Protocol):
         *,
         source: str,
         reason: str,
-        publisher: EventPublisher,
     ) -> object:
         raise NotImplementedError
 
@@ -609,7 +608,6 @@ async def run_session_viability_probe(
                     device,
                     source="session_viability",
                     reason=error or "Appium session viability probe failed",
-                    publisher=publisher,
                 )
             else:
                 logger.info(

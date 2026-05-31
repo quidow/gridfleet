@@ -188,7 +188,7 @@ async def test_update_session_status_clears_stop_pending(
     await db_session.commit()
 
     result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
     await db_session.refresh(device)
@@ -312,7 +312,7 @@ async def test_register_session_with_terminal_status_clears_stop_pending(
     await db_session.commit()
 
     result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
 
@@ -381,7 +381,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     await db_session.commit()
 
     result = await _make_real_lifecycle(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB hung", publisher=Mock()
+        db_session, device, source="device_checks", reason="ADB hung"
     )
     assert result == "deferred"
 

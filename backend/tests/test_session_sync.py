@@ -1096,7 +1096,7 @@ async def test_sync_stops_deferred_unhealthy_device_after_session_end(
     await db_session.commit()
 
     await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
 
     await _sync_sessions_impl(
@@ -1161,7 +1161,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
 
     # Defer a stop (simulates an earlier transient failure during this session).
     await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
-        db_session, device, source="node_health", reason="Probe failed", publisher=event_bus
+        db_session, device, source="node_health", reason="Probe failed"
     )
 
     # Health later recovers - seed derived health to healthy. Recovery wiring
@@ -1424,7 +1424,7 @@ async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(
     await db_session.commit()
 
     result = await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
 
@@ -1488,7 +1488,7 @@ async def test_sweep_runs_when_grid_is_unreachable(
     await db_session.commit()
 
     result = await _make_real_lifecycle(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB hung", publisher=event_bus
+        db_session, device, source="device_checks", reason="ADB hung"
     )
     assert result == "deferred"
 

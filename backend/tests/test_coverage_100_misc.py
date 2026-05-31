@@ -388,7 +388,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             Device(id=uuid.uuid4(), name="d"),
             source="test",
             reason="boom",
-            publisher=event_bus,
         )
 
     leader = control_plane_leader_module.ControlPlaneLeader()

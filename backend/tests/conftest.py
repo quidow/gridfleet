@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
@@ -79,6 +79,7 @@ from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
 from app.sessions.service import SessionCrudService
 from app.sessions.service_sync import SessionSyncService
+from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
 from app.settings.dependencies import get_settings_services
 from app.settings.registry import SETTINGS_REGISTRY, resolve_default
@@ -404,7 +405,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(publisher=test_event_bus),
-                    viability=Mock(),
+                    viability=AsyncMock(),
                 ),
             ),
             publisher=test_event_bus,
@@ -443,11 +444,16 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
+        _viability_svc = SessionViabilityService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            session_factory=sf,
+        )
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(publisher=test_event_bus),
-            viability=Mock(),
+            viability=_viability_svc,
         )
         return SessionServices(
             crud=SessionCrudService(
@@ -461,7 +467,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 grid=GridService(settings=settings_service),
                 lifecycle=_lifecycle_policy_svc,
             ),
-            viability=Mock(),
+            viability=_viability_svc,
             settings=settings_service,
             grid=GridService(settings=settings_service),
             session_factory=sf,

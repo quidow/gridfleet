@@ -179,22 +179,20 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
-    with (
-        patch(
-            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-            new=AsyncMock(side_effect=_make_device_available),
-        ),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "passed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": datetime.now(UTC).isoformat(),
-                "error": None,
-                "checked_by": "recovery",
-            },
-        ),
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        }
+    )
+    lc_viability = AsyncMock()
+    lc_viability.run_session_viability_probe = probe_mock
+    with patch(
+        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
+        new=AsyncMock(side_effect=_make_device_available),
     ):
         _sf = _session_factory(db_session)
         worked = await DurableJobService(
@@ -217,9 +215,9 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
                     crud=DeviceCrudService(settings=settings_service),
-                    viability=Mock(),
+                    viability=AsyncMock(),
                 ),
-                viability=Mock(),
+                viability=AsyncMock(),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=_sf,
@@ -229,7 +227,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(publisher=AsyncMock()),
-                    viability=Mock(),
+                    viability=lc_viability,
                 ),
             ),
         ).run_pending_once()

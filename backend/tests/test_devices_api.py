@@ -1080,7 +1080,7 @@ async def test_manual_session_test_endpoint(
     device_id = str(device.id)
 
     with patch(
-        "app.devices.routers.catalog.session_viability.run_session_viability_probe",
+        "app.sessions.service_viability.run_session_viability_probe",
         new_callable=AsyncMock,
         return_value={
             "status": "passed",
@@ -1094,9 +1094,8 @@ async def test_manual_session_test_endpoint(
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "passed"
-    # The route must forward a publisher to run_session_viability_probe; otherwise
-    # the inner _MACHINE.transition → set_operational_state assertion fires and
-    # the manual "Test Session" button returns 500.
+    # The route delegates to SessionViabilityService.run_session_viability_probe which
+    # in turn calls the free function with publisher forwarded from the service's __init__.
     assert probe.await_args is not None
     assert probe.await_args.kwargs.get("publisher") is not None
 
@@ -1200,7 +1199,7 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
             return_value={"running": True, "port": 4723},
         ),
         patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+            "app.sessions.service_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value={
                 "status": "failed",
@@ -1281,7 +1280,7 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
             return_value={"running": False, "port": 4723},
         ),
         patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+            "app.sessions.service_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -1353,7 +1352,7 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
             return_value={"running": True, "port": 4723},
         ),
         patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+            "app.sessions.service_viability.get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),

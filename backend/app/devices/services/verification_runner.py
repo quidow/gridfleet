@@ -10,7 +10,7 @@ from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificat
 from app.devices.services.verification_job_state import finish_job, hydrate_job
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.sessions import service_viability as session_viability
+from app.sessions.service_viability import build_probe_capabilities
 
 if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
@@ -51,10 +51,9 @@ class VerificationRunnerService:
         *,
         grid_url: str | None = None,
     ) -> tuple[bool, str | None]:
-        return await session_viability.probe_session_via_grid(
-            session_viability.build_probe_capabilities(capabilities),
+        return await self._viability.probe_session_via_grid(
+            build_probe_capabilities(capabilities),
             timeout_sec,
-            settings=self._settings,
             grid_url=grid_url,
         )
 

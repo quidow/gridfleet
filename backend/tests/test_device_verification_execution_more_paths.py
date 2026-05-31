@@ -230,7 +230,8 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
         AsyncMock(return_value=DeviceOperationalState.available),
     )
     monkeypatch.setattr(execution, "set_operational_state", AsyncMock())
-    monkeypatch.setattr(execution.session_viability, "record_session_viability_result", AsyncMock())
+    _mock_viability = AsyncMock()
+    _mock_viability.record_session_viability_result = AsyncMock()
 
     verified_at_when_revoked: list[object] = []
     op_state_when_revoked: list[object] = []
@@ -248,6 +249,7 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
         node=SimpleNamespace(port=4723, pid=22),
         publisher=event_bus,
         crud=AsyncMock(),
+        viability=_mock_viability,
     )
 
     assert outcome.status == "completed"

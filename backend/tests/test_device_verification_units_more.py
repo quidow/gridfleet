@@ -579,7 +579,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     mock_crud_none = AsyncMock()
     mock_crud_none.update_device = AsyncMock(return_value=None)
     failed = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_none
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_none, viability=AsyncMock()
     )
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
@@ -634,7 +634,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
 
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_del
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_del, viability=AsyncMock()
     )
     assert outcome.status == "failed"
     assert outcome.device_id is None
@@ -649,7 +649,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         lambda: SimpleNamespace(transition=AsyncMock()),
     )
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_upd
+        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_upd, viability=AsyncMock()
     )
     assert outcome.status == "failed"
     assert outcome.device_id == str(device_id)
@@ -661,12 +661,10 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         AsyncMock(return_value=DeviceOperationalState.available),
     )
     monkeypatch.setattr("app.devices.services.verification_execution.set_operational_state", AsyncMock())
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.session_viability.record_session_viability_result",
-        AsyncMock(),
-    )
+    viability_mock = AsyncMock()
+    viability_mock.record_session_viability_result = AsyncMock()
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=node, publisher=event_bus, crud=mock_crud_upd
+        db, context, job=_job(), node=node, publisher=event_bus, crud=mock_crud_upd, viability=viability_mock
     )
     assert outcome.status == "completed"
     execution.set_operational_state.assert_awaited_once()

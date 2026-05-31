@@ -27,7 +27,7 @@ from app.hosts.models import Host
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
 from app.packs.models import DriverPack
-from app.sessions.service_viability import get_session_viability
+from app.sessions.service_viability import SessionViabilityService, get_session_viability
 from tests.conftest import settings_service
 from tests.helpers import create_device_record
 from tests.pack.factories import seed_test_packs
@@ -145,9 +145,13 @@ async def _wait_for_job(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
-                    viability=Mock(),
+                    viability=SessionViabilityService(
+                        publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+                    ),
                 ),
-                viability=Mock(),
+                viability=SessionViabilityService(
+                    publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+                ),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
@@ -289,7 +293,7 @@ async def test_verification_job_success_keeps_verified_node(
         patch("app.devices.services.verification_execution.stop_node", stop_mock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -337,7 +341,7 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -381,7 +385,7 @@ async def test_retain_verified_node_acquires_row_lock(
         patch("app.devices.services.verification_execution.stop_node", AsyncMock()),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
         patch("app.devices.services.verification_execution.device_locking.lock_device", spy),
@@ -406,7 +410,7 @@ async def test_create_verification_marks_cleanup_failed_when_restart_intent_rais
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -443,7 +447,7 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
             "app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client
         ) as client_factory,
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -491,7 +495,7 @@ async def test_avd_verification_probe_uses_node_resolved_serial_when_already_run
         patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -544,7 +548,7 @@ async def test_avd_verification_preserves_explicit_virtual_lane_after_normalize(
         patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=probe_mock,
         ),
     ):
@@ -593,7 +597,7 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
         patch("app.devices.services.verification_execution.stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -701,7 +705,7 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
         patch("app.devices.services.verification_execution.stop_node", stop_mock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(False, "Session startup failed")),
         ),
     ):
@@ -885,7 +889,7 @@ async def test_existing_device_verification_marks_device_verified(
             return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -942,7 +946,7 @@ async def test_existing_running_device_verification_can_enter_verifying(
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -982,7 +986,7 @@ async def test_update_verification_probe_failure_stops_persisted_node(
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(False, "Session startup failed")),
         ),
     ):
@@ -1081,7 +1085,7 @@ async def test_existing_device_verification_can_replace_device_config(
             return_value=_mock_http_client(payload={"healthy": True, "ecp_reachable": {"reachable": True}}),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1140,7 +1144,7 @@ async def test_existing_device_verification_config_replace_writes_verbatim(
             ),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1252,7 +1256,7 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
         ),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1298,7 +1302,7 @@ async def test_android_network_verification_resolves_stable_identity_before_save
         _patch_running_node(),
         patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1354,7 +1358,7 @@ async def test_roku_verification_resolves_identity_from_ip_before_save(
         _patch_running_node(active_connection_target="192.168.1.50"),
         patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1465,7 +1469,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
         patch("app.devices.services.verification_execution.stop_node", new=AsyncMock()),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch(
-            "app.devices.services.verification_runner.session_viability.probe_session_via_grid",
+            "app.sessions.service_viability.probe_session_via_grid",
             new=AsyncMock(return_value=(True, None)),
         ),
     ):
@@ -1508,9 +1512,13 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
-                    viability=Mock(),
+                    viability=SessionViabilityService(
+                        publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+                    ),
                 ),
-                viability=Mock(),
+                viability=SessionViabilityService(
+                    publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+                ),
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,

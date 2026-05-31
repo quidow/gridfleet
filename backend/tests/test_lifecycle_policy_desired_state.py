@@ -70,22 +70,17 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
+    viability = AsyncMock()
+    viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=Mock()),
-        viability=Mock(),
+        viability=viability,
     )
-    with (
-        patch.object(
-            lifecycle_policy.session_viability,
-            "run_session_viability_probe",
-            new=AsyncMock(return_value={"status": "passed"}),
-        ),
-        patch(
-            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-            new=AsyncMock(side_effect=_register_then_mark_running),
-        ),
+    with patch(
+        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
+        new=AsyncMock(side_effect=_register_then_mark_running),
     ):
         await svc.attempt_auto_recovery(
             db_session,
