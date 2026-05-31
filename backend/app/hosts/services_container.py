@@ -13,9 +13,11 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
     from app.hosts.protocols import (
+        AgentLogsProtocol,
         HardwareTelemetryProtocol,
         HostCrudProtocol,
         HostDiagnosticsProtocol,
+        HostEventsProtocol,
         HostResourceTelemetryProtocol,
     )
 
@@ -26,6 +28,8 @@ class HostServices:
     hardware_telemetry: HardwareTelemetryProtocol
     resource_telemetry: HostResourceTelemetryProtocol
     diagnostics: HostDiagnosticsProtocol
+    agent_logs: AgentLogsProtocol
+    host_events: HostEventsProtocol
     publisher: EventPublisher
     settings: SettingsReader
     pool: AgentHttpPool

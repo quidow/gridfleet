@@ -58,8 +58,10 @@ from app.grid.services_container import GridServices
 from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service import HostCrudService
+from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.main import app
@@ -442,6 +444,8 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
             ),
             diagnostics=HostDiagnosticsService(circuit_breaker=test_circuit_breaker),
+            agent_logs=AgentLogsService(),
+            host_events=HostEventsService(),
             publisher=test_event_bus,
             settings=settings_service,
             pool=test_http_pool,
