@@ -26,7 +26,9 @@ from app.hosts import (
 from app.hosts import (
     service_resource_telemetry as host_resource_telemetry,
 )
+from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop, HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from tests.fakes import FakeSettingsReader
@@ -447,6 +449,8 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
             ),
             resource_telemetry=resource_telemetry_svc,
             diagnostics=HostDiagnosticsService(circuit_breaker=Mock()),
+            agent_logs=AgentLogsService(),
+            host_events=HostEventsService(),
             publisher=AsyncMock(),
             settings=FakeSettingsReader({"general.host_resource_telemetry_interval_sec": 1}),
             pool=Mock(),

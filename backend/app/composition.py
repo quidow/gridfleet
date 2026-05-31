@@ -52,8 +52,10 @@ from app.events.services_container import EventServices
 from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
+from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_diagnostics import HostDiagnosticsService
 from app.hosts.service_hardware_telemetry import HardwareTelemetryService
+from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
@@ -268,6 +270,8 @@ def compose_app(
             ),
             resource_telemetry=HostResourceTelemetryService(settings=settings_svc, circuit_breaker=circuit_breaker),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
+            agent_logs=AgentLogsService(),
+            host_events=HostEventsService(),
             publisher=bus,
             settings=settings_svc,
             pool=http_pool,

@@ -42,8 +42,6 @@ from app.hosts.schemas import (
     HostToolStatusRead,
     IntakeCandidateRead,
 )
-from app.hosts.service_agent_logs import query_logs
-from app.hosts.service_host_events import query_host_events
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
 from app.packs.protocols import PackDiscoveryProtocol
@@ -278,6 +276,7 @@ async def get_host(
 async def get_agent_logs(
     host_id: uuid.UUID,
     db: DbDep,
+    host_services: HostServicesDep,
     level: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     since: Annotated[datetime | None, Query()] = None,
@@ -285,7 +284,7 @@ async def get_agent_logs(
     limit: Annotated[int, Query(ge=1, le=2000)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AgentLogPage:
-    return await query_logs(
+    return await host_services.agent_logs.query_logs(
         db,
         host_id=host_id,
         levels=_expand_levels(level),
@@ -305,6 +304,7 @@ async def get_agent_logs(
 async def get_host_events(
     host_id: uuid.UUID,
     db: DbDep,
+    host_services: HostServicesDep,
     types: Annotated[str | None, Query()] = None,
     since: Annotated[datetime | None, Query()] = None,
     until: Annotated[datetime | None, Query()] = None,
@@ -312,7 +312,7 @@ async def get_host_events(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> HostEventsPage:
     type_list = [token.strip() for token in types.split(",") if token.strip()] if types else None
-    return await query_host_events(
+    return await host_services.host_events.query_host_events(
         db,
         host_id=host_id,
         types=type_list,

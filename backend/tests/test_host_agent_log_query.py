@@ -8,7 +8,7 @@ import pytest
 
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.schemas import AgentLogBatchIngest, ShippedLogLineIngest
-from app.hosts.service_agent_logs import query_logs, write_batch
+from app.hosts.service_agent_logs import AgentLogsService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +43,7 @@ async def _seed(
             for (level, message, ts, seq) in lines
         ],
     )
-    await write_batch(db_session, host_id=host_id, batch=batch)
+    await AgentLogsService().write_batch(db_session, host_id=host_id, batch=batch)
 
 
 @pytest.mark.asyncio
@@ -58,7 +58,9 @@ async def test_query_levels_filter(db_session: AsyncSession, db_host: Host) -> N
             ("ERROR", "e1", now - timedelta(seconds=1), 2),
         ],
     )
-    page = await query_logs(db_session, host_id=db_host.id, levels=["WARNING", "ERROR"], limit=10, offset=0)
+    page = await AgentLogsService().query_logs(
+        db_session, host_id=db_host.id, levels=["WARNING", "ERROR"], limit=10, offset=0
+    )
     assert page.total == 2
     assert {line.level for line in page.lines} == {"WARNING", "ERROR"}
 
@@ -74,7 +76,7 @@ async def test_query_time_range(db_session: AsyncSession, db_host: Host) -> None
             ("INFO", "new", now - timedelta(minutes=5), 1),
         ],
     )
-    page = await query_logs(
+    page = await AgentLogsService().query_logs(
         db_session,
         host_id=db_host.id,
         since=now - timedelta(minutes=10),
@@ -95,7 +97,7 @@ async def test_query_substring_search(db_session: AsyncSession, db_host: Host) -
             ("INFO", "baz", now, 1),
         ],
     )
-    page = await query_logs(db_session, host_id=db_host.id, q="bar", limit=10, offset=0)
+    page = await AgentLogsService().query_logs(db_session, host_id=db_host.id, q="bar", limit=10, offset=0)
     assert {line.message for line in page.lines} == {"fooBAR"}
 
 
@@ -105,7 +107,7 @@ async def test_query_cross_host_isolation(db_session: AsyncSession, db_host: Hos
     now = datetime.now(UTC)
     await _seed(db_session, db_host.id, lines=[("INFO", "a", now, 0)])
     await _seed(db_session, host_b.id, lines=[("INFO", "b", now, 0)])
-    page = await query_logs(db_session, host_id=db_host.id, limit=10, offset=0)
+    page = await AgentLogsService().query_logs(db_session, host_id=db_host.id, limit=10, offset=0)
     assert {line.message for line in page.lines} == {"a"}
 
 
@@ -117,8 +119,8 @@ async def test_query_pagination(db_session: AsyncSession, db_host: Host) -> None
         db_host.id,
         lines=[("INFO", f"m{i}", now + timedelta(milliseconds=i), i) for i in range(5)],
     )
-    page_first = await query_logs(db_session, host_id=db_host.id, limit=2, offset=0)
-    page_second = await query_logs(db_session, host_id=db_host.id, limit=2, offset=2)
+    page_first = await AgentLogsService().query_logs(db_session, host_id=db_host.id, limit=2, offset=0)
+    page_second = await AgentLogsService().query_logs(db_session, host_id=db_host.id, limit=2, offset=2)
     assert page_first.total == 5
     assert page_first.has_more is True
     assert len(page_first.lines) == 2
