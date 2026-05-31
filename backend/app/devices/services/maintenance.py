@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import Device, DeviceHold
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -101,8 +101,7 @@ class MaintenanceService:
 
         set_maintenance_reason(device, maintenance_reason)
 
-        await register_intents_and_reconcile(
-            db,
+        await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=_maintenance_intents(device.id),
             reason=maintenance_reason,
@@ -137,8 +136,7 @@ class MaintenanceService:
             source="exit_maintenance",
         )
 
-        await revoke_intents_and_reconcile(
-            db,
+        await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=_maintenance_sources(device.id),
             reason="Operator exited maintenance",

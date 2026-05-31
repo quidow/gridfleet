@@ -40,7 +40,6 @@ from app.settings.dependencies import SettingsServicesDep
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 require_management_host = node_manager.require_management_host
-revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 DEVICE_CONTROL_ERROR_RESPONSES = {**RESPONSES_400, **RESPONSES_401, **RESPONSES_404, **RESPONSES_409}
@@ -277,8 +276,7 @@ async def reconnect_device(
         device.session_viability_error = None
         try:
             await db.flush()
-            await revoke_intents_and_reconcile(
-                db,
+            await intent_service.IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[
                     f"connectivity:{device.id}",

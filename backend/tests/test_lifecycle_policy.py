@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -356,7 +357,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     db_session.add(run)
     await db_session.commit()
 
-    register_recovery = AsyncMock(side_effect=_mark_device_available)
+    register_recovery = AsyncMock(side_effect=partial(_mark_device_available, db_session))
     probe_mock = AsyncMock(
         return_value={
             "status": "passed",
@@ -369,7 +370,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     viability = AsyncMock()
     viability.run_session_viability_probe = probe_mock
     svc = _make_svc(publisher=Mock(), viability=viability)
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -607,7 +608,7 @@ async def test_recovery_rejoin_publishes_availability_event(
     db_session.add(run)
     await db_session.commit()
 
-    register_recovery = AsyncMock(side_effect=_mark_device_available)
+    register_recovery = AsyncMock(side_effect=partial(_mark_device_available, db_session))
     probe_mock = AsyncMock(
         return_value={
             "status": "passed",
@@ -620,7 +621,7 @@ async def test_recovery_rejoin_publishes_availability_event(
     viability = AsyncMock()
     viability.run_session_viability_probe = probe_mock
     svc = _make_svc(publisher=event_bus, viability=viability)
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -680,7 +681,7 @@ async def test_recovery_reloads_device_before_starting_node(
         await other_session.commit()
 
     register_recovery = AsyncMock()
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
             db_session,
             device,
@@ -738,7 +739,19 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     db_session.add(run)
     await db_session.commit()
 
-    register_recovery = AsyncMock(side_effect=_mark_device_available)
+    _real_register = IntentService.register_intents_and_reconcile
+
+    async def _suppress_auto_recovery_only(
+        _self: IntentService, *, device_id: object, intents: object, reason: str
+    ) -> None:
+        from app.devices.services.intent_types import IntentRegistration as IntentReg
+
+        if isinstance(intents, list) and any(
+            isinstance(i, IntentReg) and i.source.startswith("auto_recovery:") for i in intents
+        ):
+            return
+        await _real_register(_self, device_id=device_id, intents=intents, reason=reason)
+
     probe_mock = AsyncMock(
         return_value={
             "status": "failed",
@@ -751,7 +764,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     viability = AsyncMock()
     viability.run_session_viability_probe = probe_mock
     svc = _make_svc(publisher=Mock(), viability=viability)
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=_suppress_auto_recovery_only):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -797,7 +810,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     db_session.add(device)
     await db_session.commit()
 
-    register_recovery = AsyncMock(side_effect=_mark_device_available)
+    register_recovery = AsyncMock(side_effect=partial(_mark_device_available, db_session))
     mock_probe = AsyncMock(
         side_effect=[
             {
@@ -819,7 +832,7 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     viability = AsyncMock()
     viability.run_session_viability_probe = mock_probe
     svc = _make_svc(publisher=event_bus, viability=viability)
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -905,7 +918,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     db_session.add(device)
     await db_session.commit()
 
-    register_recovery = AsyncMock(side_effect=_mark_device_available)
+    register_recovery = AsyncMock(side_effect=partial(_mark_device_available, db_session))
     settings = FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 5,
@@ -927,7 +940,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     )
     viability = AsyncMock()
     viability.run_session_viability_probe = probe_mock
-    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
+    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         recovery_started_at = datetime.now(UTC)
         recovered = await _make_svc(publisher=Mock(), settings=settings, viability=viability).attempt_auto_recovery(
             db_session, device, source="device_checks", reason="Healthy again"
@@ -1883,8 +1896,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
     monkeypatch.setattr(lifecycle_policy_module, "candidate_ports", AsyncMock(return_value=[4723]))
-    monkeypatch.setattr(lifecycle_policy_module, "revoke_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(lifecycle_policy_module, "register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
     monkeypatch.setattr(
         lifecycle_policy_module,
@@ -1930,7 +1943,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         is True
     )  # type: ignore[arg-type]
     assert db.added
-    lifecycle_policy_module.register_intents_and_reconcile.assert_awaited()
+    IntentService.register_intents_and_reconcile.assert_awaited()
     lifecycle_policy_module._MACHINE.transition.assert_awaited()
     # wait_for_node_running must fire before run_session_viability_probe; probing
     # before agent start-up yields false negatives.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -44,7 +45,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     await db_session.commit()
 
     from app.devices.services import lifecycle_policy as lifecycle_policy
-    from app.devices.services.intent import register_intents_and_reconcile as _real_register
+    from app.devices.services.intent import IntentService
 
     async def _register_then_mark_running(
         db: AsyncSession,
@@ -57,7 +58,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         written, then simulate the reconciler bringing the node up so
         wait_for_node_running exits on its first poll instead of blocking
         for its full 60s timeout."""
-        await _real_register(db, device_id=device_id, intents=intents, reason=reason)
+        await _real_register(IntentService(db), device_id=device_id, intents=intents, reason=reason)
         observed_node = (
             await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
         ).scalar_one_or_none()
@@ -80,9 +81,11 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         viability=viability,
         node_manager=AsyncMock(),
     )
-    with patch(
-        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-        new=AsyncMock(side_effect=_register_then_mark_running),
+    _real_register = IntentService.register_intents_and_reconcile
+    with patch.object(
+        IntentService,
+        "register_intents_and_reconcile",
+        new=AsyncMock(side_effect=partial(_register_then_mark_running, db_session)),
     ):
         await svc.attempt_auto_recovery(
             db_session,

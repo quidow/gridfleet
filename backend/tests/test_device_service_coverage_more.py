@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import service as device_service
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
@@ -99,7 +100,7 @@ async def test_delete_helpers_stop_and_missing_paths(monkeypatch: pytest.MonkeyP
 
     running_node = SimpleNamespace(observed_running=True)
     register = AsyncMock()
-    monkeypatch.setattr(device_service, "register_intents_and_reconcile", register)
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", register)
     stopped = await device_service._stop_node(db, SimpleNamespace(id=device_id, appium_node=running_node))
     assert stopped is running_node
     register.assert_awaited_once()

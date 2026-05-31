@@ -14,7 +14,7 @@ from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
@@ -406,8 +406,7 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device, *
     startup_timeout = int(settings.get("appium.startup_timeout_sec"))
     viability_timeout = int(settings.get("general.session_viability_timeout_sec"))
     deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
-    await register_intents_and_reconcile(
-        db,
+    await IntentService(db).register_intents_and_reconcile(
         device_id=device.id,
         intents=[
             IntentRegistration(
@@ -426,8 +425,7 @@ async def _revoke_verification_node_intent(db: AsyncSession, device: Device) -> 
     if registration never succeeded — ``revoke_intent`` no-ops on missing rows.
     Caller commits.
     """
-    await revoke_intents_and_reconcile(
-        db,
+    await IntentService(db).revoke_intents_and_reconcile(
         device_id=device.id,
         sources=[_verification_intent_source(device.id)],
         reason="verification probe completed",

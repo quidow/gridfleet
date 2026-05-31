@@ -13,6 +13,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -195,9 +196,26 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     )
     lc_viability = AsyncMock()
     lc_viability.run_session_viability_probe = probe_mock
-    with patch(
-        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-        new=AsyncMock(side_effect=_make_device_available),
+
+    async def _register_and_make_available(
+        _self: IntentService, *, device_id: object, intents: object, reason: str
+    ) -> None:
+        db = _self._db
+        dev = await db.get(Device, device_id)
+        if dev is not None:
+            with state_write_guard.bypass():
+                dev.operational_state = DeviceOperationalState.available
+        node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one_or_none()
+        if node is not None:
+            with state_write_guard.bypass():
+                node.pid = 12345
+            with state_write_guard.bypass():
+                node.active_connection_target = "127.0.0.1:4723"
+
+    with patch.object(
+        IntentService,
+        "register_intents_and_reconcile",
+        new=_register_and_make_available,
     ):
         _sf = _session_factory(db_session)
         worked = await DurableJobService(

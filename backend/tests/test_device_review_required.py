@@ -7,6 +7,7 @@ must skip it; only sanctioned operator actions clear it back.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -15,6 +16,7 @@ import pytest
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
+from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -253,9 +255,10 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         viability=viability,
         node_manager=AsyncMock(),
     )
-    with patch(
-        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-        new=AsyncMock(side_effect=_mark_device_available),
+    with patch.object(
+        IntentService,
+        "register_intents_and_reconcile",
+        new=AsyncMock(side_effect=partial(_mark_device_available, db_session)),
     ):
         # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
         # which is below the threshold of 2, so no promotion yet.

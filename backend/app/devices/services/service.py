@@ -39,7 +39,7 @@ from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NA
 from app.devices.services.identity_conflicts import (
     ensure_device_payload_identity_available,
 )
-from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -382,8 +382,7 @@ async def _stop_node(db: AsyncSession, device: Device, *, caller: str = "device_
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
-    await register_intents_and_reconcile(
-        db,
+    await IntentService(db).register_intents_and_reconcile(
         device_id=device.id,
         intents=_device_delete_intents(device.id),
         reason=f"{caller} requested",

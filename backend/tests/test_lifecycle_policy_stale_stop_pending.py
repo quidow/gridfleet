@@ -1,6 +1,7 @@
 """D4: stale stop_pending on offline device must not trap recovery."""
 
 from datetime import UTC, datetime
+from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
@@ -98,9 +100,10 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     )
     viability = AsyncMock()
     viability.run_session_viability_probe = probe_mock
-    with patch(
-        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-        new=AsyncMock(side_effect=_mark_device_available),
+    with patch.object(
+        IntentService,
+        "register_intents_and_reconcile",
+        new=AsyncMock(side_effect=partial(_mark_device_available, db_session)),
     ):
         recovered = await LifecyclePolicyService(
             publisher=event_bus,

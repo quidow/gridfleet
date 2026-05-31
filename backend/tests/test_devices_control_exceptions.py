@@ -165,7 +165,7 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(HTTPException) as exc,
     ):
         ra_restart_err = AsyncMock()
@@ -199,7 +199,7 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(HTTPException) as exc,
     ):
         ra_start_err = AsyncMock()
@@ -241,7 +241,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(HTTPException) as exc,
     ):
         await devices_control.reconnect_device(
@@ -273,7 +273,7 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
             "pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
         ra_boom = AsyncMock()
