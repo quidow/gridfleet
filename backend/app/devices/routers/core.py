@@ -19,9 +19,6 @@ from app.devices.schemas.device import (
 )
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters, DeviceSortBy, DeviceSortDir
 from app.devices.services import (
-    capability as capability_service,
-)
-from app.devices.services import (
     health as device_health,
 )
 from app.devices.services import (
@@ -169,7 +166,7 @@ async def get_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceSer
 @router.get("/{device_id}/capabilities")
 async def device_capabilities(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
-    return await capability_service.get_device_capabilities(db, device)
+    return await device_services.capability.get_device_capabilities(db, device)
 
 
 @router.patch("/{device_id}", response_model=DeviceRead)

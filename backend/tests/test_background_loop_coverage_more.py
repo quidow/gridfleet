@@ -23,6 +23,7 @@ from app.devices.services import (
     intent_reconciler as intent_reconciler,
 )
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
@@ -89,6 +90,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_1,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=_svc_pub_1, settings=_svc_settings_1, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
             ),
@@ -141,6 +143,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_2,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=_svc_pub_2, settings=_svc_settings_2, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
             ),
@@ -257,6 +260,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_3,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=_svc_pub_3, settings=_svc_settings_3, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
             ),
@@ -355,6 +359,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_svc_crud_4,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=_svc_pub_4, settings=_svc_settings_4, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
             ),

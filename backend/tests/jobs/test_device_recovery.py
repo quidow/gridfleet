@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -106,6 +107,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=settings_service),
                 viability=Mock(),
+                capability=DeviceCapabilityService(),
             ),
             viability=Mock(),
         ),
@@ -217,6 +219,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     circuit_breaker=AsyncMock(),
                     crud=DeviceCrudService(settings=settings_service),
                     viability=AsyncMock(),
+                    capability=DeviceCapabilityService(),
                 ),
                 viability=AsyncMock(),
             ),
@@ -288,6 +291,7 @@ async def test_device_recovery_job_completed_when_device_missing(
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=settings_service),
                 viability=Mock(),
+                capability=DeviceCapabilityService(),
             ),
             viability=Mock(),
         ),

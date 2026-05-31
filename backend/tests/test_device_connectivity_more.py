@@ -18,6 +18,7 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
@@ -309,6 +310,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_fake_crud,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=_fake_publisher,
                 settings=_fake_settings,

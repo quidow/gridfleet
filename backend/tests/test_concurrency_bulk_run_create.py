@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.devices.dependencies import get_device_services
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
@@ -106,6 +107,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 portability_export=PortabilityExportService(),
                 verification=VerificationService(),
                 crud=_crud_svc,
+                capability=DeviceCapabilityService(),
                 connectivity=ConnectivityService(
                     publisher=event_bus,
                     settings=settings_service,
@@ -171,7 +173,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(),
             )
-            run_query = RunQueryService()
+            run_query = RunQueryService(capability=DeviceCapabilityService())
             return RunServices(
                 allocator=run_allocator,
                 lifecycle=run_lifecycle,

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
@@ -41,7 +42,7 @@ RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 _settings = FakeSettingsReader({})
 _grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
-_query_svc = RunQueryService()
+_query_svc = RunQueryService(capability=DeviceCapabilityService())
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
@@ -85,7 +86,7 @@ async def test_run_service_include_and_hydration_error_branches(
 
     monkeypatch.setattr("app.runs.service_query.config_service.get_device_config", AsyncMock(side_effect=RuntimeError))
     monkeypatch.setattr(
-        "app.runs.service_query.capability_service.get_device_capabilities",
+        "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(side_effect=ValueError),
     )
 

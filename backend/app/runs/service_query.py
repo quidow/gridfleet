@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-import app.devices.services.capability as capability_service
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices.models import Device, DeviceReservation
 from app.runs.models import RunState, TestRun
+from app.runs.protocols import DeviceCapabilityReader
 from app.runs.schemas import (
     ReservedDeviceInfo,
     RunRead,
@@ -97,6 +97,9 @@ def build_run_read(run: TestRun, counts: SessionCounts | None = None) -> RunRead
 
 
 class RunQueryService:
+    def __init__(self, *, capability: DeviceCapabilityReader) -> None:
+        self._capability = capability
+
     async def list_runs(
         self,
         db: AsyncSession,
@@ -241,7 +244,7 @@ class RunQueryService:
 
         if "capabilities" in includes:
             try:
-                info.live_capabilities = await capability_service.get_device_capabilities(db, device)
+                info.live_capabilities = await self._capability.get_device_capabilities(db, device)
             except Exception as exc:  # noqa: BLE001 — best-effort include; report unavailable instead of failing the run fetch
                 info.live_capabilities = None
                 unavailable.append(UnavailableInclude(include="capabilities", reason=type(exc).__name__))

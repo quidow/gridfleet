@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
 from app.sessions.models import Session, SessionStatus
@@ -41,6 +42,7 @@ _svc = SessionViabilityService(
     publisher=_test_event_bus,
     settings=FakeSettingsReader({}),
     session_factory=AsyncMock(),
+    capability=DeviceCapabilityService(),
 )
 
 
@@ -85,6 +87,7 @@ async def probe_session_via_grid(
         publisher=Mock(),
         settings=settings or FakeSettingsReader({}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
     return await svc.probe_session_via_grid(capabilities, timeout_sec, grid_url=grid_url)
 
@@ -185,7 +188,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
 
     with (
         patch(
-            "app.sessions.service_viability.capability_service.get_device_capabilities",
+            "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
@@ -258,7 +261,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
 
     with (
         patch(
-            "app.sessions.service_viability.capability_service.get_device_capabilities",
+            "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),
@@ -643,7 +646,12 @@ def test_session_viability_small_helpers_cover_error_shapes() -> None:
 
 
 async def test_grid_probe_client_is_reused_and_close_resets_it() -> None:
-    svc = SessionViabilityService(publisher=Mock(), settings=FakeSettingsReader({}), session_factory=AsyncMock())
+    svc = SessionViabilityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
+    )
     client = svc._get_grid_probe_client()
     assert svc._get_grid_probe_client() is client
 
@@ -931,7 +939,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
     # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
     monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(
         session_viability,
@@ -1009,7 +1017,7 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     # Exception-path restore (B2 scope) still calls set_operational_state directly.
     monkeypatch.setattr(session_viability, "set_operational_state", set_state)
     monkeypatch.setattr(
-        session_viability.capability_service,
+        DeviceCapabilityService,
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("caps")),
     )
@@ -1066,7 +1074,7 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     # Exception-path restore (B2 scope) still calls set_operational_state directly.
     monkeypatch.setattr(session_viability, "set_operational_state", set_state)
     monkeypatch.setattr(
-        session_viability.capability_service,
+        DeviceCapabilityService,
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("caps")),
     )
@@ -1105,7 +1113,7 @@ async def _run_failing_probe(
         return 5
 
     monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, error)))
-    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     if handler is not None:
         _svc.configure_health_failure_handler(handler)
     return await run_session_viability_probe(
@@ -1216,7 +1224,7 @@ async def test_passing_probe_resets_viability_failure_counter(
             return 3
         return 5
 
-    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     _svc.configure_health_failure_handler(handler)
     try:
         # Two consecutive failures get to count=2.
@@ -1285,7 +1293,7 @@ async def test_write_session_viability_persists_error_category(
             return 5  # below threshold so no escalation interferes
         return 5
 
-    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, grid_error)))
 
     await run_session_viability_probe(
@@ -1385,7 +1393,7 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
     event_bus_capture.clear()
     with (
         patch(
-            "app.sessions.service_viability.capability_service.get_device_capabilities",
+            "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),

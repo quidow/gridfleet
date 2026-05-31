@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.events.dependencies import get_event_services
@@ -97,7 +98,7 @@ async def test_start_node_locks_device_before_reservation_check(
             lifecycle_actions=AsyncMock(),
             reservation=RunReservationService(),
         )
-        run_query = RunQueryService()
+        run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(
             allocator=run_allocator,
             lifecycle=run_lifecycle,

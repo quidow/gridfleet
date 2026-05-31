@@ -13,6 +13,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
@@ -91,10 +92,11 @@ async def test_session_viability_restore_handles_external_reservation(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         session_factory=db_session_maker,
+        capability=DeviceCapabilityService(),
     )
     monkeypatch.setattr(svc, "probe_session_via_grid", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
-    monkeypatch.setattr(session_viability.capability_service, "get_device_capabilities", fake_get_caps)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", fake_get_caps)
 
     async def run_probe() -> None:
         async with db_session_maker() as session:

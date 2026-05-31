@@ -61,6 +61,7 @@ from app.devices.services import test_data as test_data_service
 from app.devices.services import (
     write as device_write,
 )
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
@@ -365,6 +366,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         crud=DeviceCrudService(settings=settings),
         viability=Mock(),
+        capability=DeviceCapabilityService(),
     )
     runner = VerificationRunnerService(
         session_factory=SessionCtx,
@@ -865,6 +867,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 circuit_breaker=Mock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
                 viability=Mock(),
+                capability=DeviceCapabilityService(),
             ),
             viability=Mock(),
         ),

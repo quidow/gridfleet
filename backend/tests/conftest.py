@@ -27,6 +27,7 @@ from app.core.shutdown import shutdown_coordinator
 from app.devices.dependencies import get_device_services
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
@@ -398,6 +399,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             portability_export=PortabilityExportService(),
             verification=VerificationService(),
             crud=_crud_svc,
+            capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
                 publisher=test_event_bus,
                 settings=settings_service,
@@ -451,6 +453,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             session_factory=sf,
+            capability=DeviceCapabilityService(),
         )
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
@@ -514,7 +517,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reservation=RunReservationService(),
         )
-        run_query = RunQueryService()
+        run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(
             allocator=run_allocator,
             lifecycle=run_lifecycle,
