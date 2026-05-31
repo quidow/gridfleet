@@ -10,6 +10,7 @@ from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
 from app.devices.services.health_view import device_allows_allocation
+from app.devices.services.intent_types import NODE_PROCESS
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import appium_node_stop_in_flight
@@ -85,6 +86,7 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
             select(DeviceIntent.id)
             .where(
                 DeviceIntent.device_id == device.id,
+                DeviceIntent.axis == NODE_PROCESS,
                 DeviceIntent.source == verification_intent_source(device.id),
                 or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
             )
