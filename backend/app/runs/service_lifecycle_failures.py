@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.runs.protocols import DeviceLifecycleFailureWriter, MaintenanceWriter
+    from app.runs.protocols import DeviceLifecycleFailureWriter, MaintenanceWriter, RunReservationProtocol
 
 
 def _cooldown_intents(
@@ -99,12 +99,14 @@ class RunFailureService:
         circuit_breaker: CircuitBreakerProtocol,
         maintenance: MaintenanceWriter,
         lifecycle_actions: DeviceLifecycleFailureWriter,
+        reservation: RunReservationProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._maintenance = maintenance
         self._lifecycle_actions = lifecycle_actions
+        self._reservation = reservation
 
     async def report_preparation_failure(
         self,

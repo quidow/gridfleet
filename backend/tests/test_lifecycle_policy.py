@@ -31,6 +31,7 @@ from app.devices.services.lifecycle_policy_summary import (
 )
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
+from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -51,7 +52,7 @@ def _make_svc(
     return LifecyclePolicyService(
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
-        actions=LifecyclePolicyActionsService(publisher=pub),  # type: ignore[arg-type]
+        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),  # type: ignore[arg-type]
         viability=via,  # type: ignore[arg-type]
     )
 

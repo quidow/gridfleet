@@ -14,6 +14,7 @@ from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActions
 from app.hosts.models import Host
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import RunState, TestRun
+from app.runs.service_reservation import RunReservationService
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -73,7 +74,7 @@ async def test_connectivity_loss_keeps_device_in_run(
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=None,  # type: ignore[arg-type]
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
     )
     await svc.note_connectivity_loss(db_session, locked, reason="Heartbeat timeout")

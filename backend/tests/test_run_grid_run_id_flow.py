@@ -20,6 +20,7 @@ from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -45,6 +46,7 @@ _failure_svc = RunFailureService(
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
     lifecycle_actions=AsyncMock(),
+    reservation=RunReservationService(),
 )
 
 if TYPE_CHECKING:

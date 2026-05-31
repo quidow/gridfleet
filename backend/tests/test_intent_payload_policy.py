@@ -73,6 +73,7 @@ async def test_health_failure_intent_payload_shape(
 ) -> None:
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     device = await create_device(
         db_session,
@@ -92,7 +93,7 @@ async def test_health_failure_intent_payload_shape(
     _svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=Mock()),
+        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=Mock(),
     )
     result = await _svc.handle_health_failure(
@@ -138,6 +139,7 @@ async def test_cooldown_intent_payload_shape(
     from app.agent_comm.circuit_breaker import AgentCircuitBreaker
     from app.devices.services.maintenance import MaintenanceService
     from app.runs.service_lifecycle_failures import RunFailureService
+    from app.runs.service_reservation import RunReservationService
 
     device = await create_device(
         db_session,
@@ -180,6 +182,7 @@ async def test_cooldown_intent_payload_shape(
         circuit_breaker=_test_cb,
         maintenance=MaintenanceService(publisher=event_bus),
         lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(),
     )
     cooldown_reason = "flaky connection detected"
     _excluded_until, count, escalated, _ = await _failure_svc.cooldown_device(
@@ -281,6 +284,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
 ) -> None:
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     device = await create_device(
         db_session,
@@ -309,7 +313,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(publisher=event_bus),
+            actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
             viability=viability,
         ).attempt_auto_recovery(
             db_session,

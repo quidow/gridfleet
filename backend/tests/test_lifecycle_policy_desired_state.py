@@ -69,13 +69,14 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
 
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     viability = AsyncMock()
     viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=Mock()),
+        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=viability,
     )
     with patch(
@@ -215,11 +216,12 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
 
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
     )
     await svc.attempt_auto_recovery(
@@ -262,8 +264,9 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     await db_session.commit()
 
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
-    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
         db_session,
         device,
         source="connectivity_lost",
@@ -309,8 +312,9 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     await db_session.commit()
 
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.runs.service_reservation import RunReservationService
 
-    await LifecyclePolicyActionsService(publisher=event_bus).handle_node_crash(
+    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
         db_session,
         device,
         source="health_check_fail",

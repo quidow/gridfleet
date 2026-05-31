@@ -22,6 +22,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host, HostStatus
+from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
@@ -34,7 +35,7 @@ def _make_real_recovery_control(publisher: object = None) -> LifecyclePolicyServ
     return LifecyclePolicyService(
         publisher=pub,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=pub),
+        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),
         viability=Mock(),
     )
 

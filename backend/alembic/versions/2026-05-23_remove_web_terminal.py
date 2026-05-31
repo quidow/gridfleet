@@ -9,6 +9,7 @@ Create Date: 2026-05-23 00:04:49.570333
 from __future__ import annotations
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "911acfbcc715"
@@ -18,11 +19,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "DELETE FROM settings WHERE key IN ("
-        "'agent.enable_web_terminal', 'agent.web_terminal_allowed_origins'"
-        ")"
-    )
+    op.execute("DELETE FROM settings WHERE key IN ('agent.enable_web_terminal', 'agent.web_terminal_allowed_origins')")
     op.drop_index("host_terminal_sessions_host_id_idx", table_name="host_terminal_sessions")
     op.drop_table("host_terminal_sessions")
 

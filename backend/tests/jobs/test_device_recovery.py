@@ -24,6 +24,7 @@ from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_RECOVERY, JOB_STATUS_COMPLETED, JOB_STATUS_PENDING
 from app.jobs import queue as job_queue
 from app.jobs.queue import DurableJobService
+from app.runs.service_reservation import RunReservationService
 from tests.conftest import settings_service
 from tests.helpers import create_device, create_reserved_run
 
@@ -226,7 +227,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 lifecycle_policy=LifecyclePolicyService(
                     publisher=AsyncMock(),
                     settings=settings_service,
-                    actions=LifecyclePolicyActionsService(publisher=AsyncMock()),
+                    actions=LifecyclePolicyActionsService(publisher=AsyncMock(), reservation=RunReservationService()),
                     viability=lc_viability,
                 ),
             ),

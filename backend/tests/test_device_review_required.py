@@ -19,6 +19,7 @@ from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.review import clear_review_required, mark_review_required
+from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
@@ -250,7 +251,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=settings,
-        actions=LifecyclePolicyActionsService(publisher=Mock()),
+        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=viability,
     )
     with patch(
@@ -300,7 +301,7 @@ async def test_review_required_short_circuits_auto_recovery(
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
-        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=viability_mock,
     )
     recovered = await svc.attempt_auto_recovery(

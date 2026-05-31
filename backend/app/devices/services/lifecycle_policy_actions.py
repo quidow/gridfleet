@@ -44,13 +44,15 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
+    from app.devices.protocols import RunReservationWriter
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 
 class LifecyclePolicyActionsService:
-    def __init__(self, *, publisher: EventPublisher) -> None:
+    def __init__(self, *, publisher: EventPublisher, reservation: RunReservationWriter) -> None:
         self._publisher = publisher
+        self._reservation = reservation
 
     async def complete_auto_stop(
         self,

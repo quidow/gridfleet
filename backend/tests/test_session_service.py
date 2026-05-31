@@ -13,6 +13,7 @@ from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.state import DeviceStateService, set_hold, set_operational_state
 from app.hosts.models import Host
+from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.protocols import SessionCrudProtocol
 from app.sessions.service import SessionCrudService
@@ -30,7 +31,7 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     return LifecyclePolicyService(
         publisher=pub,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=pub),
+        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),
         viability=Mock(),
     )
 

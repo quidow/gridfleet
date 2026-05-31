@@ -28,6 +28,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
+from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import create_device, create_reserved_run
@@ -55,6 +56,7 @@ _failure_svc = RunFailureService(
     circuit_breaker=_circuit_breaker,
     maintenance=MaintenanceService(publisher=event_bus),
     lifecycle_actions=AsyncMock(),
+    reservation=RunReservationService(),
 )
 
 
@@ -417,6 +419,7 @@ async def test_cooldown_device_guard_paths(
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
         lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(),
     )
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -603,6 +606,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(publisher=event_bus),
         lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5

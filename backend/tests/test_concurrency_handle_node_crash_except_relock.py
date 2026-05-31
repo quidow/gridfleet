@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
+from app.runs.service_reservation import RunReservationService
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -73,7 +74,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
     async with db_session_maker() as session:
         target = await session.get(Device, device_id)
         assert target is not None
-        await LifecyclePolicyActionsService(publisher=Mock()).handle_node_crash(
+        await LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()).handle_node_crash(
             session,
             target,
             source="test",

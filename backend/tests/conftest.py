@@ -75,6 +75,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
+from app.runs.service_reservation import RunReservationService
 from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
 from app.sessions.service import SessionCrudService
@@ -404,7 +405,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 lifecycle_policy=LifecyclePolicyService(
                     publisher=test_event_bus,
                     settings=settings_service,
-                    actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+                    actions=LifecyclePolicyActionsService(
+                        publisher=test_event_bus, reservation=RunReservationService()
+                    ),
                     viability=AsyncMock(),
                 ),
             ),
@@ -452,7 +455,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
             viability=_viability_svc,
         )
         return SessionServices(
@@ -483,7 +486,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
             viability=Mock(),
         )
         run_release = RunReleaseService(
@@ -506,7 +509,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(publisher=test_event_bus),
-            lifecycle_actions=LifecyclePolicyActionsService(publisher=test_event_bus),
+            lifecycle_actions=LifecyclePolicyActionsService(
+                publisher=test_event_bus, reservation=RunReservationService()
+            ),
+            reservation=RunReservationService(),
         )
         run_query = RunQueryService()
         return RunServices(
@@ -514,6 +520,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=run_lifecycle,
             release=run_release,
             failure=run_failure,
+            reservation=RunReservationService(),
             query=run_query,
             settings=settings_service,
             session_factory=sf,
