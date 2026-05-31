@@ -78,6 +78,7 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=viability,
+        node_manager=AsyncMock(),
     )
     with patch(
         "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
@@ -223,6 +224,7 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     )
     await svc.attempt_auto_recovery(
         db_session,

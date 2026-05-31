@@ -88,6 +88,7 @@ async def test_force_release_clears_stop_pending(
         settings=_settings,
         actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     )
     result = await real_deferred_stop.handle_health_failure(
         db_session, device, source="device_checks", reason="ADB not responsive"

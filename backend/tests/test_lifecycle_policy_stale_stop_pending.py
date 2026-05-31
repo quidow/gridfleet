@@ -107,6 +107,7 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
             viability=viability,
+            node_manager=AsyncMock(),
         ).attempt_auto_recovery(
             db_session,
             device,
@@ -181,6 +182,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     ).attempt_auto_recovery(
         db_session,
         device,

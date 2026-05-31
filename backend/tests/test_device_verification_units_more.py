@@ -82,6 +82,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     assert await svc.run_device_health(job, _device(None), http_client_factory=object) is None
     assert job["current_stage"] == "device_health"
@@ -100,6 +101,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     ).run_device_health(_job(), device, http_client_factory=object)
     assert detail == "Agent health check failed: down"
 
@@ -116,6 +118,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         is None
     )
@@ -134,6 +137,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(_job(), device, http_client_factory=object)
         == "adb ready failed (no)"
     )
@@ -178,13 +182,13 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     ).stop_existing_managed_node_for_update(_job(), db_session, context)
     assert detail is not None
     assert "stop failed" in detail
 
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.start_node", AsyncMock(side_effect=NodeManagerError("no node"))
-    )
+    nm_start_err = AsyncMock()
+    nm_start_err.start_node = AsyncMock(side_effect=NodeManagerError("no node"))
     started, error = await VerificationExecutionService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
@@ -193,6 +197,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=nm_start_err,
     ).run_probe(
         _job(),
         db_session,
@@ -204,10 +209,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
 
     with state_write_guard.bypass():
         fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
-    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=fake_node))
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
-    )
+    nm_timeout = AsyncMock()
+    nm_timeout.start_node = AsyncMock(return_value=fake_node)
+    nm_timeout.wait_for_node_running = AsyncMock(return_value=None)
     started, error = await VerificationExecutionService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
@@ -216,6 +220,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=nm_timeout,
     ).run_probe(
         _job(),
         db_session,
@@ -234,9 +239,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
             pid=1,
             active_connection_target="live",
         )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=running_node)
-    )
+    nm_probe_fail = AsyncMock()
+    nm_probe_fail.start_node = AsyncMock(return_value=running_node)
+    nm_probe_fail.wait_for_node_running = AsyncMock(return_value=running_node)
     monkeypatch.setattr(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
@@ -250,6 +255,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=nm_probe_fail,
     ).run_probe(
         _job(),
         db_session,
@@ -306,10 +312,9 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     )
     with state_write_guard.bypass():
         fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
-    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=fake_node))
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.wait_for_node_running", AsyncMock(return_value=None)
-    )
+    nm_converge = AsyncMock()
+    nm_converge.start_node = AsyncMock(return_value=fake_node)
+    nm_converge.wait_for_node_running = AsyncMock(return_value=None)
     converge_mock = AsyncMock(return_value=None)
 
     await VerificationExecutionService(
@@ -320,6 +325,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=SimpleNamespace(converge_device_now=converge_mock),
+        node_manager=nm_converge,
     ).run_probe(
         _job(),
         db_session,
@@ -362,11 +368,9 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
             pid=1,
             active_connection_target="live",
         )
-    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=running_node))
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.wait_for_node_running",
-        AsyncMock(return_value=running_node),
-    )
+    nm_inflight = AsyncMock()
+    nm_inflight.start_node = AsyncMock(return_value=running_node)
+    nm_inflight.wait_for_node_running = AsyncMock(return_value=running_node)
     monkeypatch.setattr(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
@@ -388,6 +392,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=nm_inflight,
     ).run_probe(
         _job(),
         db_session,
@@ -424,11 +429,9 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             pid=1,
             active_connection_target="live",
         )
-    monkeypatch.setattr("app.devices.services.verification_execution.start_node", AsyncMock(return_value=running_node))
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.wait_for_node_running",
-        AsyncMock(return_value=running_node),
-    )
+    nm_raises = AsyncMock()
+    nm_raises.start_node = AsyncMock(return_value=running_node)
+    nm_raises.wait_for_node_running = AsyncMock(return_value=running_node)
     monkeypatch.setattr(
         "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
         AsyncMock(return_value={"platformName": "Android"}),
@@ -448,6 +451,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=nm_raises,
         ).run_probe(
             _job(),
             db_session,
@@ -473,10 +477,9 @@ async def test_stop_verification_node_cleanup_error_path(
 
     with state_write_guard.bypass():
         node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.stop_node", AsyncMock(side_effect=RuntimeError("boom"))
-    )
-    cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, device, node)
+    nm_stop_boom = AsyncMock()
+    nm_stop_boom.stop_node = AsyncMock(side_effect=RuntimeError("boom"))
+    cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, device, node, nm_stop_boom)
     assert cleanup_error == "Failed to stop verification node: boom"
     assert node.pid is None
 
@@ -512,11 +515,9 @@ async def test_verification_execution_remaining_error_branches(
     assert stopped is node
     assert node.pid is None
 
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.stop_node",
-        AsyncMock(side_effect=NodeManagerError("already stopped")),
-    )
-    assert await execution._stop_verification_node_if_running(_job(), db_session, device, node) is None
+    nm_stop_already = AsyncMock()
+    nm_stop_already.stop_node = AsyncMock(side_effect=NodeManagerError("already stopped"))
+    assert await execution._stop_verification_node_if_running(_job(), db_session, device, node, nm_stop_already) is None
 
     target = _device(db_host)
     execution._restore_create_payload_fields(
@@ -574,7 +575,14 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     mock_crud_none = AsyncMock()
     mock_crud_none.update_device = AsyncMock(return_value=None)
     failed = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_none, viability=AsyncMock()
+        db,
+        context,
+        job=_job(),
+        node=None,
+        publisher=event_bus,
+        crud=mock_crud_none,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
@@ -587,6 +595,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     svc.stop_existing_managed_node_for_update = AsyncMock(return_value="stop failed")  # type: ignore[method-assign]
     outcome = await svc.execute_verification_context(
@@ -631,7 +640,14 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
 
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_del, viability=AsyncMock()
+        db,
+        context,
+        job=_job(),
+        node=None,
+        publisher=event_bus,
+        crud=mock_crud_del,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     assert outcome.status == "failed"
     assert outcome.device_id is None
@@ -646,7 +662,14 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         lambda: SimpleNamespace(transition=AsyncMock()),
     )
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=None, publisher=event_bus, crud=mock_crud_upd, viability=AsyncMock()
+        db,
+        context,
+        job=_job(),
+        node=None,
+        publisher=event_bus,
+        crud=mock_crud_upd,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     assert outcome.status == "failed"
     assert outcome.device_id == str(device_id)
@@ -661,7 +684,14 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     viability_mock = AsyncMock()
     viability_mock.record_session_viability_result = AsyncMock()
     outcome = await execution._finalize_success(
-        db, context, job=_job(), node=node, publisher=event_bus, crud=mock_crud_upd, viability=viability_mock
+        db,
+        context,
+        job=_job(),
+        node=node,
+        publisher=event_bus,
+        crud=mock_crud_upd,
+        viability=viability_mock,
+        node_manager=AsyncMock(),
     )
     assert outcome.status == "completed"
     execution.set_operational_state.assert_awaited_once()
@@ -686,6 +716,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     svc2.stop_existing_managed_node_for_update = AsyncMock(return_value=None)  # type: ignore[method-assign]
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]

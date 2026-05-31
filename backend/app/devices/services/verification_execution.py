@@ -10,7 +10,6 @@ from app.agent_comm.operations import pack_device_health as fetch_pack_device_he
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
-from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wait_for_node_running
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
         DeviceCapabilityProtocol,
         DeviceCrudProtocol,
         NodeConvergence,
+        RemoteNodeManager,
         SessionViabilityProbe,
     )
     from app.devices.services.verification_preparation import PreparedVerificationContext
@@ -70,6 +70,7 @@ class VerificationExecutionService:
         viability: SessionViabilityProbe,
         capability: DeviceCapabilityProtocol,
         reconciler: NodeConvergence,
+        node_manager: RemoteNodeManager,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -78,6 +79,7 @@ class VerificationExecutionService:
         self._viability = viability
         self._capability = capability
         self._reconciler = reconciler
+        self._node_manager = node_manager
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -171,7 +173,7 @@ class VerificationExecutionService:
         await db.commit()
         try:
             try:
-                node = await start_node(db, device, caller="verification", settings=self._settings)
+                node = await self._node_manager.start_node(db, device, caller="verification")
             except NodeManagerError as exc:
                 detail = str(exc)
                 await set_stage(job, "node_start", "failed", detail=detail)
@@ -190,7 +192,7 @@ class VerificationExecutionService:
                     )
 
             timeout = int(self._settings.get("appium.startup_timeout_sec"))
-            started_node = await wait_for_node_running(db, node.id, timeout_sec=timeout)
+            started_node = await self._node_manager.wait_for_node_running(db, node.id, timeout_sec=timeout)
             if started_node is None:
                 detail = "Verification node did not reach running state within timeout"
                 await set_stage(job, "node_start", "failed", detail=detail)
@@ -288,6 +290,7 @@ class VerificationExecutionService:
                     original_fields=original_fields,
                     publisher=self._publisher,
                     crud=self._crud,
+                    node_manager=self._node_manager,
                 )
 
             node, probe_error = await self.run_probe(
@@ -306,10 +309,18 @@ class VerificationExecutionService:
                     original_fields=original_fields,
                     publisher=self._publisher,
                     crud=self._crud,
+                    node_manager=self._node_manager,
                 )
 
             return await _finalize_success(
-                db, context, job=job, node=node, publisher=self._publisher, crud=self._crud, viability=self._viability
+                db,
+                context,
+                job=job,
+                node=node,
+                publisher=self._publisher,
+                crud=self._crud,
+                viability=self._viability,
+                node_manager=self._node_manager,
             )
         except Exception:
             await _finalize_failure(
@@ -321,6 +332,7 @@ class VerificationExecutionService:
                 original_fields=original_fields,
                 publisher=self._publisher,
                 crud=self._crud,
+                node_manager=self._node_manager,
             )
             raise
 
@@ -427,11 +439,12 @@ async def _stop_verification_node_if_running(
     db: AsyncSession,
     device: Device,
     node: AppiumNode | None,
+    node_manager: RemoteNodeManager,
 ) -> str | None:
     if node is None:
         return None
     try:
-        await stop_node(db, device, caller="verification")
+        await node_manager.stop_node(db, device, caller="verification")
         node.pid = None
         node.active_connection_target = None
         await db.flush()
@@ -487,6 +500,7 @@ async def _finalize_success(
     publisher: EventPublisher,
     crud: DeviceCrudProtocol,
     viability: SessionViabilityProbe,
+    node_manager: RemoteNodeManager,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")
@@ -504,7 +518,7 @@ async def _finalize_success(
         locked = await device_locking.lock_device(db, context.save_device_id)
         _restore_create_payload_fields(locked, context.save_payload)
     if not context.keep_running_after_verify:
-        cleanup_error = await _stop_verification_node_if_running(job, db, locked, node)
+        cleanup_error = await _stop_verification_node_if_running(job, db, locked, node, node_manager)
         if cleanup_error is not None:
             if context.mode == "create":
                 await crud.delete_device(db, context.save_device_id)
@@ -570,10 +584,11 @@ async def _finalize_failure(
     original_fields: dict[str, Any] | None = None,
     publisher: EventPublisher,
     crud: DeviceCrudProtocol,
+    node_manager: RemoteNodeManager,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
-        cleanup_error = await _stop_verification_node_if_running(job, db, context.transient_device, node)
+        cleanup_error = await _stop_verification_node_if_running(job, db, context.transient_device, node, node_manager)
         # Device deletion cascades to DeviceIntent rows, so no explicit
         # verification intent revoke is needed on the create-mode failure
         # path.
@@ -586,7 +601,7 @@ async def _finalize_failure(
     with db.no_autoflush:
         locked = await device_locking.lock_device(db, context.save_device_id)
     _restore_update_original_fields(locked, original_fields)
-    await _stop_verification_node_if_running(job, db, locked, node)
+    await _stop_verification_node_if_running(job, db, locked, node, node_manager)
     await _revoke_verification_node_intent(db, locked)
     await DeviceStateMachine().transition(
         locked,

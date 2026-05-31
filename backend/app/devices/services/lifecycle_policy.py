@@ -8,7 +8,6 @@ from tenacity import AsyncRetrying, RetryError, retry_if_result, stop_after_atte
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
-from app.appium_nodes.services.reconciler_agent import wait_for_node_running
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState
@@ -63,7 +62,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import SessionViabilityProbe
+    from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
 
@@ -80,11 +79,13 @@ class LifecyclePolicyService:
         settings: SettingsReader,
         actions: LifecyclePolicyActionsService,
         viability: SessionViabilityProbe,
+        node_manager: RemoteNodeManager,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._actions = actions
         self._viability = viability
+        self._node_manager = node_manager
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
         device = await _reload_device(db, device)
@@ -340,7 +341,7 @@ class LifecyclePolicyService:
         # The reconciler runs asynchronously; probing immediately after
         # registering the start intent races the agent start-up.
         if started_node and device.appium_node is not None:
-            observed = await wait_for_node_running(
+            observed = await self._node_manager.wait_for_node_running(
                 db,
                 device.appium_node.id,
                 timeout_sec=RECOVERY_NODE_START_WAIT_TIMEOUT_SEC,
