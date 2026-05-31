@@ -83,7 +83,9 @@ from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
-from app.webhooks.dispatcher import WebhookDeliveryLoop
+from app.webhooks.dispatcher import WebhookDispatchService
+from app.webhooks.service import WebhookCrudService
+from app.webhooks.services_container import WebhookServices
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +102,7 @@ class AppServices:
     grid: GridServices
     appium_nodes: AppiumNodeServices
     jobs: DurableJobWorkerLoop
-    webhooks: WebhookDeliveryLoop
+    webhooks: WebhookServices
     background_loop_flush: BackgroundLoopFlushLoop
     leader_keepalive: LeaderKeepaliveLoop
     leader_watcher: LeaderWatcherLoop
@@ -350,7 +352,11 @@ def compose_app(
                 recovery_runner=recovery_runner_svc,
             )
         ),
-        webhooks=WebhookDeliveryLoop(session_factory=session_factory),
+        webhooks=WebhookServices(
+            crud=WebhookCrudService(),
+            dispatch=WebhookDispatchService(session_factory=session_factory),
+            session_factory=session_factory,
+        ),
         background_loop_flush=BackgroundLoopFlushLoop(session_factory=session_factory, settings=settings_svc),
         leader_keepalive=LeaderKeepaliveLoop(settings=settings_svc),
         leader_watcher=LeaderWatcherLoop(settings=settings_svc, leader=control_plane_leader, engine=engine),

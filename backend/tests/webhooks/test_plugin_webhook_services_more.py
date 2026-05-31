@@ -11,8 +11,8 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.plugins.models import AppiumPlugin
 from app.plugins.schemas import PluginCreate, PluginUpdate
 from app.plugins.service import PluginService
-from app.webhooks import service as webhook_service
 from app.webhooks.schemas import WebhookCreate, WebhookUpdate
+from app.webhooks.service import WebhookCrudService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
@@ -161,7 +161,8 @@ async def test_auto_sync_host_plugins_handles_non_actionable_and_agent_errors() 
 
 
 async def test_webhook_service_crud_filters_and_missing_paths(db_session: AsyncSession) -> None:
-    enabled = await webhook_service.create_webhook(
+    svc = WebhookCrudService()
+    enabled = await svc.create_webhook(
         db_session,
         WebhookCreate(
             name="alerts",
@@ -170,7 +171,7 @@ async def test_webhook_service_crud_filters_and_missing_paths(db_session: AsyncS
             enabled=True,
         ),
     )
-    disabled = await webhook_service.create_webhook(
+    disabled = await svc.create_webhook(
         db_session,
         WebhookCreate(
             name="audit",
@@ -180,19 +181,19 @@ async def test_webhook_service_crud_filters_and_missing_paths(db_session: AsyncS
         ),
     )
 
-    assert [webhook.name for webhook in await webhook_service.list_webhooks(db_session)] == ["alerts", "audit"]
-    assert [webhook.name for webhook in await webhook_service.list_webhooks(db_session, enabled=True)] == ["alerts"]
-    assert [webhook.name for webhook in await webhook_service.list_webhooks(db_session, enabled=False)] == ["audit"]
+    assert [webhook.name for webhook in await svc.list_webhooks(db_session)] == ["alerts", "audit"]
+    assert [webhook.name for webhook in await svc.list_webhooks(db_session, enabled=True)] == ["alerts"]
+    assert [webhook.name for webhook in await svc.list_webhooks(db_session, enabled=False)] == ["audit"]
 
-    updated = await webhook_service.update_webhook(db_session, disabled.id, WebhookUpdate(enabled=True, name="audit-2"))
+    updated = await svc.update_webhook(db_session, disabled.id, WebhookUpdate(enabled=True, name="audit-2"))
     assert updated is not None
     assert updated.enabled is True
     assert updated.name == "audit-2"
 
-    assert await webhook_service.get_webhook(db_session, enabled.id) is not None
-    assert await webhook_service.update_webhook(db_session, uuid4_not_in_db(), WebhookUpdate(enabled=False)) is None
-    assert await webhook_service.delete_webhook(db_session, uuid4_not_in_db()) is False
-    assert await webhook_service.delete_webhook(db_session, enabled.id) is True
+    assert await svc.get_webhook(db_session, enabled.id) is not None
+    assert await svc.update_webhook(db_session, uuid4_not_in_db(), WebhookUpdate(enabled=False)) is None
+    assert await svc.delete_webhook(db_session, uuid4_not_in_db()) is False
+    assert await svc.delete_webhook(db_session, enabled.id) is True
 
 
 def uuid4_not_in_db() -> uuid.UUID:
