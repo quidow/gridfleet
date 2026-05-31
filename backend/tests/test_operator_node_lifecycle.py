@@ -14,7 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
-from app.devices.services.operator_node_lifecycle import request_restart
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -121,8 +121,8 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     # transition_deadline, expires_at, AND precondition — overwriting the stale
     # payload. Reconcile inside register_intents_and_reconcile then writes the
     # AppiumNode desired_port from the fresh payload (= node.port = 4725).
-    await request_restart(
-        db_session, device, caller="operator_restart", reason="operator restart", settings=FakeSettingsReader({})
+    await OperatorNodeLifecycleService(settings=FakeSettingsReader({})).request_restart(
+        db_session, device, caller="operator_restart", reason="operator restart"
     )
     await db_session.refresh(node)
 
@@ -243,9 +243,8 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     # fixture is constructed so the model treats the node as running.
     assert node.observed_running, "test fixture must seed an observed-running node"
 
-    await request_restart(
-        db_session, device, caller="operator_restart", reason="first", settings=FakeSettingsReader({})
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    await svc.request_restart(db_session, device, caller="operator_restart", reason="first")
     intent_first = (
         await db_session.execute(
             select(DeviceIntent).where(
@@ -257,9 +256,7 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     first_token = intent_first.payload["transition_token"]
     first_deadline = intent_first.expires_at
 
-    await request_restart(
-        db_session, device, caller="operator_restart", reason="second", settings=FakeSettingsReader({})
-    )
+    await svc.request_restart(db_session, device, caller="operator_restart", reason="second")
     # Use populate_existing so the query bypasses the SQLAlchemy identity-map
     # cache and reloads the upserted payload from the DB.
     intent_second = (

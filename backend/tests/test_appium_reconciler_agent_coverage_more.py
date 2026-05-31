@@ -14,6 +14,7 @@ from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
 from tests.fakes import FakeSettingsReader
@@ -695,7 +696,11 @@ async def test_start_stop_restart_node_guard_paths(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
+    _svc_settings = FakeSettingsReader({})
+    svc = node_agent.ReconcilerAgentService(
+        settings=_svc_settings,
+        operator=OperatorNodeLifecycleService(settings=_svc_settings),
+    )
     device = await _loaded_device(db_session, db_host, "start-stop-guards")
     with pytest.raises(NodeManagerError, match="No running node"):
         await svc.stop_node(db_session, device)
@@ -729,7 +734,11 @@ async def test_start_stop_restart_node_guard_paths(
 
 
 async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
+    _wait_settings = FakeSettingsReader({})
+    svc = node_agent.ReconcilerAgentService(
+        settings=_wait_settings,
+        operator=OperatorNodeLifecycleService(settings=_wait_settings),
+    )
     db = MagicMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
@@ -1016,7 +1025,11 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
 async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import patch as mock_patch
 
-    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
+    _guard_settings = FakeSettingsReader({})
+    svc = node_agent.ReconcilerAgentService(
+        settings=_guard_settings,
+        operator=OperatorNodeLifecycleService(settings=_guard_settings),
+    )
     db = MagicMock()
     db.refresh = AsyncMock()
     hostless = SimpleNamespace(id=uuid.uuid4(), host_id=None, appium_node=None)

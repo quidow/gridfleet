@@ -13,6 +13,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
@@ -164,6 +165,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
                 circuit_breaker=Mock(),
                 maintenance=_pr_maintenance,
                 crud=_pr_crud,
+                operator=OperatorNodeLifecycleService(settings=_pr_settings),
             ),
             presenter=DevicePresenterService(settings=_pr_settings),
             test_data=TestDataService(publisher=_pr_publisher),

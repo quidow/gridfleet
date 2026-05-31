@@ -41,6 +41,7 @@ from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -406,6 +407,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 maintenance=_maintenance_svc,
                 crud=_crud_svc,
+                operator=OperatorNodeLifecycleService(settings=settings_service),
             ),
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
@@ -603,7 +605,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 session_factory=sf,
             ),
-            reconciler_agent=ReconcilerAgentService(settings=settings_service),
+            reconciler_agent=ReconcilerAgentService(
+                settings=settings_service,
+                operator=OperatorNodeLifecycleService(settings=settings_service),
+            ),
             node_health=NodeHealthService(
                 publisher=test_event_bus,
                 settings=settings_service,

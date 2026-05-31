@@ -17,6 +17,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -96,6 +97,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
                     crud=_crud_svc,
+                    operator=OperatorNodeLifecycleService(settings=settings_service),
                 ),
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),

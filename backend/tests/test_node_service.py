@@ -19,6 +19,7 @@ from app.appium_nodes.services.reconciler_agent import (
 )
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
@@ -172,7 +173,11 @@ async def test_start_node_with_verification_caller_skips_readiness(
         return False
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", fake_ready)
-    svc = ReconcilerAgentService(settings=FakeSettingsReader({}))
+    _svc_settings = FakeSettingsReader({})
+    svc = ReconcilerAgentService(
+        settings=_svc_settings,
+        operator=OperatorNodeLifecycleService(settings=_svc_settings),
+    )
     node = await svc.start_node(db_session, device, caller="verification")
     assert node.desired_state is AppiumDesiredState.running
 

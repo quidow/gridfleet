@@ -18,6 +18,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -197,6 +198,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
                 circuit_breaker=Mock(),
                 maintenance=_fc_maintenance,
                 crud=_fc_crud,
+                operator=OperatorNodeLifecycleService(settings=_fc_settings),
             ),
             presenter=DevicePresenterService(settings=_fc_settings),
             test_data=TestDataService(publisher=_fc_publisher),

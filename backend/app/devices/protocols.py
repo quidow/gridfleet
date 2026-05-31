@@ -324,3 +324,18 @@ class RemoteNodeManager(Protocol):
     async def wait_for_node_running(
         self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = ...
     ) -> AppiumNode | None: ...
+
+
+@runtime_checkable
+class OperatorNodeLifecycleProtocol(Protocol):
+    async def request_start(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode: ...
+
+    async def request_stop(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode: ...
+
+    async def request_restart(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode: ...

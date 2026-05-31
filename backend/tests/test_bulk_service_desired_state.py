@@ -10,6 +10,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -76,7 +77,9 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     await db_session.commit()
     assert node.transition_token is None
 
-    await bulk_service._bulk_restart_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
+    await bulk_service._bulk_restart_one(
+        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    )
     await db_session.refresh(node)
 
     assert node.transition_token is not None, "restart intent's token must reach the node row"
@@ -100,7 +103,9 @@ async def test_operator_start_intent_carries_node_running_precondition(
 
     device = await create_device(db_session, host_id=db_host.id, name="op-start-prec", verified=True)
     device.appium_node = None  # avoid lazy-load in the same async context
-    await bulk_service._bulk_start_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
+    await bulk_service._bulk_start_one(
+        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    )
     await db_session.commit()
 
     row = (
@@ -143,7 +148,9 @@ async def test_operator_restart_intent_carries_node_running_precondition(
     await db_session.flush()
     device.appium_node = node
 
-    await bulk_service._bulk_restart_one(db_session, device, caller="bulk", settings=FakeSettingsReader({}))
+    await bulk_service._bulk_restart_one(
+        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    )
     await db_session.commit()
 
     row = (
@@ -174,7 +181,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, settings: FakeSettingsReader) -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, operator: object) -> AppiumNode:
         captured.append(caller)
         with state_write_guard.bypass():
             _bypass_tmp = AppiumNode(
@@ -198,6 +205,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(settings=_settings_bulk),
+        operator=OperatorNodeLifecycleService(settings=_settings_bulk),
     ).bulk_start_nodes(db_session, [device.id], caller="bulk")
 
     assert captured == ["bulk"]
@@ -213,7 +221,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
 
     captured: list[str] = []
 
-    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, settings: FakeSettingsReader) -> AppiumNode:
+    async def fake_start(_db: AsyncSession, dev: Device, caller: str, *, operator: object) -> AppiumNode:
         captured.append(caller)
         with state_write_guard.bypass():
             _bypass_tmp = AppiumNode(
@@ -237,6 +245,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(settings=_settings_group),
+        operator=OperatorNodeLifecycleService(settings=_settings_group),
     ).bulk_start_nodes(db_session, [device.id], caller="group")
 
     assert captured == ["group"]

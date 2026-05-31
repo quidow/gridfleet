@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
+from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.state import DeviceStateService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
@@ -116,7 +117,10 @@ async def test_start_node_locks_device_before_reservation_check(
     def _override_appium_node_services() -> AppiumNodeServices:
         return AppiumNodeServices(
             reconciler=AsyncMock(),
-            reconciler_agent=ReconcilerAgentService(settings=settings_service),
+            reconciler_agent=ReconcilerAgentService(
+                settings=settings_service,
+                operator=OperatorNodeLifecycleService(settings=settings_service),
+            ),
             node_health=AsyncMock(),
             heartbeat=AsyncMock(),
             settings=settings_service,
