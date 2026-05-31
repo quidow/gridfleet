@@ -52,3 +52,20 @@ async def delete_webhook(db: AsyncSession, webhook_id: uuid.UUID) -> bool:
     await db.delete(webhook)
     await db.commit()
     return True
+
+
+class WebhookCrudService:
+    async def list_webhooks(self, db: AsyncSession, enabled: bool | None = None) -> list[Webhook]:
+        return await list_webhooks(db, enabled)
+
+    async def get_webhook(self, db: AsyncSession, webhook_id: uuid.UUID) -> Webhook | None:
+        return await get_webhook(db, webhook_id)
+
+    async def create_webhook(self, db: AsyncSession, data: WebhookCreate) -> Webhook:
+        return await create_webhook(db, data)
+
+    async def update_webhook(self, db: AsyncSession, webhook_id: uuid.UUID, data: WebhookUpdate) -> Webhook | None:
+        return await update_webhook(db, webhook_id, data)
+
+    async def delete_webhook(self, db: AsyncSession, webhook_id: uuid.UUID) -> bool:
+        return await delete_webhook(db, webhook_id)

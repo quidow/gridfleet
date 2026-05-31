@@ -176,6 +176,27 @@ async def run_pending_webhook_deliveries_once(
     return True
 
 
+class WebhookDispatchService:
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def handle_system_event(self, event: Event) -> None:
+        await handle_system_event(event, self._session_factory)
+
+    async def list_deliveries(
+        self, db: AsyncSession, webhook_id: uuid.UUID, *, limit: int = 10
+    ) -> tuple[list[WebhookDelivery], int]:
+        return await list_deliveries(db, webhook_id, limit=limit)
+
+    async def retry_delivery(
+        self, db: AsyncSession, webhook_id: uuid.UUID, delivery_id: uuid.UUID
+    ) -> WebhookDelivery | None:
+        return await retry_delivery(db, webhook_id, delivery_id)
+
+    async def run_pending_once(self, *, client: httpx.AsyncClient | None = None) -> bool:
+        return await run_pending_webhook_deliveries_once(self._session_factory, client=client)
+
+
 class WebhookDeliveryLoop:
     def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
