@@ -211,3 +211,23 @@ async def request_restart(
         await clear_review_required(db, device, reason="Operator restarted Appium node", source="restart_node")
     await db.refresh(node)
     return node
+
+
+class OperatorNodeLifecycleService:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
+    async def request_start(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode:
+        return await request_start(db, device, caller=caller, reason=reason, settings=self._settings)
+
+    async def request_stop(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode:
+        return await request_stop(db, device, caller=caller, reason=reason)
+
+    async def request_restart(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
+    ) -> AppiumNode:
+        return await request_restart(db, device, caller=caller, reason=reason, settings=self._settings)
