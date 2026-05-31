@@ -93,7 +93,6 @@ from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.service import SettingsService
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
-from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks.dependencies import get_webhook_services
 from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery
@@ -290,7 +289,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     """Yield a configured async_sessionmaker bound to the test engine.
 
     Wires the same control-plane services (event_bus, settings_service,
-    webhook_dispatcher) as db_session so ORM insertions that trigger
+    WebhookDispatchService) as db_session so ORM insertions that trigger
     event-bus side effects work correctly.
     """
     await settings_service.shutdown()
@@ -301,7 +300,9 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     test_circuit_breaker._session_factory = session_factory
     settings_service.configure_store_refresh(session_factory)
     test_event_bus.register_handler(settings_service.handle_system_event)
-    test_event_bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))
+    test_event_bus.register_handler(
+        lambda event: WebhookDispatchService(session_factory=session_factory).handle_system_event(event)
+    )
     settings_service._cache.clear()
     settings_service._overrides.clear()
     settings_service._defaults.clear()

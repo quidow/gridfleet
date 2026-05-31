@@ -54,85 +54,6 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-async def handle_system_event(
-    event: Event,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    async with session_factory() as db:
-        row_result = await db.execute(select(SystemEvent).where(SystemEvent.event_id == event.id))
-        system_event = row_result.scalar_one_or_none()
-        if system_event is None:
-            return
-
-        webhook_result = await db.execute(select(Webhook).where(Webhook.enabled.is_(True)).order_by(Webhook.name.asc()))
-        webhooks = [webhook for webhook in webhook_result.scalars().all() if event.type in webhook.event_types]
-        if not webhooks:
-            return
-
-        stmt = insert(WebhookDelivery).values(
-            [
-                {
-                    "webhook_id": webhook.id,
-                    "system_event_id": system_event.id,
-                    "event_type": system_event.type,
-                    "status": "pending",
-                    "attempts": 0,
-                    "max_attempts": MAX_RETRIES,
-                    "next_retry_at": utcnow(),
-                }
-                for webhook in webhooks
-            ]
-        )
-        returning_stmt = stmt.on_conflict_do_nothing(constraint="uq_webhook_deliveries_webhook_system_event").returning(
-            WebhookDelivery.id
-        )
-        result = await db.execute(returning_stmt)
-        await db.commit()
-        record_webhook_delivery("pending", len(result.scalars().all()))
-
-
-async def list_deliveries(
-    db: AsyncSession,
-    webhook_id: uuid.UUID,
-    *,
-    limit: int = 10,
-) -> tuple[list[WebhookDelivery], int]:
-    items_result = await db.execute(
-        select(WebhookDelivery)
-        .where(WebhookDelivery.webhook_id == webhook_id)
-        .order_by(
-            WebhookDelivery.created_at.desc(),
-            WebhookDelivery.system_event_id.desc(),
-            WebhookDelivery.id.desc(),
-        )
-        .limit(limit)
-    )
-    total_result = await db.execute(
-        select(func.count()).select_from(WebhookDelivery).where(WebhookDelivery.webhook_id == webhook_id)
-    )
-    return list(items_result.scalars().all()), int(total_result.scalar_one())
-
-
-async def retry_delivery(
-    db: AsyncSession,
-    webhook_id: uuid.UUID,
-    delivery_id: uuid.UUID,
-) -> WebhookDelivery | None:
-    delivery = await db.get(WebhookDelivery, delivery_id)
-    if delivery is None or delivery.webhook_id != webhook_id:
-        return None
-
-    delivery.status = "pending"
-    delivery.attempts = 0
-    delivery.last_attempt_at = None
-    delivery.next_retry_at = utcnow()
-    delivery.last_error = None
-    delivery.last_http_status = None
-    await db.commit()
-    await db.refresh(delivery)
-    return delivery
-
-
 async def claim_next_delivery(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> WebhookDelivery | None:
@@ -159,43 +80,99 @@ async def claim_next_delivery(
         return delivery
 
 
-async def run_pending_webhook_deliveries_once(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> bool:
-    delivery = await claim_next_delivery(session_factory)
-    if delivery is None:
-        return False
-
-    if client is not None:
-        await _process_delivery(delivery.id, session_factory, client)
-        return True
-
-    async with httpx.AsyncClient() as owned_client:
-        await _process_delivery(delivery.id, session_factory, owned_client)
-    return True
-
-
 class WebhookDispatchService:
     def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def handle_system_event(self, event: Event) -> None:
-        await handle_system_event(event, self._session_factory)
+        async with self._session_factory() as db:
+            row_result = await db.execute(select(SystemEvent).where(SystemEvent.event_id == event.id))
+            system_event = row_result.scalar_one_or_none()
+            if system_event is None:
+                return
+
+            webhook_result = await db.execute(
+                select(Webhook).where(Webhook.enabled.is_(True)).order_by(Webhook.name.asc())
+            )
+            webhooks = [webhook for webhook in webhook_result.scalars().all() if event.type in webhook.event_types]
+            if not webhooks:
+                return
+
+            stmt = insert(WebhookDelivery).values(
+                [
+                    {
+                        "webhook_id": webhook.id,
+                        "system_event_id": system_event.id,
+                        "event_type": system_event.type,
+                        "status": "pending",
+                        "attempts": 0,
+                        "max_attempts": MAX_RETRIES,
+                        "next_retry_at": utcnow(),
+                    }
+                    for webhook in webhooks
+                ]
+            )
+            returning_stmt = stmt.on_conflict_do_nothing(
+                constraint="uq_webhook_deliveries_webhook_system_event"
+            ).returning(WebhookDelivery.id)
+            result = await db.execute(returning_stmt)
+            await db.commit()
+            record_webhook_delivery("pending", len(result.scalars().all()))
 
     async def list_deliveries(
-        self, db: AsyncSession, webhook_id: uuid.UUID, *, limit: int = 10
+        self,
+        db: AsyncSession,
+        webhook_id: uuid.UUID,
+        *,
+        limit: int = 10,
     ) -> tuple[list[WebhookDelivery], int]:
-        return await list_deliveries(db, webhook_id, limit=limit)
+        items_result = await db.execute(
+            select(WebhookDelivery)
+            .where(WebhookDelivery.webhook_id == webhook_id)
+            .order_by(
+                WebhookDelivery.created_at.desc(),
+                WebhookDelivery.system_event_id.desc(),
+                WebhookDelivery.id.desc(),
+            )
+            .limit(limit)
+        )
+        total_result = await db.execute(
+            select(func.count()).select_from(WebhookDelivery).where(WebhookDelivery.webhook_id == webhook_id)
+        )
+        return list(items_result.scalars().all()), int(total_result.scalar_one())
 
     async def retry_delivery(
-        self, db: AsyncSession, webhook_id: uuid.UUID, delivery_id: uuid.UUID
+        self,
+        db: AsyncSession,
+        webhook_id: uuid.UUID,
+        delivery_id: uuid.UUID,
     ) -> WebhookDelivery | None:
-        return await retry_delivery(db, webhook_id, delivery_id)
+        delivery = await db.get(WebhookDelivery, delivery_id)
+        if delivery is None or delivery.webhook_id != webhook_id:
+            return None
+
+        delivery.status = "pending"
+        delivery.attempts = 0
+        delivery.last_attempt_at = None
+        delivery.next_retry_at = utcnow()
+        delivery.last_error = None
+        delivery.last_http_status = None
+        await db.commit()
+        await db.refresh(delivery)
+        return delivery
 
     async def run_pending_once(self, *, client: httpx.AsyncClient | None = None) -> bool:
-        return await run_pending_webhook_deliveries_once(self._session_factory, client=client)
+        delivery = await claim_next_delivery(self._session_factory)
+        if delivery is None:
+            return False
+
+        if client is not None:
+            await _process_delivery(delivery.id, self._session_factory, client)
+            return True
+
+        async with httpx.AsyncClient() as owned_client:
+            await _process_delivery(delivery.id, self._session_factory, owned_client)
+        return True
 
 
 class WebhookDeliveryLoop:

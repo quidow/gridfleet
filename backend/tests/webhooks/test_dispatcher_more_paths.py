@@ -47,12 +47,13 @@ async def test_claim_retry_and_pending_no_work_paths() -> None:
     assert await webhook_dispatcher.claim_next_delivery(factory) is None
     db.rollback.assert_awaited_once()
 
-    assert await webhook_dispatcher.run_pending_webhook_deliveries_once(_Factory(_Db())) is False
+    assert await WebhookDispatchService(session_factory=_Factory(_Db())).run_pending_once() is False
 
     wrong_webhook = uuid.uuid4()
     delivery = SimpleNamespace(webhook_id=uuid.uuid4())
     db = _Db(delivery)
-    assert await webhook_dispatcher.retry_delivery(db, wrong_webhook, uuid.uuid4()) is None
+    svc = WebhookDispatchService(session_factory=_Factory())
+    assert await svc.retry_delivery(db, wrong_webhook, uuid.uuid4()) is None
 
     retry_id = uuid.uuid4()
     reset_delivery = SimpleNamespace(
@@ -65,7 +66,8 @@ async def test_claim_retry_and_pending_no_work_paths() -> None:
         last_http_status=500,
     )
     db = _Db(reset_delivery)
-    assert await webhook_dispatcher.retry_delivery(db, wrong_webhook, retry_id) is reset_delivery
+    result = await WebhookDispatchService(session_factory=_Factory()).retry_delivery(db, wrong_webhook, retry_id)
+    assert result is reset_delivery
     assert reset_delivery.status == "pending"
     assert reset_delivery.attempts == 0
     db.refresh.assert_awaited_once_with(reset_delivery)
@@ -89,7 +91,8 @@ async def test_list_deliveries_counts_rows() -> None:
     db = _Db()
     db.execute = AsyncMock(side_effect=[ItemsResult(), CountResult()])
 
-    items, total = await webhook_dispatcher.list_deliveries(db, uuid.uuid4())
+    svc = WebhookDispatchService(session_factory=_Factory())
+    items, total = await svc.list_deliveries(db, uuid.uuid4())
 
     assert items == [first, second]
     assert total == 2
@@ -97,9 +100,8 @@ async def test_list_deliveries_counts_rows() -> None:
 
 async def test_handle_system_event_missing_event_returns_early() -> None:
     db = _Db()
-    await webhook_dispatcher.handle_system_event(
+    await WebhookDispatchService(session_factory=_Factory(db)).handle_system_event(
         SimpleNamespace(id=uuid.uuid4(), type="device.created"),
-        session_factory=_Factory(db),
     )
     db.execute.assert_awaited_once()
 
@@ -110,7 +112,7 @@ async def test_run_pending_delivery_uses_owned_client(monkeypatch: pytest.Monkey
     process = AsyncMock()
     monkeypatch.setattr(webhook_dispatcher, "_process_delivery", process)
 
-    assert await webhook_dispatcher.run_pending_webhook_deliveries_once(_Factory(_Db())) is True
+    assert await WebhookDispatchService(session_factory=_Factory(_Db())).run_pending_once() is True
     process.assert_awaited_once()
 
 
@@ -249,7 +251,7 @@ async def test_process_delivery_success_and_failure_paths(monkeypatch: pytest.Mo
 
 
 async def test_handle_system_event_no_matching_webhooks() -> None:
-    """Line 77: system_event found but no enabled webhook subscribes to the event type."""
+    """system_event found but no enabled webhook subscribes to the event type."""
 
     class _ScalarResult:
         def scalar_one_or_none(self) -> SimpleNamespace:
@@ -271,9 +273,8 @@ async def test_handle_system_event_no_matching_webhooks() -> None:
 
     db = _Db()
     db.execute = AsyncMock(side_effect=_execute)
-    await webhook_dispatcher.handle_system_event(
+    await WebhookDispatchService(session_factory=_Factory(db)).handle_system_event(
         SimpleNamespace(id=uuid.uuid4(), type="device.created"),
-        session_factory=_Factory(db),
     )
     # Two executes: one for SystemEvent lookup, one for Webhook list
     assert call_count == 2
@@ -281,14 +282,14 @@ async def test_handle_system_event_no_matching_webhooks() -> None:
 
 
 async def test_process_delivery_delivery_gone_returns_early() -> None:
-    """Line 210: delivery row is None at the start of _process_delivery — silent early exit."""
+    """delivery row is None at the start of _process_delivery — silent early exit."""
     db = _Db()  # no values → db.get returns None on first call
     await webhook_dispatcher._process_delivery(uuid.uuid4(), _Factory(db), MagicMock())
     db.commit.assert_not_awaited()
 
 
 async def test_record_failure_delivery_gone_returns_early() -> None:
-    """Line 279: delivery row is None inside _record_failure — silent early exit."""
+    """delivery row is None inside _record_failure — silent early exit."""
     db = _Db()  # no values → db.get returns None
     await webhook_dispatcher._record_failure(uuid.uuid4(), _Factory(db), error="gone", http_status=None, retryable=True)
     db.commit.assert_not_awaited()

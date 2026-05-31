@@ -9,11 +9,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.webhooks.dispatcher import (
+    WebhookDispatchService,
     _compute_retry_delay,
     _is_retryable_exception,
     _process_delivery,
     _record_failure,
-    run_pending_webhook_deliveries_once,
 )
 from app.webhooks.models import WebhookDelivery
 from tests.helpers import drain_handlers
@@ -77,7 +77,7 @@ async def test_webhook_delivery_success_marks_row_delivered(client: AsyncClient,
     mock_client = AsyncMock(spec=httpx.AsyncClient)
     mock_client.post.return_value = _make_response(status_code=200)
 
-    worked = await run_pending_webhook_deliveries_once(session_factory, client=mock_client)
+    worked = await WebhookDispatchService(session_factory=session_factory).run_pending_once(client=mock_client)
 
     assert worked is True
     deliveries = (await client.get(f"/api/webhooks/{create_resp.json()['id']}/deliveries")).json()
@@ -106,7 +106,7 @@ async def test_webhook_delivery_failures_persist_retries_and_exhaustion(
     mock_client.post.return_value = _make_response(status_code=500)
 
     for attempt in range(1, 4):
-        worked = await run_pending_webhook_deliveries_once(session_factory, client=mock_client)
+        worked = await WebhookDispatchService(session_factory=session_factory).run_pending_once(client=mock_client)
         assert worked is True
         delivery = (await client.get(f"/api/webhooks/{webhook_id}/deliveries")).json()["items"][0]
         if attempt < 3:
