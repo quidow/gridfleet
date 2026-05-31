@@ -213,8 +213,9 @@ def _patch_running_node(
         await db.flush()
         return node
 
-    return patch(
-        "app.appium_nodes.services.reconciler_agent.wait_for_node_running",
+    return patch.object(
+        ReconcilerAgentService,
+        "wait_for_node_running",
         new=AsyncMock(side_effect=wait_for_node),
     )
 
@@ -289,7 +290,7 @@ async def test_verification_job_success_keeps_verified_node(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", stop_mock),
+        patch.object(ReconcilerAgentService, "stop_node", stop_mock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
@@ -373,7 +374,7 @@ async def test_retain_verified_node_acquires_row_lock(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", AsyncMock()),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch("app.devices.services.verification_execution.device_locking.lock_device", spy),
     ):
@@ -424,7 +425,7 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new_callable=AsyncMock),
+        patch.object(ReconcilerAgentService, "stop_node", new_callable=AsyncMock),
         patch(
             "app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client
         ) as client_factory,
@@ -467,7 +468,7 @@ async def test_avd_verification_probe_uses_node_resolved_serial_when_already_run
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new_callable=AsyncMock),
+        patch.object(ReconcilerAgentService, "stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=health_http_client),
     ):
         resp = await client.post(
@@ -513,7 +514,7 @@ async def test_avd_verification_preserves_explicit_virtual_lane_after_normalize(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new_callable=AsyncMock),
+        patch.object(ReconcilerAgentService, "stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
     ):
         resp = await client.post(
@@ -558,7 +559,7 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
 
     with (
         _patch_running_node(active_connection_target="emulator-5554"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new_callable=AsyncMock),
+        patch.object(ReconcilerAgentService, "stop_node", new_callable=AsyncMock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         first_resp = await client.post(
@@ -662,7 +663,7 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
 
     with (
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", stop_mock),
+        patch.object(ReconcilerAgentService, "stop_node", stop_mock),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(
@@ -769,8 +770,9 @@ async def test_verification_with_host_still_reports_node_start_failures(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     healthy_http_client = _mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}})
     with (
-        patch(
-            "app.appium_nodes.services.reconciler_agent.start_node",
+        patch.object(
+            ReconcilerAgentService,
+            "start_node",
             new=AsyncMock(side_effect=NodeManagerError("appium missing")),
         ),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
@@ -794,8 +796,9 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
 
     with (
         patch("app.devices.services.verification_preparation.normalize_pack_device", new=AsyncMock(return_value=None)),
-        patch(
-            "app.appium_nodes.services.reconciler_agent.wait_for_node_running",
+        patch.object(
+            ReconcilerAgentService,
+            "wait_for_node_running",
             new=AsyncMock(return_value=None),
         ),
         patch.object(VerificationExecutionService, "run_device_health", new_callable=AsyncMock, return_value=None),
@@ -844,7 +847,7 @@ async def test_existing_device_verification_marks_device_verified(
 
     with (
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
         patch(
             "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
@@ -1033,7 +1036,7 @@ async def test_existing_device_verification_can_replace_device_config(
 
     with (
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
         patch(
             "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(payload={"healthy": True, "ecp_reachable": {"reachable": True}}),
@@ -1086,7 +1089,7 @@ async def test_existing_device_verification_config_replace_writes_verbatim(
 
     with (
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
         patch(
             "app.devices.services.verification_runner.httpx.AsyncClient",
             return_value=_mock_http_client(
@@ -1193,8 +1196,9 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             "app.devices.services.verification_execution._stop_managed_node_for_verification",
             new=AsyncMock(side_effect=stop_running_node),
         ),
-        patch(
-            "app.appium_nodes.services.reconciler_agent.wait_for_node_running",
+        patch.object(
+            ReconcilerAgentService,
+            "wait_for_node_running",
             new=AsyncMock(side_effect=wait_for_updated_node),
         ),
         patch(
@@ -1242,7 +1246,7 @@ async def test_android_network_verification_resolves_stable_identity_before_save
     with (
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",
@@ -1294,7 +1298,7 @@ async def test_roku_verification_resolves_identity_from_ip_before_save(
     with (
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=http_client),
         _patch_running_node(active_connection_target="192.168.1.50"),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
     ):
         resp = await client.post(
             "/api/devices/verification-jobs",
@@ -1400,7 +1404,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
 
     with (
         _patch_running_node(),
-        patch("app.appium_nodes.services.reconciler_agent.stop_node", new=AsyncMock()),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
         patch("app.devices.services.verification_runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(

@@ -117,14 +117,10 @@ __all__ = [
     "mark_node_started",
     "mark_node_stopped",
     "require_management_host",
-    "restart_node",
     "restart_node_via_agent",
-    "start_node",
     "start_remote_node",
-    "stop_node",
     "stop_node_via_agent",
     "stop_remote_node",
-    "wait_for_node_running",
 ]
 
 
@@ -799,91 +795,6 @@ async def _start_for_node(
     return handle
 
 
-async def start_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    caller: DesiredStateCaller = "operator_route",
-    settings: SettingsReader,
-) -> AppiumNode:
-    """Operator-initiated single-device start.
-
-    Routes through ``operator_node_lifecycle.request_start`` so the operator:start
-    intent payload is the single source of truth. Direct ``write_desired_state``
-    calls are forbidden in operator code paths.
-    """
-    await db.refresh(device, attribute_names=["appium_node"])
-    if device.appium_node and device.appium_node.observed_running:
-        raise NodeManagerError(f"Node already running for device {device.id}")
-    if caller != "verification" and not await is_ready_for_use_async(db, device):
-        raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
-
-    node = await request_start(db, device, caller=caller, reason=f"{caller} start requested", settings=settings)
-    await db.commit()
-    await db.refresh(node)
-    return node
-
-
-async def stop_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    caller: DesiredStateCaller = "operator_route",
-) -> AppiumNode:
-    """Operator-initiated single-device stop. Routes through
-    ``operator_node_lifecycle.request_stop`` so operator:stop intents are the
-    single source of truth.
-    """
-    node = cast("AppiumNode | None", device.appium_node)
-    if not node or not node.observed_running:
-        raise NodeManagerError(f"No running node for device {device.id}")
-
-    node = await request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
-    await db.commit()
-    await db.refresh(node)
-    return node
-
-
-async def wait_for_node_running(
-    db: AsyncSession,
-    node_id: uuid.UUID,
-    *,
-    timeout_sec: int,
-    poll_interval_sec: float = 0.5,
-) -> AppiumNode | None:
-    """Poll until an AppiumNode reaches observed running state."""
-    deadline = time.monotonic() + timeout_sec
-    while time.monotonic() < deadline:
-        node = await db.get(AppiumNode, node_id)
-        if node is not None:
-            await db.refresh(node)
-            if node.observed_running:
-                return node
-        await asyncio.sleep(poll_interval_sec)
-    return None
-
-
-async def restart_node(
-    db: AsyncSession,
-    device: Device,
-    *,
-    caller: DesiredStateCaller = "operator_restart",
-    settings: SettingsReader,
-) -> AppiumNode:
-    """Operator-initiated single-device restart. Routes through
-    ``operator_node_lifecycle.request_restart`` so the operator:start intent
-    payload is the single source of truth (with fresh transition_token and
-    expires_at on every restart).
-    """
-    if not device.appium_node or not device.appium_node.observed_running:
-        return await start_node(db, device, caller=caller, settings=settings)
-
-    node = await request_restart(db, device, caller=caller, reason=f"{caller} restart requested", settings=settings)
-    await db.commit()
-    await db.refresh(node)
-    return node
-
-
 class ReconcilerAgentService:
     def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings
@@ -891,19 +802,69 @@ class ReconcilerAgentService:
     async def start_node(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
     ) -> AppiumNode:
-        return await start_node(db, device, caller=caller, settings=self._settings)
+        """Operator-initiated single-device start.
+
+        Routes through ``operator_node_lifecycle.request_start`` so the operator:start
+        intent payload is the single source of truth. Direct ``write_desired_state``
+        calls are forbidden in operator code paths.
+        """
+        await db.refresh(device, attribute_names=["appium_node"])
+        if device.appium_node and device.appium_node.observed_running:
+            raise NodeManagerError(f"Node already running for device {device.id}")
+        if caller != "verification" and not await is_ready_for_use_async(db, device):
+            raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
+
+        node = await request_start(
+            db, device, caller=caller, reason=f"{caller} start requested", settings=self._settings
+        )
+        await db.commit()
+        await db.refresh(node)
+        return node
 
     async def stop_node(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
     ) -> AppiumNode:
-        return await stop_node(db, device, caller=caller)
+        """Operator-initiated single-device stop. Routes through
+        ``operator_node_lifecycle.request_stop`` so operator:stop intents are the
+        single source of truth.
+        """
+        node = cast("AppiumNode | None", device.appium_node)
+        if not node or not node.observed_running:
+            raise NodeManagerError(f"No running node for device {device.id}")
+
+        node = await request_stop(db, device, caller=caller, reason=f"{caller} stop requested")
+        await db.commit()
+        await db.refresh(node)
+        return node
 
     async def restart_node(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_restart"
     ) -> AppiumNode:
-        return await restart_node(db, device, caller=caller, settings=self._settings)
+        """Operator-initiated single-device restart. Routes through
+        ``operator_node_lifecycle.request_restart`` so the operator:start intent
+        payload is the single source of truth (with fresh transition_token and
+        expires_at on every restart).
+        """
+        if not device.appium_node or not device.appium_node.observed_running:
+            return await self.start_node(db, device, caller=caller)
+
+        node = await request_restart(
+            db, device, caller=caller, reason=f"{caller} restart requested", settings=self._settings
+        )
+        await db.commit()
+        await db.refresh(node)
+        return node
 
     async def wait_for_node_running(
         self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = 0.5
     ) -> AppiumNode | None:
-        return await wait_for_node_running(db, node_id, timeout_sec=timeout_sec, poll_interval_sec=poll_interval_sec)
+        """Poll until an AppiumNode reaches observed running state."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            node = await db.get(AppiumNode, node_id)
+            if node is not None:
+                await db.refresh(node)
+                if node.observed_running:
+                    return node
+            await asyncio.sleep(poll_interval_sec)
+        return None
