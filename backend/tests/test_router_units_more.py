@@ -1872,7 +1872,6 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
 async def test_nodes_router_validation_branches() -> None:
     device_id = uuid.uuid4()
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
-    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
 
     with patch(
         "app.appium_nodes.routers.nodes.run_service.get_device_reservation",
@@ -1916,7 +1915,6 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router.start_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
             )
     assert exc.value.status_code == 400
@@ -1936,7 +1934,6 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router.start_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
             )
     assert "no host assigned" in str(exc.value.detail)
@@ -1958,7 +1955,6 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router.start_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(reconciler_agent=mock_reconciler_agent),
             )
             is started_node
@@ -1967,7 +1963,6 @@ async def test_nodes_router_validation_branches() -> None:
 
 async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     device_id = uuid.uuid4()
-    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
     stopped_device = SimpleNamespace(id=device_id, hold=None, appium_node=None)
     with (
         patch(
@@ -2001,7 +1996,6 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(
                     reconciler_agent=mock_ra_restart,
                     reconciler=SimpleNamespace(
@@ -2017,7 +2011,6 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
 async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     device_id = uuid.uuid4()
     verified = SimpleNamespace(readiness_state="verified", missing_setup_fields=[])
-    node_settings_services = _mock_settings_svc(FakeSettingsReader({}))
 
     device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
     with (
@@ -2031,7 +2024,6 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.start_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
             )
     assert exc.value.status_code == 400
@@ -2050,7 +2042,6 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.start_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(reconciler_agent=ra_boom),
             )
 
@@ -2108,7 +2099,6 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=object(),
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(
                     reconciler_agent=ra_fallback,
                     reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=None)),
@@ -2133,7 +2123,6 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
-                settings_services=node_settings_services,
                 appium_services=SimpleNamespace(
                     reconciler_agent=ra_restart,
                     reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=converged)),
