@@ -108,6 +108,7 @@ __all__ = [
     "RESTART_MAX_RETRIES",
     "NodeManagerError",
     "NodePortConflictError",
+    "ReconcilerAgentService",
     "RemoteStartResult",
     "agent_url",
     "allocate_port",
@@ -881,3 +882,28 @@ async def restart_node(
     await db.commit()
     await db.refresh(node)
     return node
+
+
+class ReconcilerAgentService:
+    def __init__(self, *, settings: SettingsReader) -> None:
+        self._settings = settings
+
+    async def start_node(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
+    ) -> AppiumNode:
+        return await start_node(db, device, caller=caller, settings=self._settings)
+
+    async def stop_node(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
+    ) -> AppiumNode:
+        return await stop_node(db, device, caller=caller)
+
+    async def restart_node(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_restart"
+    ) -> AppiumNode:
+        return await restart_node(db, device, caller=caller, settings=self._settings)
+
+    async def wait_for_node_running(
+        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = 0.5
+    ) -> AppiumNode | None:
+        return await wait_for_node_running(db, node_id, timeout_sec=timeout_sec, poll_interval_sec=poll_interval_sec)
