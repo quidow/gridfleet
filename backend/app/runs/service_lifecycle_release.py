@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_FORCED_RELEASE,
@@ -154,8 +154,7 @@ class RunReleaseService:
                 f"health_failure:reservation:{device.id}",
             ]
             if caller == "run_force_release":
-                await register_intents_and_reconcile(
-                    db,
+                await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=[
                         IntentRegistration(
@@ -168,8 +167,7 @@ class RunReleaseService:
                     ],
                     reason=reason or f"force release run {run.id}",
                 )
-            await revoke_intents_and_reconcile(
-                db,
+            await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=sources,
                 reason=reason or f"clear run {run.id} intents",

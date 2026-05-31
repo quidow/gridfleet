@@ -16,7 +16,7 @@ from app.devices.services import health as device_health
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services import lifecycle_policy_summary as lifecycle_policy_summary
 from app.devices.services.event import record_event
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
     NODE_PROCESS,
@@ -151,8 +151,7 @@ class LifecyclePolicyService:
             # session-safety downgrade pins ``stop_pending=True``, and the
             # device flaps offline every probe cycle. Mirrors the revoke that
             # already fires in the start-node branch below.
-            await revoke_intents_and_reconcile(
-                db,
+            await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[
                     f"connectivity:{device.id}",
@@ -241,8 +240,7 @@ class LifecyclePolicyService:
                     db.add(new_node)
                     await db.flush()
                     device.appium_node = new_node
-                await revoke_intents_and_reconcile(
-                    db,
+                await IntentService(db).revoke_intents_and_reconcile(
                     device_id=device.id,
                     sources=[
                         f"connectivity:{device.id}",
@@ -259,8 +257,7 @@ class LifecyclePolicyService:
                         "expected": False,
                     }
 
-                await register_intents_and_reconcile(
-                    db,
+                await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=[
                         *(

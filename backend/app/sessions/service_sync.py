@@ -52,9 +52,6 @@ NODE_PROCESS = intent_types.NODE_PROCESS
 PRIORITY_ACTIVE_SESSION = intent_types.PRIORITY_ACTIVE_SESSION
 RunExclusionHook = lifecycle_state_machine_hooks.RunExclusionHook
 TransitionEvent = lifecycle_state_machine_types.TransitionEvent
-register_intents_and_reconcile = intent_service.register_intents_and_reconcile
-revoke_intents_and_reconcile = intent_service.revoke_intents_and_reconcile
-
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
@@ -281,8 +278,7 @@ class SessionSyncService:
                 suppress_events=True,
                 publisher=self._publisher,
             )
-            await register_intents_and_reconcile(
-                db,
+            await intent_service.IntentService(db).register_intents_and_reconcile(
                 device_id=locked_device.id,
                 intents=[
                     IntentRegistration(
@@ -340,8 +336,7 @@ class SessionSyncService:
                     db, ended_session, device=ended_device, publisher=self._publisher
                 )
                 if ended_session.device_id is not None:
-                    await revoke_intents_and_reconcile(
-                        db,
+                    await intent_service.IntentService(db).revoke_intents_and_reconcile(
                         device_id=ended_session.device_id,
                         sources=[f"active_session:{sid}"],
                         reason=f"Session {sid} ended",
@@ -529,8 +524,7 @@ class SessionSyncService:
                     sid,
                     exc,
                 )
-        await register_intents_and_reconcile(
-            db,
+        await intent_service.IntentService(db).register_intents_and_reconcile(
             device_id=locked_device.id,
             intents=[
                 IntentRegistration(

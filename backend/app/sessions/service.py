@@ -14,7 +14,7 @@ from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_c
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state as device_state
-from app.devices.services.intent import revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
@@ -556,8 +556,7 @@ class SessionCrudService:
             # Mirror the ``update_session_status`` revoke path. Without this,
             # testkit clients that POST /finished without a follow-up PATCH /status
             # leak one ``active_session:{sid}`` intent per session served.
-            await revoke_intents_and_reconcile(
-                db,
+            await IntentService(db).revoke_intents_and_reconcile(
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",
@@ -613,8 +612,7 @@ class SessionCrudService:
             # session-the-device-ever-ran. ``reconcile_device`` runs inside the
             # helper so ``node.stop_pending`` and ``node.desired_state`` reflect
             # the post-session intent set when the row lock is taken below.
-            await revoke_intents_and_reconcile(
-                db,
+            await IntentService(db).revoke_intents_and_reconcile(
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",

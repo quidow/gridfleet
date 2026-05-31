@@ -262,7 +262,6 @@ async def test_cooldown_intents_carry_run_active_precondition(db_session: AsyncS
 async def test_forced_release_registers_run_active_precondition(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.runs import service_lifecycle_release
     from app.runs.models import TestRun
     from app.runs.service_lifecycle_release import RunReleaseService
     from tests.fakes import FakeSettingsReader
@@ -270,7 +269,7 @@ async def test_forced_release_registers_run_active_precondition(
     captured: list[IntentRegistration] = []
 
     async def fake_register(
-        db: AsyncSession,
+        _self: object,
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
@@ -279,7 +278,7 @@ async def test_forced_release_registers_run_active_precondition(
         captured.extend(intents)
 
     async def fake_revoke(
-        db: AsyncSession,
+        _self: object,
         *,
         device_id: uuid.UUID,
         sources: list[str],
@@ -287,8 +286,8 @@ async def test_forced_release_registers_run_active_precondition(
     ) -> None:
         return None
 
-    monkeypatch.setattr(service_lifecycle_release, "register_intents_and_reconcile", fake_register)
-    monkeypatch.setattr(service_lifecycle_release, "revoke_intents_and_reconcile", fake_revoke)
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", fake_revoke)
 
     device = await create_device(db_session, host_id=db_host.id, name="forced-reg")
     run = await create_reserved_run(db_session, name="forced-reg-run", devices=[device])
@@ -327,7 +326,7 @@ async def test_allocator_registers_reservation_active_precondition(
     captured: list[IntentRegistration] = []
 
     async def fake_register(
-        db: AsyncSession,
+        _self: object,
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
@@ -335,7 +334,7 @@ async def test_allocator_registers_reservation_active_precondition(
     ) -> None:
         captured.extend(intents)
 
-    monkeypatch.setattr(service_allocator, "register_intents_and_reconcile", fake_register)
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
 
     device = await create_device(db_session, host_id=db_host.id, name="alloc-reg")
     run = await create_reserved_run(db_session, name="alloc-reg-run", devices=[device])
@@ -381,12 +380,10 @@ async def test_maintenance_intents_carry_device_hold_precondition(db_session: As
 async def test_node_health_registers_node_running_precondition(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.appium_nodes.services import node_health
-
     captured: list[IntentRegistration] = []
 
     async def fake_register(
-        db: AsyncSession,
+        _self: object,
         *,
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
@@ -394,7 +391,7 @@ async def test_node_health_registers_node_running_precondition(
     ) -> None:
         captured.extend(intents)
 
-    monkeypatch.setattr(node_health, "register_intents_and_reconcile", fake_register)
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", fake_register)
 
     from unittest.mock import Mock
 

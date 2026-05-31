@@ -19,7 +19,7 @@ from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import health as device_health
-from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -263,8 +263,7 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher
     if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
         return None
 
-    await register_intents_and_reconcile(
-        db,
+    await IntentService(db).register_intents_and_reconcile(
         device_id=locked_device.id,
         intents=[
             IntentRegistration(

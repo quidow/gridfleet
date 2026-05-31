@@ -51,6 +51,7 @@ from app.devices.schemas.device import (
 )
 from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
+from app.devices.services.intent import IntentService
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
@@ -1551,7 +1552,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch(
             "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
         ),
-        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(RuntimeError, match="boom"):
             await devices_control.reconnect_device(
@@ -1735,7 +1736,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
             "app.devices.routers.control.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
-        patch("app.devices.routers.control.revoke_intents_and_reconcile", new=revoke),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=revoke),
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
@@ -1750,7 +1751,6 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
     assert device.session_viability_status is None
     assert device.session_viability_error is None
     revoke.assert_awaited_once_with(
-        db,
         device_id=device_id,
         sources=[
             f"connectivity:{device_id}",
@@ -2924,7 +2924,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         ),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
-        patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
+        patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(

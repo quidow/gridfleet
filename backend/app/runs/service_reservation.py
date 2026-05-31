@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
-from app.devices.services.intent import revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.review import clear_review_required
 from app.runs.models import TestRun
 
@@ -185,8 +185,7 @@ class RunReservationService:
             except NoResultFound:
                 device = None
             if device is not None:
-                await revoke_intents_and_reconcile(
-                    db,
+                await IntentService(db).revoke_intents_and_reconcile(
                     device_id=device.id,
                     sources=[f"run:{run.id}"],
                     reason=reason,

@@ -10,7 +10,7 @@ from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services.event import record_event
-from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -138,8 +138,7 @@ class LifecyclePolicyActionsService:
                 reason=f"Node crash recorded ({source}): {reason}",
                 publisher=self._publisher,
             )
-            await register_intents_and_reconcile(
-                db,
+            await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=_crash_intents(device, source=source, reason=reason),
                 reason=reason,
@@ -153,8 +152,7 @@ class LifecyclePolicyActionsService:
                 publisher=self._publisher,
             )
             if node is not None:
-                await register_intents_and_reconcile(
-                    db,
+                await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=_crash_intents(device, source=source, reason=reason),
                     reason=reason,
@@ -187,8 +185,7 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            await register_intents_and_reconcile(
-                db,
+            await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=[
                     IntentRegistration(
@@ -204,7 +201,9 @@ class LifecyclePolicyActionsService:
                 ],
                 reason=reason,
             )
-            await revoke_intents_and_reconcile(db, device_id=device.id, sources=[f"run:{run.id}"], reason=reason)
+            await IntentService(db).revoke_intents_and_reconcile(
+                device_id=device.id, sources=[f"run:{run.id}"], reason=reason
+            )
         if run is not None and not was_excluded:
             await lifecycle_incident_service.record_lifecycle_incident(
                 db,
@@ -239,14 +238,12 @@ class LifecyclePolicyActionsService:
         run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
-            await revoke_intents_and_reconcile(
-                db,
+            await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[f"health_failure:reservation:{device.id}"],
                 reason=reason,
             )
-            await register_intents_and_reconcile(
-                db,
+            await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=[
                     IntentRegistration(

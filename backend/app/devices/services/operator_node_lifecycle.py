@@ -16,10 +16,7 @@ from typing import TYPE_CHECKING
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
-from app.devices.services.intent import (
-    register_intents_and_reconcile,
-    revoke_intents_and_reconcile,
-)
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -131,14 +128,12 @@ class OperatorNodeLifecycleService:
             await db.flush()
             device.appium_node = node
 
-        await revoke_intents_and_reconcile(
-            db,
+        await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=operator_stop_sources(device.id),
             reason=reason,
         )
-        await register_intents_and_reconcile(
-            db,
+        await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[operator_start_intent(device, desired_port)],
             reason=reason,
@@ -168,8 +163,7 @@ class OperatorNodeLifecycleService:
         if node is None:
             raise NodeManagerError(f"No node row for device {device.id}")
 
-        await register_intents_and_reconcile(
-            db,
+        await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=operator_stop_intents(device.id),
             reason=reason,
@@ -189,8 +183,7 @@ class OperatorNodeLifecycleService:
         if node is None or not node.observed_running:
             return await self.request_start(db, device, caller=caller, reason=reason)
 
-        await register_intents_and_reconcile(
-            db,
+        await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[operator_restart_intent(device, node.port, settings=self._settings)],
             reason=reason,

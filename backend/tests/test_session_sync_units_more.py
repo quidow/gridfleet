@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.devices.models import DeviceOperationalState
+from app.devices.services.intent import IntentService
 from app.sessions import service_sync as session_sync
 from app.sessions.models import SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -143,7 +144,7 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     machine = SimpleNamespace(transition=AsyncMock())
     monkeypatch.setattr(session_sync, "_MACHINE", machine)
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
 
     mock_lifecycle = AsyncMock()
     mock_lifecycle.handle_session_finished = AsyncMock(
@@ -321,7 +322,7 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
     fake_grid.available_node_device_ids = MagicMock(return_value=None)
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(session_sync, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(
         session_sync.device_locking,
         "lock_device",

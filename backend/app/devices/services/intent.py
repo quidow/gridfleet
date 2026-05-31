@@ -122,26 +122,22 @@ class IntentService:
         )
         return int((await self._db.execute(stmt)).scalar_one())
 
+    async def register_intents_and_reconcile(
+        self,
+        *,
+        device_id: UUID,
+        intents: list[IntentRegistration],
+        reason: str,
+    ) -> None:
+        await self.register_intents(device_id=device_id, intents=intents, reason=reason)
+        await reconcile_device(self._db, device_id)
 
-async def register_intents_and_reconcile(
-    db: AsyncSession,
-    *,
-    device_id: UUID,
-    intents: list[IntentRegistration],
-    reason: str,
-) -> None:
-    service = IntentService(db)
-    await service.register_intents(device_id=device_id, intents=intents, reason=reason)
-    await reconcile_device(db, device_id)
-
-
-async def revoke_intents_and_reconcile(
-    db: AsyncSession,
-    *,
-    device_id: UUID,
-    sources: list[str],
-    reason: str,
-) -> None:
-    service = IntentService(db)
-    await service.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-    await reconcile_device(db, device_id)
+    async def revoke_intents_and_reconcile(
+        self,
+        *,
+        device_id: UUID,
+        sources: list[str],
+        reason: str,
+    ) -> None:
+        await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
+        await reconcile_device(self._db, device_id)

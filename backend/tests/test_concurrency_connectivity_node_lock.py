@@ -9,6 +9,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services import state_write_guard
+from app.devices.services.intent import IntentService
 from app.hosts.models import Host
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -48,10 +49,10 @@ async def test_stop_disconnected_node_locks_device_and_node(
 
     stomper_can_go = asyncio.Event()
 
-    real_register = device_connectivity.register_intents_and_reconcile
+    real_register = IntentService.register_intents_and_reconcile
 
     async def fake_register_intents_and_reconcile(
-        db: AsyncSession,
+        self: IntentService,
         *,
         device_id: object,
         intents: object,
@@ -59,13 +60,14 @@ async def test_stop_disconnected_node_locks_device_and_node(
     ) -> None:
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        await real_register(db, device_id=device_id, intents=intents, reason=reason)
+        await real_register(self, device_id=device_id, intents=intents, reason=reason)
 
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
-            with patch(
-                "app.devices.services.connectivity.register_intents_and_reconcile",
+            with patch.object(
+                IntentService,
+                "register_intents_and_reconcile",
                 fake_register_intents_and_reconcile,
             ):
                 await device_connectivity._stop_disconnected_node(session, target, publisher=event_bus)
