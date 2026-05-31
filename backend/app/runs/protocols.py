@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
@@ -177,3 +177,10 @@ class RunReservationProtocol(Protocol):
     async def restore_device_to_run(
         self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
     ) -> TestRun | None: ...
+
+
+@runtime_checkable
+class DeviceCapabilityReader(Protocol):
+    async def get_device_capabilities(
+        self, db: AsyncSession, device: Device, *, active_connection_target: str | None = ...
+    ) -> dict[str, Any]: ...
