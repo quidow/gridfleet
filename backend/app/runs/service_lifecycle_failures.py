@@ -24,11 +24,8 @@ from app.devices.services.intent_types import (
     RunActivePrecondition,
 )
 from app.runs.models import TERMINAL_STATES, TestRun
-from app.runs.service_reservation import get_run
-from app.runs.service_reservation_lookup import (
-    exclude_device_from_run,
-    get_reservation_entry_for_device,
-)
+from app.runs.service import exclude_device_from_run
+from app.runs.service_reservation import get_reservation_entry_for_device, get_run
 
 if TYPE_CHECKING:
     import uuid

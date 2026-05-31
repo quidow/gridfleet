@@ -32,7 +32,7 @@ from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.events import queue_device_crashed_event
-from app.runs import service_reservation as run_reservation_service
+from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.models import Session, SessionStatus
 
