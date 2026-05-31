@@ -29,10 +29,9 @@ from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
 from app.devices.services import health as device_health_service
 from app.devices.services import identity, lifecycle_policy_summary
 from app.devices.services import intent as intent_service
-from app.events.dependencies import EventServicesDep
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
-from app.sessions import service_viability as session_viability
+from app.sessions.dependencies import SessionServicesDep
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import service_config as config_service
 from app.settings.dependencies import SettingsServicesDep
@@ -127,6 +126,7 @@ async def device_health(
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    session_services: SessionServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
     host = require_management_host(device, action="inspect device health")
@@ -185,7 +185,7 @@ async def device_health(
     except AgentCallError as e:
         result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e}"}
 
-    result["session_viability"] = await session_viability.get_session_viability(db, device)
+    result["session_viability"] = await session_services.viability.get_session_viability(db, device)
     session_viability_failed = (
         result["session_viability"] is not None and result["session_viability"].get("status") == "failed"
     )
@@ -203,17 +203,14 @@ async def device_health(
 async def device_session_test(
     device_id: uuid.UUID,
     db: DbDep,
-    settings_services: SettingsServicesDep,
-    events: EventServicesDep,
+    session_services: SessionServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_for_update_or_404(device_id, db)
     try:
-        return await session_viability.run_session_viability_probe(
+        return await session_services.viability.run_session_viability_probe(
             db,
             device,
             checked_by=SessionViabilityCheckedBy.manual,
-            settings=settings_services.service,
-            publisher=events.publisher,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

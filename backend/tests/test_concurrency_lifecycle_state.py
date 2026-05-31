@@ -50,7 +50,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -113,13 +113,13 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             await svc.handle_health_failure(
                 session,
                 device_obj,
                 source=source,
                 reason=reason,
-                publisher=event_bus,
             )
 
     await asyncio.gather(*[writer(s, r) for s, r in inputs])
@@ -233,6 +233,7 @@ async def test_concurrent_health_failure_stale_overwrite(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             with patch.object(
                 LifecyclePolicyActionsService, "record_auto_stopped_incident", barrier_record_auto_stopped
@@ -242,7 +243,6 @@ async def test_concurrent_health_failure_stale_overwrite(
                     device_obj,
                     source="src-a",
                     reason="reason-a",
-                    publisher=event_bus,
                 )
 
     async def writer_b() -> None:
@@ -256,13 +256,13 @@ async def test_concurrent_health_failure_stale_overwrite(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(publisher=event_bus),
+                viability=Mock(),
             )
             await svc.handle_health_failure(
                 session,
                 device_obj,
                 source="src-b",
                 reason="reason-b",
-                publisher=event_bus,
             )
         # Signal writer A that B has committed.
         b_has_committed.set()

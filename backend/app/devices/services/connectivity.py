@@ -383,7 +383,6 @@ class ConnectivityService:
                                     device,
                                     source="device_checks",
                                     reason=summary,
-                                    publisher=self._publisher,
                                 )
                             await control_plane_state_store.set_value(
                                 db, CONNECTIVITY_NAMESPACE, device.identity_value, True

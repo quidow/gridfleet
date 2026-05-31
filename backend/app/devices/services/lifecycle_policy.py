@@ -57,13 +57,13 @@ from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import ready_operational_state, set_hold
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
-from app.sessions import service_viability as session_viability
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import SessionViabilityProbe
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
 
@@ -79,10 +79,12 @@ class LifecyclePolicyService:
         publisher: EventPublisher,
         settings: SettingsReader,
         actions: LifecyclePolicyActionsService,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._actions = actions
+        self._viability = viability
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
         device = await _reload_device(db, device)
@@ -352,7 +354,7 @@ class LifecyclePolicyService:
                     device.id,
                 )
 
-        result = await _run_recovery_probe(db, device, settings=self._settings, publisher=self._publisher)
+        result = await self._run_recovery_probe(db, device)
 
         if result.get("status") != "passed":
             failure_reason = result.get("error") or "Recovery viability probe failed"
@@ -541,9 +543,28 @@ class LifecyclePolicyService:
         await db.commit()
         return True
 
-    async def handle_health_failure(
-        self, db: AsyncSession, device: Device, *, source: str, reason: str, publisher: EventPublisher
-    ) -> str:
+    async def _run_recovery_probe(self, db: AsyncSession, device: Device) -> dict[str, Any]:
+        last_result: dict[str, Any] = {}
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(max(1, RECOVERY_PROBE_ATTEMPTS)),
+                wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, RECOVERY_PROBE_JITTER_MAX_SEC),
+                retry=retry_if_result(lambda value: value.get("status") != "passed"),
+            ):
+                with attempt:
+                    reloaded = await _reload_device(db, device)
+                    last_result = await self._viability.run_session_viability_probe(
+                        db,
+                        reloaded,
+                        checked_by=SessionViabilityCheckedBy.recovery,
+                    )
+                if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
+                    attempt.retry_state.set_result(last_result)
+        except RetryError:
+            pass  # Exhausted attempts — return last_result below
+        return last_result
+
+    async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         device = await _reload_device(db, device)
         current_state = policy_state(device)
         current_state["last_failure_source"] = source
@@ -811,33 +832,3 @@ def _set_backoff(state: dict[str, Any], *, settings: SettingsReader) -> str:
 
 async def _reload_device(db: AsyncSession, device: Device) -> Device:
     return await device_locking.lock_device(db, device.id, load_sessions=True)
-
-
-async def _run_recovery_probe(
-    db: AsyncSession,
-    device: Device,
-    *,
-    settings: SettingsReader,
-    publisher: EventPublisher,
-) -> dict[str, Any]:
-    last_result: dict[str, Any] = {}
-    try:
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(max(1, RECOVERY_PROBE_ATTEMPTS)),
-            wait=wait_fixed(RECOVERY_PROBE_RETRY_DELAY_SEC) + wait_random(0, RECOVERY_PROBE_JITTER_MAX_SEC),
-            retry=retry_if_result(lambda value: value.get("status") != "passed"),
-        ):
-            with attempt:
-                reloaded = await _reload_device(db, device)
-                last_result = await session_viability.run_session_viability_probe(
-                    db,
-                    reloaded,
-                    checked_by=SessionViabilityCheckedBy.recovery,
-                    settings=settings,
-                    publisher=publisher,
-                )
-            if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
-                attempt.retry_state.set_result(last_result)
-    except RetryError:
-        pass  # Exhausted attempts — return last_result below
-    return last_result

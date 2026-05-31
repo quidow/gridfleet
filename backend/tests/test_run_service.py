@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -86,9 +86,10 @@ async def test_force_release_clears_stop_pending(
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     )
     result = await real_deferred_stop.handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
 

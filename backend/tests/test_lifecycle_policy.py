@@ -41,15 +41,18 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 def _make_svc(
     publisher: object = None,
     settings: object = None,
+    viability: object = None,
 ) -> LifecyclePolicyService:
-    from unittest.mock import Mock
+    from unittest.mock import AsyncMock, Mock
 
     pub = publisher if publisher is not None else Mock()
     svc_settings = settings if settings is not None else FakeSettingsReader({})
+    via = viability if viability is not None else AsyncMock()
     return LifecyclePolicyService(
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(publisher=pub),  # type: ignore[arg-type]
+        viability=via,  # type: ignore[arg-type]
     )
 
 
@@ -102,7 +105,7 @@ async def test_idle_health_failure_stops_device(db_session: AsyncSession, db_hos
     await db_session.commit()
 
     result = await _make_svc(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
 
     await db_session.refresh(device)
@@ -135,7 +138,7 @@ async def test_active_session_failure_defers_stop(db_session: AsyncSession, db_h
     await db_session.commit()
 
     result = await _make_svc(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=event_bus
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
 
     await db_session.refresh(device)
@@ -190,7 +193,7 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
     await db_session.commit()
 
     await _make_svc(publisher=event_bus).handle_health_failure(
-        db_session, device, source="device_checks", reason="Health probe failed", publisher=event_bus
+        db_session, device, source="device_checks", reason="Health probe failed"
     )
 
     await db_session.refresh(device)
@@ -250,7 +253,7 @@ async def test_session_finish_completes_deferred_stop_and_excludes_run(
     await db_session.commit()
 
     await _make_svc(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="Health probe failed", publisher=Mock()
+        db_session, device, source="device_checks", reason="Health probe failed"
     )
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
@@ -350,21 +353,19 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
-    svc = _make_svc(publisher=Mock())
-    with (
-        patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "passed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": datetime.now(UTC).isoformat(),
-                "error": None,
-                "checked_by": "recovery",
-            },
-        ),
-    ):
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(publisher=Mock(), viability=viability)
+    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -430,23 +431,23 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
     )
     await db_session.commit()
 
-    with patch(
-        "app.sessions.service_viability.run_session_viability_probe",
-        new_callable=AsyncMock,
+    probe_mock = AsyncMock(
         return_value={
             "status": "passed",
             "last_attempted_at": datetime.now(UTC).isoformat(),
             "last_succeeded_at": datetime.now(UTC).isoformat(),
             "error": None,
             "checked_by": "recovery",
-        },
-    ):
-        recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="Healthy again",
-        )
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    recovered = await _make_svc(publisher=event_bus, viability=viability).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Healthy again",
+    )
 
     assert recovered is True
     sources = set(
@@ -492,23 +493,23 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
         db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
     await db_session.commit()
 
-    with patch(
-        "app.sessions.service_viability.run_session_viability_probe",
-        new_callable=AsyncMock,
+    probe_mock = AsyncMock(
         return_value={
             "status": "passed",
             "last_attempted_at": datetime.now(UTC).isoformat(),
             "last_succeeded_at": datetime.now(UTC).isoformat(),
             "error": None,
             "checked_by": "recovery",
-        },
-    ):
-        recovered = await _make_svc(publisher=event_bus).attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="Healthy again",
-        )
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    recovered = await _make_svc(publisher=event_bus, viability=viability).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Healthy again",
+    )
 
     assert recovered is True
     rows = (
@@ -603,21 +604,19 @@ async def test_recovery_rejoin_publishes_availability_event(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
-    svc = _make_svc(publisher=event_bus)
-    with (
-        patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "passed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": datetime.now(UTC).isoformat(),
-                "error": None,
-                "checked_by": "recovery",
-            },
-        ),
-    ):
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(publisher=event_bus, viability=viability)
+    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -736,21 +735,19 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
-    svc = _make_svc(publisher=Mock())
-    with (
-        patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "failed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": None,
-                "error": "Session create failed",
-                "checked_by": "recovery",
-            },
-        ),
-    ):
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "failed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": None,
+            "error": "Session create failed",
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(publisher=Mock(), viability=viability)
+    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -797,30 +794,28 @@ async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     await db_session.commit()
 
     register_recovery = AsyncMock(side_effect=_mark_device_available)
-    svc = _make_svc(publisher=event_bus)
-    with (
-        patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            side_effect=[
-                {
-                    "status": "failed",
-                    "last_attempted_at": datetime.now(UTC).isoformat(),
-                    "last_succeeded_at": None,
-                    "error": "Android settings service is not ready",
-                    "checked_by": "recovery",
-                },
-                {
-                    "status": "passed",
-                    "last_attempted_at": datetime.now(UTC).isoformat(),
-                    "last_succeeded_at": datetime.now(UTC).isoformat(),
-                    "error": None,
-                    "checked_by": "recovery",
-                },
-            ],
-        ) as mock_probe,
-    ):
+    mock_probe = AsyncMock(
+        side_effect=[
+            {
+                "status": "failed",
+                "last_attempted_at": datetime.now(UTC).isoformat(),
+                "last_succeeded_at": None,
+                "error": "Android settings service is not ready",
+                "checked_by": "recovery",
+            },
+            {
+                "status": "passed",
+                "last_attempted_at": datetime.now(UTC).isoformat(),
+                "last_succeeded_at": datetime.now(UTC).isoformat(),
+                "error": None,
+                "checked_by": "recovery",
+            },
+        ]
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = mock_probe
+    svc = _make_svc(publisher=event_bus, viability=viability)
+    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovered = await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -860,7 +855,7 @@ async def test_deferred_stop_survives_restart_boundary(db_session: AsyncSession,
     await db_session.commit()
 
     result = await _make_svc(publisher=Mock()).handle_health_failure(
-        db_session, device, source="device_checks", reason="ADB not responsive", publisher=Mock()
+        db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
 
@@ -917,22 +912,20 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
             "grid.hub_url": "http://hub:4444",
         }
     )
-    with (
-        patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "failed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": None,
-                "error": "Probe failed",
-                "checked_by": "recovery",
-            },
-        ),
-    ):
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "failed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": None,
+            "error": "Probe failed",
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    with patch("app.devices.services.lifecycle_policy.register_intents_and_reconcile", new=register_recovery):
         recovery_started_at = datetime.now(UTC)
-        recovered = await _make_svc(publisher=Mock(), settings=settings).attempt_auto_recovery(
+        recovered = await _make_svc(publisher=Mock(), settings=settings, viability=viability).attempt_auto_recovery(
             db_session, device, source="device_checks", reason="Healthy again"
         )
 
@@ -1653,9 +1646,7 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
 
     svc = _make_svc(publisher=event_bus)
-    assert (
-        await svc.handle_health_failure(db, device, source="checks", reason="bad", publisher=event_bus) == "suppressed"
-    )
+    assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
 
     monkeypatch.setattr(
         lifecycle_policy_module.run_reservation_service,
@@ -1723,11 +1714,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         "reservation_entry_is_excluded",
         lambda entry: bool(entry and entry.excluded),
     )
-    monkeypatch.setattr(
-        lifecycle_policy_module.session_viability,
-        "run_session_viability_probe",
-        AsyncMock(return_value={"status": "passed"}),
-    )
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
     mock_restore_run = AsyncMock(return_value=(run, excluded_entry))
     monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
@@ -1743,7 +1729,9 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         AsyncMock(),
     )
 
-    svc = _make_svc(publisher=event_bus)
+    viability = AsyncMock()
+    viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
+    svc = _make_svc(publisher=event_bus, viability=viability)
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
     mock_restore_run.assert_awaited_once()
     mock_set_hold.assert_awaited_with(
@@ -1907,11 +1895,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         probe_order.append("probe")
         return {"status": "passed"}
 
-    monkeypatch.setattr(
-        lifecycle_policy_module.session_viability,
-        "run_session_viability_probe",
-        AsyncMock(side_effect=probe_after_wait),
-    )
+    viability1 = AsyncMock()
+    viability1.run_session_viability_probe = AsyncMock(side_effect=probe_after_wait)
 
     async def observe_node_running(*_args: object, **_kwargs: object) -> object:
         probe_order.append("wait")
@@ -1931,7 +1916,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
             "grid.hub_url": "http://grid:4444",
         }
     )
-    svc = _make_svc(publisher=event_bus, settings=settings_with_grid)
+    svc = _make_svc(publisher=event_bus, settings=settings_with_grid, viability=viability1)
     assert (
         await svc.attempt_auto_recovery(
             db,
@@ -1956,11 +1941,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     db2 = FakeDb()
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=failing))
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=failing))
-    monkeypatch.setattr(
-        lifecycle_policy_module.session_viability,
-        "run_session_viability_probe",
-        AsyncMock(return_value={"status": "failed", "error": "probe failed"}),
-    )
     mock_complete_auto_stop = AsyncMock()
     monkeypatch.setattr(LifecyclePolicyActionsService, "complete_auto_stop", mock_complete_auto_stop)
     monkeypatch.setattr(
@@ -1969,7 +1949,9 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         lambda state, *, settings: "2026-05-13T12:00:00+00:00",
     )
 
-    svc2 = _make_svc(publisher=event_bus)
+    viability2 = AsyncMock()
+    viability2.run_session_viability_probe = AsyncMock(return_value={"status": "failed", "error": "probe failed"})
+    svc2 = _make_svc(publisher=event_bus, viability=viability2)
     assert (
         await svc2.attempt_auto_recovery(
             db2,

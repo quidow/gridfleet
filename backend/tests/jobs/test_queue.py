@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -48,7 +48,9 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                viability=Mock(),
             ),
+            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=sf,

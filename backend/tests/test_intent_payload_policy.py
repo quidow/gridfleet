@@ -93,13 +93,13 @@ async def test_health_failure_intent_payload_shape(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=Mock()),
+        viability=Mock(),
     )
     result = await _svc.handle_health_failure(
         db_session,
         device,
         source="device_checks",
         reason="ADB not responsive",
-        publisher=Mock(),
     )
     assert result == "stopped"
 
@@ -294,24 +294,23 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     # Speed up the node-wait timeout and mock the viability probe so the test
     # does not need a real Appium process.  Mirrors the autouse fixture in
     # test_lifecycle_policy.py.
-    with (
-        patch.object(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "passed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": datetime.now(UTC).isoformat(),
-                "error": None,
-                "checked_by": "recovery",
-            },
-        ),
-    ):
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    with patch.object(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0):
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(publisher=event_bus),
+            viability=viability,
         ).attempt_auto_recovery(
             db_session,
             device,

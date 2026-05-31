@@ -1447,34 +1447,24 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
         )
     assert history[0]["changed_at"] == "2026-05-01T00:00:00+00:00"
 
-    with (
-        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch(
-            "app.devices.routers.control.session_viability.run_session_viability_probe",
-            new=AsyncMock(side_effect=ValueError("busy")),
-        ),
-    ):
+    _viability_raises = AsyncMock(side_effect=ValueError("busy"))
+    _session_svc_raises = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_raises))
+    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_session_test(
                 device_id,
                 db=object(),
-                settings_services=_mock_settings_svc(FakeSettingsReader({})),
-                events=SimpleNamespace(publisher=event_bus),
+                session_services=_session_svc_raises,
             )
     assert exc.value.status_code == 409
 
-    with (
-        patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-        patch(
-            "app.devices.routers.control.session_viability.run_session_viability_probe",
-            new=AsyncMock(return_value={"status": "passed"}),
-        ),
-    ):
+    _viability_ok = AsyncMock(return_value={"status": "passed"})
+    _session_svc_ok = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_ok))
+    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
         assert await devices_control.device_session_test(
             device_id,
             db=object(),
-            settings_services=_mock_settings_svc(FakeSettingsReader({})),
-            events=SimpleNamespace(publisher=event_bus),
+            session_services=_session_svc_ok,
         ) == {"status": "passed"}
 
 
@@ -1620,12 +1610,14 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     node = SimpleNamespace(port=4731, observed_running=True, health_running=None, health_state=None)
     health_device = _control_device(appium_node=node)
+    _mock_viability = AsyncMock()
+    _mock_viability.get_session_viability = AsyncMock(return_value=None)
+    _mock_session_services = SimpleNamespace(viability=_mock_viability)
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=health_device)),
         patch("app.devices.routers.control.require_management_host", new=Mock(return_value=health_device.host)),
         patch("app.devices.routers.control.fetch_appium_status", new=AsyncMock(return_value={"running": False})),
         patch("app.devices.routers.control.fetch_pack_device_health", new=AsyncMock(return_value={"healthy": True})),
-        patch("app.devices.routers.control.session_viability.get_session_viability", new=AsyncMock(return_value=None)),
         patch(
             "app.devices.routers.control.lifecycle_policy_summary.build_lifecycle_policy",
             new=AsyncMock(return_value={}),
@@ -1637,6 +1629,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             device_services=_mock_ds_reconnect,
             settings_services=_ctrl_ss,
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            session_services=_mock_session_services,
         )
     assert health["node"]["state"] == "error"
     assert health["healthy"] is False
@@ -2814,17 +2807,14 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         appium_node=node,
         host=host,
     )
+    _viability_failed = AsyncMock(return_value={"status": "failed"})
+    _session_svc_failed = SimpleNamespace(viability=SimpleNamespace(get_session_viability=_viability_failed))
     with (
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
         patch.object(devices_control, "require_management_host", new=Mock(return_value=host)),
         patch.object(devices_control, "fetch_appium_status", new=AsyncMock(side_effect=AgentCallError("h", "down"))),
         patch.object(
             devices_control, "fetch_pack_device_health", new=AsyncMock(side_effect=AgentCallError("h", "down"))
-        ),
-        patch.object(
-            devices_control.session_viability,
-            "get_session_viability",
-            new=AsyncMock(return_value={"status": "failed"}),
         ),
         patch.object(
             devices_control.lifecycle_policy_summary, "build_lifecycle_policy", new=AsyncMock(return_value={})
@@ -2836,6 +2826,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             device_services=SimpleNamespace(crud=AsyncMock()),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            session_services=_session_svc_failed,
         )
     assert health["node"]["state"] == "error"
     assert health["device_checks"]["detail"] == "Agent unreachable: down"

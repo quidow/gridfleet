@@ -17,6 +17,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
+from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
@@ -1079,8 +1080,9 @@ async def test_manual_session_test_endpoint(
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
 
-    with patch(
-        "app.devices.routers.catalog.session_viability.run_session_viability_probe",
+    with patch.object(
+        SessionViabilityService,
+        "run_session_viability_probe",
         new_callable=AsyncMock,
         return_value={
             "status": "passed",
@@ -1094,11 +1096,8 @@ async def test_manual_session_test_endpoint(
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "passed"
-    # The route must forward a publisher to run_session_viability_probe; otherwise
-    # the inner _MACHINE.transition → set_operational_state assertion fires and
-    # the manual "Test Session" button returns 500.
     assert probe.await_args is not None
-    assert probe.await_args.kwargs.get("publisher") is not None
+    assert probe.await_args.kwargs.get("checked_by") is not None
 
 
 @pytest.mark.asyncio
@@ -1199,8 +1198,9 @@ async def test_device_health_is_unhealthy_when_session_check_failed(client: Asyn
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4723},
         ),
-        patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
             new_callable=AsyncMock,
             return_value={
                 "status": "failed",
@@ -1280,8 +1280,9 @@ async def test_device_health_is_unhealthy_when_runtime_node_is_not_reachable(cli
             new_callable=AsyncMock,
             return_value={"running": False, "port": 4723},
         ),
-        patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),
@@ -1352,8 +1353,9 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
             new_callable=AsyncMock,
             return_value={"running": True, "port": 4723},
         ),
-        patch(
-            "app.devices.routers.control.session_viability.get_session_viability",
+        patch.object(
+            SessionViabilityService,
+            "get_session_viability",
             new_callable=AsyncMock,
             return_value=None,
         ),

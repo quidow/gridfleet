@@ -25,7 +25,6 @@ from app.devices.services.state import ready_operational_state, set_operational_
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
-from app.sessions import service_viability as session_viability
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -42,7 +41,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
-    from app.devices.protocols import DeviceCrudProtocol
+    from app.devices.protocols import DeviceCrudProtocol, SessionViabilityProbe
     from app.devices.services.verification_preparation import PreparedVerificationContext
     from app.events.protocols import EventPublisher
 
@@ -65,11 +64,13 @@ class VerificationExecutionService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
+        self._viability = viability
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -306,7 +307,9 @@ class VerificationExecutionService:
                     crud=self._crud,
                 )
 
-            return await _finalize_success(db, context, job=job, node=node, publisher=self._publisher, crud=self._crud)
+            return await _finalize_success(
+                db, context, job=job, node=node, publisher=self._publisher, crud=self._crud, viability=self._viability
+            )
         except Exception:
             await _finalize_failure(
                 db,
@@ -482,6 +485,7 @@ async def _finalize_success(
     node: AppiumNode | None,
     publisher: EventPublisher,
     crud: DeviceCrudProtocol,
+    viability: SessionViabilityProbe,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")
@@ -543,12 +547,11 @@ async def _finalize_success(
     next_state = await ready_operational_state(db, locked)
     if next_state is not locked.operational_state:
         await set_operational_state(locked, next_state, reason="verification", severity="info", publisher=publisher)
-    await session_viability.record_session_viability_result(
+    await viability.record_session_viability_result(
         db,
         locked,
         status="passed",
         checked_by=SessionViabilityCheckedBy.verification,
-        publisher=publisher,
     )
     await db.commit()
     detail = "Device saved after verification" if context.mode == "create" else "Device updated after verification"

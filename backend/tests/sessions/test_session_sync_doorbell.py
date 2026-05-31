@@ -46,6 +46,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
     services = SessionServices(
         crud=Mock(),
         sync=svc,
+        viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         grid=Mock(),
         session_factory=lambda: _NullCtx(),
@@ -94,6 +95,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
     services = SessionServices(
         crud=Mock(),
         sync=svc,
+        viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
         grid=Mock(),
         session_factory=lambda: _NullCtx(),

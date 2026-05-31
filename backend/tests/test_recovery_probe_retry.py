@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -12,10 +12,19 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.core.type_defs import SettingsReader
-    from app.devices.models import Device
-    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
+
+
+def _make_svc(viability: object) -> object:
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+
+    return LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=viability,  # type: ignore[arg-type]
+    )
 
 
 @pytest.mark.asyncio
@@ -23,14 +32,12 @@ async def test_recovery_probe_stops_on_first_success() -> None:
     from app.devices.services import lifecycle_policy
 
     probe_mock = AsyncMock(return_value={"status": "passed"})
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
 
-    with (
-        patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
-        patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
-    ):
-        result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
-        )
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        result = await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
 
     assert probe_mock.await_count == 1
     assert result == {"status": "passed"}
@@ -44,14 +51,12 @@ async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pyte
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
 
     probe_mock = AsyncMock(return_value={"status": "failed", "error": "boom"})
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
 
-    with (
-        patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
-        patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
-    ):
-        result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
-        )
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        result = await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
 
     assert probe_mock.await_count == lifecycle_policy.RECOVERY_PROBE_ATTEMPTS
     assert result == {"status": "failed", "error": "boom"}
@@ -70,59 +75,49 @@ async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatc
         {"status": "passed"},
     ]
     probe_mock = AsyncMock(side_effect=outcomes)
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
 
-    with (
-        patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
-        patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
-    ):
-        result = await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(), SimpleNamespace(id="dev-1"), settings=FakeSettingsReader({}), publisher=event_bus
-        )
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        result = await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
 
     assert probe_mock.await_count == 3
     assert result == {"status": "passed"}
 
 
 @pytest.mark.asyncio
-async def test_recovery_probe_forwards_publisher_to_session_viability() -> None:
-    """The recovery probe must thread ``publisher`` through to the session
-    viability probe. ``run_session_viability_probe`` drives the device through
-    ``_MACHINE.transition`` → ``set_operational_state``, which asserts
-    ``publisher is not None`` when ``publish_event=True``. A missing forward
-    here crashes the connectivity loop's recovery path every tick and wedges
-    offline devices permanently (no recovery probe can ever complete)."""
+async def test_recovery_probe_uses_viability_service() -> None:
+    """The recovery probe must call self._viability.run_session_viability_probe
+    without forwarding publisher (which is stored on the service itself).
+    The viability service is responsible for using its own publisher."""
     from app.devices.services import lifecycle_policy
 
-    publisher = AsyncMock()
     probe_mock = AsyncMock(return_value={"status": "passed"})
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
 
-    with (
-        patch.object(lifecycle_policy.session_viability, "run_session_viability_probe", probe_mock),
-        patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)),
-    ):
-        await lifecycle_policy._run_recovery_probe(
-            SimpleNamespace(),
-            SimpleNamespace(id="dev-1"),
-            settings=FakeSettingsReader({}),
-            publisher=publisher,
-        )
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
 
-    assert probe_mock.await_args.kwargs.get("publisher") is publisher
+    # Verify the viability service method was called — publisher is encapsulated
+    # in the viability service itself, not passed as a kwarg.
+    probe_mock.assert_awaited_once()
+    call_kwargs = probe_mock.await_args.kwargs
+    assert "publisher" not in call_kwargs
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_driver_packs")
-async def test_attempt_auto_recovery_forwards_publisher_to_recovery_probe(
-    db_session: AsyncSession, db_host: Host
-) -> None:
-    """``attempt_auto_recovery`` accepts a publisher from its caller (the
-    connectivity loop) and must forward it to ``_run_recovery_probe`` so the
-    inner session-viability state transitions can emit events. A missing
-    forward here surfaces as an ``AssertionError`` from ``set_operational_state``
-    on every connectivity tick once a device goes offline — the recovery probe
-    never lands and the device stays wedged in ``offline``."""
+async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncSession, db_host: Host) -> None:
+    """``attempt_auto_recovery`` calls ``self._run_recovery_probe``, which
+    uses ``self._viability.run_session_viability_probe``. The publisher is
+    stored on the service and passed implicitly via the viability service."""
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import lifecycle_policy, state_write_guard
+    from app.devices.services import state_write_guard
+    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
     from tests.helpers import create_device
 
@@ -142,27 +137,19 @@ async def test_attempt_auto_recovery_forwards_publisher_to_recovery_probe(
     await db_session.refresh(device)
 
     publisher = AsyncMock(spec=EventPublisher)
-    captured: dict[str, EventPublisher | None] = {}
+    probe_called: list[bool] = []
 
-    async def _capture(
-        db: AsyncSession,
-        dev: Device,
-        *,
-        settings: SettingsReader,
-        publisher: EventPublisher | None = None,
-    ) -> dict[str, Any]:
-        captured["publisher"] = publisher
+    async def _capture_probe(self_arg: object, db: object, dev: object) -> dict[str, Any]:
+        probe_called.append(True)
         return {"status": "passed"}
-
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 
     svc = LifecyclePolicyService(
         publisher=publisher,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=publisher),
+        viability=Mock(),
     )
-    with patch.object(lifecycle_policy, "_run_recovery_probe", new=_capture):
+    with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=_capture_probe):
         await svc.attempt_auto_recovery(
             db_session,
             device,
@@ -170,4 +157,4 @@ async def test_attempt_auto_recovery_forwards_publisher_to_recovery_probe(
             reason="test",
         )
 
-    assert captured.get("publisher") is publisher
+    assert probe_called, "_run_recovery_probe was not called during attempt_auto_recovery"

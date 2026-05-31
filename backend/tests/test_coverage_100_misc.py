@@ -104,6 +104,7 @@ from app.plugins.service import PluginService
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
+from app.sessions import protocols as session_viability_protocols
 from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
@@ -359,7 +360,11 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
     )
     exec_svc = VerificationExecutionService(
-        publisher=publisher, settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
+        publisher=publisher,
+        settings=settings,
+        circuit_breaker=cb,
+        crud=DeviceCrudService(settings=settings),
+        viability=Mock(),
     )
     runner = VerificationRunnerService(
         session_factory=SessionCtx,
@@ -368,6 +373,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         preparation=prep,
         execution=exec_svc,
+        viability=Mock(),
     )
     assert await runner._load_persisted_job(str(uuid.uuid4())) is None
     await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
@@ -376,15 +382,15 @@ async def test_device_verification_runner_missing_job_branches() -> None:
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(NotImplementedError):
         await pack_discovery_service.AgentClient.get_pack_devices(object(), "127.0.0.1", 5100)
-    with pytest.raises(NotImplementedError):
-        await session_viability.HealthFailureHandler.__call__(
-            object(),
-            AsyncMock(),
-            Device(id=uuid.uuid4(), name="d"),
-            source="test",
-            reason="boom",
-            publisher=event_bus,
-        )
+    # HealthFailureHandler is a Protocol with ``...`` body; calling it exercises
+    # the abstract stub without raising.
+    await session_viability_protocols.HealthFailureHandler.__call__(
+        object(),
+        AsyncMock(),
+        Device(id=uuid.uuid4(), name="d"),
+        source="test",
+        reason="boom",
+    )
 
     leader = control_plane_leader_module.ControlPlaneLeader()
 
@@ -857,7 +863,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                viability=Mock(),
             ),
+            viability=Mock(),
         ),
         recovery_runner=RecoveryJobService(
             session_factory=QueueCtx,

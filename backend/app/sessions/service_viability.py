@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from sqlalchemy import select
@@ -26,10 +26,11 @@ from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+    from app.sessions.protocols import HealthFailureHandler
     from app.sessions.services_container import SessionServices
 
 __all__ = [
@@ -38,20 +39,9 @@ __all__ = [
     "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityLoop",
-    "_check_due_devices",
-    "_extract_session_error",
-    "_format_http_error",
-    "_get_grid_probe_client",
-    "_parse_timestamp",
-    "_should_run_scheduled_probe",
+    "SessionViabilityService",
     "build_probe_capabilities",
-    "close",
-    "configure_health_failure_handler",
-    "get_session_viability",
     "grid_probe_response_to_result",
-    "probe_session_via_grid",
-    "record_session_viability_result",
-    "run_session_viability_probe",
 ]
 
 SESSION_VIABILITY_KEY = "session_viability"
@@ -72,45 +62,306 @@ set_operational_state = device_state.set_operational_state
 
 _MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
-# Shared httpx.AsyncClient for grid probe calls. Per-call instantiation leaks
-# ~0.8 MB on macOS (TLS contexts not released by the native allocator).
-_grid_probe_client: httpx.AsyncClient | None = None
 
+class SessionViabilityService:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        self._publisher = publisher
+        self._settings = settings
+        self._session_factory = session_factory
+        self._health_failure_handler: HealthFailureHandler | None = None
+        self._grid_probe_client: httpx.AsyncClient | None = None
 
-def _get_grid_probe_client() -> httpx.AsyncClient:
-    global _grid_probe_client
-    if _grid_probe_client is None or _grid_probe_client.is_closed:
-        _grid_probe_client = httpx.AsyncClient()
-    return _grid_probe_client
+    def configure_health_failure_handler(self, handler: HealthFailureHandler | None) -> None:
+        self._health_failure_handler = handler
 
+    def _get_grid_probe_client(self) -> httpx.AsyncClient:
+        if self._grid_probe_client is None or self._grid_probe_client.is_closed:
+            self._grid_probe_client = httpx.AsyncClient()
+        return self._grid_probe_client
 
-async def close() -> None:
-    """Close the shared probe client. Call from app shutdown."""
-    global _grid_probe_client
-    if _grid_probe_client is not None and not _grid_probe_client.is_closed:
-        await _grid_probe_client.aclose()
-    _grid_probe_client = None
+    async def close(self) -> None:
+        if self._grid_probe_client is not None and not self._grid_probe_client.is_closed:
+            await self._grid_probe_client.aclose()
+        self._grid_probe_client = None
 
+    async def get_session_viability(self, db: AsyncSession, device: Device) -> dict[str, Any] | None:
+        state = await control_plane_state_store.get_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id))
+        if state is None:
+            return None
+        return {
+            "status": state.get("status"),
+            "last_attempted_at": state.get("last_attempted_at"),
+            "last_succeeded_at": state.get("last_succeeded_at"),
+            "error": state.get("error"),
+            "checked_by": state.get("checked_by"),
+            "consecutive_failures": state.get("consecutive_failures") or 0,
+            "error_category": state.get("error_category"),
+        }
 
-class HealthFailureHandler(Protocol):
-    async def __call__(
+    async def record_session_viability_result(
         self,
         db: AsyncSession,
         device: Device,
         *,
-        source: str,
-        reason: str,
-        publisher: EventPublisher,
-    ) -> object:
-        raise NotImplementedError
+        status: str,
+        error: str | None = None,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]:
+        config_changed = _clear_session_viability_from_config(device)
+        state = await _write_session_viability(
+            db,
+            device,
+            status=status,
+            attempted_at=_now_iso(),
+            error=error,
+            checked_by=checked_by,
+            publisher=self._publisher,
+        )
+        if config_changed:
+            await db.flush()
+        return state
 
+    async def probe_session_via_grid(
+        self,
+        capabilities: dict[str, Any],
+        timeout_sec: int,
+        *,
+        grid_url: str | None = None,
+    ) -> tuple[bool, str | None]:
+        base = (grid_url or self._settings.get("grid.hub_url")).rstrip("/")
+        client = self._get_grid_probe_client()
+        try:
+            create_resp = await client.post(
+                f"{base}/session", json=_build_session_payload(capabilities), timeout=timeout_sec
+            )
+        except httpx.HTTPError as exc:
+            return False, f"Session create request failed: {_format_http_error(exc)}"
 
-_health_failure_handler: HealthFailureHandler | None = None
+        if create_resp.status_code >= 400:
+            try:
+                return False, _extract_session_error(create_resp.json())
+            except ValueError:
+                return False, create_resp.text or "Session create failed"
 
+        try:
+            data = create_resp.json()
+        except ValueError:
+            return False, "Session create returned invalid JSON"
 
-def configure_health_failure_handler(handler: HealthFailureHandler | None) -> None:
-    global _health_failure_handler
-    _health_failure_handler = handler
+        session_id = data.get("sessionId")
+        if not session_id and isinstance(data.get("value"), dict):
+            session_id = data["value"].get("sessionId")
+        if not isinstance(session_id, str) or not session_id:
+            return False, "Session create did not return a session id"
+
+        try:
+            delete_resp = await client.delete(f"{base}/session/{session_id}", timeout=timeout_sec)
+            if delete_resp.status_code >= 400:
+                return False, f"Session created but cleanup failed ({delete_resp.status_code})"
+        except httpx.HTTPError as exc:
+            return False, f"Session created but cleanup failed: {_format_http_error(exc)}"
+
+        return True, None
+
+    async def run_session_viability_probe(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        checked_by: SessionViabilityCheckedBy,
+    ) -> dict[str, Any]:
+        device_key = str(device.id)
+        previous_state: DeviceOperationalState | None = None
+        acquired = await control_plane_state_store.try_claim_value(
+            db,
+            SESSION_VIABILITY_RUNNING_NAMESPACE,
+            device_key,
+            {"started_at": _now_iso(), "checked_by": checked_by},
+        )
+        if not acquired:
+            raise ValueError("Session viability check already in progress for this device")
+        await db.commit()
+        can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
+            checked_by == SessionViabilityCheckedBy.recovery
+            and device.operational_state == DeviceOperationalState.offline
+            and device.hold is None
+        )
+        if not can_probe:
+            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+            await db.commit()
+            raise ValueError("Session viability checks only run for available devices")
+        if not await is_ready_for_use_async(db, device):
+            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+            await db.commit()
+            raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
+
+        attempted_at = _now_iso()
+        try:
+            config_changed = _clear_session_viability_from_config(device)
+            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            node = device.appium_node
+            if not node or not node.observed_running:
+                state = await _write_session_viability(
+                    db,
+                    device,
+                    status="failed",
+                    attempted_at=attempted_at,
+                    error="Appium node is not running",
+                    checked_by=checked_by,
+                    publisher=self._publisher,
+                )
+                if config_changed:
+                    await db.commit()
+                return state
+
+            locked = await device_locking.lock_device(db, device.id)
+            # Re-validate can_probe under the row lock. The pre-lock check
+            # ran on an unlocked snapshot, so a concurrent maintenance-enter
+            # (or any other writer of ``Device.hold``/``operational_state``)
+            # may have changed the state between the gate and this lock.
+            # Raise to match the pre-lock branch's contract: manual callers
+            # surface as HTTP 409, recovery callers retry via the policy
+            # loop. Writing a ``failed`` viability record here would bump
+            # ``consecutive_failures`` on a race the device is not
+            # responsible for and could push a healthy device closer to the
+            # escalation threshold.
+            locked_can_probe = (
+                locked.operational_state == DeviceOperationalState.available and locked.hold is None
+            ) or (
+                checked_by == SessionViabilityCheckedBy.recovery
+                and locked.operational_state == DeviceOperationalState.offline
+                and locked.hold is None
+            )
+            if not locked_can_probe:
+                raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
+            previous_state = locked.operational_state
+            await _MACHINE.transition(
+                locked,
+                TransitionEvent.SESSION_STARTED,
+                reason="Session viability probe running",
+                publisher=self._publisher,
+            )
+            await db.commit()
+
+            capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
+            # Register the device as having an in-flight probe so the session_sync
+            # loop ignores the Grid slot the probe is about to create. Without this
+            # the slot is persisted as a phantom Session row: Appium strips the
+            # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
+            # markers from matched caps, so slot_parser cannot recognise it.
+            probe_inflight.mark_probe_started(device_key)
+            try:
+                ok, error = await self.probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+            finally:
+                probe_inflight.mark_probe_finished(device_key)
+            await record_probe_session(
+                db,
+                device=device,
+                attempted_at=_parse_timestamp(attempted_at) or datetime.now(UTC),
+                result=grid_probe_response_to_result((ok, error)),
+                source=_VIABILITY_PROBE_SOURCE_MAP[checked_by],
+                capabilities=capabilities,
+            )
+
+            state = await _write_session_viability(
+                db,
+                device,
+                status="passed" if ok else "failed",
+                attempted_at=attempted_at,
+                error=error,
+                checked_by=checked_by,
+                publisher=self._publisher,
+            )
+
+            relocked = await device_locking.lock_device(db, device.id)
+            if relocked.operational_state == DeviceOperationalState.busy:
+                # Branch on probe outcome — the EVENT — not on
+                # ``ready_operational_state``'s projection. The previous code
+                # fed ``ready_op`` into ``set_operational_state``, which folded
+                # ``appium_node_stop_in_flight`` into the operational axis: a
+                # stale graceful-stop intent (e.g. a leftover ``connectivity:*``
+                # row whose recovery never revoked it) would flag stop_pending,
+                # and a passing probe would still flap the device offline with
+                # reason "Session viability probe finished". Operators saw a
+                # toast pair (offline → "Health checks recovered") every probe
+                # cycle even though the device was healthy.
+                #
+                # State transitions fire on probe outcome only. Real offline
+                # transitions for in-flight stops or unhealthy nodes are
+                # emitted by the connectivity / node_health / health writers
+                # on their own schedules with their own reasons.
+                if ok:
+                    await _MACHINE.transition(
+                        relocked,
+                        TransitionEvent.SESSION_ENDED,
+                        reason="Session viability probe finished",
+                        publisher=self._publisher,
+                    )
+                else:
+                    await _MACHINE.transition(
+                        relocked,
+                        TransitionEvent.AUTO_STOP_EXECUTED,
+                        reason="Session viability probe finished",
+                        publisher=self._publisher,
+                    )
+                await db.commit()
+            else:
+                logger.info(
+                    "Device %s availability changed during probe (now %s); skipping restore",
+                    device.id,
+                    relocked.operational_state.value,
+                )
+                if config_changed:
+                    await db.commit()
+            if not ok and checked_by != SessionViabilityCheckedBy.recovery and self._health_failure_handler is not None:
+                threshold = max(1, int(self._settings.get("general.session_viability_failure_threshold")))
+                if int(state.get("consecutive_failures") or 0) >= threshold:
+                    await self._health_failure_handler(
+                        db,
+                        device,
+                        source="session_viability",
+                        reason=error or "Appium session viability probe failed",
+                    )
+                else:
+                    logger.info(
+                        "session_viability probe failed for device %s (%d/%d) — holding before escalation",
+                        device.id,
+                        state.get("consecutive_failures"),
+                        threshold,
+                    )
+            return state
+        except Exception:
+            if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
+                relocked = await device_locking.lock_device(db, device.id)
+                if relocked.operational_state == DeviceOperationalState.busy:
+                    await set_operational_state(
+                        relocked, previous_state, publish_event=False, publisher=self._publisher
+                    )
+                    await db.commit()
+            raise
+        finally:
+            await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+            await db.commit()
+
+    async def check_due_devices(self, db: AsyncSession) -> None:
+        interval_sec = self._settings.get("general.session_viability_interval_sec")
+        stmt = (
+            select(Device)
+            .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+            .options(selectinload(Device.host), selectinload(Device.appium_node))
+        )
+        result = await db.execute(stmt)
+        devices = result.scalars().all()
+
+        for device in devices:
+            if await _should_run_scheduled_probe(db, device, interval_sec):
+                await self.run_session_viability_probe(db, device, checked_by=SessionViabilityCheckedBy.scheduled)
 
 
 def _now_iso() -> str:
@@ -186,30 +437,6 @@ async def _write_session_viability(
     }
     await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id), state)
     await device_health.update_session_viability(db, device, status=status, error=error, publisher=publisher)
-    return state
-
-
-async def record_session_viability_result(
-    db: AsyncSession,
-    device: Device,
-    *,
-    status: str,
-    error: str | None = None,
-    checked_by: SessionViabilityCheckedBy,
-    publisher: EventPublisher,
-) -> dict[str, Any]:
-    config_changed = _clear_session_viability_from_config(device)
-    state = await _write_session_viability(
-        db,
-        device,
-        status=status,
-        attempted_at=_now_iso(),
-        error=error,
-        checked_by=checked_by,
-        publisher=publisher,
-    )
-    if config_changed:
-        await db.flush()
     return state
 
 
@@ -339,247 +566,6 @@ def grid_probe_response_to_result(result: tuple[bool, str | None]) -> ProbeResul
     return ProbeResult(status="refused", detail=detail)
 
 
-async def probe_session_via_grid(
-    capabilities: dict[str, Any],
-    timeout_sec: int,
-    *,
-    settings: SettingsReader,
-    grid_url: str | None = None,
-) -> tuple[bool, str | None]:
-    base = (grid_url or settings.get("grid.hub_url")).rstrip("/")
-    client = _get_grid_probe_client()
-    try:
-        create_resp = await client.post(
-            f"{base}/session", json=_build_session_payload(capabilities), timeout=timeout_sec
-        )
-    except httpx.HTTPError as exc:
-        return False, f"Session create request failed: {_format_http_error(exc)}"
-
-    if create_resp.status_code >= 400:
-        try:
-            return False, _extract_session_error(create_resp.json())
-        except ValueError:
-            return False, create_resp.text or "Session create failed"
-
-    try:
-        data = create_resp.json()
-    except ValueError:
-        return False, "Session create returned invalid JSON"
-
-    session_id = data.get("sessionId")
-    if not session_id and isinstance(data.get("value"), dict):
-        session_id = data["value"].get("sessionId")
-    if not isinstance(session_id, str) or not session_id:
-        return False, "Session create did not return a session id"
-
-    try:
-        delete_resp = await client.delete(f"{base}/session/{session_id}", timeout=timeout_sec)
-        if delete_resp.status_code >= 400:
-            return False, f"Session created but cleanup failed ({delete_resp.status_code})"
-    except httpx.HTTPError as exc:
-        return False, f"Session created but cleanup failed: {_format_http_error(exc)}"
-
-    return True, None
-
-
-async def run_session_viability_probe(
-    db: AsyncSession,
-    device: Device,
-    *,
-    checked_by: SessionViabilityCheckedBy,
-    settings: SettingsReader,
-    publisher: EventPublisher,
-) -> dict[str, Any]:
-    device_key = str(device.id)
-    previous_state: DeviceOperationalState | None = None
-    acquired = await control_plane_state_store.try_claim_value(
-        db,
-        SESSION_VIABILITY_RUNNING_NAMESPACE,
-        device_key,
-        {"started_at": _now_iso(), "checked_by": checked_by},
-    )
-    if not acquired:
-        raise ValueError("Session viability check already in progress for this device")
-    await db.commit()
-    can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
-        checked_by == SessionViabilityCheckedBy.recovery
-        and device.operational_state == DeviceOperationalState.offline
-        and device.hold is None
-    )
-    if not can_probe:
-        await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-        await db.commit()
-        raise ValueError("Session viability checks only run for available devices")
-    if not await is_ready_for_use_async(db, device):
-        await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-        await db.commit()
-        raise ValueError(await readiness_error_detail_async(db, device, action="run a session viability check"))
-
-    attempted_at = _now_iso()
-    try:
-        config_changed = _clear_session_viability_from_config(device)
-        timeout_sec = int(settings.get("general.session_viability_timeout_sec"))
-        node = device.appium_node
-        if not node or not node.observed_running:
-            state = await _write_session_viability(
-                db,
-                device,
-                status="failed",
-                attempted_at=attempted_at,
-                error="Appium node is not running",
-                checked_by=checked_by,
-                publisher=publisher,
-            )
-            if config_changed:
-                await db.commit()
-            return state
-
-        locked = await device_locking.lock_device(db, device.id)
-        # Re-validate can_probe under the row lock. The pre-lock check
-        # ran on an unlocked snapshot, so a concurrent maintenance-enter
-        # (or any other writer of ``Device.hold``/``operational_state``)
-        # may have changed the state between the gate and this lock.
-        # Raise to match the pre-lock branch's contract: manual callers
-        # surface as HTTP 409, recovery callers retry via the policy
-        # loop. Writing a ``failed`` viability record here would bump
-        # ``consecutive_failures`` on a race the device is not
-        # responsible for and could push a healthy device closer to the
-        # escalation threshold.
-        locked_can_probe = (locked.operational_state == DeviceOperationalState.available and locked.hold is None) or (
-            checked_by == SessionViabilityCheckedBy.recovery
-            and locked.operational_state == DeviceOperationalState.offline
-            and locked.hold is None
-        )
-        if not locked_can_probe:
-            raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
-        previous_state = locked.operational_state
-        await _MACHINE.transition(
-            locked,
-            TransitionEvent.SESSION_STARTED,
-            reason="Session viability probe running",
-            publisher=publisher,
-        )
-        await db.commit()
-
-        capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
-        # Register the device as having an in-flight probe so the session_sync
-        # loop ignores the Grid slot the probe is about to create. Without this
-        # the slot is persisted as a phantom Session row: Appium strips the
-        # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
-        # markers from matched caps, so slot_parser cannot recognise it.
-        probe_inflight.mark_probe_started(device_key)
-        try:
-            ok, error = await probe_session_via_grid(
-                capabilities, timeout_sec, settings=settings, grid_url=node.grid_url
-            )
-        finally:
-            probe_inflight.mark_probe_finished(device_key)
-        await record_probe_session(
-            db,
-            device=device,
-            attempted_at=_parse_timestamp(attempted_at) or datetime.now(UTC),
-            result=grid_probe_response_to_result((ok, error)),
-            source=_VIABILITY_PROBE_SOURCE_MAP[checked_by],
-            capabilities=capabilities,
-        )
-
-        state = await _write_session_viability(
-            db,
-            device,
-            status="passed" if ok else "failed",
-            attempted_at=attempted_at,
-            error=error,
-            checked_by=checked_by,
-            publisher=publisher,
-        )
-
-        relocked = await device_locking.lock_device(db, device.id)
-        if relocked.operational_state == DeviceOperationalState.busy:
-            # Branch on probe outcome — the EVENT — not on
-            # ``ready_operational_state``'s projection. The previous code
-            # fed ``ready_op`` into ``set_operational_state``, which folded
-            # ``appium_node_stop_in_flight`` into the operational axis: a
-            # stale graceful-stop intent (e.g. a leftover ``connectivity:*``
-            # row whose recovery never revoked it) would flag stop_pending,
-            # and a passing probe would still flap the device offline with
-            # reason "Session viability probe finished". Operators saw a
-            # toast pair (offline → "Health checks recovered") every probe
-            # cycle even though the device was healthy.
-            #
-            # State transitions fire on probe outcome only. Real offline
-            # transitions for in-flight stops or unhealthy nodes are
-            # emitted by the connectivity / node_health / health writers
-            # on their own schedules with their own reasons.
-            if ok:
-                await _MACHINE.transition(
-                    relocked,
-                    TransitionEvent.SESSION_ENDED,
-                    reason="Session viability probe finished",
-                    publisher=publisher,
-                )
-            else:
-                await _MACHINE.transition(
-                    relocked,
-                    TransitionEvent.AUTO_STOP_EXECUTED,
-                    reason="Session viability probe finished",
-                    publisher=publisher,
-                )
-            await db.commit()
-        else:
-            logger.info(
-                "Device %s availability changed during probe (now %s); skipping restore",
-                device.id,
-                relocked.operational_state.value,
-            )
-            if config_changed:
-                await db.commit()
-        if not ok and checked_by != SessionViabilityCheckedBy.recovery and _health_failure_handler is not None:
-            threshold = max(1, int(settings.get("general.session_viability_failure_threshold")))
-            if int(state.get("consecutive_failures") or 0) >= threshold:
-                await _health_failure_handler(
-                    db,
-                    device,
-                    source="session_viability",
-                    reason=error or "Appium session viability probe failed",
-                    publisher=publisher,
-                )
-            else:
-                logger.info(
-                    "session_viability probe failed for device %s (%d/%d) — holding before escalation",
-                    device.id,
-                    state.get("consecutive_failures"),
-                    threshold,
-                )
-        return state
-    except Exception:
-        if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
-            relocked = await device_locking.lock_device(db, device.id)
-            if relocked.operational_state == DeviceOperationalState.busy:
-                await set_operational_state(relocked, previous_state, publish_event=False, publisher=publisher)
-                await db.commit()
-        raise
-    finally:
-        await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
-        await db.commit()
-
-
-async def _check_due_devices(db: AsyncSession, *, settings: SettingsReader, publisher: EventPublisher) -> None:
-    interval_sec = settings.get("general.session_viability_interval_sec")
-    stmt = (
-        select(Device)
-        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
-        .options(selectinload(Device.host), selectinload(Device.appium_node))
-    )
-    result = await db.execute(stmt)
-    devices = result.scalars().all()
-
-    for device in devices:
-        if await _should_run_scheduled_probe(db, device, interval_sec):
-            await run_session_viability_probe(
-                db, device, checked_by=SessionViabilityCheckedBy.scheduled, settings=settings, publisher=publisher
-            )
-
-
 class SessionViabilityLoop:
     def __init__(self, *, services: SessionServices) -> None:
         self._services = services
@@ -588,7 +574,7 @@ class SessionViabilityLoop:
         while True:
             try:
                 async with observe_background_loop(LOOP_NAME, 60.0).cycle(), self._services.session_factory() as db:
-                    await _check_due_devices(db, settings=self._services.settings, publisher=self._services.publisher)
+                    await self._services.viability.check_due_devices(db)
             except Exception:
                 logger.exception("Session viability loop failed")
             await asyncio.sleep(60)

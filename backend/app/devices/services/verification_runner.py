@@ -10,12 +10,13 @@ from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificat
 from app.devices.services.verification_job_state import finish_job, hydrate_job
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
-from app.sessions import service_viability as session_viability
+from app.sessions.service_viability import build_probe_capabilities
 
 if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.protocols import SessionViabilityProbe
     from app.devices.services.verification_execution import VerificationExecutionService
     from app.devices.services.verification_preparation import VerificationPreparationService
     from app.events.protocols import EventPublisher
@@ -33,6 +34,7 @@ class VerificationRunnerService:
         circuit_breaker: CircuitBreakerProtocol,
         preparation: VerificationPreparationService,
         execution: VerificationExecutionService,
+        viability: SessionViabilityProbe,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -40,6 +42,7 @@ class VerificationRunnerService:
         self._circuit_breaker = circuit_breaker
         self._preparation = preparation
         self._execution = execution
+        self._viability = viability
 
     async def _probe_session_via_gridfleet_marker(
         self,
@@ -48,10 +51,9 @@ class VerificationRunnerService:
         *,
         grid_url: str | None = None,
     ) -> tuple[bool, str | None]:
-        return await session_viability.probe_session_via_grid(
-            session_viability.build_probe_capabilities(capabilities),
+        return await self._viability.probe_session_via_grid(
+            build_probe_capabilities(capabilities),
             timeout_sec,
-            settings=self._settings,
             grid_url=grid_url,
         )
 

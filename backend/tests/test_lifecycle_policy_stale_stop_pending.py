@@ -1,7 +1,7 @@
 """D4: stale stop_pending on offline device must not trap recovery."""
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
@@ -86,27 +86,26 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
     # No Session row exists — this is the stale case (session already gone).
     # Patch start_managed_node and the viability probe to success so the
     # recovery path can complete past the stale-clear.
-    with (
-        patch(
-            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-            new=AsyncMock(side_effect=_mark_device_available),
-        ),
-        patch(
-            "app.sessions.service_viability.run_session_viability_probe",
-            new_callable=AsyncMock,
-            return_value={
-                "status": "passed",
-                "last_attempted_at": datetime.now(UTC).isoformat(),
-                "last_succeeded_at": datetime.now(UTC).isoformat(),
-                "error": None,
-                "checked_by": "recovery",
-            },
-        ),
+    probe_mock = AsyncMock(
+        return_value={
+            "status": "passed",
+            "last_attempted_at": datetime.now(UTC).isoformat(),
+            "last_succeeded_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "checked_by": "recovery",
+        }
+    )
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+    with patch(
+        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
+        new=AsyncMock(side_effect=_mark_device_available),
     ):
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(publisher=event_bus),
+            viability=viability,
         ).attempt_auto_recovery(
             db_session,
             device,
@@ -180,6 +179,7 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=Mock(),
     ).attempt_auto_recovery(
         db_session,
         device,

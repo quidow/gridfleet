@@ -16,6 +16,7 @@ import pytest
 
 from app.devices.models import DeviceOperationalState
 from app.sessions import service_viability
+from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -85,13 +86,16 @@ async def test_exception_path_restores_previous_available_without_projection(
         AsyncMock(side_effect=RuntimeError("probe-exploded")),
     )
 
+    svc = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
+        session_factory=AsyncMock(),
+    )
     with pytest.raises(RuntimeError, match="probe-exploded"):
-        await service_viability.run_session_viability_probe(
+        await svc.run_session_viability_probe(
             db_session,
             available_device,
             checked_by=service_viability.SessionViabilityCheckedBy.manual,
-            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
-            publisher=event_bus,
         )
 
     # The exception path must have called set_operational_state with AVAILABLE
@@ -145,13 +149,16 @@ async def test_exception_path_from_offline_restores_offline(
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("probe-offline-exploded")),
     )
+    svc = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
+        session_factory=AsyncMock(),
+    )
     with pytest.raises(RuntimeError, match="probe-offline-exploded"):
-        await service_viability.run_session_viability_probe(
+        await svc.run_session_viability_probe(
             db_session,
             offline_device,
             checked_by=service_viability.SessionViabilityCheckedBy.recovery,
-            settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
-            publisher=event_bus,
         )
 
     assert set_state.call_count >= 1, "set_operational_state was never called in the exception path"

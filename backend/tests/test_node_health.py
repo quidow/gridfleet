@@ -35,6 +35,7 @@ def _make_real_recovery_control(publisher: object = None) -> LifecyclePolicyServ
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=pub),
+        viability=Mock(),
     )
 
 

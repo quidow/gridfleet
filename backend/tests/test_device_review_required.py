@@ -245,17 +245,17 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     device = await _make_offline_verified_device(db_session, db_host, "review-promotion")
 
     settings = FakeSettingsReader(_settings_stub(threshold))
+    viability = AsyncMock()
+    viability.run_session_viability_probe = _failing_probe()
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=settings,
         actions=LifecyclePolicyActionsService(publisher=Mock()),
+        viability=viability,
     )
-    with (
-        patch(
-            "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
-            new=AsyncMock(side_effect=_mark_device_available),
-        ),
-        patch("app.sessions.service_viability.run_session_viability_probe", new=_failing_probe()),
+    with patch(
+        "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
+        new=AsyncMock(side_effect=_mark_device_available),
     ):
         # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
         # which is below the threshold of 2, so no promotion yet.
@@ -295,19 +295,20 @@ async def test_review_required_short_circuits_auto_recovery(
     await mark_review_required(db_session, device, reason="shelved earlier", source="session_viability")
     await db_session.commit()
 
+    viability_mock = Mock()
+    viability_mock.run_session_viability_probe = AsyncMock()
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
         actions=LifecyclePolicyActionsService(publisher=event_bus),
+        viability=viability_mock,
     )
-    probe = AsyncMock()
-    with patch("app.sessions.service_viability.run_session_viability_probe", new=probe):
-        recovered = await svc.attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="ignored",
-        )
+    recovered = await svc.attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="ignored",
+    )
 
     assert recovered is False
-    probe.assert_not_awaited()
+    viability_mock.run_session_viability_probe.assert_not_awaited()
