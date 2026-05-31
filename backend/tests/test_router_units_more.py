@@ -416,10 +416,18 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
 
     webhook_id = uuid.uuid4()
     webhook = SimpleNamespace(id=webhook_id)
-    with patch.object(webhooks.webhook_service, "get_webhook", new=AsyncMock(return_value=webhook)):
-        assert await webhooks.get_webhook(webhook_id, db=object()) is webhook
-    with patch.object(webhooks.webhook_service, "update_webhook", new=AsyncMock(return_value=webhook)):
-        assert await webhooks.update_webhook(webhook_id, webhooks.WebhookUpdate(enabled=True), db=object()) is webhook
+    mock_wh_svc = SimpleNamespace(crud=SimpleNamespace(get_webhook=AsyncMock(return_value=webhook)))
+    assert await webhooks.get_webhook(webhook_id, db=object(), webhook_services=mock_wh_svc) is webhook  # type: ignore[arg-type]
+    mock_wh_svc2 = SimpleNamespace(crud=SimpleNamespace(update_webhook=AsyncMock(return_value=webhook)))
+    assert (
+        await webhooks.update_webhook(
+            webhook_id,
+            webhooks.WebhookUpdate(enabled=True),
+            db=object(),
+            webhook_services=mock_wh_svc2,  # type: ignore[arg-type]
+        )
+        is webhook
+    )
 
     device = object()
     mock_crud_none = SimpleNamespace(get_device=AsyncMock(return_value=None))
@@ -2364,36 +2372,60 @@ async def test_webhook_router_error_and_delivery_paths() -> None:
         updated_at=datetime(2026, 5, 1, tzinfo=UTC),
     )
 
-    with patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=None)):
-        mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
-        for call in (
-            lambda: webhooks.get_webhook(webhook_id, db=object()),
-            lambda: webhooks.update_webhook(webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object()),
-            lambda: webhooks.delete_webhook(webhook_id, db=object()),
-            lambda: webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh),
-            lambda: webhooks.list_webhook_deliveries(webhook_id, db=object()),
-            lambda: webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object()),
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await call()
-            assert exc.value.status_code == 404
+    mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
+    none_crud = SimpleNamespace(
+        get_webhook=AsyncMock(return_value=None),
+        update_webhook=AsyncMock(return_value=None),
+        delete_webhook=AsyncMock(return_value=False),
+    )
+    none_dispatch = SimpleNamespace(
+        list_deliveries=AsyncMock(return_value=([], 0)),
+        retry_delivery=AsyncMock(return_value=None),
+    )
+    none_wh_svc = SimpleNamespace(crud=none_crud, dispatch=none_dispatch)
+    for call in (
+        lambda: webhooks.get_webhook(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
+        lambda: webhooks.update_webhook(  # type: ignore[arg-type]
+            webhook_id, data=webhooks.WebhookUpdate(enabled=False), db=object(), webhook_services=none_wh_svc
+        ),
+        lambda: webhooks.delete_webhook(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
+        lambda: webhooks.test_webhook(  # type: ignore[arg-type]
+            webhook_id, db=object(), event_services=mock_event_services_wh, webhook_services=none_wh_svc
+        ),
+        lambda: webhooks.list_webhook_deliveries(webhook_id, db=object(), webhook_services=none_wh_svc),  # type: ignore[arg-type]
+        lambda: webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
+            webhook_id, delivery_id, db=object(), webhook_services=none_wh_svc
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await call()
+        assert exc.value.status_code == 404
 
     mock_event_services_wh = SimpleNamespace(publisher=AsyncMock())
-    with (
-        patch("app.webhooks.router.webhook_service.get_webhook", new=AsyncMock(return_value=webhook)),
-        patch("app.webhooks.router.webhook_dispatcher.list_deliveries", new=AsyncMock(return_value=([delivery], 1))),
-        patch("app.webhooks.router.webhook_dispatcher.retry_delivery", new=AsyncMock(side_effect=[None, delivery])),
-    ):
-        result = await webhooks.test_webhook(webhook_id, db=object(), event_services=mock_event_services_wh)
-        assert result["webhook_name"] == "alerts"
-        mock_event_services_wh.publisher.publish.assert_awaited_once()
-        deliveries = await webhooks.list_webhook_deliveries(webhook_id, db=object())
-        assert deliveries["total"] == 1
-        with pytest.raises(HTTPException) as exc:
-            await webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object())
-        assert exc.value.status_code == 404
-        retried = await webhooks.retry_webhook_delivery(webhook_id, delivery_id, db=object())
-        assert retried.id == delivery_id
+    ok_crud = SimpleNamespace(get_webhook=AsyncMock(return_value=webhook))
+    ok_dispatch = SimpleNamespace(
+        list_deliveries=AsyncMock(return_value=([delivery], 1)),
+        retry_delivery=AsyncMock(side_effect=[None, delivery]),
+    )
+    ok_wh_svc = SimpleNamespace(crud=ok_crud, dispatch=ok_dispatch)
+    result = await webhooks.test_webhook(  # type: ignore[arg-type]
+        webhook_id, db=object(), event_services=mock_event_services_wh, webhook_services=ok_wh_svc
+    )
+    assert result["webhook_name"] == "alerts"
+    mock_event_services_wh.publisher.publish.assert_awaited_once()
+    deliveries = await webhooks.list_webhook_deliveries(  # type: ignore[arg-type]
+        webhook_id, db=object(), webhook_services=ok_wh_svc
+    )
+    assert deliveries["total"] == 1
+    with pytest.raises(HTTPException) as exc:
+        await webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
+            webhook_id, delivery_id, db=object(), webhook_services=ok_wh_svc
+        )
+    assert exc.value.status_code == 404
+    retried = await webhooks.retry_webhook_delivery(  # type: ignore[arg-type]
+        webhook_id, delivery_id, db=object(), webhook_services=ok_wh_svc
+    )
+    assert retried.id == delivery_id
 
 
 async def test_runs_router_parses_filters_and_maps_service_errors() -> None:

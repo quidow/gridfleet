@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import uuid
 
+    import httpx
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.events import Event
@@ -32,4 +33,4 @@ class WebhookDispatchProtocol(Protocol):
     async def retry_delivery(
         self, db: AsyncSession, webhook_id: uuid.UUID, delivery_id: uuid.UUID
     ) -> WebhookDelivery | None: ...
-    async def run_pending_once(self, *, client: object | None = ...) -> bool: ...
+    async def run_pending_once(self, *, client: httpx.AsyncClient | None = ...) -> bool: ...

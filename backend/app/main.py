@@ -68,8 +68,8 @@ from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
-from app.webhooks import dispatcher as webhook_dispatcher
 from app.webhooks import router as webhooks
+from app.webhooks.dispatcher import WebhookDeliveryLoop
 
 configure_logging()
 
@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
-    bus.register_handler(lambda event: webhook_dispatcher.handle_system_event(event, session_factory))
+    bus.register_handler(app_services.webhooks.dispatch.handle_system_event)
     await bus.start()
 
     tasks: list[asyncio.Task[None]] = []
@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         pack_drain = PackDrainLoop(services=app_services.packs)
         job_worker = app_services.jobs
-        webhook_delivery = app_services.webhooks
+        webhook_delivery = WebhookDeliveryLoop(services=app_services.webhooks)
         background_loop_flush = app_services.background_loop_flush
 
         _leader_loops: list[tuple[Any, str]] = [

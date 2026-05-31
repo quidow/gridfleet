@@ -94,7 +94,11 @@ from app.settings.service import SettingsService
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from app.webhooks import dispatcher as webhook_dispatcher
+from app.webhooks.dependencies import get_webhook_services
+from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery
+from app.webhooks.service import WebhookCrudService
+from app.webhooks.services_container import WebhookServices
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 settings_service = SettingsService()
@@ -609,6 +613,17 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             session_factory=sf,
         )
 
+    def override_get_webhook_services() -> WebhookServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        return WebhookServices(
+            crud=WebhookCrudService(),
+            dispatch=WebhookDispatchService(session_factory=sf),
+            session_factory=sf,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_event_services] = override_get_event_services
     app.dependency_overrides[get_settings_services] = override_get_settings_services
@@ -621,6 +636,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_pack_services] = override_get_pack_services
     app.dependency_overrides[get_plugin_services] = override_get_plugin_services
     app.dependency_overrides[get_appium_node_services] = override_get_appium_node_services
+    app.dependency_overrides[get_webhook_services] = override_get_webhook_services
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()

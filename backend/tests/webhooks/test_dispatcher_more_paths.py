@@ -8,6 +8,9 @@ import httpx
 import pytest
 
 from app.webhooks import dispatcher as webhook_dispatcher
+from app.webhooks.dispatcher import WebhookDispatchService
+from app.webhooks.service import WebhookCrudService
+from app.webhooks.services_container import WebhookServices
 
 
 class _Db:
@@ -126,17 +129,16 @@ async def test_webhook_delivery_loop_logs_and_sleeps_on_error(monkeypatch: pytes
 
     monkeypatch.setattr(webhook_dispatcher.httpx, "AsyncClient", Client)
     monkeypatch.setattr(webhook_dispatcher, "observe_background_loop", MagicMock(return_value=Observation()))
-    monkeypatch.setattr(
-        webhook_dispatcher,
-        "run_pending_webhook_deliveries_once",
-        AsyncMock(side_effect=RuntimeError("boom")),
-    )
     monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
     log_exception = MagicMock()
     monkeypatch.setattr(webhook_dispatcher.logger, "exception", log_exception)
 
+    mock_dispatch = AsyncMock(spec=WebhookDispatchService)
+    mock_dispatch.run_pending_once = AsyncMock(side_effect=RuntimeError("boom"))
+    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch, session_factory=_Factory(_Db()))
+
     with pytest.raises(asyncio.CancelledError):
-        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(services=services)
         await loop.run()
 
     log_exception.assert_called_once_with("Webhook dispatcher error")
@@ -157,11 +159,14 @@ async def test_webhook_delivery_loop_sleeps_when_no_work(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(webhook_dispatcher.httpx, "AsyncClient", Client)
     monkeypatch.setattr(webhook_dispatcher, "observe_background_loop", MagicMock(return_value=Observation()))
-    monkeypatch.setattr(webhook_dispatcher, "run_pending_webhook_deliveries_once", AsyncMock(return_value=False))
     monkeypatch.setattr(webhook_dispatcher.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
+    mock_dispatch = AsyncMock(spec=WebhookDispatchService)
+    mock_dispatch.run_pending_once = AsyncMock(return_value=False)
+    services = WebhookServices(crud=WebhookCrudService(), dispatch=mock_dispatch, session_factory=_Factory(_Db()))
+
     with pytest.raises(asyncio.CancelledError):
-        loop = webhook_dispatcher.WebhookDeliveryLoop(session_factory=_Factory(_Db()))
+        loop = webhook_dispatcher.WebhookDeliveryLoop(services=services)
         await loop.run()
 
 

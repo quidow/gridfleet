@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.events import Event
+    from app.webhooks.services_container import WebhookServices
 
 logger = get_logger(__name__)
 
@@ -198,15 +199,15 @@ class WebhookDispatchService:
 
 
 class WebhookDeliveryLoop:
-    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
+    def __init__(self, *, services: WebhookServices) -> None:
+        self._services = services
 
     async def run(self) -> None:
         async with httpx.AsyncClient() as client:
             while True:
                 try:
                     async with observe_background_loop(LOOP_NAME, float(POLL_INTERVAL_SEC)).cycle():
-                        worked = await run_pending_webhook_deliveries_once(self._session_factory, client=client)
+                        worked = await self._services.dispatch.run_pending_once(client=client)
                     if not worked:
                         await asyncio.sleep(POLL_INTERVAL_SEC)
                 except Exception:
