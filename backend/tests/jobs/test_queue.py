@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
@@ -49,6 +50,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
                 viability=Mock(),
+                capability=DeviceCapabilityService(),
             ),
             viability=Mock(),
         ),

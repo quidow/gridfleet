@@ -28,6 +28,7 @@ from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
 from app.core.observability import BackgroundLoopFlushLoop
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
@@ -152,9 +153,12 @@ def compose_app(
     )
 
     device_state_svc = DeviceStateService(publisher=bus)
+    device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
     lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
-    viability_svc = SessionViabilityService(publisher=bus, settings=settings_svc, session_factory=session_factory)
+    viability_svc = SessionViabilityService(
+        publisher=bus, settings=settings_svc, session_factory=session_factory, capability=device_capability_svc
+    )
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc, viability=viability_svc
     )
@@ -193,13 +197,18 @@ def compose_app(
         lifecycle_actions=lifecycle_actions_svc,
         reservation=reservation_svc,
     )
-    run_query = RunQueryService()
+    run_query = RunQueryService(capability=device_capability_svc)
 
     verification_preparation_svc = VerificationPreparationService(
         settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
     )
     verification_execution_svc = VerificationExecutionService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc, viability=viability_svc
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        crud=crud_svc,
+        viability=viability_svc,
+        capability=device_capability_svc,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -235,6 +244,7 @@ def compose_app(
             portability_export=portability_export_svc,
             verification=verification_svc,
             crud=crud_svc,
+            capability=device_capability_svc,
             connectivity=connectivity_svc,
             publisher=bus,
             settings=settings_svc,

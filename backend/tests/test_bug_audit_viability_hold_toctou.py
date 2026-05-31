@@ -23,6 +23,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.sessions import service_viability
 from app.sessions.service_viability import SessionViabilityService
@@ -103,6 +104,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
 
     with (

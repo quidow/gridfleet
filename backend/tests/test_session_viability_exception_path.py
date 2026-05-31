@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.devices.models import DeviceOperationalState
+from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
@@ -81,7 +82,7 @@ async def test_exception_path_restores_previous_available_without_projection(
 
     # Probe raises before completing
     monkeypatch.setattr(
-        service_viability.capability_service,
+        DeviceCapabilityService,
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("probe-exploded")),
     )
@@ -90,6 +91,7 @@ async def test_exception_path_restores_previous_available_without_projection(
         publisher=event_bus,
         settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
     with pytest.raises(RuntimeError, match="probe-exploded"):
         await svc.run_session_viability_probe(
@@ -145,7 +147,7 @@ async def test_exception_path_from_offline_restores_offline(
     monkeypatch.setattr(service_viability, "set_operational_state", set_state)
 
     monkeypatch.setattr(
-        service_viability.capability_service,
+        DeviceCapabilityService,
         "get_device_capabilities",
         AsyncMock(side_effect=RuntimeError("probe-offline-exploded")),
     )
@@ -153,6 +155,7 @@ async def test_exception_path_from_offline_restores_offline(
         publisher=event_bus,
         settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
     with pytest.raises(RuntimeError, match="probe-offline-exploded"):
         await svc.run_session_viability_probe(

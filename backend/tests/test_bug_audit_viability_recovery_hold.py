@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.services.capability import DeviceCapabilityService
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
@@ -51,6 +52,7 @@ async def test_recovery_probe_rejects_offline_held_device(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
     with pytest.raises(ValueError, match="only run for available devices"):
         await svc.run_session_viability_probe(

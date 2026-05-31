@@ -17,6 +17,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification import VerificationService
@@ -127,7 +128,10 @@ async def _wait_for_job(
         if job["status"] in {"completed", "failed"}:
             return dict(job)
         _viability = SessionViabilityService(
-            publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+            publisher=AsyncMock(),
+            settings=settings_service,
+            session_factory=session_factory,
+            capability=DeviceCapabilityService(),
         )
         _viability.probe_session_via_grid = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
         await DurableJobService(
@@ -151,6 +155,7 @@ async def _wait_for_job(
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
                     viability=_viability,
+                    capability=DeviceCapabilityService(),
                 ),
                 viability=_viability,
             ),
@@ -1425,7 +1430,10 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             await db.commit()
 
         _viability2 = SessionViabilityService(
-            publisher=AsyncMock(), settings=settings_service, session_factory=session_factory
+            publisher=AsyncMock(),
+            settings=settings_service,
+            session_factory=session_factory,
+            capability=DeviceCapabilityService(),
         )
         _viability2.probe_session_via_grid = AsyncMock(return_value=(True, None))  # type: ignore[method-assign]
         recovered = await DurableJobService(
@@ -1449,6 +1457,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(settings=settings_service),
                     viability=_viability2,
+                    capability=DeviceCapabilityService(),
                 ),
                 viability=_viability2,
             ),

@@ -13,7 +13,6 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import capability as capability_service
 from app.devices.services import health as device_health
 from app.devices.services import readiness as device_readiness
 from app.devices.services import state as device_state
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import HealthFailureHandler
+    from app.sessions.protocols import DeviceCapabilityReader, HealthFailureHandler
     from app.sessions.services_container import SessionServices
 
 __all__ = [
@@ -70,10 +69,12 @@ class SessionViabilityService:
         publisher: EventPublisher,
         settings: SettingsReader,
         session_factory: async_sessionmaker[AsyncSession],
+        capability: DeviceCapabilityReader,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._session_factory = session_factory
+        self._capability = capability
         self._health_failure_handler: HealthFailureHandler | None = None
         self._grid_probe_client: httpx.AsyncClient | None = None
 
@@ -249,7 +250,7 @@ class SessionViabilityService:
             )
             await db.commit()
 
-            capabilities = build_probe_capabilities(await capability_service.get_device_capabilities(db, device))
+            capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
             # Register the device as having an in-flight probe so the session_sync
             # loop ignores the Grid slot the probe is about to create. Without this
             # the slot is persisted as a phantom Session row: Appium strips the

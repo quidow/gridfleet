@@ -14,6 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
@@ -31,7 +32,7 @@ from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 _settings = FakeSettingsReader({})
-_query_svc = RunQueryService()
+_query_svc = RunQueryService(capability=DeviceCapabilityService())
 _allocator_svc = RunAllocatorService(
     publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
 )

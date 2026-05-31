@@ -8,6 +8,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
 from app.devices.services import verification_execution as execution
+from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
 from tests.fakes import FakeSettingsReader
@@ -48,6 +49,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=settings),
             viability=Mock(),
+            capability=DeviceCapabilityService(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
@@ -64,6 +66,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=_s2),
             viability=Mock(),
+            capability=DeviceCapabilityService(),
         ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
@@ -76,6 +79,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=_s3),
         viability=Mock(),
+        capability=DeviceCapabilityService(),
     ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
@@ -87,6 +91,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=_s4),
             viability=Mock(),
+            capability=DeviceCapabilityService(),
         ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
@@ -148,6 +153,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=_s5),
         viability=Mock(),
+        capability=DeviceCapabilityService(),
     )
     with pytest.raises(NodeManagerError, match="no persisted device id"):
         await svc.execute_verification_context(
@@ -174,6 +180,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         circuit_breaker=Mock(),
         crud=DeviceCrudService(settings=_s6),
         viability=Mock(),
+        capability=DeviceCapabilityService(),
     )
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
@@ -277,6 +284,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
             circuit_breaker=Mock(),
             crud=DeviceCrudService(settings=settings),
             viability=Mock(),
+            capability=DeviceCapabilityService(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )

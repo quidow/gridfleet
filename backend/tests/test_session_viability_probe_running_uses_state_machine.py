@@ -15,6 +15,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.event import DeviceEvent, DeviceEventType
 from app.devices.services import state_write_guard
+from app.devices.services.capability import DeviceCapabilityService
 from app.hosts.models import Host
 from app.sessions import service_viability as session_viability
 from app.sessions.service_viability import SessionViabilityService
@@ -77,10 +78,11 @@ async def test_probe_running_busy_mark_writes_device_event_row(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
     )
     with (
         patch(
-            "app.sessions.service_viability.capability_service.get_device_capabilities",
+            "app.devices.services.capability.DeviceCapabilityService.get_device_capabilities",
             new_callable=AsyncMock,
             return_value={"platformName": "Android"},
         ),

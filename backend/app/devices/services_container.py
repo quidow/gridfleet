@@ -14,6 +14,7 @@ if TYPE_CHECKING:
         BulkOperationsProtocol,
         ConnectivityProtocol,
         DataCleanupProtocol,
+        DeviceCapabilityProtocol,
         DeviceCrudProtocol,
         DeviceGroupsProtocol,
         DevicePresenterProtocol,
@@ -43,6 +44,7 @@ class DeviceServices:
     portability_export: PortabilityExportProtocol
     verification: VerificationProtocol
     crud: DeviceCrudProtocol
+    capability: DeviceCapabilityProtocol
     connectivity: ConnectivityProtocol
     publisher: EventPublisher
     settings: SettingsReader

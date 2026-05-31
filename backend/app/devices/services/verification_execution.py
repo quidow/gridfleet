@@ -15,7 +15,6 @@ from app.appium_nodes.services.reconciler_agent import start_node, stop_node, wa
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
-from app.devices.services import capability as capability_service
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import register_intents_and_reconcile, revoke_intents_and_reconcile
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
@@ -41,7 +40,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
     from app.devices.models import Device
-    from app.devices.protocols import DeviceCrudProtocol, SessionViabilityProbe
+    from app.devices.protocols import DeviceCapabilityProtocol, DeviceCrudProtocol, SessionViabilityProbe
     from app.devices.services.verification_preparation import PreparedVerificationContext
     from app.events.protocols import EventPublisher
 
@@ -65,12 +64,14 @@ class VerificationExecutionService:
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
         viability: SessionViabilityProbe,
+        capability: DeviceCapabilityProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
         self._viability = viability
+        self._capability = capability
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -206,7 +207,7 @@ class VerificationExecutionService:
 
             await set_stage(job, "session_probe", "running")
             timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
-            capabilities = await capability_service.get_device_capabilities(
+            capabilities = await self._capability.get_device_capabilities(
                 db,
                 device,
                 active_connection_target=started_node.active_connection_target,

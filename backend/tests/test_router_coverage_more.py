@@ -439,8 +439,10 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     _mock_crud = AsyncMock()
     _mock_crud.list_devices_paginated = AsyncMock(return_value=([device], 1))
     _mock_crud.list_devices_by_filters = AsyncMock(return_value=[device])
+    _mock_capability = SimpleNamespace(get_device_capabilities=AsyncMock(return_value={"caps": True}))
     _mock_ds = SimpleNamespace(
         crud=_mock_crud,
+        capability=_mock_capability,
         presenter=SimpleNamespace(
             serialize_device=AsyncMock(return_value={"id": str(device_id)}),
             serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
@@ -495,9 +497,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(devices_core, "get_device_or_404", AsyncMock(return_value=device))
     assert await devices_core.get_device(device_id, db=db, device_services=_mock_ds) == {"detail": str(device_id)}
-    monkeypatch.setattr(
-        devices_core.capability_service, "get_device_capabilities", AsyncMock(return_value={"caps": True})
-    )
+    _mock_ds.capability.get_device_capabilities = AsyncMock(return_value={"caps": True})
     assert await devices_core.device_capabilities(device_id, db=db, device_services=_mock_ds) == {"caps": True}
     session_crud = SimpleNamespace(
         get_device_session_outcome_heatmap_rows=AsyncMock(return_value=[(datetime.now(UTC), "passed")])
