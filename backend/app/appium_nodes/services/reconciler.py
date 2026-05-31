@@ -1025,3 +1025,14 @@ class ReconcilerService:
             )
 
         return _reset
+
+    async def converge_device_now(self, device_id: uuid.UUID, *, db: AsyncSession | None = None) -> AppiumNode | None:
+        """Run one convergence pass for a single device, delegating to the module-level helper."""
+        return await converge_device_now(
+            device_id,
+            publisher=self._publisher,
+            db=db,
+            settings=self._settings,
+            pool=self._pool,
+            circuit_breaker=self._circuit_breaker,
+        )
