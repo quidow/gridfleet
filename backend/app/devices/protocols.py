@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from app.devices.schemas.portability import ExportBundle
     from app.events.catalog import EventSeverity
     from app.hosts.models import Host
+    from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
@@ -282,3 +283,19 @@ class SessionViabilityProbe(Protocol):
     async def probe_session_via_grid(
         self, capabilities: dict[str, Any], timeout_sec: int, *, grid_url: str | None = ...
     ) -> tuple[bool, str | None]: ...
+
+
+@runtime_checkable
+class RunReservationWriter(Protocol):
+    async def exclude_device_from_run(
+        self,
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        reason: str,
+        revoke_run_intents: bool = ...,
+        commit: bool = ...,
+    ) -> TestRun | None: ...
+    async def restore_device_to_run(
+        self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
+    ) -> TestRun | None: ...
