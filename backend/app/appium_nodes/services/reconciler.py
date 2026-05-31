@@ -111,8 +111,8 @@ def detect_orphans(
     """Return entries running on the agent that no DB row claims.
 
     `db_running_rows` is a list of dicts with keys
-    `host_id`, `device_connection_target`, `node_port`,
-    and optionally `node_desired_state`.
+    `host_id`, `device_connection_target`, `node_active_connection_target`,
+    `node_port`, and optionally `node_desired_state`.
     Pass all AppiumNode rows for the host (any observed state) — classification
     needs the full picture to surface stopped-row desyncs as
     `db_state_not_running` rather than `no_db_row`.
@@ -121,9 +121,14 @@ def detect_orphans(
     for db_row in db_running_rows:
         if db_row.get("host_id") != host_id:
             continue
-        target = db_row.get("device_connection_target")
-        if isinstance(target, str):
-            rows_by_target.setdefault(target, []).append(db_row)
+        # A running node may report either the device's registered
+        # connection_target (real devices) or a live target resolved at start
+        # time (virtual emulators report their ADB serial, not the AVD name).
+        # Index the row under both so the live serial still matches its DB row.
+        targets = {db_row.get("device_connection_target"), db_row.get("node_active_connection_target")}
+        for target in targets:
+            if isinstance(target, str) and target:
+                rows_by_target.setdefault(target, []).append(db_row)
 
     orphans: list[OrphanAppiumNode] = []
     for entry in agent_running:
@@ -286,6 +291,7 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
     stmt = select(
         Device.host_id,
         target_expr.label("device_connection_target"),
+        AppiumNode.active_connection_target.label("node_active_connection_target"),
         AppiumNode.port,
         AppiumNode.desired_state,
     ).join(AppiumNode, AppiumNode.device_id == Device.id)
@@ -294,6 +300,7 @@ async def _fetch_node_rows(db: AsyncSession) -> list[dict[str, object]]:
         {
             "host_id": row.host_id,
             "device_connection_target": row.device_connection_target,
+            "node_active_connection_target": row.node_active_connection_target,
             "node_port": row.port,
             "node_desired_state": row.desired_state.value,
         }
