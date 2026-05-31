@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
-from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     PRIORITY_RUN_ROUTING,
@@ -176,8 +176,7 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
 
 
 async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id: uuid.UUID) -> None:
-    await register_intents_and_reconcile(
-        db,
+    await IntentService(db).register_intents_and_reconcile(
         device_id=device_id,
         intents=[
             IntentRegistration(

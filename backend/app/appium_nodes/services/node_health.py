@@ -28,7 +28,7 @@ from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
 from app.devices.services.event import record_event
-from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
@@ -202,8 +202,7 @@ class NodeHealthService:
             "device_id": str(device.id),
             "expected": False,
         }
-        await register_intents_and_reconcile(
-            db,
+        await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[
                 IntentRegistration(

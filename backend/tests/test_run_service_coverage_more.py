@@ -11,6 +11,7 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceHold, DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
@@ -366,10 +367,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert run_service.get_reservation_context_for_device(None, device.id) == (None, None)
     assert run_service.get_reservation_context_for_device(run, uuid.uuid4()) == (run, None)
 
-    monkeypatch.setattr(
-        f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile",
-        AsyncMock(),
-    )
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     excluded = await svc.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
     assert excluded is not None
     assert entry.excluded is True
@@ -423,7 +421,7 @@ async def test_cooldown_device_guard_paths(
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
     )
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="ttl_seconds"):
@@ -584,7 +582,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         operational_state=DeviceOperationalState.available,
     )
 
-    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_health.update_device_checks", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -599,7 +597,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     assert refreshed.device_reservations[0].excluded is True
     assert refreshed.device_reservations[0].exclusion_reason == "bad setup"
 
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.register_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     escalate_failure_svc = RunFailureService(
         publisher=event_bus,
         settings=FakeSettingsReader(
@@ -792,7 +790,7 @@ async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monk
     db = AsyncMock()
     monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
     revoke = AsyncMock()
-    monkeypatch.setattr(f"{RUN_RELEASE_MODULE}.revoke_intents_and_reconcile", revoke)
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", revoke)
 
     await _release_svc.clear_desired_grid_run_id_for_run(db, run=run, caller="run_completed")
 

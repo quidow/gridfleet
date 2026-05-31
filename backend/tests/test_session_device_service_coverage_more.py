@@ -10,6 +10,7 @@ from app.devices.models import ConnectionType, DeviceHold, DeviceOperationalStat
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import service as device_service
+from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.state import DeviceStateService
 from app.runs.models import RunState, TestRun
@@ -214,7 +215,7 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     db.get = AsyncMock(return_value=None)
     db.flush = AsyncMock()
     db.commit = AsyncMock()
-    monkeypatch.setattr(session_service, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
 
     crud = SessionCrudService(
         publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()

@@ -13,7 +13,7 @@ from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, d
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services.intent import register_intents_and_reconcile
+from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
@@ -247,8 +247,7 @@ class RunFailureService:
                 expires_at=excluded_until,
             )
 
-            await register_intents_and_reconcile(
-                db,
+            await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=_cooldown_intents(
                     run_id=run.id,
