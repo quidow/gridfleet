@@ -15,7 +15,12 @@ from app.devices import locking as device_locking
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, IntentRegistration
+from app.devices.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_AUTO_RECOVERY,
+    IntentRegistration,
+    verification_intent_source,
+)
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.state import ready_operational_state, set_operational_state
@@ -29,8 +34,6 @@ from app.sessions.viability_types import SessionViabilityCheckedBy
 device_is_virtual = pack_platform_catalog.device_is_virtual
 
 if TYPE_CHECKING:
-    import uuid
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
@@ -378,12 +381,7 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     return node
 
 
-def verification_intent_source(device_id: uuid.UUID) -> str:
-    """Return the ``source`` key used for verification intents on *device_id*."""
-    return f"verification:{device_id}"
-
-
-# Keep the private alias for internal callers; new code should use the public name.
+# Keep the private alias for internal callers.
 _verification_intent_source = verification_intent_source
 
 

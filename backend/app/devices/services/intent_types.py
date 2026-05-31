@@ -7,6 +7,12 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+
+def verification_intent_source(device_id: UUID) -> str:
+    """Return the ``source`` key used for verification intents on *device_id*."""
+    return f"verification:{device_id}"
+
+
 IntentAxis = Literal["node_process", "grid_routing", "reservation", "recovery"]
 
 NODE_PROCESS: IntentAxis = "node_process"

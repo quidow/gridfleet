@@ -35,6 +35,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
+from app.devices.services.state_derivation import compare_shadow_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -418,8 +419,6 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     await db.flush()
 
     try:
-        from app.devices.services.state_derivation import compare_shadow_state  # noqa: PLC0415
-
         await compare_shadow_state(db, device, now=now)
     except Exception:  # noqa: BLE001 - shadow comparison must never break reconcile
         logger.warning("device-state shadow comparison failed for %s", device_id, exc_info=True)
