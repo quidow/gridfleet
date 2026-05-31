@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 SHADOW_STATE_MISMATCH = Counter(
     "gridfleet_device_state_shadow_mismatch_total",
     "Times the derived device state disagreed with the persisted column (shadow mode).",
-    ["axis"],  # "operational" | "hold"
+    labelnames=("axis",),  # "operational" | "hold"
 )
 
 
