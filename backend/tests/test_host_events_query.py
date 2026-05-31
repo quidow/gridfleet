@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.hosts.service_host_events import query_host_events
+from app.hosts.service_host_events import HostEventsService
 from tests.helpers import drain_handlers
 from tests.helpers import test_event_bus as event_bus
 
@@ -31,7 +31,7 @@ async def test_query_filters_by_host_id(db_session: AsyncSession, db_host: Host)
     other_host_id = uuid4()
     await _emit(db_host.id, "host.status_changed", extra={"old_status": "online", "new_status": "degraded"})
     await _emit(other_host_id, "host.status_changed")
-    page = await query_host_events(db_session, host_id=db_host.id, limit=10, offset=0)
+    page = await HostEventsService().query_host_events(db_session, host_id=db_host.id, limit=10, offset=0)
     assert page.total == 1
     assert page.events[0].data["host_id"] == str(db_host.id)
 
@@ -40,7 +40,7 @@ async def test_query_filters_by_host_id(db_session: AsyncSession, db_host: Host)
 async def test_query_filters_by_type(db_session: AsyncSession, db_host: Host) -> None:
     await _emit(db_host.id, "host.status_changed")
     await _emit(db_host.id, "host.heartbeat_lost", extra={"missed_count": 3})
-    page = await query_host_events(
+    page = await HostEventsService().query_host_events(
         db_session,
         host_id=db_host.id,
         types=["host.heartbeat_lost"],
@@ -54,5 +54,5 @@ async def test_query_filters_by_type(db_session: AsyncSession, db_host: Host) ->
 async def test_query_time_range(db_session: AsyncSession, db_host: Host) -> None:
     await _emit(db_host.id, "host.status_changed")
     cutoff = datetime.now(UTC) + timedelta(seconds=1)
-    page = await query_host_events(db_session, host_id=db_host.id, since=cutoff, limit=10, offset=0)
+    page = await HostEventsService().query_host_events(db_session, host_id=db_host.id, since=cutoff, limit=10, offset=0)
     assert page.total == 0

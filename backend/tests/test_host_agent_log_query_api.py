@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.hosts.schemas import AgentLogBatchIngest, ShippedLogLineIngest
-from app.hosts.service_agent_logs import write_batch
+from app.hosts.service_agent_logs import AgentLogsService
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.db
 @pytest.mark.asyncio
 async def test_get_agent_logs_returns_page(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:
     now = datetime.now(UTC)
-    await write_batch(
+    await AgentLogsService().write_batch(
         db_session,
         host_id=db_host.id,
         batch=AgentLogBatchIngest(
@@ -52,7 +52,7 @@ async def test_get_agent_logs_level_warn_expands(
     db_host: Host,
 ) -> None:
     now = datetime.now(UTC)
-    await write_batch(
+    await AgentLogsService().write_batch(
         db_session,
         host_id=db_host.id,
         batch=AgentLogBatchIngest(

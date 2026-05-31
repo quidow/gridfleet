@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.hosts.schemas import AgentLogBatchIngest, ShippedLogLineIngest
-from app.hosts.service_agent_logs import write_batch
+from app.hosts.service_agent_logs import AgentLogsService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,7 @@ async def test_write_batch_inserts_lines(db_session: AsyncSession, db_host: Host
             for i in range(5)
         ],
     )
-    result = await write_batch(db_session, host_id=db_host.id, batch=batch)
+    result = await AgentLogsService().write_batch(db_session, host_id=db_host.id, batch=batch)
     assert result.accepted == 5
     assert result.deduped == 0
 
@@ -51,8 +51,12 @@ async def test_write_batch_deduplicates_on_conflict(db_session: AsyncSession, db
         )
         for i in range(3)
     ]
-    first = await write_batch(db_session, host_id=db_host.id, batch=AgentLogBatchIngest(boot_id=boot_id, lines=lines))
-    second = await write_batch(db_session, host_id=db_host.id, batch=AgentLogBatchIngest(boot_id=boot_id, lines=lines))
+    first = await AgentLogsService().write_batch(
+        db_session, host_id=db_host.id, batch=AgentLogBatchIngest(boot_id=boot_id, lines=lines)
+    )
+    second = await AgentLogsService().write_batch(
+        db_session, host_id=db_host.id, batch=AgentLogBatchIngest(boot_id=boot_id, lines=lines)
+    )
     assert first.accepted == 3
     assert second.accepted == 0
     assert second.deduped == 3
@@ -60,7 +64,7 @@ async def test_write_batch_deduplicates_on_conflict(db_session: AsyncSession, db
 
 @pytest.mark.asyncio
 async def test_write_batch_empty_is_noop(db_session: AsyncSession, db_host: Host) -> None:
-    result = await write_batch(
+    result = await AgentLogsService().write_batch(
         db_session,
         host_id=db_host.id,
         batch=AgentLogBatchIngest(boot_id=uuid4(), lines=[]),
