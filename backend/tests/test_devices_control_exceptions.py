@@ -120,9 +120,10 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     assert device.session_viability_status == "failed"
     assert device.recovery_allowed is False
 
+    mock_ra = AsyncMock()
+    mock_ra.restart_node = AsyncMock(return_value=node)
     with (
         patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
-        patch.object(devices_control.node_manager, "restart_node", new=AsyncMock(return_value=node)),
     ):
         result = await devices_control.reconnect_device(
             device.id,
@@ -130,6 +131,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             device_services=SimpleNamespace(crud=DeviceCrudService(settings=FakeSettingsReader({}))),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            appium_services=SimpleNamespace(reconciler_agent=mock_ra),
         )
 
     assert result["success"] is True
@@ -164,19 +166,17 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
-        patch.object(
-            devices_control.node_manager,
-            "restart_node",
-            new=AsyncMock(side_effect=NodeManagerError("restart failed")),
-        ),
         pytest.raises(HTTPException) as exc,
     ):
+        ra_restart_err = AsyncMock()
+        ra_restart_err.restart_node = AsyncMock(side_effect=NodeManagerError("restart failed"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            appium_services=SimpleNamespace(reconciler_agent=ra_restart_err),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -200,19 +200,17 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
-        patch.object(
-            devices_control.node_manager,
-            "start_node",
-            new=AsyncMock(side_effect=NodePortConflictError("port occupied")),
-        ),
         pytest.raises(HTTPException) as exc,
     ):
+        ra_start_err = AsyncMock()
+        ra_start_err.start_node = AsyncMock(side_effect=NodePortConflictError("port occupied"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            appium_services=SimpleNamespace(reconciler_agent=ra_start_err),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -252,6 +250,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
         )  # type: ignore[arg-type]
 
     # Must be 400, NOT 502
@@ -275,17 +274,15 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(devices_control, "revoke_intents_and_reconcile", new=AsyncMock()),
-        patch.object(
-            devices_control.node_manager,
-            "restart_node",
-            new=AsyncMock(side_effect=RuntimeError("unexpected boom")),
-        ),
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
+        ra_boom = AsyncMock()
+        ra_boom.restart_node = AsyncMock(side_effect=RuntimeError("unexpected boom"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            appium_services=SimpleNamespace(reconciler_agent=ra_boom),
         )  # type: ignore[arg-type]

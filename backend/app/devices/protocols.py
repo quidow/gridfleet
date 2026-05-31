@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.analytics.models import AnalyticsCapacitySnapshot
     from app.analytics.schemas import FleetCapacityTimeline
     from app.appium_nodes.models import AppiumNode
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.type_defs import SessionFactory
     from app.devices.models import (
         ConnectionType,
@@ -313,4 +314,13 @@ class DeviceCapabilityProtocol(Protocol):
 class NodeConvergence(Protocol):
     async def converge_device_now(
         self, device_id: uuid.UUID, *, db: AsyncSession | None = ...
+    ) -> AppiumNode | None: ...
+
+
+@runtime_checkable
+class RemoteNodeManager(Protocol):
+    async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def wait_for_node_running(
+        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = ...
     ) -> AppiumNode | None: ...

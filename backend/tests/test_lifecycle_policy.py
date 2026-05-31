@@ -43,17 +43,20 @@ def _make_svc(
     publisher: object = None,
     settings: object = None,
     viability: object = None,
+    node_manager: object = None,
 ) -> LifecyclePolicyService:
     from unittest.mock import AsyncMock, Mock
 
     pub = publisher if publisher is not None else Mock()
     svc_settings = settings if settings is not None else FakeSettingsReader({})
     via = viability if viability is not None else AsyncMock()
+    nm = node_manager if node_manager is not None else AsyncMock()
     return LifecyclePolicyService(
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),  # type: ignore[arg-type]
         viability=via,  # type: ignore[arg-type]
+        node_manager=nm,  # type: ignore[arg-type]
     )
 
 
@@ -1903,11 +1906,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         probe_order.append("wait")
         return SimpleNamespace(observed_running=True)
 
-    monkeypatch.setattr(
-        lifecycle_policy_module,
-        "wait_for_node_running",
-        AsyncMock(side_effect=observe_node_running),
-    )
+    mock_node_manager = AsyncMock()
+    mock_node_manager.wait_for_node_running = AsyncMock(side_effect=observe_node_running)
 
     settings_with_grid = FakeSettingsReader(
         {
@@ -1917,7 +1917,9 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
             "grid.hub_url": "http://grid:4444",
         }
     )
-    svc = _make_svc(publisher=event_bus, settings=settings_with_grid, viability=viability1)
+    svc = _make_svc(
+        publisher=event_bus, settings=settings_with_grid, viability=viability1, node_manager=mock_node_manager
+    )
     assert (
         await svc.attempt_auto_recovery(
             db,

@@ -95,6 +95,7 @@ async def test_health_failure_intent_payload_shape(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     )
     result = await _svc.handle_health_failure(
         db_session,
@@ -315,6 +316,7 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
             viability=viability,
+            node_manager=AsyncMock(),
         ).attempt_auto_recovery(
             db_session,
             device,

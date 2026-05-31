@@ -24,6 +24,7 @@ from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat import shutdown_background_tasks as shutdown_heartbeat_background_tasks
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
+from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.config import settings
 from app.core.database import Base, get_db
@@ -423,6 +424,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                         publisher=test_event_bus, reservation=RunReservationService()
                     ),
                     viability=AsyncMock(),
+                    node_manager=AsyncMock(),
                 ),
             ),
             publisher=test_event_bus,
@@ -474,6 +476,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
             viability=_viability_svc,
+            node_manager=AsyncMock(),
         )
         return SessionServices(
             crud=SessionCrudService(
@@ -505,6 +508,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
             viability=Mock(),
+            node_manager=AsyncMock(),
         )
         run_release = RunReleaseService(
             publisher=test_event_bus,
@@ -599,6 +603,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 session_factory=sf,
             ),
+            reconciler_agent=ReconcilerAgentService(settings=settings_service),
             node_health=NodeHealthService(
                 publisher=test_event_bus,
                 settings=settings_service,

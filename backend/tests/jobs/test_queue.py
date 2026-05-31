@@ -52,6 +52,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),
+                node_manager=AsyncMock(),
             ),
             viability=Mock(),
         ),

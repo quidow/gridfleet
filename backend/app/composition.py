@@ -23,6 +23,7 @@ from app.agent_comm.services_container import AgentCommServices
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService
+from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.leader.keepalive import LeaderKeepaliveLoop
 from app.core.leader.watcher import LeaderWatcherLoop
@@ -163,8 +164,13 @@ def compose_app(
     viability_svc = SessionViabilityService(
         publisher=bus, settings=settings_svc, session_factory=session_factory, capability=device_capability_svc
     )
+    reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc)
     lifecycle_policy_svc = LifecyclePolicyService(
-        publisher=bus, settings=settings_svc, actions=lifecycle_actions_svc, viability=viability_svc
+        publisher=bus,
+        settings=settings_svc,
+        actions=lifecycle_actions_svc,
+        viability=viability_svc,
+        node_manager=reconciler_agent_svc,
     )
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
@@ -222,6 +228,7 @@ def compose_app(
         viability=viability_svc,
         capability=device_capability_svc,
         reconciler=reconciler_svc,
+        node_manager=reconciler_agent_svc,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -324,6 +331,7 @@ def compose_app(
         ),
         appium_nodes=AppiumNodeServices(
             reconciler=reconciler_svc,
+            reconciler_agent=reconciler_agent_svc,
             node_health=NodeHealthService(
                 publisher=bus,
                 settings=settings_svc,

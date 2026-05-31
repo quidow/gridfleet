@@ -8,6 +8,7 @@ from app.agent_comm.dependencies import AgentCommServicesDep
 from app.agent_comm.operations import appium_logs, pack_device_lifecycle_action
 from app.agent_comm.operations import appium_status as fetch_appium_status
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.appium_nodes.dependencies import AppiumNodeServicesDep
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
@@ -223,6 +224,7 @@ async def reconnect_device(
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
+    appium_services: AppiumNodeServicesDep,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
 
@@ -293,11 +295,9 @@ async def reconnect_device(
             if node is None or not node.observed_running:
                 if device.host_id is None:
                     raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-                await node_manager.start_node(db, device, caller="operator_route", settings=settings_services.service)
+                await appium_services.reconciler_agent.start_node(db, device, caller="operator_route")
             else:
-                await node_manager.restart_node(
-                    db, device, caller="operator_restart", settings=settings_services.service
-                )
+                await appium_services.reconciler_agent.restart_node(db, device, caller="operator_restart")
         except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 

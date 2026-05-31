@@ -179,6 +179,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         services=AppiumNodeServices(
             settings=settings,
             reconciler=Mock(),
+            reconciler_agent=Mock(),
             node_health=node_health_svc,
             heartbeat=Mock(),
             session_factory=_fake_session,

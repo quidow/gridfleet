@@ -695,9 +695,10 @@ async def test_start_stop_restart_node_guard_paths(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
     device = await _loaded_device(db_session, db_host, "start-stop-guards")
     with pytest.raises(NodeManagerError, match="No running node"):
-        await node_agent.stop_node(db_session, device)
+        await svc.stop_node(db_session, device)
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=False)
@@ -707,7 +708,7 @@ async def test_start_stop_restart_node_guard_paths(
         AsyncMock(return_value="not ready"),
     )
     with pytest.raises(NodeManagerError, match="not ready"):
-        await node_agent.start_node(db_session, device, settings=FakeSettingsReader({}))
+        await svc.start_node(db_session, device)
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
@@ -720,14 +721,15 @@ async def test_start_stop_restart_node_guard_paths(
     await db_session.commit()
     device.appium_node = node
     with pytest.raises(NodeManagerError, match="already running"):
-        await node_agent.start_node(db_session, device, settings=FakeSettingsReader({}))
+        await svc.start_node(db_session, device)
 
-    restarted = await node_agent.restart_node(db_session, device, settings=FakeSettingsReader({}))
+    restarted = await svc.restart_node(db_session, device)
     assert restarted.transition_token is not None
     assert restarted.transition_deadline is not None
 
 
 async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
     db = MagicMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
@@ -743,13 +745,13 @@ async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
     db.refresh.reset_mock()
     db.get = AsyncMock(side_effect=[not_running, running_node])
     monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
-    found = await node_agent.wait_for_node_running(db, node_id, timeout_sec=1, poll_interval_sec=0)
+    found = await svc.wait_for_node_running(db, node_id, timeout_sec=1, poll_interval_sec=0)
     assert found is running_node
     assert db.get.await_count == 2
     assert db.refresh.await_count == 2
 
     db.get = AsyncMock(return_value=None)
-    assert await node_agent.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
+    assert await svc.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
 
 
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1012,16 +1014,19 @@ async def test_stop_node_via_agent_handles_host_and_http_paths(monkeypatch: pyte
 
 
 async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import patch as mock_patch
+
+    svc = node_agent.ReconcilerAgentService(settings=FakeSettingsReader({}))
     db = MagicMock()
     db.refresh = AsyncMock()
     hostless = SimpleNamespace(id=uuid.uuid4(), host_id=None, appium_node=None)
     monkeypatch.setattr(node_agent, "is_ready_for_use_async", AsyncMock(return_value=True))
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await node_agent.start_node(db, hostless, settings=FakeSettingsReader({}))
+        await svc.start_node(db, hostless)
 
     start = AsyncMock(return_value="started")
-    monkeypatch.setattr(node_agent, "start_node", start)
-    result = await node_agent.restart_node(db, SimpleNamespace(appium_node=None), settings=FakeSettingsReader({}))
+    with mock_patch.object(node_agent.ReconcilerAgentService, "start_node", start):
+        result = await svc.restart_node(db, SimpleNamespace(appium_node=None))
     assert result == "started"
     start.assert_awaited_once()
 

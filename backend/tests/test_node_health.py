@@ -37,6 +37,7 @@ def _make_real_recovery_control(publisher: object = None) -> LifecyclePolicyServ
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     )
 
 
@@ -1536,6 +1537,7 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
         services=AppiumNodeServices(
             settings=settings,
             reconciler=MagicMock(),
+            reconciler_agent=MagicMock(),
             node_health=node_health_svc,
             heartbeat=MagicMock(),
             session_factory=fake_session,

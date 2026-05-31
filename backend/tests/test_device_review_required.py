@@ -251,6 +251,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
         settings=settings,
         actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
         viability=viability,
+        node_manager=AsyncMock(),
     )
     with patch(
         "app.devices.services.lifecycle_policy.register_intents_and_reconcile",
@@ -301,6 +302,7 @@ async def test_review_required_short_circuits_auto_recovery(
         settings=FakeSettingsReader(_settings_stub(5)),
         actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=viability_mock,
+        node_manager=AsyncMock(),
     )
     recovered = await svc.attempt_auto_recovery(
         db_session,

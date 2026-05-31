@@ -51,6 +51,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )
@@ -69,6 +70,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(job, _device(), http_client_factory=MagicMock())
         == "boot completed failed (no)"
     )
@@ -83,6 +85,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     ).run_device_health(job, _device(), http_client_factory=MagicMock()) == ("Agent health check failed: down")
 
     no_host = _device(host=None)
@@ -96,6 +99,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(job, no_host, http_client_factory=MagicMock())
         is None
     )
@@ -116,7 +120,14 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
 
     create_context = SimpleNamespace(mode="create", save_device_id=uuid.uuid4(), transient_device=transient)
     outcome = await execution._finalize_failure(
-        db, create_context, error="bad", job=job, node=node, publisher=event_bus, crud=mock_crud
+        db,
+        create_context,
+        error="bad",
+        job=job,
+        node=node,
+        publisher=event_bus,
+        crud=mock_crud,
+        node_manager=AsyncMock(),
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -138,6 +149,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         original_fields={"name": "original"},
         publisher=event_bus,
         crud=mock_crud,
+        node_manager=AsyncMock(),
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -159,6 +171,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     with pytest.raises(NodeManagerError, match="no persisted device id"):
         await svc.execute_verification_context(
@@ -187,6 +200,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
+        node_manager=AsyncMock(),
     )
     svc2.run_device_health = AsyncMock(side_effect=RuntimeError("crash"))  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="crash"):
@@ -263,6 +277,7 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
         publisher=event_bus,
         crud=AsyncMock(),
         viability=_mock_viability,
+        node_manager=AsyncMock(),
     )
 
     assert outcome.status == "completed"
@@ -292,6 +307,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
+            node_manager=AsyncMock(),
         ).run_device_health(job, device, http_client_factory=MagicMock())
         is None
     )

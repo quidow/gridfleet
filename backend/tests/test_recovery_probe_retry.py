@@ -25,6 +25,7 @@ def _make_svc(viability: object) -> object:
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
         viability=viability,  # type: ignore[arg-type]
+        node_manager=AsyncMock(),
     )
 
 
@@ -150,6 +151,7 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(publisher=publisher, reservation=RunReservationService()),
         viability=Mock(),
+        node_manager=AsyncMock(),
     )
     with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=_capture_probe):
         await svc.attempt_auto_recovery(

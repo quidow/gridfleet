@@ -7,6 +7,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.appium_nodes.dependencies import get_appium_node_services
+from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
+from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.database import get_db
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
 from app.devices.services.capability import DeviceCapabilityService
@@ -110,10 +113,21 @@ async def test_start_node_locks_device_before_reservation_check(
             session_factory=db_session_maker,
         )
 
+    def _override_appium_node_services() -> AppiumNodeServices:
+        return AppiumNodeServices(
+            reconciler=AsyncMock(),
+            reconciler_agent=ReconcilerAgentService(settings=settings_service),
+            node_health=AsyncMock(),
+            heartbeat=AsyncMock(),
+            settings=settings_service,
+            session_factory=db_session_maker,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_services] = override_get_settings_services
     app.dependency_overrides[get_event_services] = _override_event_services
     app.dependency_overrides[get_run_services] = _override_run_services
+    app.dependency_overrides[get_appium_node_services] = _override_appium_node_services
 
     inside_start = asyncio.Event()
     proceed_start = asyncio.Event()
@@ -170,6 +184,7 @@ async def test_start_node_locks_device_before_reservation_check(
         app.dependency_overrides.pop(get_settings_services, None)
         app.dependency_overrides.pop(get_event_services, None)
         app.dependency_overrides.pop(get_run_services, None)
+        app.dependency_overrides.pop(get_appium_node_services, None)
 
     async with db_session_maker() as verify:
         reservations = (

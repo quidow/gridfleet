@@ -76,6 +76,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
     services = AppiumNodeServices(
         settings=FakeSettingsReader({}),
         reconciler=Mock(run_cycle=AsyncMock()),
+        reconciler_agent=Mock(),
         node_health=Mock(),
         heartbeat=Mock(),
         session_factory=_Session,
@@ -94,6 +95,7 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
     services = AppiumNodeServices(
         settings=FakeSettingsReader({"general.heartbeat_interval_sec": "1"}),
         reconciler=Mock(run_cycle=AsyncMock()),
+        reconciler_agent=Mock(),
         node_health=Mock(check_nodes=AsyncMock()),
         heartbeat=heartbeat_mock,
         session_factory=_Session,
@@ -282,6 +284,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             services=AppiumNodeServices(
                 settings=FakeSettingsReader({}),
                 reconciler=Mock(run_cycle=AsyncMock(side_effect=LeadershipLost("lost"))),
+                reconciler_agent=Mock(),
                 node_health=Mock(check_nodes=AsyncMock()),
                 heartbeat=Mock(run_cycle=AsyncMock()),
                 session_factory=_Session,
@@ -296,6 +299,7 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             services=AppiumNodeServices(
                 settings=FakeSettingsReader({"general.heartbeat_interval_sec": "1"}),
                 reconciler=Mock(run_cycle=AsyncMock()),
+                reconciler_agent=Mock(),
                 node_health=Mock(check_nodes=AsyncMock()),
                 heartbeat=Mock(run_cycle=AsyncMock(side_effect=LeadershipLost("lost"))),
                 session_factory=_Session,

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.appium_nodes.models import AppiumNode
+    from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.devices.models import Device
 
 
@@ -54,3 +55,15 @@ class DeviceRecoveryControl(Protocol):
         action: str | None = None,
         record_incident: bool = True,
     ) -> bool: ...
+
+
+@runtime_checkable
+class ReconcilerAgentProtocol(Protocol):
+    async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def restart_node(
+        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...
+    ) -> AppiumNode: ...
+    async def wait_for_node_running(
+        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = ...
+    ) -> AppiumNode | None: ...

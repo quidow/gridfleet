@@ -11,6 +11,7 @@ from app.appium_nodes.exceptions import NodeManagerError, RemoteStartResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import (
+    ReconcilerAgentService,
     agent_url,
     build_agent_start_payload,
     restart_node_via_agent,
@@ -171,7 +172,8 @@ async def test_start_node_with_verification_caller_skips_readiness(
         return False
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", fake_ready)
-    node = await node_agent.start_node(db_session, device, caller="verification", settings=FakeSettingsReader({}))
+    svc = ReconcilerAgentService(settings=FakeSettingsReader({}))
+    node = await svc.start_node(db_session, device, caller="verification")
     assert node.desired_state is AppiumDesiredState.running
 
 
