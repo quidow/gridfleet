@@ -171,3 +171,10 @@ async def get_device_capabilities(
         session_caps=overlay,
         active_connection_target=active_connection_target,
     )
+
+
+class DeviceCapabilityService:
+    async def get_device_capabilities(
+        self, db: AsyncSession, device: Device, *, active_connection_target: str | None = None
+    ) -> dict[str, Any]:
+        return await get_device_capabilities(db, device, active_connection_target=active_connection_target)
