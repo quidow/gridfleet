@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -41,6 +42,25 @@ _svc = SessionViabilityService(
     settings=FakeSettingsReader({}),
     session_factory=AsyncMock(),
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_module_svc() -> Iterator[None]:
+    """Restore the shared module-level ``_svc`` state after every test.
+
+    Several tests do ``monkeypatch.setattr(_svc, "probe_session_via_grid", ...)``.
+    Because that method lives on the class, monkeypatch's undo restores it as an
+    *instance* attribute on ``_svc`` — a residual that shadows a later test's
+    ``patch.object(SessionViabilityService, ...)``, so the real probe runs and a
+    passing-probe test flaps the device offline. Snapshotting and restoring
+    ``__dict__`` gives each test a clean shared instance. This fixture is autouse
+    with no dependencies, so it tears down *after* ``monkeypatch`` undoes its
+    changes — clearing whatever residue monkeypatch leaves behind.
+    """
+    baseline = dict(_svc.__dict__)
+    yield
+    _svc.__dict__.clear()
+    _svc.__dict__.update(baseline)
 
 
 async def run_session_viability_probe(
