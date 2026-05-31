@@ -105,6 +105,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
 
     with (

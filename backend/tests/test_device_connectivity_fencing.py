@@ -52,6 +52,7 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
+            health=AsyncMock(),
         ).check_connectivity(db_session)
 
 
@@ -111,6 +112,7 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
+            health=AsyncMock(),
         ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
@@ -180,6 +182,7 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
+            health=AsyncMock(),
         ).check_connectivity(db_session)
 
     stop_called.assert_not_called()
@@ -248,6 +251,7 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
+            health=AsyncMock(),
         ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])

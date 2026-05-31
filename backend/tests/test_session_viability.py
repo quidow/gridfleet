@@ -43,6 +43,7 @@ _svc = SessionViabilityService(
     settings=FakeSettingsReader({}),
     session_factory=AsyncMock(),
     capability=DeviceCapabilityService(),
+    health=AsyncMock(),
 )
 
 
@@ -88,6 +89,7 @@ async def probe_session_via_grid(
         settings=settings or FakeSettingsReader({}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     return await svc.probe_session_via_grid(capabilities, timeout_sec, grid_url=grid_url)
 
@@ -651,6 +653,7 @@ async def test_grid_probe_client_is_reused_and_close_resets_it() -> None:
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     client = svc._get_grid_probe_client()
     assert svc._get_grid_probe_client() is client

@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-import app.devices.services.health as device_health
 import app.devices.services.lifecycle_incidents as lifecycle_incident_service
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
 from app.devices import locking as device_locking
@@ -34,7 +33,12 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.runs.protocols import DeviceLifecycleFailureWriter, MaintenanceWriter, RunReservationProtocol
+    from app.runs.protocols import (
+        DeviceHealthCheckWriter,
+        DeviceLifecycleFailureWriter,
+        MaintenanceWriter,
+        RunReservationProtocol,
+    )
 
 
 def _cooldown_intents(
@@ -99,6 +103,7 @@ class RunFailureService:
         maintenance: MaintenanceWriter,
         lifecycle_actions: DeviceLifecycleFailureWriter,
         reservation: RunReservationProtocol,
+        health: DeviceHealthCheckWriter,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -106,6 +111,7 @@ class RunFailureService:
         self._maintenance = maintenance
         self._lifecycle_actions = lifecycle_actions
         self._reservation = reservation
+        self._health = health
 
     async def report_preparation_failure(
         self,
@@ -148,7 +154,7 @@ class RunFailureService:
         )
 
         await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
-        await device_health.update_device_checks(db, device, healthy=False, summary=reason, publisher=self._publisher)
+        await self._health.update_device_checks(db, device, healthy=False, summary=reason)
 
         await lifecycle_incident_service.record_lifecycle_incident(
             db,

@@ -23,6 +23,7 @@ from app.core.leader import state_store as control_plane_state_store
 from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceType
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_diagnostics import APPIUM_PROCESSES_NAMESPACE
 from tests.fakes import FakeSettingsReader
@@ -605,6 +606,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
             circuit_breaker=Mock(),
             grid=fake_grid,
             recovery_control=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)

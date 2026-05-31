@@ -92,6 +92,7 @@ async def test_exception_path_restores_previous_available_without_projection(
         settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     with pytest.raises(RuntimeError, match="probe-exploded"):
         await svc.run_session_viability_probe(
@@ -156,6 +157,7 @@ async def test_exception_path_from_offline_restores_offline(
         settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     with pytest.raises(RuntimeError, match="probe-offline-exploded"):
         await svc.run_session_viability_probe(

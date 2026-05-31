@@ -94,13 +94,18 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             crud=_svc_crud_1,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_svc_pub_1, settings=_svc_settings_1, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_svc_pub_1,
+                settings=_svc_settings_1,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
             grid=_svc_grid_1,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 
@@ -148,13 +153,18 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             crud=_svc_crud_2,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_svc_pub_2, settings=_svc_settings_2, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_svc_pub_2,
+                settings=_svc_settings_2,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
             grid=_svc_grid_2,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 
@@ -177,6 +187,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         circuit_breaker=Mock(),
         grid=Mock(),
         recovery_control=AsyncMock(),
+        health=AsyncMock(),
     )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(
@@ -224,6 +235,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         circuit_breaker=Mock(),
         grid=fake_grid,
         recovery_control=AsyncMock(),
+        health=AsyncMock(),
     ).check_nodes(db)
 
     db.commit.assert_awaited_once()
@@ -267,13 +279,18 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             crud=_svc_crud_3,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_svc_pub_3, settings=_svc_settings_3, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_svc_pub_3,
+                settings=_svc_settings_3,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
             grid=_svc_grid_3,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 
@@ -367,13 +384,18 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             crud=_svc_crud_4,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_svc_pub_4, settings=_svc_settings_4, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_svc_pub_4,
+                settings=_svc_settings_4,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
             grid=_svc_grid_4,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 

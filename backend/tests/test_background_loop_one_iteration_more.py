@@ -207,13 +207,18 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             crud=_fc_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_fc_publisher, settings=_fc_settings, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_fc_publisher,
+                settings=_fc_settings,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_fc_publisher,
             settings=_fc_settings,
             grid=_fc_grid,
             session_factory=_Session,
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 

@@ -14,6 +14,7 @@ from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
@@ -793,7 +794,7 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     )
     set_extra = AsyncMock()
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", set_extra)
-    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
 
     node = await node_agent.mark_node_started(
         db,
@@ -855,7 +856,7 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         AsyncMock(return_value=existing),
     )
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
-    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
 
     await node_agent.mark_node_started(
         db_session,
@@ -900,7 +901,7 @@ async def test_mark_node_started_does_not_stage_reconfigure_when_node_should_acc
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
-    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
 
     await node_agent.mark_node_started(
         db_session,
@@ -939,7 +940,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
-    monkeypatch.setattr(node_agent.device_health, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
 
     await node_agent.mark_node_started(
         db_session,

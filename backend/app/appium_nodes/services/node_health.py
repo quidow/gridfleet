@@ -26,7 +26,6 @@ from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services import health as device_health
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -44,7 +43,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.protocols import DeviceRecoveryControl
+    from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -84,6 +83,7 @@ class NodeHealthService:
         circuit_breaker: CircuitBreakerProtocol,
         grid: GridServiceProtocol,
         recovery_control: DeviceRecoveryControl,
+        health: DeviceNodeHealthWriter,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -91,6 +91,7 @@ class NodeHealthService:
         self._circuit_breaker = circuit_breaker
         self._grid = grid
         self._recovery_control = recovery_control
+        self._health = health
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
@@ -272,13 +273,12 @@ class NodeHealthService:
                     device.name,
                     node.port,
                 )
-                await device_health.apply_node_state_transition(
+                await self._health.apply_node_state_transition(
                     db,
                     device,
                     health_running=None,
                     health_state=None,
                     mark_offline=False,
-                    publisher=self._publisher,
                 )
                 return
             healthy = False
@@ -339,26 +339,24 @@ class NodeHealthService:
                     source="node_health",
                 )
             locked_node.consecutive_health_failures = 0
-            await device_health.apply_node_state_transition(
+            await self._health.apply_node_state_transition(
                 db,
                 device,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
-                publisher=self._publisher,
             )
             return
 
         locked_node.consecutive_health_failures += 1
         count = locked_node.consecutive_health_failures
         max_failures = self._settings.get("general.node_max_failures")
-        await device_health.apply_node_state_transition(
+        await self._health.apply_node_state_transition(
             db,
             device,
             health_running=False,
             health_state="error",
             mark_offline=count >= max_failures,
-            publisher=self._publisher,
         )
         logger.warning(
             "Node health check failed for device %s (port %d): %d/%d",

@@ -38,6 +38,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -428,12 +429,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     viability=AsyncMock(),
                     node_manager=AsyncMock(),
                 ),
+                health=DeviceHealthService(publisher=test_event_bus),
             ),
             publisher=test_event_bus,
             settings=settings_service,
             grid=_grid_svc,
             session_factory=sf,
             circuit_breaker=test_circuit_breaker,
+            health=DeviceHealthService(publisher=test_event_bus),
         )
 
     def override_get_host_services() -> HostServices:
@@ -472,6 +475,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             session_factory=sf,
             capability=DeviceCapabilityService(),
+            health=DeviceHealthService(publisher=test_event_bus),
         )
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
@@ -536,6 +540,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 publisher=test_event_bus, reservation=RunReservationService()
             ),
             reservation=RunReservationService(),
+            health=DeviceHealthService(publisher=test_event_bus),
         )
         run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(
@@ -616,6 +621,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 grid=_grid_svc,
                 recovery_control=Mock(),
+                health=DeviceHealthService(publisher=test_event_bus),
             ),
             heartbeat=HeartbeatService(
                 publisher=test_event_bus,

@@ -27,8 +27,8 @@ from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
-from app.devices.services import health as device_health
 from app.devices.services.event import record_event
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.state import set_operational_state
 from app.events import queue_device_crashed_event, queue_event_for_session
 from app.hosts import service as host_service
@@ -442,13 +442,12 @@ async def _ingest_appium_restart_events(
                     "recovered_from": "agent_auto_restart",
                 },
             )
-            await device_health.apply_node_state_transition(
+            await DeviceHealthService(publisher=publisher).apply_node_state_transition(
                 db,
                 device,
                 health_running=None,
                 health_state=None,
                 mark_offline=False,
-                publisher=publisher,
             )
             continue
 
@@ -491,14 +490,13 @@ async def _ingest_appium_restart_events(
             degraded_state = "relay_restart_exhausted" if kind == "restart_exhausted" else "relay_restarting"
         else:
             degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
-        await device_health.apply_node_state_transition(
+        await DeviceHealthService(publisher=publisher).apply_node_state_transition(
             db,
             device,
             health_running=False,
             health_state=degraded_state,
             mark_offline=False,
             reason=error_message,
-            publisher=publisher,
         )
 
     await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
@@ -620,12 +618,11 @@ async def _apply_host_ping_result(
                 DeviceEventType.connectivity_lost,
                 {"reason": f"Host {host.hostname} offline", "host_id": str(host.id)},
             )
-            await device_health.update_device_checks(
+            await DeviceHealthService(publisher=publisher).update_device_checks(
                 db,
                 device,
                 healthy=False,
                 summary=f"Host {host.hostname} offline",
-                publisher=publisher,
             )
             await set_operational_state(
                 device,

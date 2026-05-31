@@ -174,13 +174,18 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             crud=_pr_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
-                publisher=_pr_publisher, settings=_pr_settings, circuit_breaker=Mock(), lifecycle_policy=AsyncMock()
+                publisher=_pr_publisher,
+                settings=_pr_settings,
+                circuit_breaker=Mock(),
+                lifecycle_policy=AsyncMock(),
+                health=AsyncMock(),
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,
             grid=_pr_grid,
             session_factory=AsyncMock(),
             circuit_breaker=Mock(),
+            health=AsyncMock(),
         )
     )
 

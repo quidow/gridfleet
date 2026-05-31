@@ -39,6 +39,7 @@ _failure_svc = RunFailureService(
     maintenance=MaintenanceService(publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
+    health=AsyncMock(),
 )
 
 if TYPE_CHECKING:
@@ -265,6 +266,7 @@ async def test_legacy_expired_cooldown_sweep_preserves_counter(
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)

@@ -101,6 +101,7 @@ async def test_start_node_locks_device_before_reservation_check(
             maintenance=MaintenanceService(publisher=event_bus),
             lifecycle_actions=AsyncMock(),
             reservation=RunReservationService(),
+            health=AsyncMock(),
         )
         run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(

@@ -406,6 +406,7 @@ async def test_node_health_registers_node_running_precondition(
         circuit_breaker=Mock(),
         grid=Mock(),
         recovery_control=AsyncMock(),
+        health=AsyncMock(),
     )
     await svc._attempt_node_restart(db_session, device=device)
 
