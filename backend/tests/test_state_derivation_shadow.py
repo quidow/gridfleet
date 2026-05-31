@@ -45,3 +45,26 @@ async def test_compare_logs_mismatch_without_writing(
     # Columns untouched — shadow mode writes nothing.
     assert device.operational_state is before_op
     assert device.hold is before_hold
+
+
+@pytest.mark.db
+async def test_compare_returns_false_when_state_matches(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """compare_shadow_state returns False when persisted state matches derivation."""
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    # available + no hold — derivation produces the same values, so no mismatch.
+    device = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="shadow-match-01",
+        name="Shadow Match Device",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+
+    result = await compare_shadow_state(db_session, device, now=datetime.now(UTC))
+
+    assert result is False
