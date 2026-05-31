@@ -201,3 +201,39 @@ async def update_emulator_state(db: AsyncSession, device: Device, state: str | N
     if locked is None:
         return
     locked.emulator_state = state
+
+
+class DeviceHealthService:
+    def __init__(self, *, publisher: EventPublisher) -> None:
+        self._publisher = publisher
+
+    async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None:
+        await update_device_checks(db, device, healthy=healthy, summary=summary, publisher=self._publisher)
+
+    async def update_session_viability(
+        self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
+    ) -> None:
+        await update_session_viability(db, device, status=status, error=error, publisher=self._publisher)
+
+    async def apply_node_state_transition(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        health_running: bool | None = None,
+        health_state: str | None = None,
+        mark_offline: bool = True,
+        reason: str | None = None,
+    ) -> None:
+        await apply_node_state_transition(
+            db,
+            device,
+            health_running=health_running,
+            health_state=health_state,
+            mark_offline=mark_offline,
+            reason=reason,
+            publisher=self._publisher,
+        )
+
+    async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:
+        await update_emulator_state(db, device, state)

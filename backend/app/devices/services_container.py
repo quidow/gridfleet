@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         DeviceCapabilityProtocol,
         DeviceCrudProtocol,
         DeviceGroupsProtocol,
+        DeviceHealthProtocol,
         DevicePresenterProtocol,
         DeviceStateWriter,
         FleetCapacityProtocol,
@@ -46,6 +47,7 @@ class DeviceServices:
     crud: DeviceCrudProtocol
     capability: DeviceCapabilityProtocol
     connectivity: ConnectivityProtocol
+    health: DeviceHealthProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

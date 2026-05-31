@@ -34,6 +34,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -269,6 +270,7 @@ def compose_app(
             crud=crud_svc,
             capability=device_capability_svc,
             connectivity=connectivity_svc,
+            health=DeviceHealthService(publisher=bus),
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
