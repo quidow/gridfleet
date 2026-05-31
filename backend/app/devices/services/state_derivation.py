@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from prometheus_client import Counter
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +22,12 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+SHADOW_STATE_MISMATCH = Counter(
+    "gridfleet_device_state_shadow_mismatch_total",
+    "Times the derived device state disagreed with the persisted column (shadow mode).",
+    ["axis"],  # "operational" | "hold"
+)
 
 
 @dataclass(frozen=True)
