@@ -13,8 +13,12 @@ if TYPE_CHECKING:
     from app.devices.models import Device, HardwareHealthStatus
     from app.hosts.models import Host, HostResourceSample
     from app.hosts.schemas import (
+        AgentLogBatchIngest,
+        AgentLogIngestResult,
+        AgentLogPage,
         HostCreate,
         HostDiagnosticsRead,
+        HostEventsPage,
         HostRegister,
         HostResourceTelemetryResponse,
     )
@@ -59,3 +63,37 @@ class HostResourceTelemetryProtocol(Protocol):
 @runtime_checkable
 class HostDiagnosticsProtocol(Protocol):
     async def get_host_diagnostics(self, db: AsyncSession, host: Host | uuid.UUID) -> HostDiagnosticsRead | None: ...
+
+
+@runtime_checkable
+class AgentLogsProtocol(Protocol):
+    async def write_batch(
+        self, db: AsyncSession, *, host_id: uuid.UUID, batch: AgentLogBatchIngest
+    ) -> AgentLogIngestResult: ...
+    async def query_logs(
+        self,
+        db: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        levels: list[str] | None = ...,
+        since: datetime | None = ...,
+        until: datetime | None = ...,
+        q: str | None = ...,
+        limit: int = ...,
+        offset: int = ...,
+    ) -> AgentLogPage: ...
+
+
+@runtime_checkable
+class HostEventsProtocol(Protocol):
+    async def query_host_events(
+        self,
+        db: AsyncSession,
+        *,
+        host_id: uuid.UUID,
+        types: list[str] | None = ...,
+        since: datetime | None = ...,
+        until: datetime | None = ...,
+        limit: int = ...,
+        offset: int = ...,
+    ) -> HostEventsPage: ...
