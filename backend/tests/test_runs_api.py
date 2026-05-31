@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
-from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
@@ -247,12 +247,11 @@ async def test_create_run_does_not_reserve_unhealthy_available_device(
         os_version="14",
         operational_state="available",
     )
-    await device_health.update_device_checks(
+    await DeviceHealthService(publisher=Mock()).update_device_checks(
         db_session,
         device,
         healthy=False,
         summary="Node: error",
-        publisher=Mock(),
     )
     await db_session.commit()
 

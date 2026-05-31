@@ -339,3 +339,22 @@ class OperatorNodeLifecycleProtocol(Protocol):
     async def request_restart(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
     ) -> AppiumNode: ...
+
+
+@runtime_checkable
+class DeviceHealthProtocol(Protocol):
+    async def update_device_checks(self, db: AsyncSession, device: Device, *, healthy: bool, summary: str) -> None: ...
+    async def update_session_viability(
+        self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
+    ) -> None: ...
+    async def apply_node_state_transition(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        health_running: bool | None = ...,
+        health_state: str | None = ...,
+        mark_offline: bool = ...,
+        reason: str | None = ...,
+    ) -> None: ...
+    async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None: ...

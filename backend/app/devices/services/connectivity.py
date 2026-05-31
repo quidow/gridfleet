@@ -18,7 +18,6 @@ from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
-from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
@@ -37,6 +36,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import DeviceHealthProtocol
     from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
@@ -258,7 +258,9 @@ async def _apply_ip_ping_hysteresis(
     return counter < threshold
 
 
-async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> None:
+async def _stop_disconnected_node(
+    db: AsyncSession, device: Device, *, health: DeviceHealthProtocol, publisher: EventPublisher
+) -> None:
     locked_device = await device_locking.lock_device(db, device.id)
     if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
         return None
@@ -274,7 +276,7 @@ async def _stop_disconnected_node(db: AsyncSession, device: Device, *, publisher
         ],
         reason="Device disconnected",
     )
-    await device_health.apply_node_state_transition(db, locked_device, mark_offline=True, publisher=publisher)
+    await health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
 
 
@@ -286,11 +288,13 @@ class ConnectivityService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         lifecycle_policy: LifecyclePolicyService,
+        health: DeviceHealthProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._lifecycle_policy = lifecycle_policy
+        self._health = health
 
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
@@ -321,7 +325,7 @@ class ConnectivityService:
                 )
                 await assert_current_leader(db, settings=self._settings)
                 if lifecycle_state is not None:
-                    await device_health.update_emulator_state(db, device, lifecycle_state)
+                    await self._health.update_emulator_state(db, device, lifecycle_state)
 
                 if _device_expected_aliases(device) & connected_targets:
                     # Device is connected
@@ -369,12 +373,11 @@ class ConnectivityService:
                         if not healthy:
                             summary = _summarize_unhealthy_result(health_result)
                             was_offline = device.operational_state == DeviceOperationalState.offline
-                            await device_health.update_device_checks(
+                            await self._health.update_device_checks(
                                 db,
                                 device,
                                 healthy=False,
                                 summary=summary,
-                                publisher=self._publisher,
                             )
                             if not was_offline:
                                 await self._lifecycle_policy.handle_health_failure(
@@ -398,12 +401,11 @@ class ConnectivityService:
                                 if isinstance(counter, int) and counter > 0
                                 else "Healthy"
                             )
-                            await device_health.update_device_checks(
+                            await self._health.update_device_checks(
                                 db,
                                 device,
                                 healthy=True,
                                 summary=summary,
-                                publisher=self._publisher,
                             )
 
                     if device.operational_state == DeviceOperationalState.offline:
@@ -492,9 +494,7 @@ class ConnectivityService:
                                     if isinstance(counter, int) and counter > 0
                                     else "Healthy"
                                 )
-                                await device_health.update_device_checks(
-                                    db, device, healthy=True, summary=summary, publisher=self._publisher
-                                )
+                                await self._health.update_device_checks(db, device, healthy=True, summary=summary)
                                 if device.operational_state == DeviceOperationalState.offline:
                                     if not await is_ready_for_use_async(db, device):
                                         logger.debug(
@@ -539,7 +539,7 @@ class ConnectivityService:
                     if device.hold == DeviceHold.maintenance:
                         continue
                     await assert_current_leader(db, settings=self._settings)
-                    await _stop_disconnected_node(db, device, publisher=self._publisher)
+                    await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
                     if device.operational_state == DeviceOperationalState.offline:
                         continue
                     if device.operational_state == DeviceOperationalState.busy or device.hold is not None:
@@ -550,9 +550,7 @@ class ConnectivityService:
                             host.hostname,
                             legacy_label_for_audit(device),
                         )
-                        await device_health.update_device_checks(
-                            db, device, healthy=False, summary="Disconnected", publisher=self._publisher
-                        )
+                        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                         locked_device = await device_locking.lock_device(db, device.id)
                         if (
                             locked_device.operational_state == DeviceOperationalState.busy
@@ -583,9 +581,7 @@ class ConnectivityService:
                         device.identity_value,
                         host.hostname,
                     )
-                    await device_health.update_device_checks(
-                        db, device, healthy=False, summary="Disconnected", publisher=self._publisher
-                    )
+                    await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
                     if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
                         await _MACHINE.transition(

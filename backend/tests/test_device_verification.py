@@ -122,6 +122,7 @@ async def _wait_for_job(
             settings=settings_service,
             session_factory=session_factory,
             capability=DeviceCapabilityService(),
+            health=AsyncMock(),
         )
         _viability.probe_session_via_grid = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
         await DurableJobService(
@@ -1435,6 +1436,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             settings=settings_service,
             session_factory=session_factory,
             capability=DeviceCapabilityService(),
+            health=AsyncMock(),
         )
         _viability2.probe_session_via_grid = AsyncMock(return_value=(True, None))  # type: ignore[method-assign]
         recovered = await DurableJobService(

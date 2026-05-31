@@ -19,9 +19,9 @@ from app.devices.models import (
     DeviceOperationalState,
     DeviceType,
 )
-from app.devices.services import health as device_health
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
 from app.devices.services.lifecycle_policy import DeferredStopOutcome, LifecyclePolicyService
@@ -1186,15 +1186,15 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     db_session.add(node)
     await db_session.commit()
 
-    await device_health.apply_node_state_transition(
+    _health_svc = DeviceHealthService(publisher=event_bus)
+    await _health_svc.apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
-        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
+    await _health_svc.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1252,17 +1252,15 @@ async def test_handle_session_finished_executes_stop_when_unhealthy(
     await db_session.flush()
     await db_session.commit()
 
-    await device_health.apply_node_state_transition(
+    _health_svc = DeviceHealthService(publisher=event_bus)
+    await _health_svc.apply_node_state_transition(
         db_session,
         device,
         health_running=False,
         health_state="error",
         mark_offline=False,
-        publisher=event_bus,
     )
-    await device_health.update_device_checks(
-        db_session, device, healthy=False, summary="Probe failed", publisher=event_bus
-    )
+    await _health_svc.update_device_checks(db_session, device, healthy=False, summary="Probe failed")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1320,7 +1318,9 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
         )
     db_session.add(node)
     await db_session.commit()
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=Mock())
+    await DeviceHealthService(publisher=Mock()).update_device_checks(
+        db_session, device, healthy=True, summary="Healthy"
+    )
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)
@@ -1607,15 +1607,15 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
 
     # Health reads healthy even though last_failure_* still describes a
     # current failure. The decision is to trust the derived health projection.
-    await device_health.apply_node_state_transition(
+    _health_svc = DeviceHealthService(publisher=event_bus)
+    await _health_svc.apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
-        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
+    await _health_svc.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     reloaded = await db_session.get(Device, device.id)

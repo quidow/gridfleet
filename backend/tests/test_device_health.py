@@ -17,6 +17,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import health as svc
 from app.devices.services import state_write_guard
+from app.devices.services.health import DeviceHealthService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -97,7 +98,7 @@ async def test_build_public_summary_unknown_when_no_signals(db_with_device: tupl
 @pytest.mark.asyncio
 async def test_update_device_checks_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    await svc.update_device_checks(db, device, healthy=False, summary="boom", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.commit()
     await db.refresh(device)
     assert device.device_checks_healthy is False
@@ -109,7 +110,9 @@ async def test_update_device_checks_persists_columns(db_with_device: tuple[Async
 @pytest.mark.asyncio
 async def test_update_session_viability_persists_columns(db_with_device: tuple[AsyncSession, Device]) -> None:
     db, device = db_with_device
-    await svc.update_session_viability(db, device, status="failed", error="timeout", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_session_viability(
+        db, device, status="failed", error="timeout"
+    )
     await db.commit()
     await db.refresh(device)
     assert device.session_viability_status == "failed"
@@ -123,7 +126,7 @@ async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSes
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=False, summary="lost", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="lost")
     await db.commit()
     await db.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline
@@ -136,7 +139,7 @@ async def test_healthy_signal_does_not_restore_busy_device(db_with_device: tuple
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.busy
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=True, summary="ok", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="ok")
     await db.commit()
     await db.refresh(device)
     assert device.operational_state == DeviceOperationalState.busy
@@ -187,7 +190,7 @@ async def test_health_changed_event_fires_on_derived_flip(
     db, device = db_with_device
     device.device_checks_healthy = True
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=False, summary="boom", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.commit()
     await _drain_after_commit_tasks()
     names = [name for name, _payload in event_bus_capture]
@@ -203,7 +206,7 @@ async def test_health_changed_event_skipped_when_derived_unchanged(
     db, device = db_with_device
     device.device_checks_healthy = True
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=True, summary="still ok", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="still ok")
     await db.commit()
     await _drain_after_commit_tasks()
     names = [name for name, _payload in event_bus_capture]
@@ -219,7 +222,7 @@ async def test_health_changed_event_dropped_on_rollback(
     db, device = db_with_device
     device.device_checks_healthy = True
     await db.commit()
-    await svc.update_device_checks(db, device, healthy=False, summary="boom", publisher=event_bus)
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.rollback()
     await _drain_after_commit_tasks()
     names = [name for name, _payload in event_bus_capture]
@@ -247,14 +250,13 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
     db.add(node)
     await db.flush()
 
-    await svc.apply_node_state_transition(
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db,
         device,
         health_running=False,
         health_state="error",
         mark_offline=False,
         reason="below threshold",
-        publisher=event_bus,
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -264,7 +266,7 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
 
 
 def test_apply_node_state_transition_does_not_accept_new_state() -> None:
-    sig = inspect.signature(svc.apply_node_state_transition)
+    sig = inspect.signature(DeviceHealthService.apply_node_state_transition)
     assert "new_state" not in sig.parameters
 
 
@@ -288,8 +290,8 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
     db.add(node)
     await db.flush()
 
-    await svc.apply_node_state_transition(
-        db, device, health_running=False, health_state="error", mark_offline=False, publisher=event_bus
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
+        db, device, health_running=False, health_state="error", mark_offline=False
     )
     await db.commit()
     await _drain_after_commit_tasks()
@@ -316,13 +318,12 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     db.add(node)
     await db.flush()
 
-    await svc.apply_node_state_transition(
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db,
         device,
         health_running=False,
         health_state="relay_restart_exhausted",
         mark_offline=False,
-        publisher=event_bus,
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
@@ -338,10 +339,11 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
 
     assert await svc._lock(db, device) is None  # type: ignore[arg-type]
-    await svc.update_device_checks(db, device, healthy=True, summary="ok", publisher=event_bus)  # type: ignore[arg-type]
-    await svc.update_session_viability(db, device, status="failed", error="bad", publisher=event_bus)  # type: ignore[arg-type]
-    await svc.apply_node_state_transition(db, device, publisher=event_bus)  # type: ignore[arg-type]
-    await svc.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]
+    _health = DeviceHealthService(publisher=event_bus)
+    await _health.update_device_checks(db, device, healthy=True, summary="ok")  # type: ignore[arg-type]
+    await _health.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]
+    await _health.apply_node_state_transition(db, device)  # type: ignore[arg-type]
+    await _health.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]
 
     locked = SimpleNamespace(
         operational_state=DeviceOperationalState.offline,

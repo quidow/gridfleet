@@ -110,12 +110,14 @@ async def test_run_create_and_maintenance_cannot_overlap(
                     settings=settings_service,
                     circuit_breaker=test_circuit_breaker,
                     lifecycle_policy=AsyncMock(),
+                    health=AsyncMock(),
                 ),
                 publisher=event_bus,
                 settings=settings_service,
                 grid=_grid_svc,
                 session_factory=sf,
                 circuit_breaker=test_circuit_breaker,
+                health=AsyncMock(),
             )
 
         app.dependency_overrides[get_db] = override_get_db
@@ -169,6 +171,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 maintenance=MaintenanceService(publisher=event_bus),
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(),
+                health=AsyncMock(),
             )
             run_query = RunQueryService(capability=DeviceCapabilityService())
             return RunServices(

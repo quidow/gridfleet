@@ -13,7 +13,6 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import health as device_health
 from app.devices.services import readiness as device_readiness
 from app.devices.services import state as device_state
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import DeviceCapabilityReader, HealthFailureHandler
+    from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
     from app.sessions.services_container import SessionServices
 
 __all__ = [
@@ -70,11 +69,13 @@ class SessionViabilityService:
         settings: SettingsReader,
         session_factory: async_sessionmaker[AsyncSession],
         capability: DeviceCapabilityReader,
+        health: DeviceSessionViabilityWriter,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._session_factory = session_factory
         self._capability = capability
+        self._health = health
         self._health_failure_handler: HealthFailureHandler | None = None
         self._grid_probe_client: httpx.AsyncClient | None = None
 
@@ -123,6 +124,7 @@ class SessionViabilityService:
             error=error,
             checked_by=checked_by,
             publisher=self._publisher,
+            health=self._health,
         )
         if config_changed:
             await db.flush()
@@ -216,6 +218,7 @@ class SessionViabilityService:
                     error="Appium node is not running",
                     checked_by=checked_by,
                     publisher=self._publisher,
+                    health=self._health,
                 )
                 if config_changed:
                     await db.commit()
@@ -278,6 +281,7 @@ class SessionViabilityService:
                 error=error,
                 checked_by=checked_by,
                 publisher=self._publisher,
+                health=self._health,
             )
 
             relocked = await device_locking.lock_device(db, device.id)
@@ -423,6 +427,7 @@ async def _write_session_viability(
     error: str | None,
     checked_by: SessionViabilityCheckedBy,
     publisher: EventPublisher,
+    health: DeviceSessionViabilityWriter,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}
     previous_failures = int(previous.get("consecutive_failures") or 0)
@@ -437,7 +442,7 @@ async def _write_session_viability(
         "error_category": _classify_session_error(error) if status != "passed" else None,
     }
     await control_plane_state_store.set_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id), state)
-    await device_health.update_session_viability(db, device, status=status, error=error, publisher=publisher)
+    await health.update_session_viability(db, device, status=status, error=error)
     return state
 
 

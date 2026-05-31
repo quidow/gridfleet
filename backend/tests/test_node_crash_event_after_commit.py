@@ -122,6 +122,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
     event_bus_capture.clear()
 
     from app.appium_nodes.services.node_health import NodeHealthService
+    from app.devices.services.health import DeviceHealthService
 
     await NodeHealthService(
         publisher=Mock(),
@@ -136,6 +137,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         circuit_breaker=Mock(),
         grid=Mock(),
         recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=Mock()),
     )._process_node_health(
         db_session,
         node,

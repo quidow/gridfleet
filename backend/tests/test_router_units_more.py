@@ -1590,7 +1590,12 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_lifecycle_action(
-                device_id, "state", db=object(), settings_services=_ctrl_ss, agent_comm=_lifecycle_ac
+                device_id,
+                "state",
+                db=object(),
+                settings_services=_ctrl_ss,
+                agent_comm=_lifecycle_ac,
+                device_services=AsyncMock(),
             )
     assert exc.value.status_code == 400
 
@@ -1605,7 +1610,12 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         ):
             with pytest.raises(HTTPException) as exc:
                 await devices_control.device_lifecycle_action(
-                    device_id, "state", db=object(), settings_services=_ctrl_ss, agent_comm=_lifecycle_ac
+                    device_id,
+                    "state",
+                    db=object(),
+                    settings_services=_ctrl_ss,
+                    agent_comm=_lifecycle_ac,
+                    device_services=AsyncMock(),
                 )
         assert detail in str(exc.value.detail)
 
@@ -1617,10 +1627,18 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch(
             "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"state": "running"})
         ),
-        patch("app.devices.routers.control.device_health_service.update_emulator_state", new=AsyncMock()),
     ):
+        _ds_health = AsyncMock()
+        _ds_health.update_emulator_state = AsyncMock()
+        _ds_stub = AsyncMock()
+        _ds_stub.health = _ds_health
         assert await devices_control.device_lifecycle_action(
-            device_id, "state", db=db, settings_services=_ctrl_ss, agent_comm=_lifecycle_ac
+            device_id,
+            "state",
+            db=db,
+            settings_services=_ctrl_ss,
+            agent_comm=_lifecycle_ac,
+            device_services=_ds_stub,
         ) == {"state": "running"}
     db.commit.assert_awaited_once()
 
@@ -2951,6 +2969,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
                 db=object(),
                 settings_services=_health_ss,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                device_services=AsyncMock(),
             )
     assert exc.value.status_code == 400
 

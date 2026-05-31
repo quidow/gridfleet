@@ -34,6 +34,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -162,8 +163,13 @@ def compose_app(
     device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
     lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
+    device_health_svc = DeviceHealthService(publisher=bus)
     viability_svc = SessionViabilityService(
-        publisher=bus, settings=settings_svc, session_factory=session_factory, capability=device_capability_svc
+        publisher=bus,
+        settings=settings_svc,
+        session_factory=session_factory,
+        capability=device_capability_svc,
+        health=device_health_svc,
     )
     operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc)
     reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc, operator=operator_node_lifecycle_svc)
@@ -181,7 +187,11 @@ def compose_app(
     maintenance_svc = MaintenanceService(publisher=bus)
     crud_svc = DeviceCrudService(settings=settings_svc)
     connectivity_svc = ConnectivityService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, lifecycle_policy=lifecycle_policy_svc
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        lifecycle_policy=lifecycle_policy_svc,
+        health=device_health_svc,
     )
     groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
     bulk_svc = BulkOperationsService(
@@ -209,6 +219,7 @@ def compose_app(
         maintenance=maintenance_svc,
         lifecycle_actions=lifecycle_actions_svc,
         reservation=reservation_svc,
+        health=device_health_svc,
     )
     run_query = RunQueryService(capability=device_capability_svc)
 
@@ -269,6 +280,7 @@ def compose_app(
             crud=crud_svc,
             capability=device_capability_svc,
             connectivity=connectivity_svc,
+            health=device_health_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -342,6 +354,7 @@ def compose_app(
                 circuit_breaker=circuit_breaker,
                 grid=grid_svc,
                 recovery_control=lifecycle_policy_svc,
+                health=device_health_svc,
             ),
             heartbeat=HeartbeatService(
                 publisher=bus,

@@ -142,3 +142,10 @@ class DeviceCapabilityReader(Protocol):
     async def get_device_capabilities(
         self, db: AsyncSession, device: Device, *, active_connection_target: str | None = ...
     ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class DeviceSessionViabilityWriter(Protocol):
+    async def update_session_viability(
+        self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
+    ) -> None: ...

@@ -79,6 +79,7 @@ async def test_probe_running_busy_mark_writes_device_event_row(
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     with (
         patch(

@@ -59,6 +59,7 @@ _failure_svc = RunFailureService(
     maintenance=MaintenanceService(publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
+    health=AsyncMock(),
 )
 
 
@@ -420,6 +421,7 @@ async def test_cooldown_device_guard_paths(
         maintenance=MaintenanceService(publisher=event_bus),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
+        health=AsyncMock(),
     )
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
@@ -584,7 +586,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
 
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.device_health.update_device_checks", AsyncMock())
+    # health.update_device_checks is already AsyncMock via _failure_svc health stub
     monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
 
     with pytest.raises(ValueError, match="message is required"):
@@ -607,6 +609,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         maintenance=MaintenanceService(publisher=event_bus),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
+        health=AsyncMock(),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5

@@ -567,6 +567,7 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     await db_session.refresh(reservation)
@@ -707,6 +708,7 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Exclusion should be cleared
@@ -763,6 +765,7 @@ async def test_expired_cooldown_skips_released_reservations(db_session: AsyncSes
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         lifecycle_policy=AsyncMock(),
+        health=AsyncMock(),
     ).check_expired_cooldowns(db_session)
 
     # Stale released row should be untouched

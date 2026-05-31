@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -42,7 +42,7 @@ async def test_stop_disconnected_node_registers_connectivity_intent(
 
     from app.devices.services import connectivity as device_connectivity
 
-    await device_connectivity._stop_disconnected_node(db_session, device, publisher=Mock())
+    await device_connectivity._stop_disconnected_node(db_session, device, health=AsyncMock(), publisher=Mock())
     await db_session.commit()
 
     events = (

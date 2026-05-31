@@ -27,7 +27,6 @@ from app.devices.schemas.device import (
     SessionViabilityRead,
 )
 from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
-from app.devices.services import health as device_health_service
 from app.devices.services import identity, lifecycle_policy_summary
 from app.devices.services import intent as intent_service
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -311,6 +310,7 @@ async def device_lifecycle_action(
     device_id: uuid.UUID,
     action: str,
     db: DbDep,
+    device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
     body: dict[str, Any] | None = None,
@@ -348,7 +348,7 @@ async def device_lifecycle_action(
         circuit_breaker=agent_comm.circuit_breaker,
     )
     if action == "state" and isinstance(result.get("state"), str):
-        await device_health_service.update_emulator_state(db, device, result["state"])
+        await device_services.health.update_emulator_state(db, device, result["state"])
         await db.commit()
     return result
 

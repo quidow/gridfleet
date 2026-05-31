@@ -59,6 +59,7 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         circuit_breaker=Mock(),
         grid=Mock(),
         recovery_control=AsyncMock(),
+        health=AsyncMock(),
     )
     await svc._process_node_health(
         db_session,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
@@ -93,6 +93,7 @@ async def test_session_viability_restore_handles_external_reservation(
         settings=FakeSettingsReader({}),
         session_factory=db_session_maker,
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     monkeypatch.setattr(svc, "probe_session_via_grid", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)

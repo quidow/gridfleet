@@ -47,6 +47,7 @@ _failure_svc = RunFailureService(
     maintenance=MaintenanceService(publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
+    health=AsyncMock(),
 )
 
 if TYPE_CHECKING:

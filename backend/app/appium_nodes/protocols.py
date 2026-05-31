@@ -82,3 +82,17 @@ class OperatorNodeManager(Protocol):
     async def request_restart(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
     ) -> AppiumNode: ...
+
+
+@runtime_checkable
+class DeviceNodeHealthWriter(Protocol):
+    async def apply_node_state_transition(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        health_running: bool | None = ...,
+        health_state: str | None = ...,
+        mark_offline: bool = ...,
+        reason: str | None = ...,
+    ) -> None: ...

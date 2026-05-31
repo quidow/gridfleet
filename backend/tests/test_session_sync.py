@@ -1125,7 +1125,7 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     `_on_session_end` falls through to `ready_operational_state`.
     The device must end up `available`, not stuck at `busy`."""
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.services import health as device_health
+    from app.devices.services.health import DeviceHealthService
 
     with state_write_guard.bypass():
         device = Device(
@@ -1169,15 +1169,15 @@ async def test_sync_restores_busy_when_deferred_stop_dropped_for_healthy_device(
     # Health later recovers - seed derived health to healthy. Recovery wiring
     # would normally clear stop_pending here, but this test exercises the
     # defense-in-depth path where it didn't, so we leave stop_pending=True.)
-    await device_health.apply_node_state_transition(
+    _health_svc = DeviceHealthService(publisher=event_bus)
+    await _health_svc.apply_node_state_transition(
         db_session,
         device,
         health_running=None,
         health_state=None,
         mark_offline=False,
-        publisher=event_bus,
     )
-    await device_health.update_device_checks(db_session, device, healthy=True, summary="Healthy", publisher=event_bus)
+    await _health_svc.update_device_checks(db_session, device, healthy=True, summary="Healthy")
     await db_session.commit()
 
     # Session ends — Grid no longer reports it.

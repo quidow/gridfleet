@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select, update
@@ -70,7 +70,9 @@ async def test_stop_disconnected_node_locks_device_and_node(
                 "register_intents_and_reconcile",
                 fake_register_intents_and_reconcile,
             ):
-                await device_connectivity._stop_disconnected_node(session, target, publisher=event_bus)
+                await device_connectivity._stop_disconnected_node(
+                    session, target, health=AsyncMock(), publisher=event_bus
+                )
             await session.commit()
 
     async def stomper() -> None:

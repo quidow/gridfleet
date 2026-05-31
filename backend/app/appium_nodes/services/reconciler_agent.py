@@ -46,7 +46,7 @@ from app.appium_nodes.services.reconciler_allocation import (
 from app.core.database import async_session
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
-from app.devices.services import health as device_health
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
@@ -199,11 +199,10 @@ async def mark_node_started(
     # device offline whenever transient signals (stale ``health_running``,
     # ``device_checks_healthy``) lag the node-axis update — operators see
     # spurious "Node started" → offline → "Health checks recovered" toasts.
-    await device_health.apply_node_state_transition(
+    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
         db,
         device,
         mark_offline=False,
-        publisher=publisher,
     )
     reset_reconciler_start_failure_state(device)
     if clear_transition:
@@ -278,11 +277,10 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
             reason="Node stopped",
             publisher=publisher,
         )
-    await device_health.apply_node_state_transition(
+    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
         db,
         device,
         mark_offline=False,
-        publisher=publisher,
     )
     if publisher is not None:
         queue_event_for_session(

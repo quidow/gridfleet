@@ -53,6 +53,7 @@ async def test_recovery_probe_rejects_offline_held_device(
         settings=FakeSettingsReader({}),
         session_factory=AsyncMock(),
         capability=DeviceCapabilityService(),
+        health=AsyncMock(),
     )
     with pytest.raises(ValueError, match="only run for available devices"):
         await svc.run_session_viability_probe(
