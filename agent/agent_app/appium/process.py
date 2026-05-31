@@ -915,6 +915,13 @@ class AppiumProcessManager:
             caps.update(spec.stereotype_caps)
         elif spec.extra_caps:
             caps.update(spec.extra_caps)
+        # The backend renders appium:udid from the device's stored connection_target
+        # (a stable AVD name for virtual emulators). The node is actually bound to the
+        # target resolved at boot (the live ADB serial), which is what probe and real
+        # sessions request as appium:udid. Advertise the resolved target so the hub can
+        # route to this slot instead of leaving sessions queued.
+        if "appium:udid" in caps:
+            caps["appium:udid"] = spec.connection_target
         caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
 
         node_port = self._allocate_node_port()

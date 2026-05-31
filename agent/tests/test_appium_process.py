@@ -480,6 +480,50 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
     await manager.shutdown()
 
 
+async def test_grid_stereotype_udid_uses_resolved_serial_for_emulator() -> None:
+    """An emulator's grid slot must advertise the live ADB serial, not the AVD name.
+
+    The backend renders the stereotype from the device's stored connection_target
+    (the stable AVD name), but probe/real sessions request appium:udid = the live
+    serial resolved at boot. If the advertised stereotype keeps the AVD name the
+    Selenium hub never routes the session to the slot and it queues forever.
+    """
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5101)
+    configs: list[GridNodeConfig] = []
+    adapter = _LifecycleAdapter(
+        LifecycleActionResult(ok=True, state="running", resolved_connection_target="emulator-5554")
+    )
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set("appium-uiautomator2", "2026.04.0", adapter)  # type: ignore[arg-type]
+    manager.set_adapter_registry(adapter_registry)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
+        patch(
+            "agent_app.appium.process.start_grid_node_supervisor",
+            side_effect=lambda *, factory, config: configs.append(config) or RecordingGridNodeHandle(),
+        ),
+    ):
+        await manager.start(
+            connection_target="Television_1080p",
+            port=4751,
+            grid_url="http://grid:4444",
+            device_type="emulator",
+            pack_id="appium-uiautomator2",
+            platform_id="android_tv",
+            lifecycle_actions=[{"id": "boot"}],
+            stereotype_caps={"appium:udid": "Television_1080p", "appium:platform": "android_tv"},
+        )
+
+    assert configs[0].slots[0].stereotype.caps["appium:udid"] == "emulator-5554"
+    await manager.shutdown()
+
+
 async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() -> None:
     """accepting_new_sessions=False no longer surfaces in stereotype.
 
