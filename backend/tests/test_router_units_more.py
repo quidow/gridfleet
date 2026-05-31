@@ -1968,18 +1968,17 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
         patch("app.appium_nodes.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
-        patch(
-            "app.appium_nodes.routers.nodes.converge_device_now",
-            new=AsyncMock(side_effect=RuntimeError("converge failed")),
-        ),
     ):
         assert (
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
-                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                appium_services=SimpleNamespace(
+                    reconciler=SimpleNamespace(
+                        converge_device_now=AsyncMock(side_effect=RuntimeError("converge failed"))
+                    )
+                ),
             )
             is restarted
         )
@@ -2064,9 +2063,10 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             await nodes_router.restart_node(
                 device_id,
                 db=object(),
-                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                appium_services=SimpleNamespace(
+                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=None))
+                ),
             )
             is fallback_started
         )
@@ -2081,15 +2081,15 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
         patch("app.appium_nodes.routers.nodes.node_manager.restart_node", new=AsyncMock(return_value=restarted)),
-        patch("app.appium_nodes.routers.nodes.converge_device_now", new=AsyncMock(return_value=converged)),
     ):
         assert (
             await nodes_router.restart_node(
                 device_id,
                 db=fake_db,
-                events=SimpleNamespace(publisher=Mock()),
                 settings_services=node_settings_services,
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                appium_services=SimpleNamespace(
+                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=converged))
+                ),
             )
             is converged
         )

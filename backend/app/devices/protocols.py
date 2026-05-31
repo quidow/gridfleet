@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from app.analytics.models import AnalyticsCapacitySnapshot
     from app.analytics.schemas import FleetCapacityTimeline
+    from app.appium_nodes.models import AppiumNode
     from app.core.type_defs import SessionFactory
     from app.devices.models import (
         ConnectionType,
@@ -306,3 +307,10 @@ class DeviceCapabilityProtocol(Protocol):
     async def get_device_capabilities(
         self, db: AsyncSession, device: Device, *, active_connection_target: str | None = ...
     ) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class NodeConvergence(Protocol):
+    async def converge_device_now(
+        self, device_id: uuid.UUID, *, db: AsyncSession | None = ...
+    ) -> AppiumNode | None: ...

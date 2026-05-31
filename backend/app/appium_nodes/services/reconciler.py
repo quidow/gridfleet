@@ -411,72 +411,6 @@ def _session_scope(db: AsyncSession | None) -> SessionScope:
     return _reuse_session
 
 
-async def converge_device_now(
-    device_id: uuid.UUID,
-    *,
-    publisher: EventPublisher,
-    db: AsyncSession | None = None,
-    settings: SettingsReader,
-    pool: AgentHttpPool | None = None,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> AppiumNode | None:
-    """Run one desired-state convergence pass for a single operator-requested device.
-
-    The periodic leader loop remains the durable fallback. This path only removes
-    operator-visible latency after a route has already accepted and committed a
-    desired-state change.
-    """
-    session_scope = _session_scope(db)
-    async with session_scope() as read_db:
-        row = await _fetch_desired_row(read_db, device_id)
-        if row is None:
-            return None
-        host = await read_db.get(Host, row.host_id)
-        if host is None or host.status != HostStatus.online:
-            return None
-
-    payload = (
-        await agent_health(
-            host.ip,
-            host.agent_port,
-            http_client_factory=httpx.AsyncClient,
-            settings=settings,
-            pool=pool,
-            circuit_breaker=circuit_breaker,
-        )
-        or {}
-    )
-    appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
-    if not isinstance(appium_processes, dict):
-        return None
-    observed = [
-        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
-        for entry in parse_running_nodes(appium_processes)
-    ]
-    svc = ReconcilerService(
-        publisher=publisher,
-        settings=settings,
-        pool=pool,
-        circuit_breaker=circuit_breaker,
-        session_factory=async_session,
-    )
-    await svc.converge_host_rows(
-        db,
-        [row],
-        observed,
-        host_id=host.id,
-        host_ip=host.ip,
-        agent_port=host.agent_port,
-        require_leader=False,
-        raise_errors=True,
-    )
-    async with session_scope() as read_db:
-        node = await read_db.get(AppiumNode, row.node_id)
-        if node is not None:
-            await read_db.refresh(node)
-        return node
-
-
 async def _load_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
     result = await db.execute(
         select(Device)
@@ -1025,3 +959,53 @@ class ReconcilerService:
             )
 
         return _reset
+
+    async def converge_device_now(self, device_id: uuid.UUID, *, db: AsyncSession | None = None) -> AppiumNode | None:
+        """Run one desired-state convergence pass for a single operator-requested device.
+
+        The periodic leader loop remains the durable fallback. This path only removes
+        operator-visible latency after a route has already accepted and committed a
+        desired-state change.
+        """
+        session_scope = _session_scope(db)
+        async with session_scope() as read_db:
+            row = await _fetch_desired_row(read_db, device_id)
+            if row is None:
+                return None
+            host = await read_db.get(Host, row.host_id)
+            if host is None or host.status != HostStatus.online:
+                return None
+
+        payload = (
+            await agent_health(
+                host.ip,
+                host.agent_port,
+                http_client_factory=httpx.AsyncClient,
+                settings=self._settings,
+                pool=self._pool,
+                circuit_breaker=self._circuit_breaker,
+            )
+            or {}
+        )
+        appium_processes = payload.get("appium_processes") if isinstance(payload, dict) else None
+        if not isinstance(appium_processes, dict):
+            return None
+        observed = [
+            ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+            for entry in parse_running_nodes(appium_processes)
+        ]
+        await self.converge_host_rows(
+            db,
+            [row],
+            observed,
+            host_id=host.id,
+            host_ip=host.ip,
+            agent_port=host.agent_port,
+            require_leader=False,
+            raise_errors=True,
+        )
+        async with session_scope() as read_db:
+            node = await read_db.get(AppiumNode, row.node_id)
+            if node is not None:
+                await read_db.refresh(node)
+            return node

@@ -5,14 +5,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
 
 
 @runtime_checkable
 class ReconcilerProtocol(Protocol):
     async def run_cycle(self, db: AsyncSession) -> None: ...
+    async def converge_device_now(
+        self, device_id: uuid.UUID, *, db: AsyncSession | None = ...
+    ) -> AppiumNode | None: ...
 
 
 @runtime_checkable

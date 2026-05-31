@@ -367,6 +367,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         crud=DeviceCrudService(settings=settings),
         viability=Mock(),
         capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
     )
     runner = VerificationRunnerService(
         session_factory=SessionCtx,
@@ -868,6 +869,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 crud=DeviceCrudService(settings=FakeSettingsReader({})),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
+                reconciler=AsyncMock(),
             ),
             viability=Mock(),
         ),

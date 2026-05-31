@@ -3,17 +3,15 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_comm.dependencies import AgentCommServicesDep
+from app.appium_nodes.dependencies import AppiumNodeServicesDep
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
-from app.appium_nodes.services.reconciler import converge_device_now
 from app.core.dependencies import DbDep
 from app.core.observability import get_logger
 from app.devices.models import Device, DeviceHold
 from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
 from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
-from app.events.dependencies import EventServicesDep
 from app.runs import service as run_service
 from app.settings.dependencies import SettingsServicesDep
 
@@ -83,9 +81,8 @@ async def stop_node(device_id: uuid.UUID, db: DbDep) -> AppiumNode:
 async def restart_node(
     device_id: uuid.UUID,
     db: DbDep,
-    events: EventServicesDep,
     settings_services: SettingsServicesDep,
-    agent_comm: AgentCommServicesDep,
+    appium_services: AppiumNodeServicesDep,
 ) -> AppiumNode:
     device = await get_device_for_update_or_404(device_id, db)
     await _assert_device_not_reserved(device, db)
@@ -96,13 +93,7 @@ async def restart_node(
         return await start_node(device_id, db, settings_services)
     node = await node_manager.restart_node(db, device, caller="operator_restart", settings=settings_services.service)
     try:
-        converged_node = await converge_device_now(
-            device.id,
-            publisher=events.publisher,
-            db=db,
-            settings=settings_services.service,
-            circuit_breaker=agent_comm.circuit_breaker,
-        )
+        converged_node = await appium_services.reconciler.converge_device_now(device.id, db=db)
         if converged_node is not None:
             node = converged_node
     except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
