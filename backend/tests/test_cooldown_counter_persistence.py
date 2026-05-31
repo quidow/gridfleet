@@ -24,7 +24,6 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
 from app.devices.services.maintenance import MaintenanceService
-from app.runs import service as run_service
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
@@ -172,7 +171,7 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
     reservation.cooldown_count = 3
     await db_session.commit()
 
-    await run_service.restore_device_to_run(db_session, device.id)
+    await RunReservationService().restore_device_to_run(db_session, device.id)
     await db_session.refresh(reservation)
     assert reservation.excluded is False
     assert reservation.cooldown_count == 0

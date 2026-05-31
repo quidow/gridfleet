@@ -356,8 +356,9 @@ async def test_restore_and_exclude_device_reservation_branches(
     )
     run = await create_reserved_run(db_session, name="reservation-branch-run", devices=[device])
     entry = run.device_reservations[0]
+    svc = RunReservationService()
 
-    assert await run_service.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
+    assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
     assert await run_service.get_device_reservation(db_session, device.id) == run
     reservation_map = await run_service.get_device_reservation_map(db_session, [device.id])
     assert reservation_map[device.id] == run
@@ -368,30 +369,30 @@ async def test_restore_and_exclude_device_reservation_branches(
         f"{RUN_LOOKUP_MODULE}.revoke_intents_and_reconcile",
         AsyncMock(),
     )
-    excluded = await run_service.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
+    excluded = await svc.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
     assert excluded is not None
     assert entry.excluded is True
-    same_exclusion = await run_service.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
+    same_exclusion = await svc.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
     assert same_exclusion is excluded
 
     entry.excluded_until = datetime.now(UTC) + timedelta(minutes=5)
-    still_excluded = await run_service.restore_device_to_run(db_session, device.id, commit=False)
+    still_excluded = await svc.restore_device_to_run(db_session, device.id, commit=False)
     assert still_excluded is excluded
 
     entry.excluded_until = None
-    restored = await run_service.restore_device_to_run(db_session, device.id, commit=False)
+    restored = await svc.restore_device_to_run(db_session, device.id, commit=False)
     assert restored is excluded
     assert entry.excluded is False
     assert entry.exclusion_reason is None
-    assert await run_service.restore_device_to_run(db_session, device.id, commit=False) is excluded
+    assert await svc.restore_device_to_run(db_session, device.id, commit=False) is excluded
 
     monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
-    committed_excluded = await run_service.exclude_device_from_run(db_session, device.id, reason="missing lock")
+    committed_excluded = await svc.exclude_device_from_run(db_session, device.id, reason="missing lock")
     assert committed_excluded is not None
-    committed_restored = await run_service.restore_device_to_run(db_session, device.id)
+    committed_restored = await svc.restore_device_to_run(db_session, device.id)
     assert committed_restored is not None
 
-    assert await run_service.restore_device_to_run(db_session, uuid.uuid4()) is None
+    assert await svc.restore_device_to_run(db_session, uuid.uuid4()) is None
 
 
 async def test_cooldown_device_guard_paths(

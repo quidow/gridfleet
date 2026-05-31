@@ -136,8 +136,6 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
 
 
 async def test_restore_device_to_run_clears_review_required(db_session: AsyncSession, db_host: Host) -> None:
-    from app.runs import service as run_service
-
     device = await create_device(db_session, host_id=db_host.id, name="review-cleared-on-restore")
     await create_reserved_run(db_session, name="run-for-restore", devices=[device])
 
@@ -159,7 +157,7 @@ async def test_restore_device_to_run_clears_review_required(db_session: AsyncSes
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await run_service.restore_device_to_run(db_session, device.id)
+    await RunReservationService().restore_device_to_run(db_session, device.id)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
