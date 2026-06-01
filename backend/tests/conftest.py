@@ -40,12 +40,14 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
+from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -413,6 +415,8 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
             portability_export=PortabilityExportService(),
+            inventory_export=InventoryExportService(),
+            portability_import=PortabilityImportService(),
             verification=VerificationService(),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),

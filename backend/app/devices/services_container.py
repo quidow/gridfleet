@@ -20,9 +20,11 @@ if TYPE_CHECKING:
         DeviceHealthProtocol,
         DevicePresenterProtocol,
         FleetCapacityProtocol,
+        InventoryExportProtocol,
         LifecycleIncidentProtocol,
         MaintenanceProtocol,
         PortabilityExportProtocol,
+        PortabilityImportProtocol,
         PropertyRefreshProtocol,
         TestDataProtocol,
         VerificationProtocol,
@@ -42,6 +44,8 @@ class DeviceServices:
     presenter: DevicePresenterProtocol
     test_data: TestDataProtocol
     portability_export: PortabilityExportProtocol
+    inventory_export: InventoryExportProtocol
+    portability_import: PortabilityImportProtocol
     verification: VerificationProtocol
     crud: DeviceCrudProtocol
     capability: DeviceCapabilityProtocol
