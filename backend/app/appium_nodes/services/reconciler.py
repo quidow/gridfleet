@@ -40,6 +40,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     _execute_action,
     decide_convergence_action,
     reap_orphan_nodes,
+    rows_needing_stale_clear,
 )
 from app.core.config import reconciler_convergence_enabled
 from app.core.database import async_session
@@ -709,6 +710,23 @@ class ReconcilerService:
                     # device in recovery backoff is never mistaken for an orphan.
                     # Runs even when active_rows is empty.
                     await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
+                    # Clear leaked observed pids for devices excluded from active
+                    # convergence (in recovery backoff). The active loop below never
+                    # reaches them, so a node stopped during backoff keeps a stale
+                    # pid in the DB — which blocks an operator start ("node already
+                    # running"). DB-only clear; never starts/stops an agent node.
+                    backoff_rows = [
+                        row
+                        for row in rows
+                        if (bu := backoff_until_by_device.get(row.device_id)) is not None and bu > now
+                    ]
+                    stale_rows = rows_needing_stale_clear(backoff_rows, observed, now=now)
+                    if stale_rows:
+                        clear_observed = self._write_observed_factory(require_leader=require_leader)
+                        for row in stale_rows:
+                            await clear_observed(
+                                row=row, state="stopped", port=None, pid=None, active_connection_target=None
+                            )
                     active_rows = active_rows_by_host.get(host_id, [])
                     if not active_rows:
                         return

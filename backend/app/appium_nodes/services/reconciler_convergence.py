@@ -166,6 +166,26 @@ async def reap_orphan_nodes(
     return orphans
 
 
+def rows_needing_stale_clear(
+    rows: list[DesiredRow], observed: list[ObservedEntry], *, now: datetime
+) -> list[DesiredRow]:
+    """Rows whose only safe convergence action is ``db_clear_stale_running``.
+
+    Used to clear leaked observed pids for devices excluded from active
+    convergence (in recovery backoff): the agent reports no node for the target
+    but the DB still records one. Restricted to the DB-only clear action — never
+    an agent start/stop — so a backed-off device's node lifecycle stays with
+    recovery.
+    """
+    observed_by_target = {entry.connection_target: entry for entry in observed}
+    return [
+        row
+        for row in rows
+        if decide_convergence_action(row, observed=observed_by_target.get(row.connection_target), now=now).kind
+        == "db_clear_stale_running"
+    ]
+
+
 async def _execute_action(
     *,
     host_id: uuid.UUID,
