@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -218,14 +219,29 @@ class LifecyclePolicyService:
         write_state(device, current_state)
 
         node = loaded_node(device)
+        # An offline device has no usable running node, so a positive
+        # ``observed_running`` reading here is necessarily stale: the appium
+        # process is gone but the ``appium_reconciler`` has not yet cleared the
+        # dead ``pid``/``active_connection_target`` (observed state is eventually
+        # consistent, lagging up to one reconciler interval). Trusting it would
+        # short-circuit the start path below — skipping the revoke of the
+        # blocking ``health_failure:node`` stop intent — and strand the device in
+        # backoff until the stale observation happens to clear. Treat it as not
+        # running and (re)assert the node start.
+        stale_offline_observation = (
+            node is not None and node.observed_running and device.operational_state == DeviceOperationalState.offline
+        )
         started_node = False
-        if node is None or not node.observed_running:
+        if node is None or not node.observed_running or stale_offline_observation:
             started_node = True
             try:
                 if device.host_id is None:
                     raise NodeManagerError(f"Device {device.id} has no host assigned")
-                desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
                 if device.appium_node is None:
+                    # Port allocation is only needed when creating the node row.
+                    # For the stale-offline case the node row already exists, so
+                    # skip the allocation query entirely.
+                    desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
                     new_node = AppiumNode(
                         device_id=device.id,
                         port=desired_port,
@@ -251,6 +267,24 @@ class LifecyclePolicyService:
                         "device_id": str(device.id),
                         "expected": False,
                     }
+
+                # The recovery start intents normally carry the node_running
+                # precondition so they auto-retire once the node is observed
+                # running. But when the observation is stale (stale_offline_observation),
+                # that precondition keys off the same unreliable
+                # ``observed_running`` and the precondition sweep would reap the
+                # intents within one reconciler tick — dropping desired_state back
+                # to ``stopped`` before the agent can start the node. Bound them by
+                # a deadline instead (the sweep cannot reap a TTL'd intent; it
+                # self-expires), mirroring ``exit_maintenance``.
+                if stale_offline_observation:
+                    startup_timeout = int(self._settings.get("appium.startup_timeout_sec"))
+                    viability_timeout = int(self._settings.get("general.session_viability_timeout_sec"))
+                    recovery_intent_precondition = None
+                    recovery_intent_expiry = now() + timedelta(seconds=startup_timeout + viability_timeout + 60)
+                else:
+                    recovery_intent_precondition = _node_not_running_precondition()
+                    recovery_intent_expiry = None
 
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
@@ -280,13 +314,15 @@ class LifecyclePolicyService:
                                 "action": "start",
                                 "priority": PRIORITY_AUTO_RECOVERY,
                             },
-                            precondition=_node_not_running_precondition(),
+                            precondition=recovery_intent_precondition,
+                            expires_at=recovery_intent_expiry,
                         ),
                         IntentRegistration(
                             source=f"auto_recovery:recovery:{device.id}",
                             axis=RECOVERY,
                             payload={"allowed": True, "priority": PRIORITY_AUTO_RECOVERY, "reason": reason},
-                            precondition=_node_not_running_precondition(),
+                            precondition=recovery_intent_precondition,
+                            expires_at=recovery_intent_expiry,
                         ),
                     ],
                     reason=reason,
