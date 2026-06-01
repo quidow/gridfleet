@@ -553,6 +553,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reservation=RunReservationService(),
             health=DeviceHealthService(publisher=test_event_bus),
+            incidents=LifecycleIncidentService(),
         )
         run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(
@@ -634,6 +635,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 grid=_grid_svc,
                 recovery_control=Mock(),
                 health=DeviceHealthService(publisher=test_event_bus),
+                incidents=LifecycleIncidentService(),
             ),
             heartbeat=HeartbeatService(
                 publisher=test_event_bus,

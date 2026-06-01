@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-import app.devices.services.lifecycle_incidents as lifecycle_incident_service
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC, deliver_agent_reconfigures
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceReservation
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from app.runs.protocols import (
         DeviceHealthCheckWriter,
         DeviceLifecycleFailureWriter,
+        LifecycleIncidentRecorder,
         MaintenanceWriter,
         RunReservationProtocol,
     )
@@ -104,6 +104,7 @@ class RunFailureService:
         lifecycle_actions: DeviceLifecycleFailureWriter,
         reservation: RunReservationProtocol,
         health: DeviceHealthCheckWriter,
+        incidents: LifecycleIncidentRecorder,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -112,6 +113,7 @@ class RunFailureService:
         self._lifecycle_actions = lifecycle_actions
         self._reservation = reservation
         self._health = health
+        self._incidents = incidents
 
     async def report_preparation_failure(
         self,
@@ -156,7 +158,7 @@ class RunFailureService:
         await self._enter_maintenance(db, device, maintenance_reason="CI preparation failure")
         await self._health.update_device_checks(db, device, healthy=False, summary=reason)
 
-        await lifecycle_incident_service.record_lifecycle_incident(
+        await self._incidents.record_lifecycle_incident(
             db,
             device,
             event_type=DeviceEventType.lifecycle_run_excluded,
@@ -239,7 +241,7 @@ class RunFailureService:
             entry.excluded_at = excluded_at
             entry.excluded_until = excluded_until
 
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 event_type=DeviceEventType.lifecycle_run_cooldown_set,
@@ -293,7 +295,7 @@ class RunFailureService:
         )
 
         await self._enter_maintenance(db, device, maintenance_reason="Cooldown escalation")
-        await lifecycle_incident_service.record_lifecycle_incident(
+        await self._incidents.record_lifecycle_incident(
             db,
             device,
             event_type=DeviceEventType.lifecycle_run_cooldown_escalated,
