@@ -122,3 +122,56 @@ async def ensure_device_payload_identity_available(
         host_id=payload.get("host_id"),
         exclude_device_id=exclude_device_id,
     )
+
+
+class DeviceIdentityConflictService:
+    """Container-free service for device identity-uniqueness checks."""
+
+    async def find_device_identity_conflict(
+        self,
+        db: AsyncSession,
+        *,
+        identity_scope: str | None,
+        identity_scheme: str | None,
+        identity_value: str | None,
+        host_id: uuid.UUID | str | None,
+        exclude_device_id: uuid.UUID | None = None,
+    ) -> Device | None:
+        return await find_device_identity_conflict(
+            db,
+            identity_scope=identity_scope,
+            identity_scheme=identity_scheme,
+            identity_value=identity_value,
+            host_id=host_id,
+            exclude_device_id=exclude_device_id,
+        )
+
+    async def ensure_device_identity_available(
+        self,
+        db: AsyncSession,
+        *,
+        identity_scope: str | None,
+        identity_scheme: str | None,
+        identity_value: str | None,
+        connection_target: str | None,
+        host_id: uuid.UUID | str | None,
+        exclude_device_id: uuid.UUID | None = None,
+    ) -> None:
+        await ensure_device_identity_available(
+            db,
+            identity_scope=identity_scope,
+            identity_scheme=identity_scheme,
+            identity_value=identity_value,
+            connection_target=connection_target,
+            host_id=host_id,
+            exclude_device_id=exclude_device_id,
+        )
+
+    async def ensure_device_payload_identity_available(
+        self,
+        db: AsyncSession,
+        payload: Mapping[str, Any],
+        *,
+        exclude_device_id: uuid.UUID | None = None,
+    ) -> None:
+        await ensure_device_payload_identity_available(db, payload, exclude_device_id=exclude_device_id)
