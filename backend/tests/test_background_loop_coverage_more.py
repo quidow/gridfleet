@@ -29,6 +29,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -105,6 +106,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
     )
 
@@ -163,6 +165,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
     )
 
@@ -186,6 +189,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
+        incidents=AsyncMock(),
     )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(
@@ -234,6 +238,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         grid=fake_grid,
         recovery_control=AsyncMock(),
         health=AsyncMock(),
+        incidents=AsyncMock(),
     ).check_nodes(db)
 
     db.commit.assert_awaited_once()
@@ -288,6 +293,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
     )
 
@@ -392,6 +398,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
     )
 

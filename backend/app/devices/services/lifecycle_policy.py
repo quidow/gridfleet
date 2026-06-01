@@ -14,7 +14,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services import lifecycle_policy_summary as lifecycle_policy_summary
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
@@ -60,6 +59,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
+    from app.devices.services.lifecycle_incidents import LifecycleIncidentService
     from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
 
@@ -73,12 +73,14 @@ class LifecyclePolicyService:
         publisher: EventPublisher,
         settings: SettingsReader,
         actions: LifecyclePolicyActionsService,
+        incidents: LifecycleIncidentService,
         viability: SessionViabilityProbe,
         node_manager: RemoteNodeManager,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._actions = actions
+        self._incidents = incidents
         self._viability = viability
         self._node_manager = node_manager
 
@@ -338,7 +340,7 @@ class LifecyclePolicyService:
                     suppression_reason="Automatic restart failed",
                 )
                 write_state(device, current_state)
-                await lifecycle_incident_service.record_lifecycle_incident(
+                await self._incidents.record_lifecycle_incident(
                     db,
                     device,
                     DeviceEventType.lifecycle_recovery_failed,
@@ -350,7 +352,7 @@ class LifecyclePolicyService:
                     run_name=run.name if run is not None else None,
                     backoff_until=backoff_until_iso,
                 )
-                await lifecycle_incident_service.record_lifecycle_incident(
+                await self._incidents.record_lifecycle_incident(
                     db,
                     device,
                     DeviceEventType.lifecycle_recovery_backoff,
@@ -420,7 +422,7 @@ class LifecyclePolicyService:
                 suppression_reason="Recovery probe failed",
             )
             write_state(device, fresh_state)
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_recovery_failed,
@@ -432,7 +434,7 @@ class LifecyclePolicyService:
                 run_name=run.name if run is not None else None,
                 backoff_until=backoff_until_iso,
             )
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_recovery_backoff,
@@ -522,7 +524,7 @@ class LifecyclePolicyService:
         record_recovery_recovered(fresh_state)
         current_state = fresh_state
         write_state(device, current_state)
-        await lifecycle_incident_service.record_lifecycle_incident(
+        await self._incidents.record_lifecycle_incident(
             db,
             device,
             DeviceEventType.lifecycle_recovered,
@@ -600,7 +602,7 @@ class LifecyclePolicyService:
         if await self._actions.has_running_client_session(db, device.id):
             set_deferred_stop(current_state, reason=reason)
             write_state(device, current_state)
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_deferred_stop,
@@ -773,7 +775,7 @@ class LifecyclePolicyService:
             if pending_reason:
                 detail = f"{detail} (was: {pending_reason})"
 
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_recovered,

@@ -12,6 +12,7 @@ from app.core.pagination import encode_cursor
 from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.grid.service import GridService
 from app.hosts.models import Host
@@ -58,6 +59,7 @@ _failure_svc = RunFailureService(
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
     health=AsyncMock(),
+    incidents=LifecycleIncidentService(),
 )
 
 
@@ -420,9 +422,10 @@ async def test_cooldown_device_guard_paths(
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),
+        incidents=LifecycleIncidentService(),
     )
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
+    failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match="ttl_seconds"):
         await failure_svc.cooldown_device(db_session, run.id, device.id, reason="flaky", ttl_seconds=31)
@@ -582,7 +585,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(RunFailureService, "_enter_maintenance", AsyncMock())
     # health.update_device_checks is already AsyncMock via _failure_svc health stub
-    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.lifecycle_incident_service.record_lifecycle_incident", AsyncMock())
+    _failure_svc._incidents = AsyncMock()  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match="message is required"):
         await _failure_svc.report_preparation_failure(db_session, run.id, device.id, message="  ")
@@ -605,6 +608,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),
+        incidents=LifecycleIncidentService(),
     )
     escalated_until, count, escalated, threshold = await escalate_failure_svc.cooldown_device(
         db_session, refreshed.id, device.id, reason="still flaky", ttl_seconds=5

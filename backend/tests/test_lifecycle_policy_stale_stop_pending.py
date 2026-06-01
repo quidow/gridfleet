@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
@@ -108,7 +109,10 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            ),
+            incidents=LifecycleIncidentService(),
             viability=viability,
             node_manager=AsyncMock(),
         ).attempt_auto_recovery(
@@ -183,7 +187,10 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     recovered = await LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     ).attempt_auto_recovery(

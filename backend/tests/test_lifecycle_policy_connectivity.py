@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
@@ -73,7 +74,10 @@ async def test_connectivity_loss_keeps_device_in_run(
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=None,  # type: ignore[arg-type]
-        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )

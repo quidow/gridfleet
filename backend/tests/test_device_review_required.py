@@ -17,6 +17,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -252,7 +253,10 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=settings,
-        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=viability,
         node_manager=AsyncMock(),
     )
@@ -304,7 +308,10 @@ async def test_review_required_short_circuits_auto_recovery(
     svc = LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
-        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=viability_mock,
         node_manager=AsyncMock(),
     )

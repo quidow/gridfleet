@@ -35,7 +35,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
-from app.devices.services.lifecycle_incidents import record_lifecycle_incident
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
@@ -43,7 +42,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
-    from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl
+    from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl, LifecycleIncidentRecorder
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -84,6 +83,7 @@ class NodeHealthService:
         grid: GridServiceProtocol,
         recovery_control: DeviceRecoveryControl,
         health: DeviceNodeHealthWriter,
+        incidents: LifecycleIncidentRecorder,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -92,6 +92,7 @@ class NodeHealthService:
         self._grid = grid
         self._recovery_control = recovery_control
         self._health = health
+        self._incidents = incidents
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
@@ -329,7 +330,7 @@ class NodeHealthService:
                     DeviceEventType.node_restart,
                     {"recovered_from": "health_check_failure", "port": node.port},
                 )
-                await record_lifecycle_incident(
+                await self._incidents.record_lifecycle_incident(
                     db,
                     device,
                     DeviceEventType.lifecycle_recovered,

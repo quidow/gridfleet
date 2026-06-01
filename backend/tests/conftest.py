@@ -40,6 +40,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -423,8 +424,11 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
-                        publisher=test_event_bus, reservation=RunReservationService()
+                        publisher=test_event_bus,
+                        reservation=RunReservationService(),
+                        incidents=LifecycleIncidentService(),
                     ),
+                    incidents=LifecycleIncidentService(),
                     viability=AsyncMock(),
                     node_manager=AsyncMock(),
                 ),
@@ -436,6 +440,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             session_factory=sf,
             circuit_breaker=test_circuit_breaker,
             health=DeviceHealthService(publisher=test_event_bus),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
 
     def override_get_host_services() -> HostServices:
@@ -479,7 +484,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
+            ),
+            incidents=LifecycleIncidentService(),
             viability=_viability_svc,
             node_manager=AsyncMock(),
         )
@@ -510,7 +520,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
+            ),
+            incidents=LifecycleIncidentService(),
             viability=Mock(),
             node_manager=AsyncMock(),
         )
@@ -533,10 +548,13 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(settings=settings_service, publisher=test_event_bus),
             lifecycle_actions=LifecyclePolicyActionsService(
-                publisher=test_event_bus, reservation=RunReservationService()
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
             ),
             reservation=RunReservationService(),
             health=DeviceHealthService(publisher=test_event_bus),
+            incidents=LifecycleIncidentService(),
         )
         run_query = RunQueryService(capability=DeviceCapabilityService())
         return RunServices(
@@ -619,6 +637,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 grid=_grid_svc,
                 recovery_control=Mock(),
                 health=DeviceHealthService(publisher=test_event_bus),
+                incidents=LifecycleIncidentService(),
             ),
             heartbeat=HeartbeatService(
                 publisher=test_event_bus,

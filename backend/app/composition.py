@@ -36,6 +36,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -163,7 +164,10 @@ def compose_app(
 
     device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
-    lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
+    incidents_svc = LifecycleIncidentService()
+    lifecycle_actions_svc = LifecyclePolicyActionsService(
+        publisher=bus, reservation=reservation_svc, incidents=incidents_svc
+    )
     device_health_svc = DeviceHealthService(publisher=bus)
     viability_svc = SessionViabilityService(
         publisher=bus,
@@ -178,6 +182,7 @@ def compose_app(
         publisher=bus,
         settings=settings_svc,
         actions=lifecycle_actions_svc,
+        incidents=incidents_svc,
         viability=viability_svc,
         node_manager=reconciler_agent_svc,
     )
@@ -220,6 +225,7 @@ def compose_app(
         lifecycle_actions=lifecycle_actions_svc,
         reservation=reservation_svc,
         health=device_health_svc,
+        incidents=incidents_svc,
     )
     run_query = RunQueryService(capability=device_capability_svc)
 
@@ -280,6 +286,7 @@ def compose_app(
             capability=device_capability_svc,
             connectivity=connectivity_svc,
             health=device_health_svc,
+            lifecycle_incidents=incidents_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -354,6 +361,7 @@ def compose_app(
                 grid=grid_svc,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
+                incidents=incidents_svc,
             ),
             heartbeat=HeartbeatService(
                 publisher=bus,

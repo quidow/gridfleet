@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from app.devices.models import (
         ConnectionType,
         Device,
+        DeviceEvent,
+        DeviceEventType,
         DeviceGroup,
         DeviceOperationalState,
         DeviceReservation,
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     )
     from app.devices.models.test_data_audit import DeviceTestDataAuditLog
     from app.devices.schemas.device import (
+        DeviceLifecyclePolicySummaryState,
         DevicePatch,
         DeviceVerificationCreate,
         DeviceVerificationUpdate,
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
     )
     from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+    from app.devices.schemas.lifecycle import LifecycleIncidentRead
     from app.devices.schemas.portability import ExportBundle
     from app.hosts.models import Host
     from app.runs.models import TestRun
@@ -333,3 +337,34 @@ class DeviceHealthProtocol(Protocol):
         reason: str | None = ...,
     ) -> None: ...
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None: ...
+
+
+@runtime_checkable
+class LifecycleIncidentProtocol(Protocol):
+    async def record_lifecycle_incident(
+        self,
+        db: AsyncSession,
+        device: Device,
+        event_type: DeviceEventType,
+        *,
+        summary_state: DeviceLifecyclePolicySummaryState,
+        reason: str | None = ...,
+        detail: str | None = ...,
+        source: str | None = ...,
+        run_id: uuid.UUID | str | None = ...,
+        run_name: str | None = ...,
+        backoff_until: str | datetime | None = ...,
+        ttl_seconds: int | None = ...,
+        worker_id: str | None = ...,
+        expires_at: str | datetime | None = ...,
+    ) -> DeviceEvent: ...
+
+    async def list_lifecycle_incidents_paginated(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int = ...,
+        device_id: uuid.UUID | None = ...,
+        cursor: str | None = ...,
+        direction: str = ...,
+    ) -> tuple[list[LifecycleIncidentRead], str | None, str | None]: ...

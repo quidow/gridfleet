@@ -17,6 +17,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -117,6 +118,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 session_factory=sf,
                 circuit_breaker=test_circuit_breaker,
                 health=AsyncMock(),
+                lifecycle_incidents=LifecycleIncidentService(),
             )
 
         app.dependency_overrides[get_db] = override_get_db
@@ -169,6 +171,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(),
                 health=AsyncMock(),
+                incidents=LifecycleIncidentService(),
             )
             run_query = RunQueryService(capability=DeviceCapabilityService())
             return RunServices(

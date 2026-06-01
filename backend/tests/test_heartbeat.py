@@ -608,6 +608,7 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
             grid=fake_grid,
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=Mock()),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)

@@ -57,6 +57,7 @@ from sqlalchemy import select
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import lifecycle_policy as lifecycle_policy
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.runs.service_reservation import RunReservationService
@@ -113,7 +114,10 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
             svc = LifecyclePolicyService(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
-                actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+                actions=LifecyclePolicyActionsService(
+                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                ),
+                incidents=LifecycleIncidentService(),
                 viability=Mock(),
                 node_manager=AsyncMock(),
             )
@@ -234,7 +238,10 @@ async def test_concurrent_health_failure_stale_overwrite(
             svc = LifecyclePolicyService(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
-                actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+                actions=LifecyclePolicyActionsService(
+                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                ),
+                incidents=LifecycleIncidentService(),
                 viability=Mock(),
                 node_manager=AsyncMock(),
             )
@@ -258,7 +265,10 @@ async def test_concurrent_health_failure_stale_overwrite(
             svc = LifecyclePolicyService(
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
-                actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+                actions=LifecyclePolicyActionsService(
+                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                ),
+                incidents=LifecycleIncidentService(),
                 viability=Mock(),
                 node_manager=AsyncMock(),
             )

@@ -8,7 +8,6 @@ from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services import lifecycle_incidents as lifecycle_incident_service
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -40,14 +39,22 @@ if TYPE_CHECKING:
 
     from app.devices.models import Device, DeviceReservation
     from app.devices.protocols import RunReservationWriter
+    from app.devices.services.lifecycle_incidents import LifecycleIncidentService
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
 
 
 class LifecyclePolicyActionsService:
-    def __init__(self, *, publisher: EventPublisher, reservation: RunReservationWriter) -> None:
+    def __init__(
+        self,
+        *,
+        publisher: EventPublisher,
+        reservation: RunReservationWriter,
+        incidents: LifecycleIncidentService,
+    ) -> None:
         self._publisher = publisher
         self._reservation = reservation
+        self._incidents = incidents
 
     async def complete_auto_stop(
         self,
@@ -198,7 +205,7 @@ class LifecyclePolicyActionsService:
                 device_id=device.id, sources=[f"run:{run.id}"], reason=reason
             )
         if run is not None and not was_excluded:
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_run_excluded,
@@ -249,7 +256,7 @@ class LifecyclePolicyActionsService:
                 ],
                 reason=reason,
             )
-            await lifecycle_incident_service.record_lifecycle_incident(
+            await self._incidents.record_lifecycle_incident(
                 db,
                 device,
                 DeviceEventType.lifecycle_run_restored,
@@ -296,7 +303,7 @@ class LifecyclePolicyActionsService:
         fresh["recovery_suppressed_reason"] = suppression_reason
         set_action(fresh, "recovery_suppressed")
         write_state(device, fresh)
-        await lifecycle_incident_service.record_lifecycle_incident(
+        await self._incidents.record_lifecycle_incident(
             db,
             device,
             DeviceEventType.lifecycle_recovery_suppressed,
@@ -332,7 +339,7 @@ class LifecyclePolicyActionsService:
         fresh["stop_pending_since"] = next_state.get("stop_pending_since")
         set_action(fresh, "auto_stopped")
         write_state(device, fresh)
-        await lifecycle_incident_service.record_lifecycle_incident(
+        await self._incidents.record_lifecycle_incident(
             db,
             device,
             DeviceEventType.lifecycle_auto_stopped,

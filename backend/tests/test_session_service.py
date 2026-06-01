@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
@@ -30,7 +31,10 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     return LifecyclePolicyService(
         publisher=pub,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=pub, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )
