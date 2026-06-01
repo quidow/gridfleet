@@ -40,8 +40,14 @@ def _facts(**overrides: bool) -> DeviceStateFacts:
         (_facts(has_running_session=True, has_verification_lease=True), DeviceOperationalState.busy),
         # precedence: verification beats offline
         (_facts(has_verification_lease=True, stop_in_flight=True), DeviceOperationalState.verifying),
-        # maintenance/reservation never affect the operational axis in Stage 1
-        (_facts(in_maintenance=True), DeviceOperationalState.available),
+        # §4: maintenance derives onto the operational axis when idle
+        (_facts(in_maintenance=True), DeviceOperationalState.maintenance),
+        # busy/verifying outrank maintenance
+        (_facts(in_maintenance=True, has_running_session=True), DeviceOperationalState.busy),
+        (_facts(in_maintenance=True, has_verification_lease=True), DeviceOperationalState.verifying),
+        # maintenance outranks offline: a maintenance device whose node is down stays maintenance
+        (_facts(in_maintenance=True, stop_in_flight=True, ready=False), DeviceOperationalState.maintenance),
+        # reservation never affects the operational axis
         (_facts(is_reserved=True), DeviceOperationalState.available),
     ],
 )

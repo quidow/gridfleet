@@ -46,11 +46,13 @@ class DeviceStateFacts:
 
 
 def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalState:
-    """Derive the 4-value operational axis. Stage 1: no `maintenance` value (that lives in `hold`)."""
+    """Derive the 5-value operational axis (spec §4): busy > verifying > maintenance > offline > available."""
     if facts.has_running_session:
         return DeviceOperationalState.busy
     if facts.has_verification_lease:
         return DeviceOperationalState.verifying
+    if facts.in_maintenance:
+        return DeviceOperationalState.maintenance
     if facts.stop_in_flight or not facts.ready:
         return DeviceOperationalState.offline
     return DeviceOperationalState.available
