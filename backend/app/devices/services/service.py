@@ -17,7 +17,6 @@ from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
-    DeviceHold,
     DeviceOperationalState,
     DeviceType,
     HardwareHealthStatus,
@@ -47,6 +46,7 @@ from app.devices.services.intent_types import (
     RECOVERY,
     IntentRegistration,
 )
+from app.devices.services.reservation_query import active_reservation_exists
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.runs import service as run_service
@@ -262,25 +262,20 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.platform_id == filters.platform_id)
     if filters.status is not None:
         if filters.status == "available":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+            stmt = stmt.where(
+                Device.operational_state == DeviceOperationalState.available,
+                ~active_reservation_exists(),
+            )
         elif filters.status == "busy":
             stmt = stmt.where(
                 Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying])
             )
         elif filters.status == "offline":
-            stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None))
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline)
         elif filters.status == "maintenance":
-            stmt = stmt.where(
-                Device.hold == DeviceHold.maintenance,
-                Device.operational_state != DeviceOperationalState.busy,
-                Device.operational_state != DeviceOperationalState.verifying,
-            )
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.maintenance)
         elif filters.status == "reserved":
-            stmt = stmt.where(
-                Device.hold == DeviceHold.reserved,
-                Device.operational_state != DeviceOperationalState.busy,
-                Device.operational_state != DeviceOperationalState.verifying,
-            )
+            stmt = stmt.where(active_reservation_exists())
         elif filters.status == "verifying":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.verifying)
     if filters.host_id is not None:
@@ -311,8 +306,8 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
     direction = asc if filters.sort_dir == "asc" else desc
     chip_case = case(
         (Device.operational_state == DeviceOperationalState.busy, 4),
-        (Device.hold == DeviceHold.maintenance, 3),
-        (Device.hold == DeviceHold.reserved, 2),
+        (Device.operational_state == DeviceOperationalState.maintenance, 3),
+        (active_reservation_exists(), 2),
         (Device.operational_state == DeviceOperationalState.offline, 1),
         else_=0,
     )

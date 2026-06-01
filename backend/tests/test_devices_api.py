@@ -486,7 +486,8 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """Device reserved by a run AND running a session must surface as busy, not reserved."""
+    """Busy/verifying filters key off operational_state; the reserved filter keys off active
+    reservation rows, so a device that is both busy and reserved matches both filters."""
     busy_reserved = await _create_device(
         db_session,
         default_host_id,
@@ -509,20 +510,18 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
         name="Verifying Reserved Device",
     )
 
-    from app.devices.models import DeviceHold, DeviceOperationalState
+    from app.devices.models import DeviceOperationalState
+    from tests.helpers import create_reservation
 
     with state_write_guard.bypass():
         busy_reserved.operational_state = DeviceOperationalState.busy
     with state_write_guard.bypass():
-        busy_reserved.hold = DeviceHold.reserved
-    with state_write_guard.bypass():
         plain_reserved.operational_state = DeviceOperationalState.available
     with state_write_guard.bypass():
-        plain_reserved.hold = DeviceHold.reserved
-    with state_write_guard.bypass():
         verifying_reserved.operational_state = DeviceOperationalState.verifying
-    with state_write_guard.bypass():
-        verifying_reserved.hold = DeviceHold.reserved
+    await create_reservation(db_session, device_id=busy_reserved.id)
+    await create_reservation(db_session, device_id=plain_reserved.id)
+    await create_reservation(db_session, device_id=verifying_reserved.id)
     await db_session.commit()
 
     busy_resp = await client.get("/api/devices", params={"status": "busy"})
@@ -541,9 +540,76 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
     reserved_resp = await client.get("/api/devices", params={"status": "reserved"})
     assert reserved_resp.status_code == 200
     reserved_ids = {item["id"] for item in reserved_resp.json()}
+    # The reserved filter is reservation-row based: any device with an active reservation
+    # matches, including those also busy or verifying.
     assert str(plain_reserved.id) in reserved_ids
-    assert str(busy_reserved.id) not in reserved_ids
-    assert str(verifying_reserved.id) not in reserved_ids
+    assert str(busy_reserved.id) in reserved_ids
+    assert str(verifying_reserved.id) in reserved_ids
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_status_uses_operational_state_and_reservation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """status filters key off operational_state + active reservation rows, not Device.hold."""
+    from app.devices.models import DeviceOperationalState
+    from tests.helpers import create_reservation
+
+    reserved = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-reserved-1",
+        connection_target="status-reserved-1",
+        name="Status Reserved Device",
+    )
+    maintenance = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-maintenance-1",
+        connection_target="status-maintenance-1",
+        name="Status Maintenance Device",
+    )
+    available = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="status-available-1",
+        connection_target="status-available-1",
+        name="Status Available Device",
+    )
+
+    # hold stays NULL for all rows; state is expressed via operational_state + reservation rows.
+    with state_write_guard.bypass():
+        reserved.operational_state = DeviceOperationalState.available
+    with state_write_guard.bypass():
+        maintenance.operational_state = DeviceOperationalState.maintenance
+    with state_write_guard.bypass():
+        available.operational_state = DeviceOperationalState.available
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    reserved_resp = await client.get("/api/devices", params={"status": "reserved"})
+    assert reserved_resp.status_code == 200
+    reserved_ids = {item["id"] for item in reserved_resp.json()}
+    assert str(reserved.id) in reserved_ids
+    assert str(maintenance.id) not in reserved_ids
+    assert str(available.id) not in reserved_ids
+
+    maintenance_resp = await client.get("/api/devices", params={"status": "maintenance"})
+    assert maintenance_resp.status_code == 200
+    maintenance_ids = {item["id"] for item in maintenance_resp.json()}
+    assert str(maintenance.id) in maintenance_ids
+    assert str(reserved.id) not in maintenance_ids
+    assert str(available.id) not in maintenance_ids
+
+    available_resp = await client.get("/api/devices", params={"status": "available"})
+    assert available_resp.status_code == 200
+    available_ids = {item["id"] for item in available_resp.json()}
+    assert str(available.id) in available_ids
+    # Reserved device is operational_state=available but has an active reservation -> excluded.
+    assert str(reserved.id) not in available_ids
+    assert str(maintenance.id) not in available_ids
 
 
 @pytest.mark.asyncio
