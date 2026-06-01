@@ -274,3 +274,62 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     assert intent_second.expires_at is not None
     assert first_deadline is not None
     assert intent_second.expires_at > first_deadline, "expires_at must move forward on each restart"
+
+
+async def test_operator_start_revokes_blocking_health_failure_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """An explicit operator start must clear a leftover ``health_failure:node`` stop.
+
+    That crash-handler stop (priority 60) outranks the operator start intent
+    (priority 20); if the operator path only revokes its own stop intents, the
+    failure stop silently blocks the start and the node never comes up.
+    """
+    from app.devices.services.intent import IntentService
+    from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, IntentRegistration
+
+    device = await create_device(db_session, host_id=db_host.id, name="op-start-unblock", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.stopped,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+            )
+        ],
+        reason="node crash",
+    )
+    await db_session.commit()
+
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
+    await db_session.commit()
+
+    remaining = (
+        (
+            await db_session.execute(
+                select(DeviceIntent.source).where(
+                    DeviceIntent.device_id == device.id,
+                    DeviceIntent.source == f"health_failure:node:{device.id}",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == [], "operator start did not revoke the blocking health_failure:node stop intent"
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running

@@ -173,6 +173,29 @@ async def test_reap_orphan_nodes_swallows_stop_errors() -> None:
     stop_agent.assert_awaited_once()
 
 
+def test_rows_needing_stale_clear_selects_only_db_clear_action() -> None:
+    """Backoff devices (excluded from active convergence) must get only the
+    DB-only stale-pid clear — never an agent start/stop, which is recovery's job."""
+    from app.appium_nodes.services.reconciler_convergence import rows_needing_stale_clear
+
+    now = datetime.now(UTC)
+    stale = _row(connection_target="dev-A", desired_state="stopped", pid=999, active_connection_target="dev-A")
+    clean = _row(connection_target="dev-B", desired_state="stopped")  # no pid -> no_op
+    running_no_obs = _row(connection_target="dev-C", desired_state="running", desired_port=4723)  # -> start, skip
+    result = rows_needing_stale_clear([stale, clean, running_no_obs], [], now=now)
+    assert [r.connection_target for r in result] == ["dev-A"]
+
+
+def test_rows_needing_stale_clear_skips_when_node_observed_running() -> None:
+    """If the agent still reports the node, it's not stale — leave it to recovery."""
+    from app.appium_nodes.services.reconciler_convergence import rows_needing_stale_clear
+
+    now = datetime.now(UTC)
+    row = _row(connection_target="dev-A", desired_state="stopped", pid=999, active_connection_target="dev-A")
+    observed = [ObservedEntry(port=4723, pid=999, connection_target="dev-A")]
+    assert rows_needing_stale_clear([row], observed, now=now) == []
+
+
 def test_desired_running_active_token_picks_restart() -> None:
     row = _row(
         desired_state="running",

@@ -128,9 +128,20 @@ class OperatorNodeLifecycleService:
             await db.flush()
             device.appium_node = node
 
+        revoke_sources = list(operator_stop_sources(device.id))
+        if caller in {"operator_route", "operator_restart"}:
+            # An explicit operator start overrides any failure state. Clear the
+            # crash/connectivity stop intents too — a leftover health_failure:node
+            # stop (priority 60) would otherwise outrank the operator start
+            # (priority 20) and silently block it.
+            revoke_sources += [
+                f"health_failure:node:{device.id}",
+                f"health_failure:recovery:{device.id}",
+                f"connectivity:{device.id}",
+            ]
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
-            sources=operator_stop_sources(device.id),
+            sources=revoke_sources,
             reason=reason,
         )
         await IntentService(db).register_intents_and_reconcile(

@@ -191,6 +191,22 @@ class SessionViabilityService:
             {"started_at": _now_iso(), "checked_by": checked_by},
         )
         if not acquired:
+            # A probe whose process died between claim and release leaks the lock
+            # with no TTL, blocking this device's viability checks forever. If the
+            # existing lock is older than any probe could legitimately run, reclaim
+            # it; otherwise a probe really is in flight.
+            existing = await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+            timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
+            if _viability_lock_is_stale(existing, now=datetime.now(UTC), timeout_sec=timeout_sec):
+                logger.warning("session_viability_reclaiming_stale_lock", device_id=device_key, existing_lock=existing)
+                await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
+                acquired = await control_plane_state_store.try_claim_value(
+                    db,
+                    SESSION_VIABILITY_RUNNING_NAMESPACE,
+                    device_key,
+                    {"started_at": _now_iso(), "checked_by": checked_by},
+                )
+        if not acquired:
             raise ValueError("Session viability check already in progress for this device")
         await db.commit()
         device_reserved = await device_is_reserved(db, device.id)
@@ -362,6 +378,28 @@ def _parse_timestamp(raw: object) -> datetime | None:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+# A viability probe holds its lock for at most one ``session_viability_timeout_sec``
+# window. A lock older than a generous multiple of that was leaked by a probe whose
+# process died between claim and release; it must be reclaimable or the device's
+# viability checks are blocked forever.
+_VIABILITY_LOCK_STALE_TIMEOUT_FACTOR = 2
+_VIABILITY_LOCK_STALE_MARGIN_SEC = 60
+
+
+def _viability_lock_is_stale(value: object, *, now: datetime, timeout_sec: int) -> bool:
+    # Reclaim a lock ONLY when we can prove it is old. A missing/unparseable
+    # ``started_at`` is treated as live (do not reclaim) — the probe always writes
+    # a valid ISO timestamp, so an unreasonable one is anomalous and reclaiming it
+    # could stomp a real in-progress probe.
+    if not isinstance(value, dict):
+        return False
+    started_at = _parse_timestamp(value.get("started_at"))
+    if started_at is None:
+        return False
+    threshold_sec = _VIABILITY_LOCK_STALE_TIMEOUT_FACTOR * timeout_sec + _VIABILITY_LOCK_STALE_MARGIN_SEC
+    return (now - started_at).total_seconds() > threshold_sec
 
 
 async def get_session_viability(db: AsyncSession, device: Device) -> dict[str, Any] | None:
