@@ -524,34 +524,14 @@ async def _finalize_success(
     else:
         locked = await device_locking.lock_device(db, context.save_device_id)
         _restore_create_payload_fields(locked, context.save_payload)
-    if not context.keep_running_after_verify:
-        cleanup_error = await _stop_verification_node_if_running(job, db, locked, node, node_manager)
-        if cleanup_error is not None:
-            if context.mode == "create":
-                await crud.delete_device(db, context.save_device_id)
-                await db.commit()
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
-            await _revoke_verification_node_intent(db, locked, publisher=publisher)
-            await set_operational_state(
-                locked,
-                DeviceOperationalState.offline,
-                reason="verification",
-                severity="warning",
-                publisher=publisher,
-            )
-            await db.commit()
-            return VerificationExecutionOutcome(
-                status="failed", error=cleanup_error, device_id=str(context.save_device_id)
-            )
-    else:
-        data = {"port": node.port, "pid": node.pid} if node is not None else None
-        await set_stage(
-            job,
-            "cleanup",
-            "passed",
-            detail="Verified node retained as the managed Appium node",
-            data=data,
-        )
+    data = {"port": node.port, "pid": node.pid} if node is not None else None
+    await set_stage(
+        job,
+        "cleanup",
+        "passed",
+        detail="Verified node retained as the managed Appium node",
+        data=data,
+    )
 
     locked.verified_at = datetime.now(UTC)
     # Reconciler-authoritative terminal: no direct set_operational_state push. Set

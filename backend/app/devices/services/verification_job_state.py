@@ -43,10 +43,6 @@ def enum_value(value: object) -> object:
     return getattr(value, "value", value)
 
 
-def should_keep_verified_node_running() -> bool:
-    return True
-
-
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 

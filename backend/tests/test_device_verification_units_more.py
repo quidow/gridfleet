@@ -644,63 +644,17 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         verified_at=None,
     )
     context = PreparedVerificationContext(
-        mode="create",
+        mode="update",
         transient_device=locked,
-        save_payload={"name": "created"},
+        save_payload={"name": "updated", "host_id": __import__("uuid").uuid4()},
         save_device_id=device_id,
-        keep_running_after_verify=False,
     )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_locking.lock_device", AsyncMock(return_value=locked)
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution._restore_create_payload_fields", lambda *args: None
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution._stop_verification_node_if_running",
-        AsyncMock(return_value="cleanup failed"),
-    )
-    mock_crud_del = AsyncMock()
-    mock_crud_del.delete_device = AsyncMock()
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
-
-    outcome = await execution._finalize_success(
-        db,
-        context,
-        job=_job(),
-        node=None,
-        publisher=event_bus,
-        crud=mock_crud_del,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    assert outcome.status == "failed"
-    assert outcome.device_id is None
-
-    context.mode = "update"
-    context.save_payload = {"name": "updated", "host_id": __import__("uuid").uuid4()}
-    context.keep_running_after_verify = False
+    machine_spy = AsyncMock()
+    monkeypatch.setattr("app.devices.services.verification_execution.set_operational_state", machine_spy)
     mock_crud_upd = AsyncMock()
     mock_crud_upd.update_device = AsyncMock(return_value=locked)
-    machine_spy = AsyncMock()
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.set_operational_state",
-        machine_spy,
-    )
-    outcome = await execution._finalize_success(
-        db,
-        context,
-        job=_job(),
-        node=None,
-        publisher=event_bus,
-        crud=mock_crud_upd,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    assert outcome.status == "failed"
-    assert outcome.device_id == str(device_id)
 
-    context.keep_running_after_verify = True
     node = SimpleNamespace(port=4723, pid=22)
     viability_mock = AsyncMock()
     viability_mock.record_session_viability_result = AsyncMock()
@@ -715,8 +669,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         node_manager=AsyncMock(),
     )
     assert outcome.status == "completed"
-    # PASS is reconciler-authoritative now: the revoke (carrying the publisher) is the writer,
+    # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer,
     # not a direct set_operational_state.
+    machine_spy.assert_not_awaited()
     execution._revoke_verification_node_intent.assert_awaited()
 
     update_device = SimpleNamespace(id=device_id, identity_value="update-device", name="old")

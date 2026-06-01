@@ -193,7 +193,6 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         save_device_id=uuid.uuid4(),
         transient_device=_device(),
         save_payload={},
-        keep_running_after_verify=False,
     )
     finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
@@ -245,7 +244,6 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
         transient_device=locked,
         save_payload={"name": "created"},
         save_device_id=device_id,
-        keep_running_after_verify=True,
     )
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
