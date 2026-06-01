@@ -10,7 +10,6 @@ from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificat
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import write as device_write
 from app.devices.services.identity import host_scoped_clause, is_host_scoped_identity, non_host_scoped_clause
-from app.devices.services.identity_conflicts import ensure_device_payload_identity_available
 from app.hosts.schemas import DiscoveredDevice, DiscoveryConfirmResult, DiscoveryResult, IntakeCandidateRead
 
 if TYPE_CHECKING:
@@ -19,7 +18,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.models import Host
-    from app.packs.protocols import DeviceSerializer
+    from app.packs.protocols import DeviceIdentityGuard, DeviceSerializer
 
 
 class PackDevicesFetcher(Protocol):
@@ -76,12 +75,14 @@ class PackDiscoveryService:
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         serializer: DeviceSerializer,
+        identity_guard: DeviceIdentityGuard,
     ) -> None:
         self._agent_get_pack_devices = agent_get_pack_devices
         self._agent_get_pack_device_properties = agent_get_pack_device_properties
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._serializer = serializer
+        self._identity_guard = identity_guard
 
     async def list_intake_candidates(self, session: AsyncSession, host: Host) -> list[IntakeCandidateRead]:
         raw = await self._agent_get_pack_devices(
@@ -244,7 +245,7 @@ class PackDiscoveryService:
             for discovered in discovered_by_value.get(identity_value, []):
                 create_request = _build_discovery_create_request(discovered, host)
                 payload = device_write.prepare_device_create_payload(create_request)
-                await ensure_device_payload_identity_available(db, payload)
+                await self._identity_guard.ensure_device_payload_identity_available(db, payload)
                 payload["verified_at"] = None
                 device = device_write.stage_device_record(db, payload)
                 added_devices.append(device)

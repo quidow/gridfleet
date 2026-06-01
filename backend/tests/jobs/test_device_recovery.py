@@ -13,6 +13,7 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
@@ -101,13 +102,14 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service),
+                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service),
+                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),
@@ -232,13 +234,14 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
                     viability=AsyncMock(),
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -318,13 +321,14 @@ async def test_device_recovery_job_completed_when_device_missing(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service),
+                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service),
+                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import service as device_service
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY
 from app.devices.services.service import DeviceCrudService
@@ -19,15 +20,15 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
     db.rollback = AsyncMock()
     prepared = {"name": "Device"}
     monkeypatch.setattr(DeviceCrudService, "prepare_device_create_payload", AsyncMock(return_value=prepared))
+
+    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
     ensure = AsyncMock()
-    monkeypatch.setattr(device_service, "ensure_device_payload_identity_available", ensure)
+    monkeypatch.setattr(crud._identity, "ensure_device_payload_identity_available", ensure)
     monkeypatch.setattr(
         device_service.device_write,
         "create_device_record",
         AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("dupe"))),
     )
-
-    crud = DeviceCrudService(settings=FakeSettingsReader())
     with pytest.raises(IntegrityError):
         await crud.create_device(
             db,
@@ -51,7 +52,7 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     db = MagicMock()
     db.rollback = AsyncMock()
     device_id = uuid.uuid4()
-    crud = DeviceCrudService(settings=FakeSettingsReader())
+    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
     monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
     assert await crud.update_device(db, device_id, DevicePatch(name="new")) is None
 
@@ -67,7 +68,7 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
 
     monkeypatch.setattr(device_service.device_write, "validate_patch_contract", lambda *args: None)
     monkeypatch.setattr(DeviceCrudService, "prepare_device_update_payload", AsyncMock(return_value={"name": "new"}))
-    monkeypatch.setattr(device_service, "ensure_device_payload_identity_available", AsyncMock())
+    monkeypatch.setattr(crud._identity, "ensure_device_payload_identity_available", AsyncMock())
     monkeypatch.setattr(device_service.device_readiness, "payload_requires_reverification", lambda *args: True)
     monkeypatch.setattr(device_service.device_write, "apply_device_payload", lambda *args: None)
     monkeypatch.setattr(

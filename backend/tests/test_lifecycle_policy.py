@@ -545,6 +545,180 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
         )
 
 
+@pytest.mark.db
+async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_stale(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Recovery must unblock an offline device even when ``observed_running`` is stale.
+
+    ``observed_running`` (``pid``/``active_connection_target``) is eventually
+    consistent: after an appium process dies there is a window (one
+    ``appium_reconciler`` interval) where the DB row still reports the node
+    running. If recovery fires during that window for an *offline* device, the
+    short-circuit at ``attempt_auto_recovery`` (``if node is None or not
+    node.observed_running``) skips revoking the blocking ``health_failure:node``
+    stop intent (priority 60) — which outranks the recovery start intent
+    (priority 20) — so the node can never be told to start and the device is
+    stranded in backoff until the stale observation happens to clear. An offline
+    device has no usable running node, so recovery must clear that blocking stop
+    regardless of the stale snapshot.
+    """
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="stale-observed-running",
+            connection_target="stale-observed-running",
+            name="Stale Observed Running Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    with state_write_guard.bypass():
+        # Stale-positive observation: pid + active_connection_target set, so
+        # ``observed_running`` is True even though the process is actually dead.
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid:4444",
+                pid=99999,
+                active_connection_target="stale-observed-running",
+            )
+        )
+    await db_session.commit()
+
+    # The blocking stop intent the crash handler leaves behind (priority 60).
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "priority": PRIORITY_HEALTH_FAILURE, "stop_mode": "graceful"},
+            )
+        ],
+        reason="node crash",
+    )
+    await db_session.commit()
+
+    probe_mock = AsyncMock(return_value={"status": "passed"})
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+
+    await _make_svc(publisher=event_bus, viability=viability).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Recovering offline device",
+    )
+
+    remaining = (
+        (
+            await db_session.execute(
+                select(DeviceIntent.source).where(
+                    DeviceIntent.device_id == device.id,
+                    DeviceIntent.source == f"health_failure:node:{device.id}",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == [], (
+        "recovery left the blocking health_failure:node stop intent in place; "
+        "the node start intent can never win against it"
+    )
+
+
+@pytest.mark.db
+async def test_auto_recovery_start_intent_survives_sweep_when_observed_running_is_stale(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The recovery start intent must survive the precondition sweep on a stale node.
+
+    The normal recovery start intent carries a ``node_running expected=False``
+    precondition so it auto-retires once the node is observed running. But when
+    ``observed_running`` is stale-``True`` (the post-crash window on an offline
+    device), that precondition is *unsatisfied* — so the periodic
+    ``reconcile_unsatisfied_preconditions`` sweep would reap the start intent
+    within one reconciler tick, dropping ``desired_state`` back to ``stopped``
+    before the appium_reconciler can start the node. For the stale-offline case
+    recovery must register a start intent that the sweep cannot reap (bounded by
+    ``expires_at`` rather than the unreliable observed-running precondition),
+    mirroring ``exit_maintenance``.
+    """
+    from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="stale-start-survives",
+            connection_target="stale-start-survives",
+            name="Stale Start Survives Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid:4444",
+                pid=99999,
+                active_connection_target="stale-start-survives",
+            )
+        )
+    await db_session.commit()
+
+    probe_mock = AsyncMock(return_value={"status": "passed"})
+    viability = AsyncMock()
+    viability.run_session_viability_probe = probe_mock
+
+    await _make_svc(publisher=event_bus, viability=viability).attempt_auto_recovery(
+        db_session,
+        device,
+        source="device_checks",
+        reason="Recovering offline device",
+    )
+
+    # The stale observation is still in place — the appium_reconciler has not yet
+    # started the node. A precondition sweep now must NOT remove the start intent.
+    await reconcile_unsatisfied_preconditions(db_session)
+    await db_session.commit()
+
+    start_intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert start_intent is not None, (
+        "recovery start intent was never registered or was reaped by the precondition "
+        "sweep while observed_running was stale; the node can never be told to start"
+    )
+
+
 async def test_recovery_reloads_device_before_starting_node(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -1638,7 +1812,10 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     db.add = lambda _row: None
     run = SimpleNamespace(id=uuid.uuid4(), name="active-run", state=RunState.active)
     excluded_entry = SimpleNamespace(excluded=True, excluded_until=None, exclusion_reason="flaky")
-    node = SimpleNamespace(observed_running=True)
+    # Offline + observed_running=True is a stale observation: recovery now routes
+    # it through the start path (revoke blocking stops, register start, wait), so
+    # the node mock needs an id for wait_for_node_running.
+    node = SimpleNamespace(id=uuid.uuid4(), observed_running=True)
     device = SimpleNamespace(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
@@ -1665,6 +1842,8 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         lambda entry: bool(entry and entry.excluded),
     )
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     mock_restore_run = AsyncMock(return_value=(run, excluded_entry))
     monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
@@ -1874,7 +2053,9 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     failing.id = uuid.uuid4()
     with state_write_guard.bypass():
         failing.lifecycle_policy_state = {}
-    failing.appium_node = SimpleNamespace(observed_running=True)
+    # Offline + observed_running=True is stale: recovery routes it through the
+    # start path before probing, so the node mock needs an id (wait_for_node_running).
+    failing.appium_node = SimpleNamespace(id=uuid.uuid4(), observed_running=True)
     db2 = FakeDb()
     monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=failing))
     monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device", AsyncMock(return_value=failing))

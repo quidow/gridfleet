@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationCreate
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
@@ -25,7 +26,7 @@ async def test_create_device_persists_initial_operational_state(db_session: Asyn
         host_id=db_host.id,
     )
 
-    crud = DeviceCrudService(settings=FakeSettingsReader())
+    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
     device = await crud.create_device(
         db_session,
         data,

@@ -15,6 +15,7 @@ from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
@@ -60,7 +61,9 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
     )
     from app.devices.services.service import DeviceCrudService
 
-    loaded = await DeviceCrudService(settings=FakeSettingsReader()).get_device(db_session, device.id)
+    loaded = await DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()
+    ).get_device(db_session, device.id)
     assert loaded is not None
     return loaded
 

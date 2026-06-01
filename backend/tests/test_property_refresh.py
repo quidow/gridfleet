@@ -12,6 +12,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
@@ -150,7 +151,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
 
     _pr_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
-    _pr_crud = DeviceCrudService(settings=_pr_settings)
+    _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService())
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_pr_grid),

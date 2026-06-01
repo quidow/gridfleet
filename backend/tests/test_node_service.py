@@ -19,13 +19,14 @@ from app.appium_nodes.services.reconciler_agent import (
 )
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
 
-_crud = DeviceCrudService(settings=FakeSettingsReader())
+_crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
 
 HOST_PAYLOAD = {
     "hostname": "remote-host",

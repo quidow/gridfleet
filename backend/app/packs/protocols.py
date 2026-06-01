@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Mapping
 
     import httpx
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,3 +110,14 @@ class PackDiscoveryProtocol(Protocol):
 @runtime_checkable
 class DeviceSerializer(Protocol):
     async def serialize_device(self, db: AsyncSession, device: Device) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class DeviceIdentityGuard(Protocol):
+    async def ensure_device_payload_identity_available(
+        self,
+        db: AsyncSession,
+        payload: Mapping[str, Any],
+        *,
+        exclude_device_id: uuid.UUID | None = ...,
+    ) -> None: ...
