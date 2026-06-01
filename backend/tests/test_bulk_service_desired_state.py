@@ -10,6 +10,7 @@ import pytest
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
@@ -204,7 +205,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
         settings=_settings_bulk,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_bulk),
+        crud=DeviceCrudService(settings=_settings_bulk, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=_settings_bulk),
     ).bulk_start_nodes(db_session, [device.id], caller="bulk")
 
@@ -244,7 +245,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
         settings=_settings_group,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_group),
+        crud=DeviceCrudService(settings=_settings_group, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=_settings_group),
     ).bulk_start_nodes(db_session, [device.id], caller="group")
 

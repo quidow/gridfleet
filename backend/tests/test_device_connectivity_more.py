@@ -23,6 +23,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -290,7 +291,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
     _fake_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
-    _fake_crud = DeviceCrudService(settings=_fake_settings)
+    _fake_crud = DeviceCrudService(settings=_fake_settings, identity=DeviceIdentityConflictService())
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_fake_grid),

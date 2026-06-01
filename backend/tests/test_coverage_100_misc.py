@@ -62,6 +62,7 @@ from app.devices.services import (
     write as device_write,
 )
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
@@ -223,7 +224,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
         )
 
     assert (
-        await device_identity_conflicts.find_device_identity_conflict(
+        await device_identity_conflicts.DeviceIdentityConflictService().find_device_identity_conflict(
             db,
             identity_scope="global",
             identity_scheme=None,
@@ -233,7 +234,7 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
         is None
     )
     assert (
-        await device_identity_conflicts.find_device_identity_conflict(
+        await device_identity_conflicts.DeviceIdentityConflictService().find_device_identity_conflict(
             db,
             identity_scope="host",
             identity_scheme="serial",
@@ -361,13 +362,16 @@ async def test_device_verification_runner_missing_job_branches() -> None:
     cb = Mock()
     publisher = AsyncMock()
     prep = VerificationPreparationService(
-        settings=settings, circuit_breaker=cb, crud=DeviceCrudService(settings=settings)
+        settings=settings,
+        circuit_breaker=cb,
+        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
+        identity=DeviceIdentityConflictService(),
     )
     exec_svc = VerificationExecutionService(
         publisher=publisher,
         settings=settings,
         circuit_breaker=cb,
-        crud=DeviceCrudService(settings=settings),
+        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -620,6 +624,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(settings=FakeSettingsReader()),
+        identity_guard=DeviceIdentityConflictService(),
     ).discover_devices(
         discovery_db,
         SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
@@ -755,7 +760,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     )
     _gs1 = FakeSettingsReader({})
     listed = await device_group_service.DeviceGroupsService(
-        publisher=event_bus, settings=_gs1, crud=DeviceCrudService(settings=_gs1)
+        publisher=event_bus,
+        settings=_gs1,
+        crud=DeviceCrudService(settings=_gs1, identity=DeviceIdentityConflictService()),
     ).list_groups(group_db)
     assert listed[0]["device_count"] == 2
     missing_group_db = AsyncMock()
@@ -763,7 +770,9 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     _gs2 = FakeSettingsReader({})
     assert (
         await device_group_service.DeviceGroupsService(
-            publisher=event_bus, settings=_gs2, crud=DeviceCrudService(settings=_gs2)
+            publisher=event_bus,
+            settings=_gs2,
+            crud=DeviceCrudService(settings=_gs2, identity=DeviceIdentityConflictService()),
         ).delete_group(missing_group_db, uuid.uuid4())
         is False
     )
@@ -870,13 +879,14 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             preparation=VerificationPreparationService(
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+                identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

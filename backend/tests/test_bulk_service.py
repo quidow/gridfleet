@@ -18,6 +18,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
@@ -110,7 +111,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         settings=settings,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=settings),
+        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=settings),
     )
     started = await svc.bulk_start_nodes(db_session, [device.id for device in devices])
@@ -175,7 +176,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         settings=_settings_rc,
         circuit_breaker=Mock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_rc),
+        crud=DeviceCrudService(settings=_settings_rc, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=_settings_rc),
     ).bulk_reconnect(db, [eligible_ok.id, eligible_fail.id, ineligible.id])
 
@@ -254,7 +255,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
         maintenance=MaintenanceService(settings=FakeSettingsReader({})),
-        crud=DeviceCrudService(settings=_settings_exit),
+        crud=DeviceCrudService(settings=_settings_exit, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=_settings_exit),
     ).bulk_exit_maintenance(db_session, [d.id for d in devices])
 

@@ -18,6 +18,7 @@ from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
@@ -138,13 +139,14 @@ async def _wait_for_job(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
                     viability=_viability,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -1452,13 +1454,14 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service),
+                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),

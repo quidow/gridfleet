@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
@@ -84,7 +85,7 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
             settings=_settings_enter,
             circuit_breaker=MagicMock(),
             maintenance=mock_maintenance,
-            crud=DeviceCrudService(settings=_settings_enter),
+            crud=DeviceCrudService(settings=_settings_enter, identity=DeviceIdentityConflictService()),
             operator=OperatorNodeLifecycleService(settings=_settings_enter),
         ).bulk_enter_maintenance(session, device_ids)
 

@@ -12,6 +12,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import bulk as bulk_service
 from app.devices.services import state_write_guard
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
@@ -114,7 +115,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             settings=_settings_runner,
             circuit_breaker=MagicMock(),
             maintenance=MagicMock(),
-            crud=DeviceCrudService(settings=_settings_runner),
+            crud=DeviceCrudService(settings=_settings_runner, identity=DeviceIdentityConflictService()),
             operator=OperatorNodeLifecycleService(settings=_settings_runner),
         ).bulk_start_nodes(db_session, [device_a_id, device_b_id])
 

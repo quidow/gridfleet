@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
@@ -26,7 +27,7 @@ def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
         settings=_settings,
         circuit_breaker=MagicMock(),
         maintenance=maintenance or MaintenanceService(settings=FakeSettingsReader({})),
-        crud=DeviceCrudService(settings=_settings),
+        crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService()),
         operator=OperatorNodeLifecycleService(settings=_settings),
     )
 

@@ -35,6 +35,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -143,6 +144,7 @@ def compose_app(
     presenter_svc = DevicePresenterService(settings=settings_svc)
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
+    identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
     pack_feature = FeatureService(publisher=bus, circuit_breaker=circuit_breaker)
@@ -156,6 +158,7 @@ def compose_app(
         settings=settings_svc,
         circuit_breaker=circuit_breaker,
         serializer=presenter_svc,
+        identity_guard=identity_conflict_svc,
     )
 
     device_capability_svc = DeviceCapabilityService()
@@ -183,7 +186,7 @@ def compose_app(
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus)
-    crud_svc = DeviceCrudService(settings=settings_svc)
+    crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc)
     connectivity_svc = ConnectivityService(
         publisher=bus,
         settings=settings_svc,
@@ -229,7 +232,7 @@ def compose_app(
     )
 
     verification_preparation_svc = VerificationPreparationService(
-        settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc
+        settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc, identity=identity_conflict_svc
     )
     verification_execution_svc = VerificationExecutionService(
         publisher=bus,

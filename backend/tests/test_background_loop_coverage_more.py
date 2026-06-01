@@ -28,6 +28,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -69,7 +70,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     _svc_grid_1 = Mock()
     _svc_pub_1 = AsyncMock()
     _svc_maint_1 = MaintenanceService(settings=FakeSettingsReader({}))
-    _svc_crud_1 = DeviceCrudService(settings=_svc_settings_1)
+    _svc_crud_1 = DeviceCrudService(settings=_svc_settings_1, identity=DeviceIdentityConflictService())
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
@@ -127,7 +128,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_grid_2 = Mock()
     _svc_pub_2 = AsyncMock()
     _svc_maint_2 = MaintenanceService(settings=FakeSettingsReader({}))
-    _svc_crud_2 = DeviceCrudService(settings=_svc_settings_2)
+    _svc_crud_2 = DeviceCrudService(settings=_svc_settings_2, identity=DeviceIdentityConflictService())
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
@@ -252,7 +253,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     _svc_grid_3 = Mock()
     _svc_pub_3 = AsyncMock()
     _svc_maint_3 = MaintenanceService(settings=FakeSettingsReader({}))
-    _svc_crud_3 = DeviceCrudService(settings=_svc_settings_3)
+    _svc_crud_3 = DeviceCrudService(settings=_svc_settings_3, identity=DeviceIdentityConflictService())
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
@@ -356,7 +357,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     _svc_grid_4 = Mock()
     _svc_pub_4 = AsyncMock()
     _svc_maint_4 = MaintenanceService(settings=FakeSettingsReader({}))
-    _svc_crud_4 = DeviceCrudService(settings=_svc_settings_4)
+    _svc_crud_4 = DeviceCrudService(settings=_svc_settings_4, identity=DeviceIdentityConflictService())
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_svc_grid_4),

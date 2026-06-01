@@ -39,6 +39,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -393,7 +394,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         _grid_svc = GridService(settings=settings_service)
         _maintenance_svc = MaintenanceService(settings=settings_service, publisher=test_event_bus)
-        _crud_svc = DeviceCrudService(settings=settings_service)
+        _crud_svc = DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService())
         return DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
@@ -576,6 +577,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 serializer=DevicePresenterService(settings=settings_service),
+                identity_guard=DeviceIdentityConflictService(),
             ),
             storage=storage,
             publisher=test_event_bus,

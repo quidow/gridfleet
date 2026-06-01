@@ -15,6 +15,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.routers import control as devices_control
 from app.devices.services import state_write_guard
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
@@ -128,7 +129,9 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         result = await devices_control.reconnect_device(
             device.id,
             db=db_session,
-            device_services=SimpleNamespace(crud=DeviceCrudService(settings=FakeSettingsReader({}))),
+            device_services=SimpleNamespace(
+                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService())
+            ),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             appium_services=SimpleNamespace(reconciler_agent=mock_ra),
