@@ -23,6 +23,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -325,6 +326,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             session_factory=fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
+            lifecycle_incidents=LifecycleIncidentService(),
         )
     )
 
