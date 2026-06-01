@@ -10,7 +10,7 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
 from app.devices.services import lifecycle_incidents as lifecycle_incident_service
@@ -50,7 +50,6 @@ from app.devices.services.lifecycle_policy_state import (
     state as policy_state,
 )
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import set_hold
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -167,7 +166,7 @@ class LifecyclePolicyService:
                 suppression_reason="Device setup or verification is incomplete",
                 run=run,
             )
-        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
+        if policy_state(device).get("maintenance_reason") is not None:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
@@ -462,22 +461,8 @@ class LifecyclePolicyService:
                     DeviceEventType.node_restart,
                     {"recovered_from": source, "reason": reason},
                 )
-                await set_hold(
-                    device,
-                    DeviceHold.reserved,
-                    reason=f"Rejoined run after {source}: {reason}",
-                    severity="info",
-                    publisher=self._publisher,
-                )
                 await db.commit()
             else:
-                await set_hold(
-                    device,
-                    DeviceHold.reserved,
-                    reason=f"Rejoined run after {source}: {reason}",
-                    severity="info",
-                    publisher=self._publisher,
-                )
                 await db.commit()
         else:
             await record_event(
@@ -548,7 +533,7 @@ class LifecyclePolicyService:
         # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
         write_state(device, current_state)
 
-        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
+        if policy_state(device).get("maintenance_reason") is not None:
             await self._actions.record_recovery_suppressed(
                 db,
                 device,

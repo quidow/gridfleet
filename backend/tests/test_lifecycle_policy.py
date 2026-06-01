@@ -556,17 +556,6 @@ async def test_recovery_rejoin_publishes_availability_event(
 
     monkeypatch.setattr(event_bus, "publish", fake_publish)
 
-    from app.devices.services import state as state_mod
-
-    _orig_set_hold = state_mod.set_hold
-
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        if kwargs.get("publisher") is None:
-            kwargs["publisher"] = event_bus
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("app.devices.services.lifecycle_policy.set_hold", _wrapped_set_hold)
-
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -1651,8 +1640,8 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        hold=DeviceHold.maintenance,
-        lifecycle_policy_state={},
+        hold=None,
+        lifecycle_policy_state={"maintenance_reason": "maintenance opened"},
         recovery_allowed=True,
         review_required=False,
         review_reason=None,
@@ -1680,18 +1669,15 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     mock_has_running = AsyncMock(return_value=False)
     monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", mock_has_running)
 
-    with state_write_guard.bypass():
-        device.hold = None
+    device.lifecycle_policy_state = {}
     device.recovery_allowed = False
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     device.recovery_allowed = True
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+    device.lifecycle_policy_state = {"maintenance_reason": "maintenance opened"}
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
-    with state_write_guard.bypass():
-        device.hold = None
+    device.lifecycle_policy_state = {}
     mock_has_running.return_value = True
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
@@ -1700,6 +1686,35 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
     db.commit.assert_awaited()
+
+
+async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery suppression triggers on the durable ``maintenance_reason`` signal
+    alone, without the device carrying ``hold == DeviceHold.maintenance``."""
+    db = AsyncMock()
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        hold=None,
+        lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
+        recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
+        recovery_blocked_reason=None,
+        operational_state=DeviceOperationalState.offline,
+        appium_node=None,
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
+    )
+    suppressed = AsyncMock(return_value="suppressed")
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
+
+    svc = _make_svc(publisher=event_bus)
+    assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
+    suppressed.assert_awaited_once()
 
 
 async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
@@ -1740,8 +1755,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     mock_restore_run = AsyncMock(return_value=(run, excluded_entry))
     monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
-    mock_set_hold = AsyncMock()
-    monkeypatch.setattr(lifecycle_policy_module, "set_hold", mock_set_hold)
     monkeypatch.setattr(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
@@ -1756,13 +1769,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     svc = _make_svc(publisher=event_bus, viability=viability)
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
     mock_restore_run.assert_awaited_once()
-    mock_set_hold.assert_awaited_with(
-        device,
-        DeviceHold.reserved,
-        reason="Rejoined run after checks: reconnected",
-        severity="info",
-        publisher=event_bus,
-    )
 
     busy = SimpleNamespace(
         id=uuid.uuid4(),
