@@ -223,6 +223,41 @@ async def create_reserved_run(
     return run
 
 
+async def create_reservation(
+    db_session: AsyncSession,
+    *,
+    device_id: uuid.UUID,
+    run_id: uuid.UUID | None = None,
+) -> DeviceReservation:
+    """Create an active (released_at IS NULL) DeviceReservation for the given device.
+
+    Creates a minimal TestRun if ``run_id`` is not supplied.
+    """
+    if run_id is None:
+        run = TestRun(
+            name="test-run-for-reservation",
+            state=RunState.active,
+            requirements=[{"platform_id": "android_mobile", "count": 1}],
+            ttl_minutes=60,
+            heartbeat_timeout_sec=120,
+        )
+        db_session.add(run)
+        await db_session.flush()
+        run_id = run.id
+
+    res = DeviceReservation(
+        run_id=run_id,
+        device_id=device_id,
+        identity_value="test-device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        os_version="14",
+    )
+    db_session.add(res)
+    await db_session.flush()
+    return res
+
+
 async def settle_after_commit_tasks() -> None:
     """Drain after_commit-created publish tasks so contract assertions run after dispatch.
 
