@@ -14,7 +14,12 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
+from app.devices.services.lifecycle_policy_state import (
+    set_maintenance_reason,
+)
+from app.devices.services.lifecycle_policy_state import (
+    write_state as write_lifecycle_policy_state,
+)
 from app.hosts.models import Host, HostStatus
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
@@ -601,6 +606,27 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
     assert maintenance_resp.status_code == 200
     # hold is now derived by the reconciler (Task 7+8); just verify the call succeeds
+
+    for action in ("start", "restart"):
+        resp = await client.post(f"/api/devices/{device_id}/node/{action}")
+        assert resp.status_code == 409
+        assert "maintenance" in resp.json()["error"]["message"]
+
+
+async def test_maintenance_signal_without_hold_blocks_start_and_restart(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    """Signal-only maintenance (hold=NULL, maintenance_reason set) must block start/restart."""
+    device = await _create_device(db_session, default_host_id)
+    device_id = device["id"]
+
+    # Set maintenance_reason via signal without touching the hold column.
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
+    set_maintenance_reason(locked, "signal-only test")
+    await db_session.commit()
 
     for action in ("start", "restart"):
         resp = await client.post(f"/api/devices/{device_id}/node/{action}")
