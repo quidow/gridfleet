@@ -23,6 +23,7 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.devices.services.review import mark_review_required
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -609,6 +610,12 @@ async def _finalize_failure(
         TransitionEvent.VERIFICATION_FAILED,
         reason="verification",
         publisher=publisher,
+    )
+    await mark_review_required(
+        db,
+        locked,
+        reason=f"verification failed: {error}",
+        source="verification",
     )
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))

@@ -286,6 +286,48 @@ async def test_finalize_success_revokes_verification_intent_after_verified_at(
     assert op_state_when_revoked[0] == DeviceOperationalState.available
 
 
+async def test_update_mode_verification_failure_shelves_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """§14.4 — when an update-mode verification fails, the device must be
+    shelved (review_required=True) before the transaction commits."""
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.no_autoflush = MagicMock()
+    db.no_autoflush.__enter__ = MagicMock()
+    db.no_autoflush.__exit__ = MagicMock()
+    job: dict[str, object] = {"stages": []}
+    transient = _device()
+
+    locked = _device(review_required=False, review_reason=None)
+    monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
+    monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
+    monkeypatch.setattr(execution, "_revoke_verification_node_intent", AsyncMock())
+    machine = MagicMock()
+    machine.transition = AsyncMock()
+    monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
+
+    mark_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(execution, "mark_review_required", mark_mock)
+
+    update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
+    outcome = await execution._finalize_failure(
+        db,
+        update_context,
+        error="adb probe timed out",
+        job=job,
+        original_fields={},
+        publisher=event_bus,
+        crud=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+
+    assert outcome.status == "failed"
+    mark_mock.assert_awaited_once()
+    call_args = mark_mock.call_args
+    assert call_args.args[1] is locked  # mark_review_required(db, device, *, ...)
+    assert "verification" in call_args.kwargs.get("reason", "")
+    assert call_args.kwargs.get("source") == "verification"
+
+
 async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: device row with plain-string device_type / connection_type
     (e.g. after `setattr` from agent-normalized save_payload in the update
