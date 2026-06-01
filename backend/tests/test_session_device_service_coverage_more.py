@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import encode_cursor
-from app.devices.models import ConnectionType, DeviceHold, DeviceOperationalState, DeviceType, HardwareHealthStatus
+from app.devices.models import (
+    ConnectionType,
+    DeviceOperationalState,
+    DeviceReservation,
+    DeviceType,
+    HardwareHealthStatus,
+)
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import service as device_service
@@ -355,8 +361,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         identity_value="device-filter-maint",
         connection_target="device-filter-maint",
         name="Beta Device",
-        operational_state=DeviceOperationalState.offline,
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         tags={"team": "ops"},
     )
 
@@ -444,7 +449,20 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         connection_target="device-filter-reserved",
         name="Reserved Device",
         operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.reserved,
+    )
+    reservation_run = TestRun(name="device-filter-reservation", requirements=[], state=RunState.active)
+    db_session.add(reservation_run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run_id=reservation_run.id,
+            device_id=reserved.id,
+            identity_value=reserved.identity_value,
+            connection_target=reserved.connection_target,
+            pack_id=reserved.pack_id,
+            platform_id=reserved.platform_id,
+            os_version=reserved.os_version,
+        )
     )
     verifying = await create_device_record(
         db_session,
