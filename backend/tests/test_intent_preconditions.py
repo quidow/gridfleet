@@ -242,3 +242,40 @@ async def test_device_hold_unsatisfied_when_device_missing(db_session: AsyncSess
         precondition={"kind": "device_hold", "device_id": str(uuid4()), "hold": "maintenance"},
     )
     assert await is_satisfied(db_session, intent) is False
+
+
+@pytest.mark.db
+async def test_maintenance_active_reads_maintenance_reason(db_session: AsyncSession, db_host: Host) -> None:
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    device = await create_device(db_session, host_id=db_host.id, name="prec-maint-active")
+    await db_session.flush()
+
+    intent = DeviceIntent(
+        device_id=device.id,
+        source=f"maintenance:node:{device.id}",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "maintenance_active", "device_id": str(device.id)},
+    )
+
+    assert await is_satisfied(db_session, intent) is False
+
+    set_maintenance_reason(device, "op test")
+    await db_session.flush()
+
+    assert await is_satisfied(db_session, intent) is True
+
+
+@pytest.mark.db
+async def test_maintenance_active_precondition_unsatisfied_when_device_missing(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    intent = DeviceIntent(
+        device_id=uuid4(),
+        source="maintenance:node:none",
+        axis=NODE_PROCESS,
+        payload={},
+        precondition={"kind": "maintenance_active", "device_id": str(uuid4())},
+    )
+    assert await is_satisfied(db_session, intent) is False
