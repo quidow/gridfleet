@@ -12,6 +12,7 @@ import pytest_asyncio
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.exceptions import NodePortConflictError
 from app.appium_nodes.services.reconciler_agent import start_remote_node
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
@@ -45,7 +46,7 @@ async def db_with_pending_device(
         identity_scope="host",
         os_version="14",
     )
-    crud = DeviceCrudService(settings=FakeSettingsReader())
+    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
     loaded = await crud.get_device(db_session, device.id)
     assert loaded is not None
     yield db_session, loaded

@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.verification_execution import VerificationExecutionService
@@ -42,13 +43,14 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
             preparation=VerificationPreparationService(
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+                identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({})),
+                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

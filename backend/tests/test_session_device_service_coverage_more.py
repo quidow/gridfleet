@@ -16,6 +16,7 @@ from app.devices.models import (
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.schemas.filters import DeviceQueryFilters
 from app.devices.services import service as device_service
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.runs.models import RunState, TestRun
@@ -381,7 +382,7 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         lambda *_args, **_kwargs: False,
     )
 
-    crud = DeviceCrudService(settings=FakeSettingsReader({}))
+    crud = DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService())
     filters = DeviceQueryFilters(
         status="available",
         host_id=available.host_id,

@@ -16,6 +16,7 @@ from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
@@ -82,7 +83,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _grid_svc = GridService(settings=settings_service)
             _maintenance_svc = MaintenanceService(settings=settings_service)
-            _crud_svc = DeviceCrudService(settings=settings_service)
+            _crud_svc = DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService())
             return DeviceServices(
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
