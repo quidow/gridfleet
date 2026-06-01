@@ -84,7 +84,7 @@ authoritative list of callers.
 
 | Event | Notes |
 |-------|-------|
-| `MAINTENANCE_ENTERED` / `MAINTENANCE_EXITED` | Maintenance enter/exit routes through the lifecycle policy; the machine itself is no longer called — maintenance state is now driven by `maintenance_reason` in `lifecycle_policy_state` and derived by the reconciler. |
+| `VERIFICATION_STARTED` / `VERIFICATION_PASSED` / `VERIFICATION_FAILED` | Called from `app/devices/services/verification_execution.py` (4 call sites). |
 
 ### Removed machine events (Phase 2B)
 
@@ -96,6 +96,7 @@ The following events no longer have active producers:
 | `CONNECTIVITY_RESTORED` | Connectivity loop uses `attempt_auto_recovery` → `mark_dirty` |
 | `SESSION_STARTED` / `SESSION_ENDED` | `session_sync` now calls `mark_dirty` |
 | `AUTO_STOP_EXECUTED` | Lifecycle policy loop calls `mark_dirty` |
+| `MAINTENANCE_ENTERED` / `MAINTENANCE_EXITED` | Maintenance state is now driven by `maintenance_reason` in `lifecycle_policy_state` and derived by the reconciler; the machine is no longer called. |
 
 ### Hooks
 
