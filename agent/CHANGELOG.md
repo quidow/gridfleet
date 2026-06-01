@@ -2,6 +2,26 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.21.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.20.1...gridfleet-agent-v0.21.0) (2026-06-01)
+
+
+### Features
+
+* **backend:** device state derivation Stage 1 Phase 2 — reconciler becomes authoritative writer ([f91a51d](https://github.com/quidow/gridfleet/commit/f91a51db910b68540a30dc4ee9672a728b45ec88))
+
+
+### Bug Fixes
+
+* **agent:** advertise resolved device serial as grid slot udid ([cf68526](https://github.com/quidow/gridfleet/commit/cf68526ae59cfabc35e82b876100401eda76f687))
+* **agent:** drop hardcoded appium:udid grid-slot rewrite; route on deviceId ([fcc0fab](https://github.com/quidow/gridfleet/commit/fcc0fab828e7b35b0189e3f37584e2f6ebd7f2a5))
+* move appium:udid out of grid slot stereotype; route on deviceId ([4539b8e](https://github.com/quidow/gridfleet/commit/4539b8ea7c6c10877931828e1b27b74f551f89af))
+
+
+### Dependencies
+
+* **deps:** bump pytest-asyncio ([#414](https://github.com/quidow/gridfleet/issues/414)) ([60141aa](https://github.com/quidow/gridfleet/commit/60141aa44a0ad883605693cadcd25546aa251a9a))
+* **deps:** bump ruff in /agent in the python-dependencies group ([#430](https://github.com/quidow/gridfleet/issues/430)) ([8e75c6e](https://github.com/quidow/gridfleet/commit/8e75c6eafd3229d1596983d4ee6e46def0b2b2e6))
+
 ## [0.20.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.20.0...gridfleet-agent-v0.20.1) (2026-05-25)
 
 
