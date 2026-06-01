@@ -621,7 +621,7 @@ class LifecyclePolicyService:
         # before the ``policy_state["stop_pending"]`` path below — that path
         # tracks lifecycle-policy-driven deferrals; this one covers
         # intent-driven deferrals registered by any caller.
-        await reconcile_device(db, device.id)
+        await reconcile_device(db, device.id, publisher=self._publisher)
         current_state = policy_state(device)
 
         # Clear any stale "A client session is still running" suppression recorded by

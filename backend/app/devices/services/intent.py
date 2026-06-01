@@ -130,7 +130,7 @@ class IntentService:
         reason: str,
     ) -> None:
         await self.register_intents(device_id=device_id, intents=intents, reason=reason)
-        await reconcile_device(self._db, device_id)
+        await reconcile_device(self._db, device_id)  # TODO: pass publisher once IntentService is wired with one
 
     async def revoke_intents_and_reconcile(
         self,
@@ -140,4 +140,4 @@ class IntentService:
         reason: str,
     ) -> None:
         await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-        await reconcile_device(self._db, device_id)
+        await reconcile_device(self._db, device_id)  # TODO: pass publisher once IntentService is wired with one

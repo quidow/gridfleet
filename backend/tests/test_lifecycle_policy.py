@@ -1214,10 +1214,12 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
-    # handle_session_finished itself does not touch operational_state —
-    # restoration is the caller's responsibility (covered by the integration
-    # test test_session_sync_restores_busy_after_healthy_drop).
-    assert reloaded.operational_state == DeviceOperationalState.busy
+    # reconcile_device (now called with publisher) derives operational_state
+    # authoritatively. The intent reconciler set desired_state=stopped, so
+    # stop_in_flight is True → offline is the correct derived value here.
+    # Restoration to available/busy is the session_sync caller's responsibility
+    # (covered by test_session_sync_restores_busy_after_healthy_drop).
+    assert reloaded.operational_state == DeviceOperationalState.offline
 
 
 async def test_handle_session_finished_executes_stop_when_unhealthy(
