@@ -132,7 +132,7 @@ class LifecyclePolicyService:
         if (
             node is not None
             and node.observed_running
-            and device.operational_state != DeviceOperationalState.offline
+            and device.operational_state not in (DeviceOperationalState.offline, DeviceOperationalState.verifying)
             and not run_reservation_service.reservation_entry_is_excluded(entry)
         ):
             # Device is already healthy — recovery has nothing to start. Revoke
