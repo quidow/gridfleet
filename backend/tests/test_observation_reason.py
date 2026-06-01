@@ -5,6 +5,11 @@ from app.devices.models import DeviceOperationalState as S
 from app.devices.services.observation_reason import ObservationReason, map_transition_event
 
 
+def test_verification_passed_not_in_enum() -> None:
+    """verification_passed has no DeviceEventType; it must not exist until Task 7 adds one."""
+    assert not hasattr(ObservationReason, "verification_passed")
+
+
 def test_offline_disconnect_maps_to_connectivity_lost() -> None:
     et, sev = map_transition_event(S.available, S.offline, ObservationReason.disconnected)
     assert et is DeviceEventType.connectivity_lost

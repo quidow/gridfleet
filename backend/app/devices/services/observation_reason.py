@@ -15,7 +15,8 @@ class ObservationReason(StrEnum):
     node_crashed = "node_crashed"
     recovered = "recovered"
     verification_started = "verification_started"
-    verification_passed = "verification_passed"
+    # verification_passed is intentionally absent: no DeviceEventType for it yet.
+    # Add back when Task 7 (apply_derived_state) wires verifying→available and a proper event type is defined.
     verification_failed = "verification_failed"
     session = "session"
     session_ended = "session_ended"
@@ -43,7 +44,7 @@ def map_transition_event(
     if to is DeviceOperationalState.busy and reason is ObservationReason.session:
         return DeviceEventType.session_started, "info"
 
-    if frm is DeviceOperationalState.busy and reason is ObservationReason.session_ended:
+    if to is DeviceOperationalState.available and reason is ObservationReason.session_ended:
         return DeviceEventType.session_ended, "info"
 
-    return DeviceEventType.desired_state_changed, "info"
+    return DeviceEventType.desired_state_changed, "info"  # no dedicated event type for verification_started yet
