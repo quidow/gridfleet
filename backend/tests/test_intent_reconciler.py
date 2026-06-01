@@ -541,6 +541,7 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
         await run_device_intent_reconciler_once(
             db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
+    reconcile_expired.assert_not_awaited()
 
 
 async def test_maintenance_signal_suppresses_baseline_idle_injection(
