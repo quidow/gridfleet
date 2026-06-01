@@ -2,9 +2,17 @@
 
 ## Writer model (Phase 2B and later)
 
-`Device.operational_state` and `Device.hold` are **derived** by a single authoritative
-writer: the `device_intent_reconciler` loop
-(`app/devices/services/intent_reconciler.py`).
+`Device.operational_state` and `Device.hold` are **derived** by the
+`device_intent_reconciler` loop (`app/devices/services/intent_reconciler.py`) — the
+authoritative writer for every observation-driven transition and for the normal
+verification pass / update-failure terminals.
+
+The one remaining direct writer is the `verification_execution` job, which still sets the
+transient `verifying` entry state and the (rare) node-cleanup-failure offline terminal via
+`DeviceStateMachine.transition`. That path routes through the sanctioned
+`set_operational_state` setter and cannot be derived: a cleanup failure leaves a *verified*
+device whose facts would otherwise derive back to `available`, so the offline push is
+load-bearing. See *Legacy: DeviceStateMachine* below.
 
 ### Derivation flow
 
@@ -84,7 +92,8 @@ authoritative list of callers.
 
 | Event | Notes |
 |-------|-------|
-| `VERIFICATION_STARTED` / `VERIFICATION_PASSED` / `VERIFICATION_FAILED` | Called from `app/devices/services/verification_execution.py` (4 call sites). |
+| `VERIFICATION_STARTED` | `verification_execution.py` — transient `verifying` entry state when a verification begins. |
+| `VERIFICATION_FAILED` | `verification_execution.py` — node-cleanup-failure terminal only. The normal verification pass and update-mode failure terminals no longer push: `_finalize_success` / `_finalize_failure` set the durable facts (`verified_at` / `review_required`) and call `mark_dirty_and_reconcile` so the reconciler derives `available` / `offline`. |
 
 ### Removed machine events (Phase 2B)
 

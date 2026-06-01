@@ -676,11 +676,6 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
 
     context.keep_running_after_verify = True
     node = SimpleNamespace(port=4723, pid=22)
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.available),
-    )
-    monkeypatch.setattr("app.devices.services.verification_execution.set_operational_state", AsyncMock())
     viability_mock = AsyncMock()
     viability_mock.record_session_viability_result = AsyncMock()
     outcome = await execution._finalize_success(
@@ -694,7 +689,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         node_manager=AsyncMock(),
     )
     assert outcome.status == "completed"
-    execution.set_operational_state.assert_awaited_once()
+    # PASS is reconciler-authoritative now: the revoke (carrying the publisher) is the writer,
+    # not a direct set_operational_state.
+    execution._revoke_verification_node_intent.assert_awaited()
 
     update_device = SimpleNamespace(id=device_id, identity_value="update-device", name="old")
     update_context = PreparedVerificationContext(
