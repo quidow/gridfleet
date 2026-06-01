@@ -25,6 +25,7 @@ from app.devices.services import (
     lifecycle_state_machine_types,
 )
 from app.devices.services import state as device_state
+from app.devices.services.state_derivation import GATING_VIOLATION
 from app.grid.slot_parser import list_slot_sessions
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
@@ -272,6 +273,13 @@ class SessionSyncService:
 
             # Mark device busy under row lock
             locked_device = await device_locking.lock_device(db, device.id)
+            if locked_device.operational_state is not DeviceOperationalState.available:
+                GATING_VIOLATION.labels(kind="session_on_non_available").inc()
+                logger.error(
+                    "gating_violation: session started on device not in available state",
+                    device_id=str(locked_device.id),
+                    operational_state=locked_device.operational_state,
+                )
             await _MACHINE.transition(
                 locked_device,
                 TransitionEvent.SESSION_STARTED,
@@ -524,6 +532,13 @@ class SessionSyncService:
                     sid,
                     exc,
                 )
+        else:
+            GATING_VIOLATION.labels(kind="session_on_non_available").inc()
+            logger.error(
+                "gating_violation: session started on device not in available state",
+                device_id=str(locked_device.id),
+                operational_state=locked_device.operational_state,
+            )
         await intent_service.IntentService(db).register_intents_and_reconcile(
             device_id=locked_device.id,
             intents=[

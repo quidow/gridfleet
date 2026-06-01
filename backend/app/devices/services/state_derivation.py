@@ -31,6 +31,12 @@ SHADOW_STATE_MISMATCH = Counter(
     labelnames=("axis",),  # "operational" | "hold"
 )
 
+GATING_VIOLATION = Counter(
+    "gridfleet_device_state_gating_violation_total",
+    "An allocation landed on a device whose operational state forbade it (invariant breach).",
+    ["kind"],
+)
+
 
 @dataclass(frozen=True)
 class DeviceStateFacts:

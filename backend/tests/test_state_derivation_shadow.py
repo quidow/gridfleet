@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
-from app.devices.services.state_derivation import SHADOW_STATE_MISMATCH, compare_shadow_state
+from app.devices.services.state_derivation import GATING_VIOLATION, SHADOW_STATE_MISMATCH, compare_shadow_state
 from tests.helpers import create_device_record, create_host
 from tests.pack.factories import seed_test_packs
 
@@ -14,6 +14,10 @@ def test_shadow_metric_exists() -> None:
     # Counter with labels for which axis diverged.
     SHADOW_STATE_MISMATCH.labels(axis="operational").inc(0)
     SHADOW_STATE_MISMATCH.labels(axis="hold").inc(0)
+
+
+def test_gating_counter_exists() -> None:
+    GATING_VIOLATION.labels(kind="session_on_non_available").inc(0)
 
 
 @pytest.mark.db
