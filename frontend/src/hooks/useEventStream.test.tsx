@@ -16,7 +16,6 @@ vi.mock('../api/events', () => ({
     { name: 'session.started' },
     { name: 'run.created' },
     { name: 'device.operational_state_changed' },
-    { name: 'device.hold_changed' },
     { name: 'device.health_changed' },
   ]),
 }));

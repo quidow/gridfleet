@@ -9,7 +9,6 @@ import { formatEventDetails } from '../components/notifications/eventRegistry';
 
 const EVENT_QUERY_MAP: Record<string, string[][]> = {
   'device.operational_state_changed': [['devices'], ['device'], ['device-capabilities']],
-  'device.hold_changed': [['devices'], ['device']],
   'device.verification.updated': [['devices'], ['device']],
   'node.state_changed': [['devices'], ['device'], ['device-capabilities']],
   'node.crash': [['devices'], ['device']],
@@ -54,13 +53,6 @@ const TOAST_EVENTS: Record<string, (data: Record<string, unknown>) => ToastResul
       return { type: 'success', message: `${data.device_name} is back online` };
     return null;
   },
-  'device.hold_changed': (data) => {
-    if (data.new_hold === 'maintenance')
-      return { type: 'warning', message: `${data.device_name} entered maintenance` };
-    if (data.old_hold === 'maintenance' && data.new_hold === null)
-      return { type: 'success', message: `${data.device_name} exited maintenance` };
-    return null;
-  },
   'node.crash': (data) => ({
     type: 'error',
     message: `Node crashed for ${data.device_name}: ${data.error}`,
@@ -98,7 +90,6 @@ const DEFAULT_TOAST_EVENTS = [
   'node.crash',
   'host.heartbeat_lost',
   'device.operational_state_changed',
-  'device.hold_changed',
   'run.expired',
 ];
 const DEFAULT_TOAST_DISMISS_SEC = 5;
