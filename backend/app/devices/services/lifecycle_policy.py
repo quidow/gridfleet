@@ -510,11 +510,27 @@ class LifecyclePolicyService:
             ):
                 with attempt:
                     reloaded = await _reload_device(db, device)
-                    last_result = await self._viability.run_session_viability_probe(
-                        db,
-                        reloaded,
-                        checked_by=SessionViabilityCheckedBy.recovery,
-                    )
+                    try:
+                        last_result = await self._viability.run_session_viability_probe(
+                            db,
+                            reloaded,
+                            checked_by=SessionViabilityCheckedBy.recovery,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — a probe error must not crash the recovery job
+                        # Fold an unexpected probe error (transient "already in
+                        # progress" race, concurrent state change, etc.) into a failed
+                        # result so the retry loop re-probes and, if it persists, the
+                        # caller's failure terminal applies backoff and schedules a later
+                        # retry — rather than propagating out of attempt_auto_recovery and
+                        # stranding the device until the verification lease's expires_at
+                        # safety net fires.
+                        logger.warning(
+                            "Recovery viability probe for device %s raised %s; treating as a failed attempt",
+                            device.id,
+                            type(exc).__name__,
+                            exc_info=True,
+                        )
+                        last_result = {"status": "failed", "error": str(exc)}
                 if attempt.retry_state.outcome is not None and not attempt.retry_state.outcome.failed:
                     attempt.retry_state.set_result(last_result)
         except RetryError:

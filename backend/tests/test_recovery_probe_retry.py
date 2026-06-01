@@ -89,6 +89,36 @@ async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
+async def test_recovery_probe_treats_unexpected_exception_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected probe error must not propagate out of ``_run_recovery_probe``.
+
+    The gate ``ValueError`` is gone (verifying is admitted), but other errors — a
+    transient "already in progress" race, a concurrent state change, an unexpected
+    bug — could still escape and crash the whole ``device_recovery`` job, leaving the
+    device stranded in ``verifying`` until the lease's ``expires_at`` fires. Fold the
+    error into a failed result so the retry loop re-probes and the caller's failure
+    terminal applies backoff instead.
+    """
+    from app.devices.services import lifecycle_policy
+
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
+
+    probe_mock = AsyncMock(side_effect=RuntimeError("grid exploded"))
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
+
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        result = await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
+
+    assert result["status"] == "failed"
+    assert "grid exploded" in result["error"]
+    # Folded into a failed result, so the existing retry loop re-probes it.
+    assert probe_mock.await_count == lifecycle_policy.RECOVERY_PROBE_ATTEMPTS
+
+
+@pytest.mark.asyncio
 async def test_recovery_probe_uses_viability_service() -> None:
     """The recovery probe must call self._viability.run_session_viability_probe
     without forwarding publisher (which is stored on the service itself).
