@@ -1138,6 +1138,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )

@@ -21,9 +21,6 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import legacy_label_for_audit
 from app.hosts.models import Host, HostStatus
@@ -49,7 +46,6 @@ CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -556,11 +552,8 @@ class ConnectivityService:
                             locked_device.operational_state == DeviceOperationalState.busy
                             or locked_device.hold is not None
                         ):
-                            await _MACHINE.transition(
-                                locked_device,
-                                TransitionEvent.CONNECTIVITY_LOST,
-                                reason="Device disconnected",
-                                publisher=self._publisher,
+                            await IntentService(db).mark_dirty_and_reconcile(
+                                locked_device.id, reason="Device disconnected"
                             )
                             await self._lifecycle_policy.note_connectivity_loss(
                                 db, locked_device, reason="Device disconnected"
@@ -584,12 +577,7 @@ class ConnectivityService:
                     await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
                     if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
-                        await _MACHINE.transition(
-                            locked_device,
-                            TransitionEvent.CONNECTIVITY_LOST,
-                            reason="Device disconnected",
-                            publisher=self._publisher,
-                        )
+                        await IntentService(db).mark_dirty_and_reconcile(locked_device.id, reason="Device disconnected")
                         await self._lifecycle_policy.note_connectivity_loss(
                             db, locked_device, reason="Device disconnected"
                         )

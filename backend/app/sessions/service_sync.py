@@ -11,7 +11,6 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.core.errors import InvalidTransitionError
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
@@ -20,11 +19,7 @@ from app.devices.services import intent as intent_service
 from app.devices.services import (
     intent_types,
     lifecycle_policy,
-    lifecycle_state_machine,
-    lifecycle_state_machine_hooks,
-    lifecycle_state_machine_types,
 )
-from app.devices.services import state as device_state
 from app.devices.services.state_derivation import GATING_VIOLATION
 from app.grid.slot_parser import list_slot_sessions
 from app.runs import service as run_service
@@ -44,16 +39,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
-ready_operational_state = device_state.ready_operational_state
-DeviceStateMachine = lifecycle_state_machine.DeviceStateMachine
-EventLogHook = lifecycle_state_machine_hooks.EventLogHook
-IncidentHook = lifecycle_state_machine_hooks.IncidentHook
+
 IntentRegistration = intent_types.IntentRegistration
 NODE_PROCESS = intent_types.NODE_PROCESS
 PRIORITY_ACTIVE_SESSION = intent_types.PRIORITY_ACTIVE_SESSION
-RunExclusionHook = lifecycle_state_machine_hooks.RunExclusionHook
-TransitionEvent = lifecycle_state_machine_types.TransitionEvent
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_session_sync_wake_source",
@@ -280,12 +269,8 @@ class SessionSyncService:
                     device_id=str(locked_device.id),
                     operational_state=locked_device.operational_state,
                 )
-            await _MACHINE.transition(
-                locked_device,
-                TransitionEvent.SESSION_STARTED,
-                suppress_events=True,
-                publisher=self._publisher,
-            )
+            # No explicit SESSION_STARTED transition: register_intents_and_reconcile
+            # calls reconcile_device which derives busy (has_running_session=True).
             await intent_service.IntentService(db).register_intents_and_reconcile(
                 device_id=locked_device.id,
                 intents=[
@@ -348,6 +333,7 @@ class SessionSyncService:
                         device_id=ended_session.device_id,
                         sources=[f"active_session:{sid}"],
                         reason=f"Session {sid} ended",
+                        publisher=self._publisher,
                     )
                 logger.info("Session %s ended", sid)
                 if ended_session.device_id is not None:
@@ -378,18 +364,11 @@ class SessionSyncService:
                 # and the locked check inside the helper; leave the device busy
                 # so the new session keeps it.
                 continue
-            if device.operational_state != DeviceOperationalState.busy:
-                continue
-            locked_device = await device_locking.lock_device(db, device.id)
-            if locked_device.operational_state != DeviceOperationalState.busy:
-                continue
             # Authoritative recheck under the row lock. ``handle_session_finished``
-            # only does the locked running-session check when ``stop_pending`` is
-            # set; in the common no-deferred-stop path it returns NO_PENDING
-            # without ever consulting the Session table under lock, so a fresh
-            # session inserted between the outer ``still_running`` check and
-            # this restore could be skipped past. Re-check here so we never
-            # restore a device that now hosts a new running session.
+            # (reconciler path) may have already derived the correct state; but a
+            # fresh session inserted between handle_session_finished and this lock
+            # must override that derivation. Always recheck under lock.
+            locked_device = await device_locking.lock_device(db, device.id)
             fresh_running_stmt = select(Session.id).where(
                 Session.device_id == locked_device.id,
                 Session.status == SessionStatus.running,
@@ -397,23 +376,17 @@ class SessionSyncService:
             )
             fresh_running = (await db.execute(fresh_running_stmt)).first()
             if fresh_running is None:
-                target = await ready_operational_state(db, locked_device)
-                if target == DeviceOperationalState.available:
-                    await _MACHINE.transition(
-                        locked_device,
-                        TransitionEvent.SESSION_ENDED,
-                        reason="Session ended",
-                        publisher=self._publisher,
-                    )
-                else:
-                    # Probe failed during the session — auto-stop the device.
-                    # AUTO_STOP_EXECUTED is the modeled busy->offline path.
-                    await _MACHINE.transition(
-                        locked_device,
-                        TransitionEvent.AUTO_STOP_EXECUTED,
-                        reason="Session ended on unhealthy device",
-                        publisher=self._publisher,
-                    )
+                # Mark dirty: the reconciler derives available or offline from
+                # durable facts (no running session + readiness + stop_in_flight).
+                await intent_service.IntentService(db).mark_dirty_and_reconcile(
+                    locked_device.id, reason="Session ended", publisher=self._publisher
+                )
+            else:
+                # Fresh session exists → device must be busy. If reconcile inside
+                # handle_session_finished set available, fix it back to busy.
+                await intent_service.IntentService(db).mark_dirty_and_reconcile(
+                    locked_device.id, reason="Fresh session started", publisher=self._publisher
+                )
 
         await self._sweep_stale_stop_pending(db)
         await db.commit()
@@ -513,32 +486,15 @@ class SessionSyncService:
             reservation_run_id = reservation_run.id
             session.run_id = reservation_run_id
 
-        if locked_device.operational_state == DeviceOperationalState.available:
-            # Belt-and-braces against re-entry: the row lock fences out other
-            # writers within this transaction, but a state-machine guard means
-            # we still log instead of crashing if the device somehow already
-            # left ``available`` between the read above and the transition.
-            try:
-                await _MACHINE.transition(
-                    locked_device,
-                    TransitionEvent.SESSION_STARTED,
-                    suppress_events=True,
-                    publisher=self._publisher,
-                )
-            except InvalidTransitionError as exc:
-                logger.warning(
-                    "Skipping SESSION_STARTED on device %s during hydration of %s: %s",
-                    locked_device.id,
-                    sid,
-                    exc,
-                )
-        else:
+        if locked_device.operational_state != DeviceOperationalState.available:
             GATING_VIOLATION.labels(kind="session_on_non_available").inc()
             logger.error(
                 "gating_violation: session started on device not in available state",
                 device_id=str(locked_device.id),
                 operational_state=locked_device.operational_state,
             )
+        # No explicit SESSION_STARTED transition: register_intents_and_reconcile
+        # calls reconcile_device which derives busy (has_running_session=True).
         await intent_service.IntentService(db).register_intents_and_reconcile(
             device_id=locked_device.id,
             intents=[

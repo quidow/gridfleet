@@ -49,14 +49,14 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher,
+    publisher: EventPublisher | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.operational_state
     if old == new_state:
         return False
     device.operational_state = new_state
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -82,14 +82,14 @@ async def set_hold(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher,
+    publisher: EventPublisher | None = None,
 ) -> bool:
     session = _persistent_session(device)
     old = device.hold
     if old == new_hold:
         return False
     device.hold = new_hold
-    if publish_event:
+    if publish_event and publisher is not None:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,

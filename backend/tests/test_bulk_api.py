@@ -129,7 +129,9 @@ async def test_bulk_exit_maintenance(client: AsyncClient, db_session: AsyncSessi
 
     for device_id in ids:
         r = await client.get(f"/api/devices/{device_id}")
-        assert r.json()["operational_state"] == "offline"
+        # After Task 10: exit_maintenance registers a verification intent, so
+        # the reconciler may derive verifying or offline (if pack not loaded).
+        assert r.json()["operational_state"] in ("offline", "verifying")
 
 
 async def test_bulk_exit_maintenance_not_in_maintenance(

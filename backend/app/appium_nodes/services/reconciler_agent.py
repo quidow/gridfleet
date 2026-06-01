@@ -48,12 +48,10 @@ from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
+from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
 )
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import DeviceStateModel, TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
@@ -84,8 +82,6 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 logger = logging.getLogger(__name__)
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 RESTART_BACKOFF_BASE = 2
 
@@ -259,24 +255,11 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
     assert node is not None
     node.pid = None
     node.active_connection_target = None
-    # Route through the state machine so AUTO_STOP_EXECUTED records the
-    # ``auto_stopped`` DeviceEvent and idempotent self-loops (already-offline)
-    # produce no spurious ``device.operational_state_changed`` event. The
-    # previous direct ``set_operational_state(offline)`` write bypassed the
-    # machine, fired an event on every node-stop regardless of prior state,
-    # and skipped audit-log rows.
-    # Skip the operational-axis transition when the current state does not
-    # accept AUTO_STOP_EXECUTED (e.g. ``verifying`` — verification flow owns
-    # its own terminal transition via VERIFICATION_PASSED/FAILED). The
-    # observation columns above still get cleared so the convergence loop
-    # can drop a stale ``running`` flag without leaving the row wedged.
-    if _MACHINE.is_valid(DeviceStateModel.from_device(device), TransitionEvent.AUTO_STOP_EXECUTED):
-        await _MACHINE.transition(
-            device,
-            TransitionEvent.AUTO_STOP_EXECUTED,
-            reason="Node stopped",
-            publisher=publisher,
-        )
+    # Mark dirty so the reconciler derives the correct operational state
+    # (offline when the node stops, unless a running session holds it busy).
+    # Skip the write-through state machine that used to route AUTO_STOP_EXECUTED
+    # here: the reconciler's apply_derived_state is now authoritative.
+    await IntentService(db).mark_dirty_and_reconcile(device.id, reason="Node stopped")
     await DeviceHealthService(publisher=publisher).apply_node_state_transition(
         db,
         device,

@@ -160,11 +160,12 @@ async def apply_derived_state(
     device: Device,
     *,
     now: datetime,
-    publisher: EventPublisher,
+    publisher: EventPublisher | None = None,
 ) -> bool:
     """Derive (operational_state, hold) and write them when they differ from the persisted columns.
 
-    Emits the mapped event for each axis that changes. Returns True if either axis was written.
+    Emits the mapped event for each axis that changes when publisher is provided.
+    Returns True if either axis was written.
     This is the authoritative replacement for ``compare_shadow_state`` (which logs only).
     """
     facts = await gather_device_state_facts(db, device, now=now)

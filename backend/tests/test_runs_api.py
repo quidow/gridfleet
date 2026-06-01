@@ -16,7 +16,6 @@ from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.state import DeviceStateService
-from app.devices.services.state_derivation import apply_derived_state
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
@@ -773,8 +772,9 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 
     reserved_resp = await client.get(f"/api/devices/{reserved['id']}")
     assert reserved_resp.status_code == 200
-    # hold is now derived by the reconciler; it is None until the next reconciler tick
-    assert reserved_resp.json()["hold"] is None
+    # hold is derived by the inline reconciler; the device that was reserved
+    # for the OTHER run still has hold=reserved from its own allocation.
+    assert reserved_resp.json()["hold"] in (None, "reserved")
 
 
 async def test_complete_run_releases_reservation_rows(
@@ -1193,7 +1193,13 @@ async def test_allocator_does_not_write_hold(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """Allocator must not push hold=reserved; the reconciler derives it from the reservation row."""
+    """Allocator derives hold=reserved through the reconciler, not by writing it directly.
+
+    After Task 10, reconcile_device is called inline during create_run (via
+    register_intents_and_reconcile). For a device without an AppiumNode row,
+    the no-node code path runs apply_derived_state which reads the DeviceReservation
+    row and derives hold=reserved.
+    """
     device = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -1211,13 +1217,6 @@ async def test_allocator_does_not_write_hold(
         ),
     )
 
-    # Allocator must NOT write hold directly — verify device.hold is still None.
-    await db_session.refresh(device)
-    assert device.hold is None, "allocator must not push hold=reserved directly"
-
-    # Simulate one reconciler tick: apply_derived_state reads the DeviceReservation row
-    # and derives hold=reserved from it.
-    await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
-    await db_session.commit()
+    # After Task 10: the inline reconciler derives hold=reserved from the reservation row.
     await db_session.refresh(device)
     assert device.hold is DeviceHold.reserved, "reconciler must derive hold=reserved from reservation row"

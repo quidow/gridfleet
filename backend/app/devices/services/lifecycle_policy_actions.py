@@ -28,15 +28,10 @@ from app.devices.services.lifecycle_policy_state import (
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.events import queue_device_crashed_event
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.models import Session, SessionStatus
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 if TYPE_CHECKING:
     import uuid
@@ -132,12 +127,6 @@ class LifecyclePolicyActionsService:
                 )
 
         if node is not None and node.observed_running:
-            await _MACHINE.transition(
-                device,
-                TransitionEvent.AUTO_STOP_EXECUTED,
-                reason=f"Node crash recorded ({source}): {reason}",
-                publisher=self._publisher,
-            )
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,
                 intents=_crash_intents(device, source=source, reason=reason),
@@ -145,17 +134,19 @@ class LifecyclePolicyActionsService:
             )
             await db.commit()
         else:
-            await _MACHINE.transition(
-                device,
-                TransitionEvent.AUTO_STOP_EXECUTED,
-                reason=f"Node crash recorded ({source}): {reason}",
-                publisher=self._publisher,
-            )
             if node is not None:
                 await IntentService(db).register_intents_and_reconcile(
                     device_id=device.id,
                     intents=_crash_intents(device, source=source, reason=reason),
                     reason=reason,
+                )
+            else:
+                # No node row — mark device_checks_healthy=False so the reconciler
+                # derives offline (device_allows_allocation=False → ready=False).
+                device.device_checks_healthy = False
+                device.device_checks_summary = reason
+                await IntentService(db).mark_dirty_and_reconcile(
+                    device.id, reason=f"Node crash recorded ({source}): {reason}"
                 )
             await db.commit()
 
@@ -242,6 +233,7 @@ class LifecyclePolicyActionsService:
                 device_id=device.id,
                 sources=[f"health_failure:reservation:{device.id}"],
                 reason=reason,
+                publisher=self._publisher,
             )
             await IntentService(db).register_intents_and_reconcile(
                 device_id=device.id,

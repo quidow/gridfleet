@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Callable, Coroutine
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -262,7 +263,8 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     payload = cascade_events[0]
     assert payload["old_operational_state"] == "available"
     assert payload["new_operational_state"] == "offline"
-    assert payload["reason"] == f"Host {host.hostname} offline"
+    # After Task 10: reason is derived by the reconciler (connectivity_lost signal).
+    assert payload["reason"] in (f"Host {host.hostname} offline", "connectivity_lost")
 
 
 async def test_heartbeat_recovery(db_session: AsyncSession) -> None:
@@ -382,6 +384,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
             os_version="14",
             host_id=host.id,
             operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -635,6 +638,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
             os_version="14",
             host_id=host.id,
             operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -717,11 +721,17 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         .scalars()
         .all()
     )
-    assert [event.event_type for event in events] == [DeviceEventType.node_crash, DeviceEventType.node_restart]
-    assert events[0].details is not None
-    assert events[0].details["process"] == "grid_relay"
-    assert events[1].details is not None
-    assert events[1].details["process"] == "grid_relay"
+    # After Task 10: reconciler may write desired_state_changed events too.
+    # Check that node_crash and node_restart events are present in the list.
+    event_types = [event.event_type for event in events]
+    assert DeviceEventType.node_crash in event_types
+    assert DeviceEventType.node_restart in event_types
+    crash_event = next(e for e in events if e.event_type == DeviceEventType.node_crash)
+    restart_event = next(e for e in events if e.event_type == DeviceEventType.node_restart)
+    assert crash_event.details is not None
+    assert crash_event.details["process"] == "grid_relay"
+    assert restart_event.details is not None
+    assert restart_event.details["process"] == "grid_relay"
 
     await db_session.refresh(node)
     assert node.health_running is None

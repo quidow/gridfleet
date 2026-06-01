@@ -1145,7 +1145,8 @@ async def test_exit_device_maintenance(client: AsyncClient, db_session: AsyncSes
 
     exit_resp = await client.post(f"/api/devices/{device_id}/maintenance/exit")
     assert exit_resp.status_code == 200
-    assert exit_resp.json()["operational_state"] == "offline"
+    # After Task 10: exit_maintenance registers a verification intent → verifying or offline
+    assert exit_resp.json()["operational_state"] in ("offline", "verifying")
 
 
 @pytest.mark.asyncio

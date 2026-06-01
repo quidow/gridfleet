@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services.intent_types import IntentRegistration
+    from app.events.protocols import EventPublisher
 
 
 class IntentService:
@@ -122,6 +123,31 @@ class IntentService:
         )
         return int((await self._db.execute(stmt)).scalar_one())
 
+    async def mark_dirty_and_reconcile(
+        self,
+        device_id: UUID,
+        *,
+        reason: str,
+        publisher: EventPublisher | None = None,
+    ) -> None:
+        """Mark device dirty and immediately reconcile.
+
+        Use for observation paths that need the derived state to be written
+        inline (e.g. session-end, health-check write) rather than deferred to
+        the next background reconciler tick.
+
+        Flushes pending session changes to the DB buffer first so the inline
+        reconciler sees the updated observation columns (e.g. device_checks_healthy)
+        instead of the stale DB snapshot that would otherwise be returned by the
+        lock_device(populate_existing=True) re-read inside reconcile_device.
+
+        Pass ``publisher`` to emit ``operational_state_changed`` / ``hold_changed``
+        events inline; omit it (or pass None) to write state silently.
+        """
+        await self._db.flush()
+        await self.mark_dirty(device_id, reason=reason)
+        await reconcile_device(self._db, device_id, publisher=publisher)
+
     async def register_intents_and_reconcile(
         self,
         *,
@@ -138,6 +164,7 @@ class IntentService:
         device_id: UUID,
         sources: list[str],
         reason: str,
+        publisher: EventPublisher | None = None,
     ) -> None:
         await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-        await reconcile_device(self._db, device_id)  # TODO: pass publisher once IntentService is wired with one
+        await reconcile_device(self._db, device_id, publisher=publisher)

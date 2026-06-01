@@ -11,7 +11,7 @@ from app.appium_nodes.dependencies import get_appium_node_services
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.database import get_db
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
@@ -219,7 +219,9 @@ async def test_start_node_locks_device_before_reservation_check(
             "the reservation check is racing the node-start window."
         )
 
+    # After Task 10: reconciler derives state; after node start, device may be
+    # offline (node desired_state=running but pid not yet set → not running yet).
     assert device_row.operational_state in {
         DeviceOperationalState.available,
-        DeviceHold.reserved,
+        DeviceOperationalState.offline,
     }, f"unexpected final status {device_row.operational_state}"

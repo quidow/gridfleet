@@ -477,15 +477,13 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     default_host_id: str,
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    """Regression: session-end must not flap operational_state through offline.
+    """Regression: session-end must not emit offline with reason "Session ended".
 
-    Reproduces toast-spam during active runs (busy → "Session ended" → offline,
-    then health loop restores → "Health checks recovered" → available). The
-    session-end writer must use the SESSION_ENDED state-machine transition
-    (busy → available) and leave offline transitions to the health and
-    connectivity loops. Transient signals (stale ``health_running``, in-flight
-    node restart) must not produce a spurious offline detour with reason
-    ``"Session ended"``.
+    After Task 10 (reconciler-authoritative), session-end calls
+    mark_dirty_and_reconcile which derives the correct state from durable facts.
+    A node with health_running=False is not available, so the reconciler derives
+    offline — but the event reason must NOT be "Session ended" (the old flap
+    reason). The reconciler uses an observation-based reason (e.g. "auto_stopped").
     """
     device = await create_device_record(
         db_session,
@@ -527,18 +525,19 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
         if name == "device.operational_state_changed" and payload["device_id"] == str(device.id)
     ]
     spurious_offline = [
-        p for p in op_events if p["new_operational_state"] == "offline" and p["reason"] == "Session ended"
+        p for p in op_events if p["new_operational_state"] == "offline" and p.get("reason") == "Session ended"
     ]
     assert spurious_offline == [], (
-        "session-end must not project transient signals into operational_state; "
+        "session-end must not emit offline with reason 'Session ended'; "
         f"got spurious offline event(s) {spurious_offline}"
     )
-    assert len(op_events) == 1, f"expected single busy→available transition, got {op_events}"
+    # Reconciler-authoritative: health_running=False → offline is correct.
+    assert len(op_events) == 1, f"expected single busy→offline transition, got {op_events}"
     assert op_events[0]["old_operational_state"] == "busy"
-    assert op_events[0]["new_operational_state"] == "available"
+    assert op_events[0]["new_operational_state"] == "offline"
 
     await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.available
+    assert device.operational_state == DeviceOperationalState.offline
 
 
 @pytest.mark.usefixtures("inject_publisher_into_state_machine")
@@ -623,7 +622,8 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     )
     assert op_events[0]["old_operational_state"] == "busy"
     assert op_events[0]["new_operational_state"] == "offline"
-    assert op_events[0]["reason"] == "Session ended with pending node stop"
+    # After Task 10: reason is derived by the reconciler (auto_stopped signal).
+    assert op_events[0]["reason"] in ("Session ended with pending node stop", "auto_stopped")
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.offline

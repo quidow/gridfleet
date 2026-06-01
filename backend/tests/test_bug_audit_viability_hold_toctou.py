@@ -24,8 +24,6 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceHold, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.sessions import service_viability
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
@@ -75,14 +73,6 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     # at viability.py:383 does not trigger lazy IO in the async context.
     device = await device_locking.lock_device(db_session, device.id)
 
-    transitions_fired: list[TransitionEvent] = []
-    original_transition = service_viability._MACHINE.transition
-
-    async def _spy_transition(target_device: Device, event: TransitionEvent, **kwargs: object) -> bool:
-        transitions_fired.append(event)
-        result: bool = await original_transition(target_device, event, **kwargs)  # type: ignore[arg-type]
-        return result
-
     original_lock = device_locking.lock_device
 
     async def _flip_hold_then_lock(db: object, did: uuid.UUID, **kwargs: object) -> Device:
@@ -108,8 +98,9 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         health=AsyncMock(),
     )
 
+    # After Task 10: the probe no longer fires SESSION_STARTED via _MACHINE.
+    # It only re-checks hold under the lock and raises ValueError if changed.
     with (
-        patch.object(service_viability._MACHINE, "transition", side_effect=_spy_transition),
         patch.object(device_locking, "lock_device", side_effect=_flip_hold_then_lock),
         patch.object(svc, "probe_session_via_grid", probe_mock),
         pytest.raises(ValueError, match="state changed concurrently"),
@@ -119,11 +110,6 @@ async def test_viability_probe_runs_on_maintenance_held_device(
             device,
             checked_by=SessionViabilityCheckedBy.manual,
         )
-
     # Fixed behavior: the probe re-checks hold under the lock and raises
-    # ValueError before transitioning to busy. Buggy behavior was firing
-    # SESSION_STARTED despite the maintenance hold.
-    assert TransitionEvent.SESSION_STARTED not in transitions_fired, (
-        "Probe transitioned device to busy even though hold flipped to maintenance "
-        "between the unlocked pre-flight check and the FOR UPDATE re-lock"
-    )
+    # ValueError before any state transition. No SESSION_STARTED is fired
+    # because Task 10 removed the _MACHINE.transition call entirely.

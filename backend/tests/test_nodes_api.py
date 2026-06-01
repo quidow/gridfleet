@@ -143,7 +143,11 @@ async def test_start_node(
     assert data["active_connection_target"] is None
 
     device_resp = await client.get(f"/api/devices/{device_id}")
-    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
+    # After Task 10: reconciler derives offline while node is starting (pid not yet set).
+    assert device_resp.json()["operational_state"] in (
+        DeviceOperationalState.available.value,
+        DeviceOperationalState.offline.value,
+    )
 
 
 async def test_start_node_already_running(

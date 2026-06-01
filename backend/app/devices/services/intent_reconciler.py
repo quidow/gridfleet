@@ -35,7 +35,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.state_derivation import apply_derived_state, compare_shadow_state
+from app.devices.services.state_derivation import apply_derived_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -300,6 +300,13 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID, *, publisher:
     device = await device_locking.lock_device(db, device_id)
     node = device.appium_node
     if node is None:
+        # No Appium node — skip intent evaluation but still derive device state
+        # so operational_state / hold stay consistent with durable facts.
+        try:
+            now = datetime.now(UTC)
+            await apply_derived_state(db, device, now=now, publisher=publisher)
+        except Exception:  # noqa: BLE001 - state derivation must never break reconcile
+            logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return
 
     now = datetime.now(UTC)
@@ -443,10 +450,7 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID, *, publisher:
     await db.flush()
 
     try:
-        if publisher is not None:
-            await apply_derived_state(db, device, now=now, publisher=publisher)
-        else:
-            await compare_shadow_state(db, device, now=now)
+        await apply_derived_state(db, device, now=now, publisher=publisher)
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 

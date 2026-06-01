@@ -134,7 +134,14 @@ async def test_failed_health_signal_marks_offline(db_with_device: tuple[AsyncSes
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_healthy_signal_does_not_restore_busy_device(db_with_device: tuple[AsyncSession, Device]) -> None:
+async def test_healthy_signal_does_not_change_busy_device(
+    db_with_device: tuple[AsyncSession, Device],
+) -> None:
+    """After Task 10: a healthy device_checks signal does NOT immediately reconcile
+    (to avoid prematurely restoring offline devices without a running node).
+    A busy device without a running session stays busy after update_device_checks.
+    The background reconciler will eventually correct it on the next cycle.
+    """
     db, device = db_with_device
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.busy
@@ -142,6 +149,7 @@ async def test_healthy_signal_does_not_restore_busy_device(db_with_device: tuple
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="ok")
     await db.commit()
     await db.refresh(device)
+    # Healthy signal on busy: state unchanged (no immediate reconcile on success path).
     assert device.operational_state == DeviceOperationalState.busy
 
 
@@ -231,9 +239,14 @@ async def test_health_changed_event_dropped_on_rollback(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_apply_node_state_transition_skips_offline_when_mark_offline_false(
+async def test_apply_node_state_transition_mark_offline_false_preserves_hysteresis(
     db_with_device: tuple[AsyncSession, Device],
 ) -> None:
+    """After Task 10: apply_node_state_transition with mark_offline=False and
+    health_running=False does NOT immediately reconcile (hysteresis). The device
+    stays in its current state; below-threshold failures are deferred to the
+    background reconciler.
+    """
     db, device = db_with_device
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available
@@ -260,8 +273,10 @@ async def test_apply_node_state_transition_skips_offline_when_mark_offline_false
     )
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
+    # mark_offline=False with health_running=False: no immediate reconcile (hysteresis).
+    # Device stays available; the background reconciler will eventually apply the signal.
     assert device.operational_state == DeviceOperationalState.available
-    assert device.appium_node.observed_running is True
+    assert device.appium_node.observed_running is True  # pid/connection_target still set
     assert device.appium_node.health_state == "error"
 
 
@@ -333,7 +348,8 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     assert device.appium_node.observed_running
 
 
-async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When lock_device raises NoResultFound, all health update methods must return early."""
     db = object()
     device = SimpleNamespace(id=__import__("uuid").uuid4())
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
@@ -344,15 +360,3 @@ async def test_device_health_missing_lock_and_restore_guard_branches(monkeypatch
     await _health.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]
     await _health.apply_node_state_transition(db, device)  # type: ignore[arg-type]
     await _health.update_emulator_state(db, device, "booted")  # type: ignore[arg-type]
-
-    locked = SimpleNamespace(
-        operational_state=DeviceOperationalState.offline,
-        appium_node=SimpleNamespace(pid=1, active_connection_target="dev", health_running=True),
-    )
-    monkeypatch.setattr(svc, "is_ready_for_use_async", AsyncMock(return_value=False))
-    transition = AsyncMock(return_value=False)
-    monkeypatch.setattr(svc._MACHINE, "transition", transition)
-
-    await svc._restore_available_for_healthy_signal(db, locked, event_bus)  # type: ignore[arg-type]
-
-    transition.assert_not_awaited()
