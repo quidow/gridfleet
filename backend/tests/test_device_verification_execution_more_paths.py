@@ -7,11 +7,11 @@ import pytest
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices.models import ConnectionType, DeviceType
-from app.devices.services import verification_execution as execution
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.verification_execution import VerificationExecutionService
+from app.verification.services import execution as execution
+from app.verification.services.execution import VerificationExecutionService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -230,7 +230,7 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     state still emits ``operational_state_changed``.
     """
     from app.devices.models import DeviceOperationalState
-    from app.devices.services.verification_preparation import PreparedVerificationContext
+    from app.verification.services.preparation import PreparedVerificationContext
 
     db = AsyncMock()
     device_id = uuid.uuid4()

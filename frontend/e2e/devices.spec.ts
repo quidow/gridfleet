@@ -1186,7 +1186,7 @@ test.describe('Devices page', () => {
       });
     });
 
-    await page.route('**/api/devices/verification-jobs', async (route) => {
+    await page.route('**/api/verification/jobs', async (route) => {
       if (route.request().method() !== 'POST') {
         await route.fallback();
         return;
@@ -1845,14 +1845,14 @@ test.describe('Devices page', () => {
   test('add flow shows verification failure and preserves form values', async ({ page }) => {
     const mockApi = await mockAddDeviceVerificationSurface(page);
 
-    await page.route('**/api/devices/verification-jobs', async (route) => {
+    await page.route('**/api/verification/jobs', async (route) => {
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
         body: JSON.stringify(verificationJob('job-failure')),
       });
     });
-    await page.route('**/api/devices/verification-jobs/job-failure/events', async (route) => {
+    await page.route('**/api/verification/jobs/job-failure/events', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
@@ -1895,14 +1895,14 @@ test.describe('Devices page', () => {
   test('add flow closes on successful verification and refreshes the list', async ({ page }) => {
     const mockApi = await mockAddDeviceVerificationSurface(page);
 
-    await page.route('**/api/devices/verification-jobs', async (route) => {
+    await page.route('**/api/verification/jobs', async (route) => {
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
         body: JSON.stringify(verificationJob('job-success')),
       });
     });
-    await page.route('**/api/devices/verification-jobs/job-success/events', async (route) => {
+    await page.route('**/api/verification/jobs/job-success/events', async (route) => {
       mockApi.setDevices([
         {
           id: 'device-success',
@@ -2010,14 +2010,14 @@ test.describe('Devices page', () => {
       },
     ]);
 
-    await page.route('**/api/devices/device-edit-success/verification-jobs', async (route) => {
+    await page.route('**/api/verification/devices/device-edit-success/jobs', async (route) => {
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
         body: JSON.stringify(verificationJob('job-edit-success')),
       });
     });
-    await page.route('**/api/devices/verification-jobs/job-edit-success/events', async (route) => {
+    await page.route('**/api/verification/jobs/job-edit-success/events', async (route) => {
       mockApi.setDevices([
         {
           id: 'device-edit-success',
@@ -2127,14 +2127,14 @@ test.describe('Devices page', () => {
       },
     ]);
 
-    await page.route('**/api/devices/device-edit-failure/verification-jobs', async (route) => {
+    await page.route('**/api/verification/devices/device-edit-failure/jobs', async (route) => {
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
         body: JSON.stringify(verificationJob('job-edit-failure')),
       });
     });
-    await page.route('**/api/devices/verification-jobs/job-edit-failure/events', async (route) => {
+    await page.route('**/api/verification/jobs/job-edit-failure/events', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream',

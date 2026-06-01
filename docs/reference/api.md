@@ -43,10 +43,10 @@ Current auth behavior:
 | `GET` | `/api/devices/{device_id}` | Get full device detail | path `device_id` | `DeviceDetail` |
 | `PATCH` | `/api/devices/{device_id}` | Apply generic device edits | `DevicePatch` | `DeviceRead` |
 | `DELETE` | `/api/devices/{device_id}` | Delete a device | path `device_id` | empty `204` |
-| `POST` | `/api/devices/verification-jobs` | Start add-device verification | `DeviceVerificationCreate` | `DeviceVerificationJobRead` (`202`) |
-| `POST` | `/api/devices/{device_id}/verification-jobs` | Start re-verification for an existing device | `DeviceVerificationUpdate` | `DeviceVerificationJobRead` (`202`) |
-| `GET` | `/api/devices/verification-jobs/{job_id}` | Read verification job state | path `job_id` | `DeviceVerificationJobRead` |
-| `GET` | `/api/devices/verification-jobs/{job_id}/events` | Subscribe to verification job SSE updates | path `job_id` | SSE stream |
+| `POST` | `/api/verification/jobs` | Start add-device verification | `DeviceVerificationCreate` | `DeviceVerificationJobRead` (`202`) |
+| `POST` | `/api/verification/devices/{device_id}/jobs` | Start re-verification for an existing device | `DeviceVerificationUpdate` | `DeviceVerificationJobRead` (`202`) |
+| `GET` | `/api/verification/jobs/{job_id}` | Read verification job state | path `job_id` | `DeviceVerificationJobRead` |
+| `GET` | `/api/verification/jobs/{job_id}/events` | Subscribe to verification job SSE updates | path `job_id` | SSE stream |
 | `GET` | `/api/devices/{device_id}/capabilities` | Read generated Appium capabilities | path `device_id` | object of Appium capabilities |
 | `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance (stops the node immediately) | `DeviceMaintenanceUpdate` | `DeviceRead` |
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |

@@ -10,9 +10,9 @@ Tests cover:
 from __future__ import annotations
 
 from app.appium_nodes.services.common import node_state_severity
-from app.devices.services.verification_job_state import _verification_severity
 from app.runs.service_lifecycle import _run_completed_severity
 from app.sessions.service import _session_ended_severity
+from app.verification.services.job_state import _verification_severity
 
 # ---------------------------------------------------------------------------
 # _session_ended_severity

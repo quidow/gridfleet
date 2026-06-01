@@ -66,9 +66,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.verification_execution import VerificationExecutionService
-from app.devices.services.verification_preparation import VerificationPreparationService
-from app.devices.services.verification_runner import VerificationRunnerService
 from app.events import catalog as event_catalog
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
@@ -111,6 +108,9 @@ from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
+from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.preparation import VerificationPreparationService
+from app.verification.services.runner import VerificationRunnerService
 from app.webhooks.schemas import WebhookUpdate
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -345,9 +345,9 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
 
 
 async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.devices.services.verification_execution import VerificationExecutionService
-    from app.devices.services.verification_preparation import VerificationPreparationService
-    from app.devices.services.verification_runner import VerificationRunnerService
+    from app.verification.services.execution import VerificationExecutionService
+    from app.verification.services.preparation import VerificationPreparationService
+    from app.verification.services.runner import VerificationRunnerService
 
     class SessionCtx:
         async def __aenter__(self) -> AsyncMock:

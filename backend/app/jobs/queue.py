@@ -11,10 +11,10 @@ from sqlalchemy import func, or_, select
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
-from app.devices.services.verification_job_state import reset_snapshot_for_retry
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY, JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
+from app.verification.services.job_state import reset_snapshot_for_retry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

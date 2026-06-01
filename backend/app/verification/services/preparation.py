@@ -19,9 +19,9 @@ from app.devices.services.identity import (
 from app.devices.services.identity_conflicts import (
     DeviceIdentityConflictError,
 )
-from app.devices.services.verification_job_state import set_stage
 from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
+from app.verification.services.job_state import set_stage
 
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 

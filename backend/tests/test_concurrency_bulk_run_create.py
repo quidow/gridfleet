@@ -28,7 +28,6 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
@@ -45,6 +44,7 @@ from app.runs.services_container import RunServices
 from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
+from app.verification.services.service import VerificationService
 from tests.conftest import settings_service, test_circuit_breaker
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -112,8 +112,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
                 inventory_export=InventoryExportService(),
-                portability_import=PortabilityImportService(),
-                verification=VerificationService(),
+                portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),
                 connectivity=ConnectivityService(

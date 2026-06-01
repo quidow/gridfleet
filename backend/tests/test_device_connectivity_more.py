@@ -34,9 +34,9 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
+from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -316,8 +316,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             test_data=TestDataService(publisher=_fake_publisher),
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(),
-            verification=VerificationService(),
+            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             crud=_fake_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

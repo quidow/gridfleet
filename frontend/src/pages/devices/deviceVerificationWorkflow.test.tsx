@@ -16,7 +16,7 @@ const onClose = vi.fn();
 const probeSession = vi.fn<() => Promise<AuthSession>>();
 const authValue = { probeSession };
 
-vi.mock('../../api/devices', () => ({
+vi.mock('../../api/verification', () => ({
   fetchDeviceVerificationJob: (...args: unknown[]) => fetchDeviceVerificationJob(...args),
 }));
 
@@ -259,7 +259,7 @@ describe('useDeviceVerificationJobController', () => {
 
     renderHookProbe();
     expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0]?.url).toBe('/api/devices/verification-jobs/job-1/events');
+    expect(MockEventSource.instances[0]?.url).toBe('/api/verification/jobs/job-1/events');
 
     await act(async () => {
       MockEventSource.instances[0]?.emit('device.verification.updated', {
@@ -292,7 +292,7 @@ describe('useDeviceVerificationJobController', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(MockEventSource.instances).toHaveLength(2);
-    expect(MockEventSource.instances[1]?.url).toBe('/api/devices/verification-jobs/job-1/events');
+    expect(MockEventSource.instances[1]?.url).toBe('/api/verification/jobs/job-1/events');
   });
 
   it('stops reconnecting when the browser session has expired', async () => {

@@ -13,13 +13,13 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.verification_execution import VerificationExecutionService
-from app.devices.services.verification_preparation import VerificationPreparationService
-from app.devices.services.verification_runner import VerificationRunnerService
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.jobs.protocols import DurableJobProtocol
 from app.jobs.queue import DurableJobService
+from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.preparation import VerificationPreparationService
+from app.verification.services.runner import VerificationRunnerService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 

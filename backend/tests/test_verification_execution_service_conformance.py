@@ -1,4 +1,4 @@
-from app.devices.services.verification_execution import VerificationExecutionService
+from app.verification.services.execution import VerificationExecutionService
 
 
 def test_verification_execution_service_has_methods() -> None:

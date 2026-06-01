@@ -13,7 +13,6 @@ __all__ = [
     "lifecycle_incidents",
     "portability",
     "test_data",
-    "verification",
 ]
 
 

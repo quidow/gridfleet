@@ -10,15 +10,11 @@ from app.devices.routers import (
 from app.devices.routers import (
     test_data as devices_test_data,
 )
-from app.devices.routers import (
-    verification as devices_verification,
-)
 from app.devices.services import lifecycle_policy
 from app.sessions import service_viability as session_viability
 
 router = APIRouter()
 
-router.include_router(devices_verification.router, prefix="/api/devices", tags=["devices"])
 router.include_router(devices_core.router, prefix="/api/devices", tags=["devices"])
 router.include_router(devices_control.router, prefix="/api/devices", tags=["devices"])
 router.include_router(devices_test_data.router, prefix="/api/devices", tags=["devices"])

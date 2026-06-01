@@ -14,16 +14,17 @@ from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailabl
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
-    DeviceVerificationJobRead,
     DeviceVerificationUpdate,
 )
-from app.devices.services.verification_job_state import public_snapshot
 from app.events import Event
 from app.events.dependencies import EventServicesDep
+from app.verification.dependencies import VerificationServicesDep
+from app.verification.schemas import DeviceVerificationJobRead
+from app.verification.services.job_state import public_snapshot
 
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
 
-router = APIRouter(responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
+router = APIRouter(prefix="/api/verification", tags=["verification"], responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
 
 
 async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
@@ -36,56 +37,59 @@ async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
             _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
-@router.post("/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)
+@router.post("/jobs", response_model=DeviceVerificationJobRead, status_code=202)
 async def create_device_verification_job(
     data: DeviceVerificationCreate,
     db: DbDep,
-    device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     try:
-        return await device_services.verification.start_verification_job(data, session_factory=session_factory)
+        return await verification_services.service.start_verification_job(data, session_factory=session_factory)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
-@router.post("/{device_id}/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)
+@router.post("/devices/{device_id}/jobs", response_model=DeviceVerificationJobRead, status_code=202)
 async def create_existing_device_verification_job(
     device_id: uuid.UUID,
     data: DeviceVerificationUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> dict[str, Any]:
     device = await device_services.crud.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    return await device_services.verification.start_existing_device_verification_job(
+    return await verification_services.service.start_existing_device_verification_job(
         device_id,
         data,
         session_factory=session_factory,
     )
 
 
-@router.get("/verification-jobs/{job_id}", response_model=DeviceVerificationJobRead)
-async def get_device_verification_job(job_id: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+@router.get("/jobs/{job_id}", response_model=DeviceVerificationJobRead)
+async def get_device_verification_job(
+    job_id: str, db: DbDep, verification_services: VerificationServicesDep
+) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    job = await device_services.verification.get_verification_job(job_id, session_factory=session_factory)
+    job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
     if job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
     return job
 
 
-@router.get("/verification-jobs/{job_id}/events")
+@router.get("/jobs/{job_id}/events")
 async def stream_device_verification_job_events(
     job_id: str,
     request: Request,
     db: DbDep,
     event_services: EventServicesDep,
-    device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> EventSourceResponse:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    initial_job = await device_services.verification.get_verification_job(job_id, session_factory=session_factory)
+    initial_job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
     if initial_job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
 

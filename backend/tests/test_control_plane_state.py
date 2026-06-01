@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.state import ready_operational_state, set_operational_state
-from app.devices.services.verification import VerificationService
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
+from app.verification.services.service import VerificationService
 from tests.helpers import (
     drain_handlers,
     get_connectivity_control_plane_state,

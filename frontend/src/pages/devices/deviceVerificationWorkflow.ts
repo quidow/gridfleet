@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { fetchDeviceVerificationJob } from '../../api/devices';
+import { fetchDeviceVerificationJob } from '../../api/verification';
 import { useAuth } from '../../context/auth';
 import {
   CONNECTION_TYPE_LABELS,
@@ -366,7 +366,7 @@ export function useDeviceVerificationJobController({
       if (disposed) return;
       closeEventSource();
 
-      eventSource = new EventSource(`/api/devices/verification-jobs/${jobId}/events`);
+      eventSource = new EventSource(`/api/verification/jobs/${jobId}/events`);
       eventSource.onopen = () => {
         reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
       };

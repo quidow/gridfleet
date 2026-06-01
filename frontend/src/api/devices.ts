@@ -12,9 +12,6 @@ import type {
   SessionOutcomeHeatmapRow,
   DeviceFilterStatus,
   DeviceType,
-  DeviceVerificationCreate,
-  DeviceVerificationJob,
-  DeviceVerificationUpdate,
   DeviceTestData,
   TestDataAuditEntry,
 } from '../types';
@@ -82,24 +79,6 @@ export async function fetchDeviceSessionOutcomeHeatmap(
   days = 90,
 ): Promise<SessionOutcomeHeatmapRow[]> {
   const { data } = await api.get(`/devices/${id}/session-outcome-heatmap`, { params: { days } });
-  return data;
-}
-
-export async function startDeviceVerificationJob(body: DeviceVerificationCreate): Promise<DeviceVerificationJob> {
-  const { data } = await api.post('/devices/verification-jobs', body);
-  return data;
-}
-
-export async function startExistingDeviceVerificationJob(
-  id: string,
-  body: DeviceVerificationUpdate,
-): Promise<DeviceVerificationJob> {
-  const { data } = await api.post(`/devices/${id}/verification-jobs`, body);
-  return data;
-}
-
-export async function fetchDeviceVerificationJob(jobId: string): Promise<DeviceVerificationJob> {
-  const { data } = await api.get(`/devices/verification-jobs/${jobId}`);
   return data;
 }
 

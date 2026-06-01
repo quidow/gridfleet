@@ -20,6 +20,7 @@ from app.devices.services.portability_hash import compute_bundle_hash
 from app.devices.services.portability_import import BundleHashMismatchError, PortabilityImportService
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
+from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 
 
@@ -58,7 +59,9 @@ async def test_commit_creates_device_and_enqueues_verification(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService().commit_import(db_session, request)
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
 
     assert len(result.created) == 1
     assert result.failed == []
@@ -85,7 +88,7 @@ async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession, see
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
     with pytest.raises(BundleHashMismatchError):
-        await PortabilityImportService().commit_import(db_session, request)
+        await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
 
 
 @pytest.mark.asyncio
@@ -101,7 +104,9 @@ async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession, s
             ImportMapping(index=1, target_host_id=host.id),
         ],
     )
-    result = await PortabilityImportService().commit_import(db_session, request)
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
     assert result.created == []
     assert len(result.skipped) == 2
     assert all(r.reason == "duplicate in bundle" for r in result.skipped)
@@ -126,7 +131,9 @@ async def test_commit_skips_existing_identity_as_conflict_skip(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService().commit_import(db_session, request)
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
     assert result.created == []
     assert len(result.skipped) == 1
     assert "identity" in result.skipped[0].reason
@@ -143,7 +150,9 @@ async def test_commit_fails_row_when_host_missing(db_session: AsyncSession, seed
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=bogus)],
     )
-    result = await PortabilityImportService().commit_import(db_session, request)
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
     assert result.created == []
     assert len(result.failed) == 1
     assert "host" in result.failed[0].reason
@@ -163,10 +172,12 @@ async def test_commit_rolls_back_device_when_verification_enqueue_fails(
     )
 
     with patch(
-        "app.devices.services.portability_import.job_queue.create_job",
+        "app.verification.services.service.job_queue.create_job",
         side_effect=RuntimeError("boom"),
     ):
-        result = await PortabilityImportService().commit_import(db_session, request)
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
 
     assert result.created == []
     assert len(result.failed) == 1
@@ -284,7 +295,9 @@ async def test_commit_handles_session_commit_failure_after_savepoint_release(
         return await original_commit(self)
 
     with patch.object(db_session.__class__, "commit", flaky_commit):
-        result = await PortabilityImportService().commit_import(db_session, request)
+        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+            db_session, request
+        )
 
     # The row is reported as failed with the outer commit error message, not an InvalidStateError.
     assert result.created == []
@@ -321,7 +334,9 @@ async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, se
             ImportMapping(index=2, target_host_id=bogus_host),
         ],
     )
-    result = await PortabilityImportService().commit_import(db_session, request)
+    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
+        db_session, request
+    )
     assert len(result.created) == 1
     assert result.created[0].index == 0
     assert len(result.skipped) == 1

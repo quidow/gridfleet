@@ -68,6 +68,7 @@ from app.settings import router as settings
 from app.settings import validate_leader_keepalive_settings
 from app.settings.dependencies import SettingsServicesDep
 from app.settings.service import SettingsService
+from app.verification import router as verification_router
 from app.webhooks import router as webhooks
 from app.webhooks.dispatcher import WebhookDeliveryLoop
 
@@ -313,6 +314,7 @@ app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(verification_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(events.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(webhooks.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(device_routers.groups.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
