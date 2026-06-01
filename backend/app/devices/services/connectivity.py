@@ -22,7 +22,6 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import legacy_label_for_audit
 from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -544,7 +543,7 @@ class ConnectivityService:
                             device.name,
                             device.identity_value,
                             host.hostname,
-                            legacy_label_for_audit(device),
+                            device.hold.value if device.hold is not None else device.operational_state.value,
                         )
                         await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                         locked_device = await device_locking.lock_device(db, device.id)
@@ -589,7 +588,9 @@ class ConnectivityService:
                             "Device %s (%s) transitioned to %s before offline write — skipping",
                             locked_device.name,
                             locked_device.identity_value,
-                            legacy_label_for_audit(locked_device),
+                            locked_device.hold.value
+                            if locked_device.hold is not None
+                            else locked_device.operational_state.value,
                         )
 
         await db.commit()

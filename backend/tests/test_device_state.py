@@ -89,25 +89,6 @@ async def test_set_hold_to_none_clears(db_session: AsyncSession, default_host_id
     assert device.hold is None
 
 
-def test_legacy_label_for_audit_returns_legacy_string() -> None:
-    device = Device(name="x", identity_value="x", connection_target="x")
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.reserved
-    assert device_state.legacy_label_for_audit(device) == "reserved"
-
-    with state_write_guard.bypass():
-        device.hold = None
-    assert device_state.legacy_label_for_audit(device) == "available"
-
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.busy
-    with state_write_guard.bypass():
-        device.hold = None
-    assert device_state.legacy_label_for_audit(device) == "busy"
-
-
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_ready_operational_state_returns_available_when_ready(

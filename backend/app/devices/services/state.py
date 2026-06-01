@@ -144,13 +144,6 @@ async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOpe
     return DeviceOperationalState.offline
 
 
-def legacy_label_for_audit(device: Device) -> str:
-    """Return the legacy chip label for audit/log output only."""
-    if device.hold is not None:
-        return device.hold.value
-    return device.operational_state.value
-
-
 class DeviceStateService:
     """Injectable facade over the sanctioned device-state writers.
 

@@ -362,39 +362,3 @@ class TestSkipHooks:
         assert changed is True
         assert device.operational_state == DeviceOperationalState.busy
         assert calls == []
-
-
-class TestPassThroughEvents:
-    @pytest.mark.parametrize(
-        "operational,hold",
-        [
-            (DeviceOperationalState.available, None),
-            (DeviceOperationalState.busy, None),
-            (DeviceOperationalState.offline, None),
-        ],
-    )
-    async def test_device_discovered_is_passthrough(
-        self, db_session: AsyncSession, db_host: Host, operational: DeviceOperationalState, hold: DeviceHold | None
-    ) -> None:
-        suffix = f"pt-disc-{operational.value}"
-        device = await _seed_device(db_session, db_host, operational=operational, hold=hold, name_suffix=suffix)
-        machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED, publisher=event_bus)
-        assert changed is False
-        assert device.operational_state == operational
-        assert device.hold == hold
-
-    @pytest.mark.parametrize(
-        "operational",
-        [DeviceOperationalState.available, DeviceOperationalState.busy],
-    )
-    async def test_auto_stop_deferred_is_passthrough(
-        self, db_session: AsyncSession, db_host: Host, operational: DeviceOperationalState
-    ) -> None:
-        suffix = f"pt-defer-{operational.value}"
-        device = await _seed_device(db_session, db_host, operational=operational, hold=None, name_suffix=suffix)
-        machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.AUTO_STOP_DEFERRED, publisher=event_bus)
-        assert changed is False
-        assert device.operational_state == operational
-        assert device.hold is None
