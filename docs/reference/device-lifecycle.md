@@ -2,10 +2,13 @@
 
 ## Writer model (Phase 2B and later)
 
-`Device.operational_state` and `Device.hold` are **derived** by the
-`device_intent_reconciler` loop (`app/devices/services/intent_reconciler.py`) — the
-authoritative writer for every observation-driven transition and for the normal
-verification pass / update-failure terminals.
+`Device.operational_state` is **derived** by the `device_intent_reconciler` loop
+(`app/devices/services/intent_reconciler.py`) — the authoritative writer for every
+observation-driven transition and for the normal verification pass / update-failure
+terminals.  `operational_state` is a 5-value enum: `available`, `busy`, `verifying`,
+`offline`, `maintenance`.  Reservation is an orthogonal concern surfaced as the
+`is_reserved` flag computed from the `device_reservations` table; there is no `hold`
+column.
 
 The one remaining direct writer is the `verification_execution` job, which still sets the
 transient `verifying` entry state and the (rare) node-cleanup-failure offline terminal via
@@ -26,18 +29,17 @@ load-bearing. See *Legacy: DeviceStateMachine* below.
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
      intent, reservation row, maintenance flag, readiness, stop-in-flight).
    - Evaluates `evaluate_operational_state(facts)` → `DeviceOperationalState`.
-   - Evaluates `evaluate_hold(facts)` → `DeviceHold | None`.
-   - Writes the new values through `set_operational_state` / `set_hold`
+   - Writes the new value through `set_operational_state`
      (`app.devices.services.state`) only when the derived value differs from the
      persisted column.
-   - Emits the mapped event for each axis that actually changed.
+   - Emits the mapped event if the value actually changed.
 
 ### Derived axes at a glance
 
-| Column | Derived from |
-|--------|-------------|
-| `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness |
-| `hold` | `maintenance_reason` in `lifecycle_policy_state` (maintenance) or active `DeviceReservation` row (reserved) |
+| Axis | Derived from |
+|------|-------------|
+| `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness, `maintenance_reason` in `lifecycle_policy_state` |
+| `is_reserved` (computed) | Existence of an active `DeviceReservation` row — not a column on `Device` |
 
 ### Key rules
 
@@ -46,9 +48,10 @@ load-bearing. See *Legacy: DeviceStateMachine* below.
   Instead they write facts and call `mark_dirty`.
 - **Maintenance mode** is driven by the `maintenance_reason` signal in
   `lifecycle_policy_state`.  `enter_maintenance` / `exit_maintenance` write to that
-  JSON column; the reconciler observes the flag when deriving `hold=maintenance`.
-- **`reserved` hold** is derived from the existence of an active `DeviceReservation`
-  row, not from a direct `hold` write.
+  JSON column; the reconciler derives `operational_state=maintenance` from that flag.
+- **Reservation** is derived from the existence of an active `DeviceReservation` row
+  and exposed as the computed `is_reserved` field on read DTOs — there is no `hold`
+  column.
 - **Direct attribute assignment** (`device.operational_state = ...`) is still
   **forbidden** outside the sanctioned writers.  This rule is enforced at runtime
   by the SQLAlchemy attribute-event guardrail in
@@ -62,7 +65,6 @@ which production modules may write each protected column.
 | Column | Sanctioned module |
 |--------|------------------|
 | `Device.operational_state` | `app.devices.services.state` (called by `apply_derived_state`); `app.devices.services.write` (initial device creation only) |
-| `Device.hold` | `app.devices.services.state` (called by `apply_derived_state`) |
 | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` |
 | `AppiumNode.desired_state` / `desired_port` / `transition_token` / `transition_deadline` | `app.appium_nodes.services.desired_state_writer` |
 
@@ -72,10 +74,9 @@ Any new sanctioned writer must be added to `ALLOWLIST`; unlisted callers get
 
 ### Row locking
 
-Any code that writes `Device.operational_state`, `Device.hold`, or
-`Device.lifecycle_policy_state` MUST acquire the row lock first via
-`app.devices.locking.lock_device` (or `lock_devices` for batch) inside the same
-transaction.  Routers should use `get_device_for_update_or_404` for state-mutating
+Any code that writes `Device.operational_state` or `Device.lifecycle_policy_state`
+MUST acquire the row lock first via `app.devices.locking.lock_device` (or
+`lock_devices` for batch) inside the same transaction.  Routers should use `get_device_for_update_or_404` for state-mutating
 endpoints.  Background loops commit per device after the locked write window.  The
 leader advisory lock alone is NOT sufficient — API mutators run on every worker and
 bypass it.
