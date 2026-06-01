@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import lifecycle_incidents as incidents
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.presenter import DevicePresenterService
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
@@ -28,7 +29,7 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
         name="Incident Device",
     )
     run_id = __import__("uuid").uuid4()
-    event = await incidents.record_lifecycle_incident(
+    event = await LifecycleIncidentService().record_lifecycle_incident(
         db_session,
         device,
         DeviceEventType.lifecycle_recovery_backoff,
@@ -63,12 +64,14 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
     assert invalid_serialized.run_id is None
     assert invalid_serialized.backoff_until is None
 
-    items, next_cursor, prev_cursor = await incidents.list_lifecycle_incidents_paginated(db_session, limit=1)
+    items, next_cursor, prev_cursor = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
+        db_session, limit=1
+    )
     assert [item.id for item in items] == [event.id]
     assert next_cursor is None
     assert prev_cursor is None
 
-    newer, _next, prev = await incidents.list_lifecycle_incidents_paginated(
+    newer, _next, prev = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
         db_session,
         limit=1,
         cursor=(event.created_at - timedelta(seconds=1)).isoformat(),
@@ -77,7 +80,7 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
     assert [item.id for item in newer] == [event.id]
     assert prev is not None
 
-    invalid_cursor_items, _next, _prev = await incidents.list_lifecycle_incidents_paginated(
+    invalid_cursor_items, _next, _prev = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
         db_session,
         cursor="not-a-date",
     )

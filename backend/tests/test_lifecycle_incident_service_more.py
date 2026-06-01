@@ -5,6 +5,7 @@ import pytest
 
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.devices.services import lifecycle_incidents as incidents
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 
 
 def test_lifecycle_incident_serialization_parse_fallbacks() -> None:
@@ -42,7 +43,7 @@ async def test_record_lifecycle_incident_serializes_optional_detail_branches(mon
     record = AsyncMock(return_value=object())
     monkeypatch.setattr(incidents, "record_event", record)
 
-    await incidents.record_lifecycle_incident(
+    await LifecycleIncidentService().record_lifecycle_incident(
         object(),  # type: ignore[arg-type]
         device,
         DeviceEventType.lifecycle_run_cooldown_set,
