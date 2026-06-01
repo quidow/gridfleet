@@ -9,7 +9,6 @@ export type HardwareChargingState = Schemas['HardwareChargingState'];
 export type HardwareHealthStatus = Schemas['HardwareHealthStatus'];
 export type HardwareTelemetryState = Schemas['HardwareTelemetryState'];
 export type DeviceOperationalState = Schemas['DeviceOperationalState'];
-export type DeviceHold = Schemas['DeviceHold'];
 export type RunState = Schemas['RunState'];
 export type DesiredNodeState = Schemas['DesiredNodeState'];
 export type SessionStatus = Schemas['SessionStatus'];
@@ -29,7 +28,7 @@ export type DeviceVerificationStageStatus = NonNullable<
 // Frontend-only composites and pagination helpers (not on the backend).
 export type SortDirection = 'asc' | 'desc';
 export type CursorDirection = 'older' | 'newer';
-export type DeviceChipStatus = DeviceOperationalState | DeviceHold;
+export type DeviceChipStatus = DeviceOperationalState;
 
 export type PaginatedResponse<T> = {
   items: T[];
