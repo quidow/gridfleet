@@ -1,12 +1,12 @@
-"""Recovery probe must reject offline-and-held devices at the pre-lock gate.
+"""Recovery probe must reject offline-and-reserved devices at the pre-lock gate.
 
 The pre-lock predicate previously allowed ``checked_by=recovery`` past the
-gate as long as ``operational_state == offline``, even if ``hold`` was set.
-The post-lock re-check (see ``test_bug_audit_viability_hold_toctou``)
+gate as long as ``operational_state == offline``, even if the device was
+reserved. The post-lock re-check (see ``test_bug_audit_viability_hold_toctou``)
 caught that case, but only after taking the row lock — and the manual
 path emitted a free ``failed`` viability record on the way out. The
-pre-lock predicate now also requires ``hold is None`` for the recovery
-branch, so a recovery probe against an ``offline + maintenance`` device
+pre-lock predicate now also requires no active reservation for the recovery
+branch, so a recovery probe against an ``offline + reserved`` device
 fails fast with ``ValueError`` and never reaches the lock.
 """
 
@@ -18,12 +18,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device, create_host
+from tests.helpers import create_device, create_host, create_reservation
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -43,9 +43,9 @@ async def test_recovery_probe_rejects_offline_held_device(
         host_id=uuid.UUID(host["id"]),
         name="viability-recovery-held",
         operational_state=DeviceOperationalState.offline,
-        hold=DeviceHold.maintenance,
         verified=True,
     )
+    await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
     svc = SessionViabilityService(
