@@ -18,7 +18,6 @@ from app.devices.services.identity import (
 )
 from app.devices.services.identity_conflicts import (
     DeviceIdentityConflictError,
-    ensure_device_payload_identity_available,
 )
 from app.devices.services.verification_job_state import set_stage, should_keep_verified_node_running
 from app.hosts.models import Host
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.device import DeviceVerificationUpdate
+    from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 
 
 @dataclass
@@ -51,11 +51,17 @@ class PreparedVerificationContext:
 
 class VerificationPreparationService:
     def __init__(
-        self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol, crud: DeviceCrudProtocol
+        self,
+        *,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        crud: DeviceCrudProtocol,
+        identity: DeviceIdentityConflictService,
     ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
+        self._identity = identity
 
     async def validate_create_request(
         self,
@@ -81,7 +87,7 @@ class VerificationPreparationService:
             payload.get("ip_address"),
         ):
             try:
-                await ensure_device_payload_identity_available(db, payload)
+                await self._identity.ensure_device_payload_identity_available(db, payload)
             except DeviceIdentityConflictError as exc:
                 return await _validation_failed(job, str(exc))
 
@@ -94,7 +100,7 @@ class VerificationPreparationService:
         if resolution_error:
             return await _validation_failed(job, resolution_error)
         try:
-            await ensure_device_payload_identity_available(db, payload)
+            await self._identity.ensure_device_payload_identity_available(db, payload)
         except DeviceIdentityConflictError as exc:
             return await _validation_failed(job, str(exc))
 
@@ -191,7 +197,9 @@ class VerificationPreparationService:
         if resolution_error:
             return await _validation_failed(job, resolution_error)
         try:
-            await ensure_device_payload_identity_available(db, verification_payload, exclude_device_id=existing.id)
+            await self._identity.ensure_device_payload_identity_available(
+                db, verification_payload, exclude_device_id=existing.id
+            )
         except DeviceIdentityConflictError as exc:
             return await _validation_failed(job, str(exc))
 

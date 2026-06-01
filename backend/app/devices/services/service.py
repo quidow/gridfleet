@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
@@ -35,9 +35,6 @@ from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
 from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
-from app.devices.services.identity_conflicts import (
-    ensure_device_payload_identity_available,
-)
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
@@ -51,6 +48,9 @@ from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.runs import service as run_service
 
+if TYPE_CHECKING:
+    from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
@@ -58,8 +58,9 @@ DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
 
 
 class DeviceCrudService:
-    def __init__(self, *, settings: SettingsReader) -> None:
+    def __init__(self, *, settings: SettingsReader, identity: "DeviceIdentityConflictService") -> None:
         self._settings = settings
+        self._identity = identity
 
     async def prepare_device_create_payload(self, db: AsyncSession, data: DeviceVerificationCreate) -> dict[str, Any]:
         return await device_write.prepare_device_create_payload_async(db, data)
@@ -81,12 +82,12 @@ class DeviceCrudService:
         if mark_verified:
             payload["verified_at"] = datetime.now(UTC)
         payload["operational_state"] = initial_operational_state
-        await ensure_device_payload_identity_available(db, payload)
+        await self._identity.ensure_device_payload_identity_available(db, payload)
         try:
             return await device_write.create_device_record(db, payload)
         except IntegrityError:
             await db.rollback()
-            await ensure_device_payload_identity_available(db, payload)
+            await self._identity.ensure_device_payload_identity_available(db, payload)
             raise
 
     async def list_devices(
@@ -222,7 +223,7 @@ class DeviceCrudService:
             device_write.validate_patch_contract(device, data)
 
         payload = await self.prepare_device_update_payload(db, device, data)
-        await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
+        await self._identity.ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
         if device_readiness.payload_requires_reverification(device, payload):
             device.verified_at = None
 
@@ -231,7 +232,7 @@ class DeviceCrudService:
             return await device_write.persist_device_record(db, device)
         except IntegrityError:
             await db.rollback()
-            await ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
+            await self._identity.ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
             raise
 
     async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
