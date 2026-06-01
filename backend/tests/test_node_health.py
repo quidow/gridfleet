@@ -111,6 +111,7 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )
         await svc.check_nodes(db_session)
 
@@ -169,6 +170,7 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )
         await svc.check_nodes(db_session)
 
@@ -231,6 +233,7 @@ async def test_node_missing_from_grid_increments_failure_count(db_session: Async
             grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
@@ -293,6 +296,7 @@ async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
             grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -369,6 +373,7 @@ async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSes
                     }
                 }
             ),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
@@ -431,6 +436,7 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)
@@ -498,6 +504,7 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)
@@ -565,6 +572,7 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node)
@@ -631,6 +639,7 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     status_mock.assert_awaited_once()
@@ -691,6 +700,7 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     status_mock.assert_awaited_once()
@@ -751,6 +761,7 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     status_mock.assert_awaited_once()
@@ -811,6 +822,7 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     status_mock.assert_awaited_once()
@@ -907,6 +919,7 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                 grid=make_fake_grid(),
                 recovery_control=AsyncMock(),
                 health=DeviceHealthService(publisher=event_bus),
+                incidents=AsyncMock(),
             ).check_nodes(db_session)
         )
         await asyncio.wait_for(both_started.wait(), timeout=1)
@@ -963,6 +976,7 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
             grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )._check_node_health(node, device)
 
     assert result.status == "indeterminate"
@@ -995,6 +1009,7 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
             grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )._check_node_health(node, device)
 
     assert result.status == "indeterminate"
@@ -1027,6 +1042,7 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
             grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )._check_node_health(node, device)
 
     assert result.status == "indeterminate"
@@ -1057,6 +1073,7 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
         grid=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
     )._check_node_health(node, device)
     assert result.status == "refused"
 
@@ -1088,6 +1105,7 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
             grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )._check_node_health(node, device)
 
     assert result.status == "ack"
@@ -1124,6 +1142,7 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
             grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         )._check_node_health(node, device)
 
     assert result.status == "indeterminate"
@@ -1190,6 +1209,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     # Counter unchanged (still absent)
@@ -1274,6 +1294,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     assert peak <= 2, f"per-host probe concurrency exceeded cap: peak={peak}"
@@ -1348,6 +1369,7 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
             grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=AsyncMock(),
         ).check_nodes(db_session)
 
     await db_session.refresh(node, attribute_names=["consecutive_health_failures", "pid", "active_connection_target"])
@@ -1429,6 +1451,7 @@ async def test_node_health_recovery_clears_pending_stop(
             grid=make_fake_grid(),
             recovery_control=_make_real_recovery_control(),
             health=DeviceHealthService(publisher=event_bus),
+            incidents=LifecycleIncidentService(),
         ).check_nodes(db_session)
 
     reloaded = await db_session.get(Device, device.id)
@@ -1480,6 +1503,7 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         grid=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
     )
 
     monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
@@ -1561,6 +1585,7 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
         grid=MagicMock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
     )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(

@@ -83,6 +83,7 @@ async def _run_node_health_with_gate(
                 grid=fake_grid,
                 recovery_control=AsyncMock(),
                 health=AsyncMock(),
+                incidents=AsyncMock(),
             ).check_nodes(session)
 
 

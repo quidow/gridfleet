@@ -188,6 +188,7 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
+        incidents=AsyncMock(),
     )
     loop = NodeHealthLoop(
         services=AppiumNodeServices(
@@ -236,6 +237,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         grid=fake_grid,
         recovery_control=AsyncMock(),
         health=AsyncMock(),
+        incidents=AsyncMock(),
     ).check_nodes(db)
 
     db.commit.assert_awaited_once()

@@ -358,6 +358,7 @@ def compose_app(
                 grid=grid_svc,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
+                incidents=incidents_svc,
             ),
             heartbeat=HeartbeatService(
                 publisher=bus,

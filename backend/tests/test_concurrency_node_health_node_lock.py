@@ -72,6 +72,7 @@ async def test_node_health_failure_path_locks_appium_node(
                     grid=Mock(),
                     recovery_control=AsyncMock(),
                     health=AsyncMock(),
+                    incidents=AsyncMock(),
                 )._process_node_health(
                     session,
                     locked_device.appium_node,

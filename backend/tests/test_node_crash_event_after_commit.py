@@ -138,6 +138,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         grid=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=Mock()),
+        incidents=AsyncMock(),
     )._process_node_health(
         db_session,
         node,
