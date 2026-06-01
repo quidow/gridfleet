@@ -10,7 +10,6 @@ terminals.  `operational_state` is a 5-value enum: `available`, `busy`, `verifyi
 `is_reserved` flag computed from the `device_reservations` table; there is no `hold`
 column.
 
-
 ### Derivation flow
 
 1. **Observation loops** (`device_connectivity`, `node_health`, `session_sync`,
@@ -37,9 +36,8 @@ column.
 
 ### Key rules
 
-- **Observation loops MUST NOT call `DeviceStateMachine.transition` directly.**
-  Direct `_MACHINE.transition` calls from observation loops have been removed.
-  Instead they write facts and call `mark_dirty`.
+- **Observation loops MUST NOT write `operational_state` directly.**
+  Instead they write facts and call `mark_dirty` so the reconciler re-derives state.
 - **Maintenance mode** is driven by the `maintenance_reason` signal in
   `lifecycle_policy_state`.  `enter_maintenance` / `exit_maintenance` write to that
   JSON column; the reconciler derives `operational_state=maintenance` from that flag.
@@ -79,5 +77,5 @@ bypass it.
 
 `Device.lifecycle_policy_state` (the JSON column for `stop_pending`,
 `backoff_until`, `maintenance_reason`, `recovery_suppressed_reason`, etc.) is NOT
-managed by the state machine.  Helpers in `app.services.lifecycle_policy_state`
+derived by the reconciler.  Helpers in `app.services.lifecycle_policy_state`
 manage that column directly under the same row lock.
