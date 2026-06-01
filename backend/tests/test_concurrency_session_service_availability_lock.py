@@ -14,6 +14,7 @@ from app.devices.services.state import DeviceStateService
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -32,7 +33,7 @@ async def _enter_maintenance_after_gate(
     async def do_maintenance() -> None:
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await MaintenanceService(publisher=Mock()).enter_maintenance(session, locked)
+            await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(session, locked)
 
     maintenance_task = asyncio.create_task(do_maintenance())
     await asyncio.sleep(0.05)

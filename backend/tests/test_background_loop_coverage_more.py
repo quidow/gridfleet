@@ -69,7 +69,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_1 = Mock()
     _svc_pub_1 = AsyncMock()
-    _svc_maint_1 = MaintenanceService(publisher=_svc_pub_1)
+    _svc_maint_1 = MaintenanceService(settings=FakeSettingsReader({}))
     _svc_crud_1 = DeviceCrudService(settings=_svc_settings_1)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
@@ -128,7 +128,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_2 = Mock()
     _svc_pub_2 = AsyncMock()
-    _svc_maint_2 = MaintenanceService(publisher=_svc_pub_2)
+    _svc_maint_2 = MaintenanceService(settings=FakeSettingsReader({}))
     _svc_crud_2 = DeviceCrudService(settings=_svc_settings_2)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
@@ -254,7 +254,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     _svc_settings_3 = FakeSettingsReader({})
     _svc_grid_3 = Mock()
     _svc_pub_3 = AsyncMock()
-    _svc_maint_3 = MaintenanceService(publisher=_svc_pub_3)
+    _svc_maint_3 = MaintenanceService(settings=FakeSettingsReader({}))
     _svc_crud_3 = DeviceCrudService(settings=_svc_settings_3)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
@@ -359,7 +359,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     _svc_settings_4 = FakeSettingsReader({})
     _svc_grid_4 = Mock()
     _svc_pub_4 = AsyncMock()
-    _svc_maint_4 = MaintenanceService(publisher=_svc_pub_4)
+    _svc_maint_4 = MaintenanceService(settings=FakeSettingsReader({}))
     _svc_crud_4 = DeviceCrudService(settings=_svc_settings_4)
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(

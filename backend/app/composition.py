@@ -184,7 +184,7 @@ def compose_app(
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
-    maintenance_svc = MaintenanceService(publisher=bus)
+    maintenance_svc = MaintenanceService(settings=settings_svc)
     crud_svc = DeviceCrudService(settings=settings_svc)
     connectivity_svc = ConnectivityService(
         publisher=bus,

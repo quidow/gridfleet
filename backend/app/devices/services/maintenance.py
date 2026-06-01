@@ -1,5 +1,7 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +24,9 @@ from app.devices.services.lifecycle_policy_state import (
     set_maintenance_reason,
     state,
 )
-from app.events.protocols import EventPublisher
+
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,8 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class MaintenanceService:
-    def __init__(self, *, publisher: EventPublisher) -> None:
-        self._publisher = publisher
+    def __init__(self, *, settings: "SettingsReader") -> None:
+        self._settings = settings
 
     async def enter_maintenance(
         self,
@@ -121,6 +125,11 @@ class MaintenanceService:
 
         # §14.4a: register a verification intent so the device starts re-verifying
         # immediately rather than waiting for the next device_connectivity_loop tick.
+        # expires_at mirrors _register_verification_node_intent in verification_execution.py:
+        # startup_timeout_sec + session_viability_timeout_sec + 60 s safety margin.
+        startup_timeout = int(self._settings.get("appium.startup_timeout_sec"))
+        viability_timeout = int(self._settings.get("general.session_viability_timeout_sec"))
+        verify_intent_deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[
@@ -128,6 +137,7 @@ class MaintenanceService:
                     source=verification_intent_source(device.id),
                     axis=NODE_PROCESS,
                     payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+                    expires_at=verify_intent_deadline,
                 )
             ],
             reason="Operator exited maintenance",

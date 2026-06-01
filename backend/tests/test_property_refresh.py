@@ -149,7 +149,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     mock_property_refresh_svc = Mock()
     mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
 
-    _pr_maintenance = MaintenanceService(publisher=_pr_publisher)
+    _pr_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
     _pr_crud = DeviceCrudService(settings=_pr_settings)
     loop = PropertyRefreshLoop(
         services=DeviceServices(

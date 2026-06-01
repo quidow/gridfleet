@@ -290,7 +290,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_grid = Mock()
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
-    _fake_maintenance = MaintenanceService(publisher=_fake_publisher)
+    _fake_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
     _fake_crud = DeviceCrudService(settings=_fake_settings)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(

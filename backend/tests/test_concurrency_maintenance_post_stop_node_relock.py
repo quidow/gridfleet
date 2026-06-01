@@ -1,5 +1,3 @@
-from unittest.mock import Mock
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +8,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -42,7 +41,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     device_id = device.id
 
     target = await device_locking.lock_device(db_session, device_id)
-    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, target)
+    await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, target)
 
     final_status = (
         await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))

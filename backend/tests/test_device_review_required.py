@@ -113,7 +113,7 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
+    await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -133,7 +133,7 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, device)
+    await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is True
 

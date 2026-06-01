@@ -1,6 +1,6 @@
 """D3: exit_maintenance must enqueue a recovery job."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -32,7 +33,7 @@ async def test_exit_maintenance_enqueues_recovery_job(
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
+    await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, locked)
 
     rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 1
@@ -83,7 +84,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
         # Must NOT raise even though schedule_device_recovery raises.
-        result = await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
+        result = await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, locked)
 
     # Sanity: the patched mock actually intercepted the call. If this fires,
     # the warning-call assertion below would also fail but for a different

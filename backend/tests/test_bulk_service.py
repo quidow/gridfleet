@@ -254,7 +254,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         publisher=event_bus,
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
-        maintenance=MaintenanceService(publisher=event_bus),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
         crud=DeviceCrudService(settings=_settings_exit),
         operator=OperatorNodeLifecycleService(settings=_settings_exit),
     ).bulk_exit_maintenance(db_session, [d.id for d in devices])

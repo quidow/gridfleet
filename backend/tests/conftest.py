@@ -393,7 +393,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         _grid_svc = GridService(settings=settings_service)
-        _maintenance_svc = MaintenanceService(publisher=test_event_bus)
+        _maintenance_svc = MaintenanceService(settings=settings_service)
         _crud_svc = DeviceCrudService(settings=settings_service)
         return DeviceServices(
             state=DeviceStateService(publisher=test_event_bus),
@@ -535,7 +535,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
-            maintenance=MaintenanceService(publisher=test_event_bus),
+            maintenance=MaintenanceService(settings=settings_service),
             lifecycle_actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus, reservation=RunReservationService()
             ),
