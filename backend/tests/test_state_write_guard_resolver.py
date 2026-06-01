@@ -38,9 +38,9 @@ def test_mixed_sa_and_exec_frames_then_real_caller() -> None:
         None,
         "sqlalchemy.orm.attributes",
         None,
-        "app.devices.services.lifecycle_state_machine",
+        "app.devices.services.state",
     ]
-    assert _resolve_caller_name(iter(names)) == "app.devices.services.lifecycle_state_machine"
+    assert _resolve_caller_name(iter(names)) == "app.devices.services.state"
 
 
 def test_prefix_match_is_permissive_documents_current_contract() -> None:

@@ -215,8 +215,6 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr("app.appium_nodes.services.heartbeat.set_operational_state", _wrapped_set_op)
-    # Also inject into state machine for cascade via _restore_available_for_healthy_signal
-    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
 
     host = Host(
         hostname="cascade-host",

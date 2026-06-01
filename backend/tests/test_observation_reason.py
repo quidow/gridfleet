@@ -13,7 +13,7 @@ def test_verification_passed_not_in_enum() -> None:
 def test_unmapped_transition_returns_no_event_type() -> None:
     """A transition with no audit-row equivalent maps to (None, _).
 
-    The old EventLogHook wrote NO DeviceEvent row for verification transitions, so the
+    The legacy mapping wrote NO DeviceEvent row for verification transitions, so the
     reconciler must not invent a spurious ``desired_state_changed`` audit row for them.
     """
     et, _sev = map_transition_event(S.verifying, ObservationReason.verification_started)

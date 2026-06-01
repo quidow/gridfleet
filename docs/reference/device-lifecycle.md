@@ -10,12 +10,6 @@ terminals.  `operational_state` is a 5-value enum: `available`, `busy`, `verifyi
 `is_reserved` flag computed from the `device_reservations` table; there is no `hold`
 column.
 
-The one remaining direct writer is the `verification_execution` job, which still sets the
-transient `verifying` entry state and the (rare) node-cleanup-failure offline terminal via
-`DeviceStateMachine.transition`. That path routes through the sanctioned
-`set_operational_state` setter and cannot be derived: a cleanup failure leaves a *verified*
-device whose facts would otherwise derive back to `available`, so the offline push is
-load-bearing. See *Legacy: DeviceStateMachine* below.
 
 ### Derivation flow
 
@@ -80,42 +74,6 @@ MUST acquire the row lock first via `app.devices.locking.lock_device` (or
 endpoints.  Background loops commit per device after the locked write window.  The
 leader advisory lock alone is NOT sufficient — API mutators run on every worker and
 bypass it.
-
-## Legacy: DeviceStateMachine
-
-`DeviceStateMachine` (`app/devices/services/lifecycle_state_machine.py`) still exists
-but its role is reduced.  The machine's `transition(device, event, ...)` entry point
-is no longer called by observation loops.  The machine remains active only where it is
-still directly wired — see the `state_write_guard.py` ALLOWLIST for the current
-authoritative list of callers.
-
-### Still-active machine events
-
-| Event | Notes |
-|-------|-------|
-| `VERIFICATION_STARTED` | `verification_execution.py` — transient `verifying` entry state when a verification begins. |
-| `VERIFICATION_FAILED` | `verification_execution.py` — node-cleanup-failure terminal only. The normal verification pass and update-mode failure terminals no longer push: `_finalize_success` / `_finalize_failure` set the durable facts (`verified_at` / `review_required`) and call `mark_dirty_and_reconcile` so the reconciler derives `available` / `offline`. |
-
-### Removed machine events (Phase 2B)
-
-The following events no longer have active producers:
-
-| Event | Removed from |
-|-------|-------------|
-| `CONNECTIVITY_LOST` | Connectivity loop now calls `mark_dirty_and_reconcile` instead |
-| `CONNECTIVITY_RESTORED` | Connectivity loop uses `attempt_auto_recovery` → `mark_dirty` |
-| `SESSION_STARTED` / `SESSION_ENDED` | `session_sync` now calls `mark_dirty` |
-| `AUTO_STOP_EXECUTED` | Lifecycle policy loop calls `mark_dirty` |
-| `MAINTENANCE_ENTERED` / `MAINTENANCE_EXITED` | Maintenance state is now driven by `maintenance_reason` in `lifecycle_policy_state` and derived by the reconciler; the machine is no longer called. |
-
-### Hooks
-
-`DeviceStateMachine(hooks=[...])` still accepts `TransitionHook` implementations.
-
-Built-in hooks:
-
-- `EventLogHook` — records one `DeviceEvent` row per state-changing transition.
-- `IncidentHook`, `RunExclusionHook` — currently no-op skeletons.
 
 ### Lifecycle JSON axis
 

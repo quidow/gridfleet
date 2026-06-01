@@ -657,9 +657,10 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     context.keep_running_after_verify = False
     mock_crud_upd = AsyncMock()
     mock_crud_upd.update_device = AsyncMock(return_value=locked)
+    machine_spy = AsyncMock()
     monkeypatch.setattr(
-        "app.devices.services.verification_execution.DeviceStateMachine",
-        lambda: SimpleNamespace(transition=AsyncMock()),
+        "app.devices.services.verification_execution.set_operational_state",
+        machine_spy,
     )
     outcome = await execution._finalize_success(
         db,

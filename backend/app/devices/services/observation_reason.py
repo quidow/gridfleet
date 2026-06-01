@@ -32,7 +32,7 @@ def map_transition_event(
     not needed (the reason already disambiguates, e.g. recovered vs session_ended for → available).
 
     A ``None`` event type means the transition records no DeviceEvent audit row — matching the
-    old EventLogHook, which mapped only the seven transitions below and left verification (and
+    legacy severity mapping, which covered only the seven transitions below and left verification (and
     any other) transitions without a row. The severity still drives the operational_state_changed
     bus event for unmapped transitions.
     """
