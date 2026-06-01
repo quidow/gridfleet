@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.dependencies import get_device_services
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -223,9 +223,9 @@ async def test_run_create_and_maintenance_cannot_overlap(
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     if reservation is not None:
-        assert device_row.hold == DeviceHold.reserved, (
-            f"Reservation exists but device row is {device_row.operational_state} — orphaned reservation. "
-            f"HTTP statuses were {statuses}."
+        assert device_row.operational_state != DeviceOperationalState.maintenance, (
+            f"Reservation exists but device row is in maintenance — the maintenance path stomped a "
+            f"reservation. HTTP statuses were {statuses}."
         )
     else:
         if any(s in (200, 201) for s in statuses):

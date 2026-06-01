@@ -14,7 +14,6 @@ from app.devices.models import (
     Device,
     DeviceEvent,
     DeviceEventType,
-    DeviceHold,
     DeviceIntent,
     DeviceOperationalState,
     DeviceType,
@@ -168,7 +167,6 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
             name="Reserved Device",
             os_version="14",
             host_id=db_host.id,
-            hold=DeviceHold.reserved,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -1554,7 +1552,6 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={"maintenance_reason": "maintenance opened"},
         recovery_allowed=True,
         review_required=False,
@@ -1606,11 +1603,10 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Recovery suppression triggers on the durable ``maintenance_reason`` signal
-    alone, without the device carrying ``hold == DeviceHold.maintenance``."""
+    alone, without the device carrying a legacy maintenance hold."""
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
         recovery_allowed=True,
         review_required=False,
@@ -1642,7 +1638,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     device = SimpleNamespace(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
         review_required=False,
@@ -1687,7 +1682,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     busy = SimpleNamespace(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
         review_required=False,
@@ -1728,7 +1722,6 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
-        hold=None,
         host_id=None,
         appium_node=None,
     )
@@ -1796,7 +1789,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
-        hold=None,
         host_id=uuid.uuid4(),
         appium_node=None,
     )

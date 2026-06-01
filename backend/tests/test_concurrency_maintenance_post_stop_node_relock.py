@@ -43,9 +43,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     target = await device_locking.lock_device(db_session, device_id)
     await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, target)
 
-    final_status = (
-        await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-    ).one()
+    final_status = (await db_session.execute(select(Device.operational_state).where(Device.id == device_id))).one()
     node_status = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
     # §4 (Phase 2): maintenance derives onto the operational axis and outranks the

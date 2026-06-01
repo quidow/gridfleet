@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
@@ -476,7 +476,6 @@ async def test_release_devices_branches_and_session_counts(
         name="Release Device",
         identity_value="run-release-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     run = await create_reserved_run(db_session, name="release-run", devices=[device], state=RunState.active)
     db_session.add_all(
@@ -523,7 +522,6 @@ async def test_mark_running_sessions_released_success_path(
         name="Release Session Device",
         identity_value="run-release-session-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     run = await create_reserved_run(db_session, name="release-session-run", devices=[device], state=RunState.cancelled)
     session = Session(session_id="release-success", device_id=device.id, run_id=run.id, status=SessionStatus.running)
@@ -648,7 +646,6 @@ async def test_release_devices_unusual_restore_branches(
         name="Maintenance Release Device",
         identity_value="run-release-maint-001",
         operational_state=DeviceOperationalState.maintenance,
-        hold=DeviceHold.maintenance,
     )
     busy = await create_device(
         db_session,
@@ -656,7 +653,6 @@ async def test_release_devices_unusual_restore_branches(
         name="Busy Release Device",
         identity_value="run-release-busy-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     odd = await create_device(
         db_session,
@@ -664,7 +660,6 @@ async def test_release_devices_unusual_restore_branches(
         name="Odd Release Device",
         identity_value="run-release-odd-001",
         operational_state=DeviceOperationalState.offline,
-        hold=None,
     )
     run = await create_reserved_run(
         db_session,
@@ -824,7 +819,6 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
         name="maint-no-hold",
         identity_value="run-release-maint-no-hold-001",
         operational_state=DeviceOperationalState.maintenance,
-        hold=None,
     )
     run = await create_reserved_run(
         db_session,
@@ -862,7 +856,6 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
         name="reserved-no-hold",
         identity_value="run-release-reserved-no-hold-001",
         operational_state=DeviceOperationalState.available,
-        hold=None,  # hold is no longer written; the reservation row drives the branch
     )
     run = TestRun(
         name="release-reserved-no-hold-run",
@@ -894,4 +887,3 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     # The reservation row drives the branch: the device is queued for lifecycle cleanup
     # and its operational state is restored, with no hold write.
     assert reserved_device.id in pending
-    assert reserved_device.hold is None

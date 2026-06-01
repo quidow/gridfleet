@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import DeviceStateService, set_operational_state
 from app.grid.service import GridService
@@ -47,7 +47,6 @@ async def test_release_devices_does_not_stomp_offline_writer(
         host_id=db_host.id,
         name="release-target",
         operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.reserved,
         verified=True,
     )
     run = TestRun(
@@ -138,7 +137,6 @@ async def test_release_devices_serializes_with_concurrent_writer(
         host_id=db_host.id,
         name="serial-target",
         operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.reserved,
         verified=True,
     )
     run = TestRun(

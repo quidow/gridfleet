@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentCallError
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
     ConnectivityService,
@@ -38,7 +38,6 @@ async def _setup_host_and_device(
     db_session: AsyncSession,
     connection_target: str = "dc-001",
     device_operational_state: DeviceOperationalState = DeviceOperationalState.available,
-    device_hold: DeviceHold | None = None,
     with_node: bool = False,
 ) -> tuple[Host, Device, AppiumNode | None]:
     host = Host(hostname="dc-host", ip="10.0.0.10", os_type="linux", agent_port=5100, status=HostStatus.online)
@@ -57,7 +56,6 @@ async def _setup_host_and_device(
             os_version="14",
             host_id=host.id,
             operational_state=device_operational_state,
-            hold=device_hold,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,

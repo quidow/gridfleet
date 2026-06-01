@@ -28,7 +28,6 @@ async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> Device:
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
-            hold=None,
             device_type="real_device",
             connection_type="usb",
         )

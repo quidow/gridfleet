@@ -58,11 +58,6 @@ class DeviceOperationalState(enum.StrEnum):
     maintenance = "maintenance"
 
 
-class DeviceHold(enum.StrEnum):
-    maintenance = "maintenance"
-    reserved = "reserved"
-
-
 class HardwareChargingState(enum.StrEnum):
     charging = "charging"
     discharging = "discharging"
@@ -130,11 +125,6 @@ class Device(Base):
         Enum(DeviceOperationalState),
         default=DeviceOperationalState.offline,
         nullable=False,
-    )
-    hold: Mapped[DeviceHold | None] = mapped_column(
-        Enum(DeviceHold),
-        nullable=True,
-        default=None,
     )
     tags: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True, default=dict)
     manufacturer: Mapped[str | None] = mapped_column(String, nullable=True)

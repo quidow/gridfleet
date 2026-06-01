@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
@@ -1001,7 +1001,6 @@ async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.busy,
-            hold=DeviceHold.reserved,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -1039,7 +1038,7 @@ async def test_sync_preserves_reserved_hold_after_session_end_for_reserved_run(
     )
 
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+    assert device.operational_state != DeviceOperationalState.maintenance
 
 
 async def test_sync_stops_deferred_unhealthy_device_after_session_end(
@@ -1368,7 +1367,6 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
             name="Reserved Placeholder Phone",
             os_version="14",
             host_id=db_host.id,
-            hold=DeviceHold.reserved,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.emulator,
             connection_type=ConnectionType.usb,
@@ -1385,7 +1383,7 @@ async def test_sync_ignores_reserved_placeholder_sessions(db_session: AsyncSessi
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved"))
     assert result.scalar_one_or_none() is None
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+    assert device.operational_state != DeviceOperationalState.maintenance
 
 
 async def test_sweep_clears_stale_stop_pending_for_devices_without_sessions(

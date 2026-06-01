@@ -48,7 +48,6 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         host_id=uuid.UUID(host["id"]),
         name="viability-toctou",
         operational_state=DeviceOperationalState.available,
-        hold=None,
         verified=True,
     )
     with state_write_guard.bypass():

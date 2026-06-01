@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
 from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
@@ -309,14 +309,3 @@ def test_appium_node_stop_in_flight_predicate() -> None:
             stop_pending=False,
         )
     assert device_state.appium_node_stop_in_flight(device) is True
-
-
-def test_operational_state_and_hold_value_sets_are_disjoint() -> None:
-    op_values = {v.value for v in DeviceOperationalState}
-    # DeviceHold.maintenance overlaps intentionally during the hold-collapse migration
-    # (Phase 1 adds maintenance to operational_state; Phase 5 removes DeviceHold.maintenance).
-    hold_values = {v.value for v in DeviceHold} - {"maintenance"}
-    assert op_values.isdisjoint(hold_values), (
-        "operational_state and hold value sets must not overlap; the chip "
-        "projection `hold or operational_state` becomes ambiguous otherwise."
-    )

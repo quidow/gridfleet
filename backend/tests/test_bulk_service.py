@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
@@ -241,7 +241,6 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
             db_session,
             host_id=db_host.id,
             name=f"bulk-exit-recovery-{i}",
-            hold=DeviceHold.maintenance,
             operational_state=DeviceOperationalState.offline,
             lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
         )

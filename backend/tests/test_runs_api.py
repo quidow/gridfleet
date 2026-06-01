@@ -185,7 +185,6 @@ async def test_find_matching_devices_excludes_reserved_device_with_null_hold(
         connection_target="reserved-null-hold",
         name="Reserved Null Hold",
         operational_state="available",
-        hold=None,
     )
     # Add an active reservation row without setting hold.
     run = TestRun(
@@ -1276,5 +1275,4 @@ async def test_allocator_does_not_write_hold(
     )
 
     await db_session.refresh(device)
-    assert device.hold is None, "allocator must not write the hold column"
     assert await device_is_reserved(db_session, device.id), "reservation row must drive reserved state"

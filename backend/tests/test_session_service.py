@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
@@ -145,7 +145,15 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
 
     assert updated is not None
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+    active_reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active_reservation is not None
 
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved-sess"))
     stored = result.scalar_one()

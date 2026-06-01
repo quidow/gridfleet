@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.database import get_db
 from app.devices.dependencies import get_device_services
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -228,7 +228,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
     for reservation in reservations:
         device_row = next(d for d in active_devices if d.id == reservation.device_id)
-        assert device_row.hold == DeviceHold.reserved, (
-            f"Device {device_row.id} has active reservation but status is {device_row.operational_state} "
-            f"— orphaned reservation. HTTP statuses were {statuses}."
+        assert device_row.operational_state != DeviceOperationalState.maintenance, (
+            f"Device {device_row.id} has an active reservation but was escalated to maintenance "
+            f"— the maintenance path stomped a reservation. HTTP statuses were {statuses}."
         )

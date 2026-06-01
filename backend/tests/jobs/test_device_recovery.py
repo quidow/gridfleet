@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
@@ -154,7 +154,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
-            hold=DeviceHold.reserved,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
@@ -266,7 +265,15 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     assert device.operational_state == DeviceOperationalState.available, (
         f"Expected available, got {device.operational_state}"
     )
-    assert device.hold == DeviceHold.reserved, f"Expected hold=reserved (active run), got {device.hold}"
+    active_reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active_reservation is not None, "Expected an active reservation (device rejoined the run)"
     _ = run  # consumed above; suppress unused-variable warning
 
 

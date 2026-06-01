@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
@@ -27,7 +27,6 @@ async def test_exit_maintenance_enqueues_recovery_job(
         db_session,
         host_id=db_host.id,
         name="exit-enqueues-job",
-        hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
@@ -71,7 +70,6 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         db_session,
         host_id=db_host.id,
         name="exit-enqueue-fail",
-        hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )

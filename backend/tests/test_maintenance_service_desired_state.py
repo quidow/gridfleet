@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceIntent
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from tests.fakes import FakeSettingsReader
@@ -28,9 +28,13 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True)
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="dw-maint",
+        verified=True,
+        operational_state=DeviceOperationalState.maintenance,
+    )
     from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 
     set_maintenance_reason(device, "Operator entered maintenance")
