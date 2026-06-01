@@ -78,23 +78,16 @@ def _skip_leader_fencing() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _inject_publisher_into_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inject publisher=AsyncMock() into state machine when missing."""
-    from app.devices.services.lifecycle_state_machine import set_hold, set_operational_state
+    from app.devices.services.lifecycle_state_machine import set_operational_state
 
     _orig_set_op = set_operational_state
-    _orig_set_hold = set_hold
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
         if kwargs.get("publisher") is None:
             kwargs["publisher"] = AsyncMock()
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        if kwargs.get("publisher") is None:
-            kwargs["publisher"] = AsyncMock()
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 def _grid_response(sessions_per_node: list[dict[str, Any]] | None = None) -> dict[str, Any]:

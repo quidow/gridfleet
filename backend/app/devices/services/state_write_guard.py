@@ -34,11 +34,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.devices.services.write",
         }
     ),
-    ("devices", "hold"): frozenset(
-        {
-            "app.devices.services.state",
-        }
-    ),
     ("devices", "lifecycle_policy_state"): frozenset(
         {
             "app.devices.services.lifecycle_policy_state",

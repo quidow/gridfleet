@@ -4,10 +4,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.state_derivation import (
     DeviceStateFacts,
-    evaluate_hold,
     evaluate_operational_state,
     gather_device_state_facts,
 )
@@ -53,20 +52,6 @@ def _facts(**overrides: bool) -> DeviceStateFacts:
 )
 def test_evaluate_operational_state(facts: DeviceStateFacts, expected: DeviceOperationalState) -> None:
     assert evaluate_operational_state(facts) is expected
-
-
-@pytest.mark.parametrize(
-    "facts,expected",
-    [
-        (_facts(), None),
-        (_facts(in_maintenance=True), DeviceHold.maintenance),
-        (_facts(is_reserved=True), DeviceHold.reserved),
-        # maintenance outranks reserved
-        (_facts(in_maintenance=True, is_reserved=True), DeviceHold.maintenance),
-    ],
-)
-def test_evaluate_hold(facts: DeviceStateFacts, expected: DeviceHold | None) -> None:
-    assert evaluate_hold(facts) is expected
 
 
 @pytest.mark.db

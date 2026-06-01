@@ -59,8 +59,8 @@ class TestHookOrdering:
         machine = DeviceStateMachine(hooks=[_RecordingHook("A", log), _RecordingHook("B", log)])
         await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
         assert log == [
-            "A:session_started:available/None->busy/None",
-            "B:session_started:available/None->busy/None",
+            "A:session_started:available->busy",
+            "B:session_started:available->busy",
         ]
 
     async def test_hooks_skipped_on_noop(self, db_session: AsyncSession, db_host: Host) -> None:
@@ -85,7 +85,7 @@ class TestEventLogHook:
         rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
         assert any(row.event_type == DeviceEventType.session_started for row in rows)
         session_row = next(row for row in rows if row.event_type == DeviceEventType.session_started)
-        assert session_row.details == {"from": "available/None", "to": "busy/None"}
+        assert session_row.details == {"from": "available", "to": "busy"}
 
     async def test_idempotent_transition_writes_no_event(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed(db_session, db_host, "evt2")

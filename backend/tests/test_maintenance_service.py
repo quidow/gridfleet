@@ -17,12 +17,13 @@ from tests.helpers import create_device, settle_after_commit_tasks
 pytestmark = pytest.mark.asyncio
 
 
-async def test_enter_maintenance_emits_hold_changed_and_audit_row(
+async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Entering maintenance must still emit device.hold_changed (SSE/webhooks) and record a
-    maintenance_entered audit row — the reconciler is now the writer, so it must carry both."""
+    """Entering maintenance must emit device.operational_state_changed (SSE/webhooks) and record a
+    maintenance_entered audit row — maintenance now lives on the operational axis, derived by the
+    reconciler, which carries both."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -37,7 +38,7 @@ async def test_enter_maintenance_emits_hold_changed_and_audit_row(
     await settle_after_commit_tasks()
 
     emitted = [call.args[0] for call in publisher.publish.call_args_list]
-    assert "device.hold_changed" in emitted
+    assert "device.operational_state_changed" in emitted
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
     assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)

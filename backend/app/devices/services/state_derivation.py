@@ -7,7 +7,7 @@ from prometheus_client import Counter
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
 from app.devices.services.event import record_event
@@ -16,7 +16,7 @@ from app.devices.services.intent_types import NODE_PROCESS, verification_intent_
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import appium_node_stop_in_flight, set_hold, set_operational_state
+from app.devices.services.state import appium_node_stop_in_flight, set_operational_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -56,15 +56,6 @@ def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalStat
     if facts.stop_in_flight or not facts.ready:
         return DeviceOperationalState.offline
     return DeviceOperationalState.available
-
-
-def evaluate_hold(facts: DeviceStateFacts) -> DeviceHold | None:
-    """Derive the back-compat `hold` mirror. `maintenance` > `reserved` (§4)."""
-    if facts.in_maintenance:
-        return DeviceHold.maintenance
-    if facts.is_reserved:
-        return DeviceHold.reserved
-    return None
 
 
 async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: datetime) -> DeviceStateFacts:
@@ -164,10 +155,9 @@ async def apply_derived_state(
     publisher: EventPublisher | None = None,
     observed_reason: ObservationReason | None = None,
 ) -> bool:
-    """Derive (operational_state, hold) and write them when they differ from the persisted columns.
+    """Derive ``operational_state`` and write it when it differs from the persisted column.
 
-    Emits the mapped operational/hold bus event for each axis that changes when ``publisher`` is
-    provided.
+    Emits the mapped operational bus event when the axis changes and ``publisher`` is provided.
 
     The typed DeviceEvent audit row is written only when the caller carries an ``observed_reason``
     (§6: the cause rides on the observation, the reconciler maps ``(delta, reason) → event``). The
@@ -177,50 +167,42 @@ async def apply_derived_state(
     analytics reliability counts that query that type. Background reconciles (no carried reason)
     still update state and emit the bus event, but record no audit row.
 
-    Returns True if either axis was written.
+    Maintenance enter/exit transitions on the operational axis are structurally unambiguous, so they
+    always record a ``maintenance_entered`` / ``maintenance_exited`` audit row regardless of a carried
+    reason.
+
+    Returns True if the operational axis was written.
     """
     facts = await gather_device_state_facts(db, device, now=now)
     derived_op = evaluate_operational_state(facts)
-    derived_hold = evaluate_hold(facts)
 
-    changed = False
+    if derived_op is device.operational_state:
+        return False
 
-    if derived_op is not device.operational_state:
-        prev_op = device.operational_state
-        reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts, derived_op)
-        event_type, severity = map_transition_event(derived_op, reason)
-        # Persist the typed audit row the old EventLogHook used to write (§6) only when the cause was
-        # explicitly carried in by the observation site — never from the fact-based heuristic, which
-        # cannot tell connectivity loss from a node crash / health failure.
-        if observed_reason is not None and event_type is not None:
-            await record_event(
-                db,
-                device.id,
-                event_type,
-                {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
-            )
-        await set_operational_state(
-            device,
-            derived_op,
-            reason=(event_type.value if event_type is not None else reason.value),
-            severity=severity,
-            publisher=publisher,
+    prev_op = device.operational_state
+    reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts, derived_op)
+    event_type, severity = map_transition_event(derived_op, reason)
+    # Persist the typed audit row the old EventLogHook used to write (§6) only when the cause was
+    # explicitly carried in by the observation site — never from the fact-based heuristic, which
+    # cannot tell connectivity loss from a node crash / health failure.
+    if observed_reason is not None and event_type is not None:
+        await record_event(
+            db,
+            device.id,
+            event_type,
+            {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
         )
-        changed = True
-
-    if derived_hold is not device.hold:
-        prev_hold = device.hold
-        # Maintenance enter/exit are the only hold transitions the old EventLogHook audited
-        # (reserved hold churn from allocation/release recorded no row).
-        if derived_hold is DeviceHold.maintenance:
-            await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": "maintenance"})
-            hold_reason = "maintenance"
-        elif prev_hold is DeviceHold.maintenance:
-            await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
-            hold_reason = "exit maintenance"
-        else:
-            hold_reason = derived_hold.value if derived_hold is not None else "released"
-        await set_hold(device, derived_hold, reason=hold_reason, severity="info", publisher=publisher)
-        changed = True
-
-    return changed
+    # Maintenance enter/exit are structurally unambiguous (the maintenance operational state has
+    # exactly one cause) so the audit row is always recorded, mirroring the old hold-axis behavior.
+    if derived_op is DeviceOperationalState.maintenance:
+        await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": "maintenance"})
+    elif prev_op is DeviceOperationalState.maintenance:
+        await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
+    await set_operational_state(
+        device,
+        derived_op,
+        reason=(event_type.value if event_type is not None else reason.value),
+        severity=severity,
+        publisher=publisher,
+    )
+    return True

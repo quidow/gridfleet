@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.devices.services.state import set_hold, set_operational_state
+from app.devices.services.state import set_operational_state
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -30,10 +30,9 @@ pytestmark = pytest.mark.db
 def _make_severity_capture(monkeypatch: pytest.MonkeyPatch, *, inject_publisher: bool = False) -> list[dict[str, Any]]:
     """Return a list that accumulates {type, severity} dicts for each publish call.
 
-    When *inject_publisher* is True, the state-machine module's references to
-    ``set_operational_state`` and ``set_hold`` are wrapped so that
-    ``publisher=event_bus`` is injected automatically (the state machine does
-    not pass publisher itself).
+    When *inject_publisher* is True, the state-machine module's reference to
+    ``set_operational_state`` is wrapped so that ``publisher=event_bus`` is
+    injected automatically (the state machine does not pass publisher itself).
     """
     captured: list[dict[str, Any]] = []
 
@@ -44,20 +43,13 @@ def _make_severity_capture(monkeypatch: pytest.MonkeyPatch, *, inject_publisher:
 
     if inject_publisher:
         _orig_set_op = set_operational_state
-        _orig_set_hold = set_hold
 
         async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
             if kwargs.get("publisher") is None:
                 kwargs["publisher"] = event_bus
             return await _orig_set_op(device, new_state, **kwargs)
 
-        async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-            if kwargs.get("publisher") is None:
-                kwargs["publisher"] = event_bus
-            return await _orig_set_hold(device, new_hold, **kwargs)
-
         monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-        monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
     return captured
 
@@ -130,42 +122,6 @@ async def test_set_operational_state_none_severity_passes_none(
     events = _events_of_type(captured, "device.operational_state_changed")
     assert len(events) == 1
     # None means the bus resolves the catalog default ("info")
-    assert events[0]["severity"] is None
-
-
-async def test_set_hold_forwards_explicit_severity(
-    db_session: AsyncSession,
-    device: Device,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _make_severity_capture(monkeypatch)
-
-    await set_hold(
-        device,
-        DeviceHold.maintenance,
-        reason="Operator entered maintenance",
-        severity="info",
-        publisher=event_bus,
-    )
-    await db_session.commit()
-
-    events = _events_of_type(captured, "device.hold_changed")
-    assert len(events) == 1
-    assert events[0]["severity"] == "info"
-
-
-async def test_set_hold_none_severity_passes_none(
-    db_session: AsyncSession,
-    device: Device,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _make_severity_capture(monkeypatch)
-
-    await set_hold(device, DeviceHold.maintenance, reason="no severity kwarg", publisher=event_bus)
-    await db_session.commit()
-
-    events = _events_of_type(captured, "device.hold_changed")
-    assert len(events) == 1
     assert events[0]["severity"] is None
 
 
@@ -289,27 +245,3 @@ async def test_state_machine_verification_passed_emits_success(
     events = _events_of_type(captured, "device.operational_state_changed")
     assert len(events) == 1
     assert events[0]["severity"] == "success"
-
-
-async def test_state_machine_maintenance_entered_emits_info_on_hold(
-    db_session: AsyncSession,
-    device: Device,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """MAINTENANCE_ENTERED changes hold → severity='info' on hold_changed event."""
-    captured = _make_severity_capture(monkeypatch, inject_publisher=True)
-
-    with state_write_guard.bypass():
-        device.operational_state = DeviceOperationalState.available
-    await db_session.flush()
-
-    changed = await DeviceStateMachine().transition(
-        device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=event_bus
-    )
-
-    assert changed is True
-    await db_session.commit()
-
-    hold_events = _events_of_type(captured, "device.hold_changed")
-    assert len(hold_events) == 1
-    assert hold_events[0]["severity"] == "info"

@@ -8,7 +8,7 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.devices.services import state_write_guard
-from app.devices.services.state import set_hold, set_operational_state
+from app.devices.services.state import set_operational_state
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
@@ -33,18 +33,12 @@ def _inject_publisher_into_session_and_state_machine(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(session_module, "queue_session_ended_event", _wrapped_ended)
 
     _orig_set_op = set_operational_state
-    _orig_set_hold = set_hold
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
         kwargs.setdefault("publisher", event_bus)
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 DEVICE_PAYLOAD = {

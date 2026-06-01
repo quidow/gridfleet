@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 from app.appium_nodes.services.reconciler_agent import mark_node_started, mark_node_stopped
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
-from app.devices.services.state import set_hold as _orig_set_hold
 from app.devices.services.state import set_operational_state as _orig_set_op
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
@@ -27,12 +26,7 @@ def _inject_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
         kwargs.setdefault("publisher", event_bus)
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        kwargs.setdefault("publisher", event_bus)
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 async def test_mark_node_started_queues_state_changed_after_availability(

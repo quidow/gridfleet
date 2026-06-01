@@ -79,28 +79,6 @@ class TestValidTransitions:
         await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, publisher=Mock())
         assert device.operational_state == DeviceOperationalState.available
 
-    async def test_maintenance_entered_sets_hold_only(self, db_session: AsyncSession, db_host: Host) -> None:
-        device = await _seed_device(
-            db_session, db_host, operational=DeviceOperationalState.available, hold=None, name_suffix="t5"
-        )
-        machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
-        assert device.operational_state == DeviceOperationalState.available
-        assert device.hold == DeviceHold.maintenance
-
-    async def test_maintenance_exited_clears_hold(self, db_session: AsyncSession, db_host: Host) -> None:
-        device = await _seed_device(
-            db_session,
-            db_host,
-            operational=DeviceOperationalState.offline,
-            hold=DeviceHold.maintenance,
-            name_suffix="t6",
-        )
-        machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, publisher=Mock())
-        assert device.operational_state == DeviceOperationalState.offline
-        assert device.hold is None
-
     async def test_offline_to_busy_on_session_started(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed_device(
             db_session, db_host, operational=DeviceOperationalState.offline, hold=None, name_suffix="t7"
@@ -227,52 +205,8 @@ class TestMaintenanceHoldTransparent:
         assert device.operational_state == DeviceOperationalState.available
         assert device.hold == DeviceHold.maintenance
 
-    async def test_maintenance_entered_preserves_busy_operational(
-        self, db_session: AsyncSession, db_host: Host
-    ) -> None:
-        device = await _seed_device(
-            db_session,
-            db_host,
-            operational=DeviceOperationalState.busy,
-            hold=None,
-            name_suffix="mt3",
-        )
-        machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
-        assert device.operational_state == DeviceOperationalState.busy
-        assert device.hold == DeviceHold.maintenance
-
-    async def test_maintenance_entered_preserves_available_operational(
-        self, db_session: AsyncSession, db_host: Host
-    ) -> None:
-        device = await _seed_device(
-            db_session,
-            db_host,
-            operational=DeviceOperationalState.available,
-            hold=None,
-            name_suffix="mt4",
-        )
-        machine = DeviceStateMachine()
-        await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=Mock())
-        assert device.operational_state == DeviceOperationalState.available
-        assert device.hold == DeviceHold.maintenance
-
 
 class TestIdempotency:
-    async def test_maintenance_entered_from_maintenance_is_noop(self, db_session: AsyncSession, db_host: Host) -> None:
-        device = await _seed_device(
-            db_session,
-            db_host,
-            operational=DeviceOperationalState.offline,
-            hold=DeviceHold.maintenance,
-            name_suffix="i1",
-        )
-        machine = DeviceStateMachine()
-        changed = await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, publisher=event_bus)
-        assert changed is False
-        assert device.operational_state == DeviceOperationalState.offline
-        assert device.hold == DeviceHold.maintenance
-
     async def test_session_started_from_busy_is_noop(self, db_session: AsyncSession, db_host: Host) -> None:
         device = await _seed_device(
             db_session, db_host, operational=DeviceOperationalState.busy, hold=None, name_suffix="i2"
@@ -306,9 +240,11 @@ class TestIdempotency:
 
 
 class TestInvalidTransitions:
-    async def test_maintenance_exited_without_maintenance_hold_raises(
+    async def test_maintenance_exited_is_invalid_on_operational_axis(
         self, db_session: AsyncSession, db_host: Host
     ) -> None:
+        # Maintenance is derived onto operational_state by the reconciler; the
+        # state machine no longer handles the maintenance transition events.
         device = await _seed_device(
             db_session, db_host, operational=DeviceOperationalState.available, hold=None, name_suffix="x2"
         )
@@ -331,13 +267,13 @@ class TestStateModel:
             db_session,
             db_host,
             operational=DeviceOperationalState.busy,
-            hold=DeviceHold.reserved,
+            hold=None,
             name_suffix="m1",
         )
         snapshot = DeviceStateModel.from_device(device)
-        assert snapshot.label() == "busy/reserved"
-        snapshot_none = DeviceStateModel(operational=DeviceOperationalState.offline, hold=None)
-        assert snapshot_none.label() == "offline/None"
+        assert snapshot.label() == "busy"
+        snapshot_offline = DeviceStateModel(operational=DeviceOperationalState.offline)
+        assert snapshot_offline.label() == "offline"
 
 
 class TestSkipHooks:

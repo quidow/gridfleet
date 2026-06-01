@@ -848,16 +848,12 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A device with hold=NULL but an active reservation row must have set_hold(None) called.
+    """A device with an active reservation row is restored via the reservation query.
 
-    This exercises the post-migration code path where the reserved state is
-    detected via ``device_is_reserved(db, device.id)`` rather than
-    ``device.hold == DeviceHold.reserved``.  The fixture deliberately leaves
-    ``hold=NULL`` in the DB to confirm the reservation-row query drives the
-    branch, not the hold column.
+    Reserved state is detected via ``device_is_reserved(db, device.id)`` rather than the
+    ``hold`` column (which is no longer written). The release path restores the operational
+    state and queues the device for lifecycle cleanup; it performs no hold write.
     """
-    from unittest.mock import patch
-
     from app.devices.models import DeviceReservation
 
     reserved_device = await create_device(
@@ -866,9 +862,8 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
         name="reserved-no-hold",
         identity_value="run-release-reserved-no-hold-001",
         operational_state=DeviceOperationalState.available,
-        hold=None,  # hold stays NULL — we rely on the reservation row
+        hold=None,  # hold is no longer written; the reservation row drives the branch
     )
-    # Build the run + reservation manually so hold is NOT set to DeviceHold.reserved.
     run = TestRun(
         name="release-reserved-no-hold-run",
         state=RunState.cancelled,
@@ -891,23 +886,12 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     db_session.add(reservation)
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
-    # Confirm hold is still NULL in DB.
-    await db_session.refresh(reserved_device)
-    assert reserved_device.hold is None
 
     monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
 
-    set_hold_calls: list[object] = []
-    original_set_hold = _release_svc._device_state.set_hold
+    pending = await _release_svc.release_devices(db_session, run, commit=False)
 
-    async def capturing_set_hold(device: object, value: object, **kwargs: object) -> None:
-        set_hold_calls.append((device, value))
-        await original_set_hold(device, value, **kwargs)  # type: ignore[misc]
-
-    with patch.object(_release_svc._device_state, "set_hold", capturing_set_hold):
-        pending = await _release_svc.release_devices(db_session, run, commit=False)
-
-    # Device should be in pending list (eventually restored) and set_hold(None) was called.
+    # The reservation row drives the branch: the device is queued for lifecycle cleanup
+    # and its operational state is restored, with no hold write.
     assert reserved_device.id in pending
-    assert len(set_hold_calls) == 1
-    assert set_hold_calls[0][1] is None  # hold cleared to None
+    assert reserved_device.hold is None

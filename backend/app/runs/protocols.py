@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.pagination import CursorPage
-    from app.devices.models import Device, DeviceHold, DeviceOperationalState
+    from app.devices.models import Device, DeviceOperationalState
     from app.devices.models.reservation import DeviceReservation
     from app.events.catalog import EventSeverity
     from app.runs.models import RunState, TestRun
@@ -107,16 +107,6 @@ class DeviceStateWriter(Protocol):
         self,
         device: Device,
         new_state: DeviceOperationalState,
-        *,
-        reason: str | None = ...,
-        publish_event: bool = ...,
-        severity: EventSeverity | None = ...,
-    ) -> bool: ...
-
-    async def set_hold(
-        self,
-        device: Device,
-        new_hold: DeviceHold | None,
         *,
         reason: str | None = ...,
         publish_event: bool = ...,

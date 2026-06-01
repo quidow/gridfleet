@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
@@ -25,7 +25,6 @@ async def test_full_lifecycle_via_state_machine(db_session: AsyncSession, db_hos
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
-            hold=None,
             device_type="real_device",
             connection_type="usb",
         )
@@ -43,27 +42,20 @@ async def test_full_lifecycle_via_state_machine(db_session: AsyncSession, db_hos
 
     await machine.transition(device, TransitionEvent.CONNECTIVITY_LOST, reason="cable yanked", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.offline
-    assert device.hold is None
-
-    await machine.transition(device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=publisher)
-    assert device.operational_state == DeviceOperationalState.offline
-    assert device.hold == DeviceHold.maintenance
 
     # Re-assert is a no-op (idempotent)
     changed = await machine.transition(
-        device, TransitionEvent.MAINTENANCE_ENTERED, reason="operator", publisher=publisher
+        device, TransitionEvent.CONNECTIVITY_LOST, reason="cable yanked", publisher=publisher
     )
     assert changed is False
-
-    await machine.transition(device, TransitionEvent.MAINTENANCE_EXITED, reason="operator", publisher=publisher)
-    assert device.hold is None
-    assert device.operational_state == DeviceOperationalState.offline
 
     await machine.transition(device, TransitionEvent.CONNECTIVITY_RESTORED, reason="recovered", publisher=publisher)
     assert device.operational_state == DeviceOperationalState.available
 
 
-async def test_reserved_hold_survives_session_lifecycle(db_session: AsyncSession, db_host: Host) -> None:
+async def test_reserved_device_session_lifecycle(db_session: AsyncSession, db_host: Host) -> None:
+    """A reserved device (tracked via reservation rows, not hold) cycles through a
+    session on the operational axis. The state machine only touches operational_state."""
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -76,7 +68,6 @@ async def test_reserved_hold_survives_session_lifecycle(db_session: AsyncSession
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.available,
-            hold=DeviceHold.reserved,
             device_type="real_device",
             connection_type="usb",
         )
@@ -87,16 +78,14 @@ async def test_reserved_hold_survives_session_lifecycle(db_session: AsyncSession
     publisher = Mock()
     await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=publisher)
     assert device.operational_state == DeviceOperationalState.busy
-    assert device.hold == DeviceHold.reserved
 
     await machine.transition(device, TransitionEvent.SESSION_ENDED, publisher=publisher)
     assert device.operational_state == DeviceOperationalState.available
-    assert device.hold == DeviceHold.reserved
 
 
-async def test_offline_reserved_to_busy_via_session_started(db_session: AsyncSession, db_host: Host) -> None:
-    """Production race: session arrives on an offline-but-reserved device before
-    the connectivity loop catches up. The machine handles it directly."""
+async def test_offline_to_busy_via_session_started(db_session: AsyncSession, db_host: Host) -> None:
+    """Production race: session arrives on an offline device before the
+    connectivity loop catches up. The machine handles it directly."""
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -109,7 +98,6 @@ async def test_offline_reserved_to_busy_via_session_started(db_session: AsyncSes
             os_version="14",
             host_id=db_host.id,
             operational_state=DeviceOperationalState.offline,
-            hold=DeviceHold.reserved,
             device_type="real_device",
             connection_type="usb",
         )
@@ -119,4 +107,3 @@ async def test_offline_reserved_to_busy_via_session_started(db_session: AsyncSes
     machine = DeviceStateMachine()
     await machine.transition(device, TransitionEvent.SESSION_STARTED, publisher=Mock())
     assert device.operational_state == DeviceOperationalState.busy
-    assert device.hold == DeviceHold.reserved

@@ -107,13 +107,6 @@ class RunReleaseService:
             if not was_reserved and device.operational_state != DeviceOperationalState.busy:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if was_reserved:
-                await self._device_state.set_hold(
-                    device,
-                    None,
-                    reason=f"Run '{run.name}' ended ({run.state.value})",
-                    severity="info",
-                )
             if device.operational_state == DeviceOperationalState.busy and await self._device_has_running_session(
                 db, device.id
             ):

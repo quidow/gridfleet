@@ -19,7 +19,6 @@ if TYPE_CHECKING:
         ConnectionType,
         Device,
         DeviceGroup,
-        DeviceHold,
         DeviceOperationalState,
         DeviceReservation,
         DeviceType,
@@ -47,16 +46,6 @@ class DeviceStateWriter(Protocol):
         self,
         device: Device,
         new_state: DeviceOperationalState,
-        *,
-        reason: str | None = ...,
-        publish_event: bool = ...,
-        severity: EventSeverity | None = ...,
-    ) -> bool: ...
-
-    async def set_hold(
-        self,
-        device: Device,
-        new_hold: DeviceHold | None,
         *,
         reason: str | None = ...,
         publish_event: bool = ...,

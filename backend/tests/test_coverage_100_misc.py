@@ -29,7 +29,7 @@ from app.core.leader import advisory as control_plane_leader_module
 from app.core.leader import watcher as control_plane_leader_watcher
 from app.core.observability import sanitize_log_value
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceType
+from app.devices.models import Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState, SessionCreate
 from app.devices.schemas.test_data import TestDataPayload
 from app.devices.services import (
@@ -245,10 +245,13 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     assert await device_locking.lock_devices(db, []) == []
 
     with state_write_guard.bypass():
-        device = Device(id=uuid.uuid4(), name="d", hold=DeviceHold.maintenance)
+        device = Device(id=uuid.uuid4(), name="d", operational_state=DeviceOperationalState.maintenance)
     monkeypatch.setattr(device_state, "_persistent_session", lambda _device: object())
     assert (
-        await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False, publisher=event_bus) is False
+        await device_state.set_operational_state(
+            device, DeviceOperationalState.maintenance, publish_event=False, publisher=event_bus
+        )
+        is False
     )
 
     assert event_catalog.normalize_public_event_names("bad") == []

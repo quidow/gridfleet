@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
@@ -1249,13 +1249,14 @@ async def test_allocator_does_not_write_hold(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """Allocator derives hold=reserved through the reconciler, not by writing it directly.
+    """Allocator never writes hold; reserved state lives on the DeviceReservation row.
 
-    After Task 10, reconcile_device is called inline during create_run (via
-    register_intents_and_reconcile). For a device without an AppiumNode row,
-    the no-node code path runs apply_derived_state which reads the DeviceReservation
-    row and derives hold=reserved.
+    Hold derivation has been removed. Reserving a device for a run creates a reservation
+    row and leaves the device's operational axis untouched — the device is reserved per
+    ``device_is_reserved``, with no hold write.
     """
+    from app.devices.services.reservation_query import device_is_reserved
+
     device = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -1273,6 +1274,6 @@ async def test_allocator_does_not_write_hold(
         ),
     )
 
-    # After Task 10: the inline reconciler derives hold=reserved from the reservation row.
     await db_session.refresh(device)
-    assert device.hold is DeviceHold.reserved, "reconciler must derive hold=reserved from reservation row"
+    assert device.hold is None, "allocator must not write the hold column"
+    assert await device_is_reserved(db_session, device.id), "reservation row must drive reserved state"
