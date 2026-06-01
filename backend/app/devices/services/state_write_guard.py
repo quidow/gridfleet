@@ -69,7 +69,7 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler",
             "app.appium_nodes.services.heartbeat",
             # Verification teardown clears pid to signal the node has stopped.
-            "app.devices.services.verification_execution",
+            "app.verification.services.execution",
         }
     ),
     ("appium_nodes", "port"): frozenset(
@@ -88,7 +88,7 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
         {
             "app.appium_nodes.services.reconciler_agent",
             "app.devices.services.capability",
-            "app.devices.services.verification_execution",
+            "app.verification.services.execution",
         }
     ),
     ("appium_nodes", "health_running"): frozenset(

@@ -18,9 +18,9 @@ from app.devices.schemas.portability import (
 )
 from app.devices.services.portability_hash import compute_bundle_hash
 from app.devices.services.portability_import import BundleHashMismatchError, PortabilityImportService
-from app.devices.services.verification import VerificationService
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
+from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 
 
@@ -172,7 +172,7 @@ async def test_commit_rolls_back_device_when_verification_enqueue_fails(
     )
 
     with patch(
-        "app.devices.services.verification.job_queue.create_job",
+        "app.verification.services.service.job_queue.create_job",
         side_effect=RuntimeError("boom"),
     ):
         result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(

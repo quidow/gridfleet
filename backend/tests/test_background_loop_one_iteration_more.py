@@ -28,7 +28,6 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.service import HostCrudService
@@ -43,6 +42,7 @@ from app.sessions import service_viability as session_viability
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
+from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 

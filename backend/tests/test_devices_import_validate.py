@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.schemas.portability import ExportBundle, ExportedDevice, OriginalHost
 from app.devices.services.portability_import import PortabilityImportService
-from app.devices.services.verification import VerificationService
+from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 
 

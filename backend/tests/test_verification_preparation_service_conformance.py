@@ -1,4 +1,4 @@
-from app.devices.services.verification_preparation import VerificationPreparationService
+from app.verification.services.preparation import VerificationPreparationService
 
 
 def test_verification_preparation_service_has_methods() -> None:

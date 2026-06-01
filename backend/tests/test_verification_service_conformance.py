@@ -1,5 +1,5 @@
 from app.devices.protocols import VerificationProtocol
-from app.devices.services.verification import VerificationService
+from app.verification.services.service import VerificationService
 
 
 def test_verification_service_satisfies_protocol() -> None:

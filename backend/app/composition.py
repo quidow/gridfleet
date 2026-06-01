@@ -49,10 +49,6 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
-from app.devices.services.verification_execution import VerificationExecutionService
-from app.devices.services.verification_preparation import VerificationPreparationService
-from app.devices.services.verification_runner import VerificationRunnerService
 from app.devices.services_container import DeviceServices
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -89,6 +85,10 @@ from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
+from app.verification.services.execution import VerificationExecutionService
+from app.verification.services.preparation import VerificationPreparationService
+from app.verification.services.runner import VerificationRunnerService
+from app.verification.services.service import VerificationService
 from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.service import WebhookCrudService
 from app.webhooks.services_container import WebhookServices

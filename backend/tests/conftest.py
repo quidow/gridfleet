@@ -52,7 +52,6 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
@@ -101,6 +100,7 @@ from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.service import SettingsService
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
+from app.verification.services.service import VerificationService
 from app.webhooks.dependencies import get_webhook_services
 from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery

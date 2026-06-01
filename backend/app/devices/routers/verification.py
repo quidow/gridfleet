@@ -14,12 +14,12 @@ from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailabl
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
-    DeviceVerificationJobRead,
     DeviceVerificationUpdate,
 )
-from app.devices.services.verification_job_state import public_snapshot
 from app.events import Event
 from app.events.dependencies import EventServicesDep
+from app.verification.schemas import DeviceVerificationJobRead
+from app.verification.services.job_state import public_snapshot
 
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
 

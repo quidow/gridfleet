@@ -7,19 +7,19 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
-from app.devices.services.verification_job_state import finish_job, hydrate_job
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions.service_viability import build_probe_capabilities
+from app.verification.services.job_state import finish_job, hydrate_job
 
 if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.devices.protocols import SessionViabilityProbe
-    from app.devices.services.verification_execution import VerificationExecutionService
-    from app.devices.services.verification_preparation import VerificationPreparationService
     from app.events.protocols import EventPublisher
+    from app.verification.services.execution import VerificationExecutionService
+    from app.verification.services.preparation import VerificationPreparationService
 
 logger = logging.getLogger(__name__)
 

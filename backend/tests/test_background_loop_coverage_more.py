@@ -39,9 +39,9 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
-from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
 from app.runs import service_reaper as run_reaper
+from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 

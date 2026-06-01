@@ -24,12 +24,12 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.review import mark_review_required
 from app.devices.services.state import set_operational_state
-from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.service_viability import grid_probe_response_to_result
 from app.sessions.viability_types import SessionViabilityCheckedBy
+from app.verification.services.job_state import enum_value, set_stage
 
 device_is_virtual = pack_platform_catalog.device_is_virtual
 
@@ -48,8 +48,8 @@ if TYPE_CHECKING:
         RemoteNodeManager,
         SessionViabilityProbe,
     )
-    from app.devices.services.verification_preparation import PreparedVerificationContext
     from app.events.protocols import EventPublisher
+    from app.verification.services.preparation import PreparedVerificationContext
 
 AVD_LAUNCH_HTTP_TIMEOUT_SECS = 190
 logger = logging.getLogger(__name__)

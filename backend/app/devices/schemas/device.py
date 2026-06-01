@@ -19,9 +19,6 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
-VerificationJobStatus = Literal["pending", "running", "completed", "failed"]
-VerificationStageStatus = Literal["pending", "running", "failed", "passed", "skipped"]
-
 DeviceTags = dict[str, str]
 
 
@@ -369,18 +366,6 @@ class DeviceRead(BaseModel):
 class DeviceDetail(DeviceRead):
     appium_node: AppiumNodeRead | None = None
     orchestration: DeviceOrchestrationRead
-
-
-class DeviceVerificationJobRead(BaseModel):
-    job_id: str
-    status: VerificationJobStatus
-    current_stage: str | None = None
-    current_stage_status: VerificationStageStatus | None = None
-    detail: str | None = None
-    error: str | None = None
-    device_id: uuid.UUID | None = None
-    started_at: str
-    finished_at: str | None = None
 
 
 class SessionDetail(SessionRead):
