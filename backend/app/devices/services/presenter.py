@@ -20,6 +20,7 @@ from app.devices.services.intent_evaluator import (
     evaluate_reservation,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.reservation_query import device_is_reserved
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
@@ -103,6 +104,7 @@ class DevicePresenterService:
             "host_id": device.host_id,
             "operational_state": device.operational_state,
             "hold": device.hold,
+            "is_reserved": await device_is_reserved(db, device.id),
             "tags": device.tags,
             "device_type": device.device_type,
             "connection_type": device.connection_type,

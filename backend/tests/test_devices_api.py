@@ -1927,3 +1927,25 @@ def test_backend_sanitize_log_value_strips_control_characters() -> None:
     from app.core.observability import sanitize_log_value
 
     assert sanitize_log_value("device-1\r\ninjected=true") == "device-1\\r\\ninjected=true"
+
+
+@pytest.mark.asyncio
+async def test_device_read_exposes_is_reserved(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from tests.helpers import create_reservation
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="reserved-device-1",
+        connection_target="reserved-device-1",
+        name="Reserved Device",
+    )
+    device_id = str(device.id)
+    await create_reservation(db_session, device_id=uuid.UUID(device_id))
+    await db_session.commit()
+
+    got = await client.get(f"/api/devices/{device_id}")
+    assert got.status_code == 200
+    assert got.json()["is_reserved"] is True

@@ -336,6 +336,7 @@ class DeviceRead(BaseModel):
     host_id: uuid.UUID
     operational_state: DeviceOperationalState
     hold: DeviceHold | None
+    is_reserved: bool = False
     tags: DeviceTags | None
     manufacturer: str | None
     model: str | None
