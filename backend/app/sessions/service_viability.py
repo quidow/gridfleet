@@ -15,6 +15,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
 from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.reservation_query import active_reservation_exists, device_is_reserved
 from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -43,6 +44,13 @@ __all__ = [
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
+
+# §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
+# It validates an ``offline`` device coming back from a node failure, or a
+# ``verifying`` device that exit-maintenance deliberately held out of service for
+# eager re-validation (``maintenance → verifying → available|offline``). Any other
+# state (``busy``, ``maintenance``) is never probed.
+_RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, DeviceOperationalState.verifying})
 
 _VIABILITY_PROBE_SOURCE_MAP: dict[SessionViabilityCheckedBy, ProbeSource] = {
     SessionViabilityCheckedBy.scheduled: ProbeSource.scheduled,
@@ -188,7 +196,7 @@ class SessionViabilityService:
         device_reserved = await device_is_reserved(db, device.id)
         can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
             checked_by == SessionViabilityCheckedBy.recovery
-            and device.operational_state == DeviceOperationalState.offline
+            and device.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
             and not device_reserved
         )
         if not can_probe:
@@ -236,7 +244,7 @@ class SessionViabilityService:
                 locked.operational_state == DeviceOperationalState.available and not locked_reserved
             ) or (
                 checked_by == SessionViabilityCheckedBy.recovery
-                and locked.operational_state == DeviceOperationalState.offline
+                and locked.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
                 and not locked_reserved
             )
             if not locked_can_probe:
@@ -274,6 +282,21 @@ class SessionViabilityService:
                 publisher=self._publisher,
                 health=self._health,
             )
+
+            # §14.4a: a recovery probe is the validator for the eager exit-maintenance
+            # re-validation. Now that it has completed (pass or fail), revoke the
+            # verification lease so the post-probe reconcile derives the device's real
+            # state (`available` on pass, `offline` on genuine failure) instead of
+            # re-deriving `verifying` and stranding it until the lease's `expires_at`
+            # safety net. Mirrors verification_execution._finalize_*; the revoke-triggered
+            # reconcile re-injects `baseline:idle` for a now-available device. No-op for
+            # background auto-recovery on an `offline` device (no lease present).
+            if checked_by == SessionViabilityCheckedBy.recovery:
+                await IntentService(db).revoke_intents(
+                    device_id=device.id,
+                    sources=[verification_intent_source(device.id)],
+                    reason="exit-maintenance re-validation complete",
+                )
 
             # Mark dirty so the reconciler derives the correct post-probe state.
             # The probe created and deleted a Grid session but left no running
