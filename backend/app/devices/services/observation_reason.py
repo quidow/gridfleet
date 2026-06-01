@@ -15,8 +15,8 @@ class ObservationReason(StrEnum):
     node_crashed = "node_crashed"
     recovered = "recovered"
     verification_started = "verification_started"
-    # verification_passed is intentionally absent: no DeviceEventType for it yet.
-    # Add back when Task 7 (apply_derived_state) wires verifying→available and a proper event type is defined.
+    # verification_passed is intentionally absent: no DeviceEventType for verifying→available yet;
+    # add when the event type is defined.
     verification_failed = "verification_failed"
     session = "session"
     session_ended = "session_ended"

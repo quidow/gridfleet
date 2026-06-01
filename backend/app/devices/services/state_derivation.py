@@ -137,15 +137,19 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
 
 
 def _reason_for(facts: DeviceStateFacts, derived_op: DeviceOperationalState) -> ObservationReason:
-    """Map gathered facts to the closest ObservationReason for the derived transition."""
+    """Map gathered facts to the closest ObservationReason for the derived transition.
+
+    Priority mirrors evaluate_operational_state: session > verification_lease >
+    stop_in_flight / not_ready > available / recovered.
+    """
+    if facts.has_running_session:
+        return ObservationReason.session
+    if facts.has_verification_lease:
+        return ObservationReason.verification_started
     if facts.stop_in_flight:
         return ObservationReason.auto_stopped
     if not facts.ready:
         return ObservationReason.disconnected
-    if facts.has_verification_lease:
-        return ObservationReason.verification_started
-    if facts.has_running_session and derived_op is DeviceOperationalState.busy:
-        return ObservationReason.session
     if derived_op is DeviceOperationalState.available:
         return ObservationReason.session_ended
     return ObservationReason.recovered
