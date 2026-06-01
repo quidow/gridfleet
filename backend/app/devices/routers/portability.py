@@ -6,7 +6,7 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.portability import ExportBundle, ImportCommitRequest, ImportCommitResult, ImportPreview
-from app.devices.services.portability_import import BundleHashMismatchError, commit_import, validate_bundle
+from app.devices.services.portability_import import BundleHashMismatchError
 
 router = APIRouter(
     prefix="/api/devices",
@@ -32,9 +32,9 @@ async def export_devices(db: DbDep, device_services: DeviceServicesDep, response
     response_model=ImportPreview,
     summary="Validate a device import bundle and return a per-row preview",
 )
-async def import_validate(bundle: ExportBundle, db: DbDep) -> ImportPreview:
+async def import_validate(bundle: ExportBundle, db: DbDep, device_services: DeviceServicesDep) -> ImportPreview:
     try:
-        return await validate_bundle(db, bundle)
+        return await device_services.portability_import.validate_bundle(db, bundle)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -44,8 +44,10 @@ async def import_validate(bundle: ExportBundle, db: DbDep) -> ImportPreview:
     response_model=ImportCommitResult,
     summary="Commit a previously-validated device import bundle",
 )
-async def import_commit(request: ImportCommitRequest, db: DbDep) -> ImportCommitResult:
+async def import_commit(
+    request: ImportCommitRequest, db: DbDep, device_services: DeviceServicesDep
+) -> ImportCommitResult:
     try:
-        return await commit_import(db, request)
+        return await device_services.portability_import.commit_import(db, request)
     except BundleHashMismatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -119,46 +119,6 @@ async def _classify_row(
     return (ImportRowStatus.VALID_NEW, [])
 
 
-async def validate_bundle(session: AsyncSession, bundle: ExportBundle) -> ImportPreview:
-    """Validate a bundle and return a preview with per-row classifications.
-
-    This function is read-only; it issues no writes to the database.
-
-    Raises:
-        ValueError: if ``bundle.schema_version`` is not supported.
-    """
-    if bundle.schema_version != SCHEMA_VERSION:
-        raise ValueError(f"unsupported schema_version: {bundle.schema_version}")
-
-    hosts = await _load_available_hosts(session)
-
-    counts: Counter[tuple[str, str, str]] = Counter(_identity_key(d) for d in bundle.devices)
-    duplicate_keys = {k for k, c in counts.items() if c > 1}
-
-    rows: list[ImportPreviewRow] = []
-    for idx, device in enumerate(bundle.devices):
-        status, issues = await _classify_row(session, device, hosts, duplicate_keys)
-        suggestion = _pick_host_suggestion(device, hosts)
-        rows.append(
-            ImportPreviewRow(
-                index=idx,
-                device=device,
-                status=status,
-                host_suggestion=suggestion,
-                issues=issues,
-            )
-        )
-
-    return ImportPreview(
-        schema_version=SCHEMA_VERSION,
-        source_instance=bundle.source_instance,
-        exported_at=bundle.exported_at,
-        bundle_hash=compute_bundle_hash(bundle),
-        available_hosts=[HostSuggestion(id=h.id, hostname=h.hostname) for h in hosts],
-        rows=rows,
-    )
-
-
 def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> dict[str, Any]:
     return {
         "pack_id": device.pack_id,
@@ -207,71 +167,113 @@ async def _enqueue_verification(session: AsyncSession, device: Device) -> None:
     )
 
 
-async def commit_import(session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
-    """Commit a validated import bundle: insert devices row-by-row with per-row savepoints.
+class PortabilityImportService:
+    """Container-held device-portability import (validate + commit)."""
 
-    Each row is committed atomically together with its verification job enqueue.
-    If the verification enqueue fails, the savepoint rollback unwinds the device insert.
+    async def validate_bundle(self, session: AsyncSession, bundle: ExportBundle) -> ImportPreview:
+        """Validate a bundle and return a preview with per-row classifications.
 
-    Raises:
-        BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
-    """
-    expected_hash = compute_bundle_hash(request.bundle)
-    if expected_hash != request.bundle_hash:
-        raise BundleHashMismatchError("bundle_hash mismatch")
+        This method is read-only; it issues no writes to the database.
 
-    preview = await validate_bundle(session, request.bundle)
-    by_index = {row.index: row for row in preview.rows}
-    mappings_by_index = {m.index: m for m in request.mappings}
+        Raises:
+            ValueError: if ``bundle.schema_version`` is not supported.
+        """
+        if bundle.schema_version != SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema_version: {bundle.schema_version}")
 
-    created: list[ImportCommitCreatedRow] = []
-    skipped: list[ImportCommitSkippedRow] = []
-    failed: list[ImportCommitFailedRow] = []
+        hosts = await _load_available_hosts(session)
 
-    for idx, row in by_index.items():
-        if row.status == ImportRowStatus.DUPLICATE_IN_BUNDLE:
-            skipped.append(ImportCommitSkippedRow(index=idx, reason="duplicate in bundle"))
-            continue
-        if row.status == ImportRowStatus.CONFLICT_SKIP:
-            skipped.append(ImportCommitSkippedRow(index=idx, reason="identity already exists"))
-            continue
-        if row.status == ImportRowStatus.INVALID:
-            skipped.append(ImportCommitSkippedRow(index=idx, reason="invalid"))
-            continue
+        counts: Counter[tuple[str, str, str]] = Counter(_identity_key(d) for d in bundle.devices)
+        duplicate_keys = {k for k, c in counts.items() if c > 1}
 
-        mapping = mappings_by_index.get(idx)
-        if mapping is None:
-            skipped.append(ImportCommitSkippedRow(index=idx, reason="no mapping"))
-            continue
+        rows: list[ImportPreviewRow] = []
+        for idx, device in enumerate(bundle.devices):
+            status, issues = await _classify_row(session, device, hosts, duplicate_keys)
+            suggestion = _pick_host_suggestion(device, hosts)
+            rows.append(
+                ImportPreviewRow(
+                    index=idx,
+                    device=device,
+                    status=status,
+                    host_suggestion=suggestion,
+                    issues=issues,
+                )
+            )
 
-        host = await session.get(Host, mapping.target_host_id)
-        if host is None:
-            failed.append(ImportCommitFailedRow(index=idx, reason="host not found"))
-            continue
+        return ImportPreview(
+            schema_version=SCHEMA_VERSION,
+            source_instance=bundle.source_instance,
+            exported_at=bundle.exported_at,
+            bundle_hash=compute_bundle_hash(bundle),
+            available_hosts=[HostSuggestion(id=h.id, hostname=h.hostname) for h in hosts],
+            rows=rows,
+        )
 
-        savepoint = await session.begin_nested()
-        savepoint_released = False
-        try:
-            payload = _build_create_payload(row.device, mapping.target_host_id)
-            device = device_write.stage_device_record(session, payload)
-            await session.flush()
-            await _enqueue_verification(session, device)
-            await savepoint.commit()
-            savepoint_released = True
-            await session.commit()
-            created.append(ImportCommitCreatedRow(index=idx, device_id=device.id))
-        except IntegrityError as exc:
-            if not savepoint_released:
-                await savepoint.rollback()
-            failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}"))
-        except Exception as exc:  # noqa: BLE001
-            if not savepoint_released:
-                await savepoint.rollback()
-            reason = str(exc) or exc.__class__.__name__
-            lower = reason.lower()
-            if "verification" in lower or "create_job" in lower:
-                failed.append(ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}"))
-            else:
-                failed.append(ImportCommitFailedRow(index=idx, reason=reason))
+    async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
+        """Commit a validated import bundle: insert devices row-by-row with per-row savepoints.
 
-    return ImportCommitResult(created=created, skipped=skipped, failed=failed)
+        Each row is committed atomically together with its verification job enqueue.
+        If the verification enqueue fails, the savepoint rollback unwinds the device insert.
+
+        Raises:
+            BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
+        """
+        expected_hash = compute_bundle_hash(request.bundle)
+        if expected_hash != request.bundle_hash:
+            raise BundleHashMismatchError("bundle_hash mismatch")
+
+        preview = await self.validate_bundle(session, request.bundle)
+        by_index = {row.index: row for row in preview.rows}
+        mappings_by_index = {m.index: m for m in request.mappings}
+
+        created: list[ImportCommitCreatedRow] = []
+        skipped: list[ImportCommitSkippedRow] = []
+        failed: list[ImportCommitFailedRow] = []
+
+        for idx, row in by_index.items():
+            if row.status == ImportRowStatus.DUPLICATE_IN_BUNDLE:
+                skipped.append(ImportCommitSkippedRow(index=idx, reason="duplicate in bundle"))
+                continue
+            if row.status == ImportRowStatus.CONFLICT_SKIP:
+                skipped.append(ImportCommitSkippedRow(index=idx, reason="identity already exists"))
+                continue
+            if row.status == ImportRowStatus.INVALID:
+                skipped.append(ImportCommitSkippedRow(index=idx, reason="invalid"))
+                continue
+
+            mapping = mappings_by_index.get(idx)
+            if mapping is None:
+                skipped.append(ImportCommitSkippedRow(index=idx, reason="no mapping"))
+                continue
+
+            host = await session.get(Host, mapping.target_host_id)
+            if host is None:
+                failed.append(ImportCommitFailedRow(index=idx, reason="host not found"))
+                continue
+
+            savepoint = await session.begin_nested()
+            savepoint_released = False
+            try:
+                payload = _build_create_payload(row.device, mapping.target_host_id)
+                device = device_write.stage_device_record(session, payload)
+                await session.flush()
+                await _enqueue_verification(session, device)
+                await savepoint.commit()
+                savepoint_released = True
+                await session.commit()
+                created.append(ImportCommitCreatedRow(index=idx, device_id=device.id))
+            except IntegrityError as exc:
+                if not savepoint_released:
+                    await savepoint.rollback()
+                failed.append(ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}"))
+            except Exception as exc:  # noqa: BLE001
+                if not savepoint_released:
+                    await savepoint.rollback()
+                reason = str(exc) or exc.__class__.__name__
+                lower = reason.lower()
+                if "verification" in lower or "create_job" in lower:
+                    failed.append(ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}"))
+                else:
+                    failed.append(ImportCommitFailedRow(index=idx, reason=reason))
+
+        return ImportCommitResult(created=created, skipped=skipped, failed=failed)

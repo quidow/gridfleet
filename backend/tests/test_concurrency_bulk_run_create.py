@@ -23,6 +23,7 @@ from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
+from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -109,6 +110,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
                 inventory_export=InventoryExportService(),
+                portability_import=PortabilityImportService(),
                 verification=VerificationService(),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),

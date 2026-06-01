@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         LifecycleIncidentProtocol,
         MaintenanceProtocol,
         PortabilityExportProtocol,
+        PortabilityImportProtocol,
         PropertyRefreshProtocol,
         TestDataProtocol,
         VerificationProtocol,
@@ -44,6 +45,7 @@ class DeviceServices:
     test_data: TestDataProtocol
     portability_export: PortabilityExportProtocol
     inventory_export: InventoryExportProtocol
+    portability_import: PortabilityImportProtocol
     verification: VerificationProtocol
     crud: DeviceCrudProtocol
     capability: DeviceCapabilityProtocol

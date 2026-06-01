@@ -23,6 +23,7 @@ from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.portability_export import PortabilityExportService
+from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -205,6 +206,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             test_data=TestDataService(publisher=_fc_publisher),
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
+            portability_import=PortabilityImportService(),
             verification=VerificationService(),
             crud=_fc_crud,
             capability=DeviceCapabilityService(),
