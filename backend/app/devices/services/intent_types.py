@@ -50,23 +50,13 @@ class NodeRunningPrecondition(TypedDict):
     expected: bool
 
 
-class DeviceHoldPrecondition(TypedDict):
-    kind: Literal["device_hold"]
-    device_id: str
-    hold: Literal["maintenance", "reserved"]
-
-
 class MaintenanceActivePrecondition(TypedDict):
     kind: Literal["maintenance_active"]
     device_id: str
 
 
 Precondition = (
-    RunActivePrecondition
-    | ReservationActivePrecondition
-    | NodeRunningPrecondition
-    | DeviceHoldPrecondition
-    | MaintenanceActivePrecondition
+    RunActivePrecondition | ReservationActivePrecondition | NodeRunningPrecondition | MaintenanceActivePrecondition
 )
 
 
