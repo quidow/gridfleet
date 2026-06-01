@@ -1949,3 +1949,39 @@ async def test_device_read_exposes_is_reserved(
     got = await client.get(f"/api/devices/{device_id}")
     assert got.status_code == 200
     assert got.json()["is_reserved"] is True
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_device_list_exposes_is_reserved(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from tests.helpers import create_reservation
+
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="list-reserved-1",
+        connection_target="list-reserved-1",
+        name="List Reserved Device",
+    )
+    free = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="list-free-1",
+        connection_target="list-free-1",
+        name="List Free Device",
+    )
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    resp = await client.get("/api/devices")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Every item must carry the is_reserved field.
+    assert all("is_reserved" in item for item in data), "is_reserved missing from list row"
+
+    by_id = {item["id"]: item for item in data}
+    assert by_id[str(reserved.id)]["is_reserved"] is True
+    assert by_id[str(free.id)]["is_reserved"] is False
