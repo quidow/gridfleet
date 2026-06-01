@@ -139,7 +139,16 @@ async def test_find_matching_devices_excludes_review_required(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    await create_device_record(
+    eligible = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="eligible-device",
+        connection_target="eligible-device",
+        name="Eligible Device",
+        operational_state="available",
+        review_required=False,
+    )
+    shelved = await create_device_record(
         db_session,
         host_id=default_host_id,
         identity_value="review-required-device",
@@ -154,7 +163,9 @@ async def test_find_matching_devices_excludes_review_required(
         DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
     )
 
-    assert devices == []
+    ids = {d.id for d in devices}
+    assert eligible.id in ids
+    assert shelved.id not in ids
 
 
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
