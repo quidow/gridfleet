@@ -2508,7 +2508,6 @@ export interface components {
             hardware_telemetry_reported_at: string | null;
             hardware_telemetry_state: components["schemas"]["HardwareTelemetryState"];
             health_summary: components["schemas"]["DeviceHealthSummaryRead"];
-            hold: components["schemas"]["DeviceHold"] | null;
             /**
              * Host Id
              * Format: uuid
@@ -2741,11 +2740,6 @@ export interface components {
             /** Summary */
             summary: string;
         };
-        /**
-         * DeviceHold
-         * @enum {string}
-         */
-        DeviceHold: "maintenance" | "reserved";
         /** DeviceIntentSummaryRead */
         DeviceIntentSummaryRead: {
             /** Axis */
@@ -2784,7 +2778,7 @@ export interface components {
          * DeviceOperationalState
          * @enum {string}
          */
-        DeviceOperationalState: "available" | "busy" | "offline" | "verifying";
+        DeviceOperationalState: "available" | "busy" | "offline" | "verifying" | "maintenance";
         /** DeviceOrchestrationRead */
         DeviceOrchestrationRead: {
             /** Derived */
@@ -2852,7 +2846,6 @@ export interface components {
             hardware_telemetry_reported_at: string | null;
             hardware_telemetry_state: components["schemas"]["HardwareTelemetryState"];
             health_summary: components["schemas"]["DeviceHealthSummaryRead"];
-            hold: components["schemas"]["DeviceHold"] | null;
             /**
              * Host Id
              * Format: uuid
@@ -3674,7 +3667,6 @@ export interface components {
         GridRegistryDeviceRead: {
             /** Connection Target */
             connection_target?: string | null;
-            hold?: components["schemas"]["DeviceHold"] | null;
             /** Id */
             id: string;
             /** Identity Value */
@@ -7030,7 +7022,7 @@ export interface operations {
                 hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
                 hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
-                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "hold" | "created_at";
+                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
             };
             header?: never;
@@ -7931,7 +7923,7 @@ export interface operations {
                 hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
                 hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
-                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "hold" | "created_at";
+                sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
             };
             header?: never;
