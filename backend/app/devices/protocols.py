@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import AsyncIterator
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,8 +37,14 @@ if TYPE_CHECKING:
     )
     from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+    from app.devices.schemas.inventory import InventoryColumn
     from app.devices.schemas.lifecycle import LifecycleIncidentRead
-    from app.devices.schemas.portability import ExportBundle
+    from app.devices.schemas.portability import (
+        ExportBundle,
+        ImportCommitRequest,
+        ImportCommitResult,
+        ImportPreview,
+    )
     from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -172,6 +179,22 @@ class TestDataProtocol(Protocol):
 @runtime_checkable
 class PortabilityExportProtocol(Protocol):
     async def build_export_bundle(self, db: AsyncSession) -> ExportBundle: ...
+
+
+@runtime_checkable
+class InventoryExportProtocol(Protocol):
+    def iter_inventory_json(
+        self, session: AsyncSession, *, columns: list[InventoryColumn], filters: DeviceQueryFilters | None
+    ) -> AsyncIterator[str]: ...
+    def iter_inventory_csv(
+        self, session: AsyncSession, *, columns: list[InventoryColumn], filters: DeviceQueryFilters | None
+    ) -> AsyncIterator[str]: ...
+
+
+@runtime_checkable
+class PortabilityImportProtocol(Protocol):
+    async def validate_bundle(self, session: AsyncSession, bundle: ExportBundle) -> ImportPreview: ...
+    async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult: ...
 
 
 @runtime_checkable
