@@ -1086,6 +1086,67 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert snapshot["recent_restart_events"][-1]["process"] == "appium"
 
 
+async def test_auto_restart_aborts_when_target_already_served_by_another_node() -> None:
+    """Auto-restart must abort (not churn retries) when another node already
+    serves the crashed node's target on a different port.
+
+    The crash window can leave a second node serving the same connection_target
+    (e.g. the backend restarted it elsewhere). ``start()`` then raises
+    ``AlreadyRunningError`` for the duplicate target; resurrecting the old port
+    would only re-raise forever, so the loop must drop the port and stop. The
+    backend reconciler reaps whichever node is the true orphan.
+    """
+    manager = AppiumProcessManager()
+    # Crashed node on 4723 for the shared target.
+    crashed = FakeProcess(pid=1111, returncode=1)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", crashed)
+    manager._grid_supervisors[4723] = RecordingGridNodeHandle()
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="device-dup",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=True,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=1111, connection_target="device-dup", platform_id="android_mobile"
+    )
+    # A live node on 4724 already serves the SAME target.
+    live = FakeProcess(pid=2222, returncode=None)
+    manager._appium_procs[4724] = cast("asyncio.subprocess.Process", live)
+    manager._info[4724] = AppiumProcessInfo(
+        port=4724, pid=2222, connection_target="device-dup", platform_id="android_mobile"
+    )
+
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_delay: float) -> None:
+        await real_sleep(0)
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
+        patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await manager._auto_restart_appium(4723, exit_code=1)
+
+    # The crashed port is dropped without spawning a replacement...
+    create_proc.assert_not_awaited()
+    assert 4723 not in manager._launch_specs
+    assert 4723 not in manager._info
+    # ...and the node already serving the target is left untouched.
+    assert 4724 in manager._info
+    assert [info.port for info in manager.list_running()] == [4724]
+
+
 async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
     manager = AppiumProcessManager()
     first_proc = FakeProcess(pid=1001)
