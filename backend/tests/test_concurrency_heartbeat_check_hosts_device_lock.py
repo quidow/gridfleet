@@ -10,8 +10,7 @@ from app.appium_nodes.services import heartbeat as heartbeat
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.heartbeat_outcomes import ClientMode, HeartbeatOutcome, HeartbeatPingResult
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
-from app.devices.services import state_write_guard
+from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -101,20 +100,22 @@ async def test_check_hosts_locks_device_rows_before_offline_write(
         async with db_session_maker() as db:
             race_attempted_lock.set()
             device = await device_locking.lock_device(db, device_id)
-            with state_write_guard.bypass():
-                device.hold = DeviceHold.reserved
+            # Write an unguarded column under the row lock to prove the offline
+            # write serialized through device_locking.lock_device before this
+            # writer acquired the lock.
+            device.model = "race-marker"
             await db.commit()
         race_committed.set()
 
     await asyncio.wait_for(asyncio.gather(heartbeat_caller(), race_writer()), timeout=5.0)
 
     async with db_session_maker() as db:
-        final = (await db.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))).one()
+        final = (await db.execute(select(Device.operational_state, Device.model).where(Device.id == device_id))).one()
 
     assert final.operational_state == DeviceOperationalState.offline
-    assert final.hold == DeviceHold.reserved, (
+    assert final.model == "race-marker", (
         f"Heartbeat _check_hosts did not lock device rows before the offline "
-        f"write; final hold={final.hold} indicates the host-offline "
-        f"write raced the concurrent reservation writer instead of serializing "
+        f"write; final model={final.model} indicates the host-offline "
+        f"write raced the concurrent writer instead of serializing "
         f"through device_locking.lock_devices"
     )

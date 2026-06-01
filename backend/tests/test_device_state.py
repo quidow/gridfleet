@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
 from app.devices.services import state_write_guard
 from tests.helpers import create_device_record
@@ -59,34 +59,6 @@ async def test_set_operational_state_noop_when_unchanged(db_session: AsyncSessio
         device, DeviceOperationalState.offline, publish_event=False, publisher=event_bus
     )
     assert changed is False
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_set_hold_writes_and_queues_event(
-    db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    device = await _persisted_device(db_session, default_host_id)
-    captured: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "app.devices.services.state.queue_event_for_session",
-        lambda s, n, p, *, severity=None, publisher=None: captured.append((n, p)),
-    )
-
-    changed = await device_state.set_hold(device, DeviceHold.reserved, reason="run-1", publisher=event_bus)
-    assert changed is True
-    assert device.hold == DeviceHold.reserved
-    assert any(name == "device.hold_changed" for name, _ in captured)
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_set_hold_to_none_clears(db_session: AsyncSession, default_host_id: str) -> None:
-    device = await _persisted_device(db_session, default_host_id)
-    await device_state.set_hold(device, DeviceHold.maintenance, publish_event=False, publisher=event_bus)
-    changed = await device_state.set_hold(device, None, publish_event=False, publisher=event_bus)
-    assert changed is True
-    assert device.hold is None
 
 
 @pytest.mark.db
@@ -337,12 +309,3 @@ def test_appium_node_stop_in_flight_predicate() -> None:
             stop_pending=False,
         )
     assert device_state.appium_node_stop_in_flight(device) is True
-
-
-def test_operational_state_and_hold_value_sets_are_disjoint() -> None:
-    op_values = {v.value for v in DeviceOperationalState}
-    hold_values = {v.value for v in DeviceHold}
-    assert op_values.isdisjoint(hold_values), (
-        "operational_state and hold value sets must not overlap; the chip "
-        "projection `hold or operational_state` becomes ambiguous otherwise."
-    )

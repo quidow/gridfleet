@@ -55,9 +55,7 @@ async def test_health_failure_offline_write_serializes_with_reservation(
     await health_writer()
 
     async with db_session_maker() as verify:
-        final = (
-            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-        ).one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
 
     assert final.operational_state == DeviceOperationalState.offline
 
@@ -112,8 +110,6 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
     await recovery_writer()
 
     async with db_session_maker() as verify:
-        final = (
-            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-        ).one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
 
     assert final.operational_state == DeviceOperationalState.available

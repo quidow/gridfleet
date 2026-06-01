@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
@@ -20,7 +20,6 @@ _actions = LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReserv
 def _make_device(
     host: Host,
     operational_state: DeviceOperationalState = DeviceOperationalState.available,
-    hold: DeviceHold | None = None,
 ) -> Device:
     with state_write_guard.bypass():
         _bypass_tmp = Device(
@@ -36,7 +35,6 @@ def _make_device(
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
             operational_state=operational_state,
-            hold=hold,
         )
     return _bypass_tmp
 
@@ -44,7 +42,7 @@ def _make_device(
 @pytest.fixture
 async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tuple[Device, TestRun]:
     """Create a device reserved for an active run."""
-    device = _make_device(db_host, hold=DeviceHold.reserved)
+    device = _make_device(db_host)
     db_session.add(device)
     await db_session.flush()
 
@@ -114,9 +112,8 @@ async def test_exclude_run_if_needed_excludes_without_maintenance(
     assert returned_run is not None
     assert entry is not None
     assert entry.excluded is True
-    # Device started with hold=reserved and must keep that hold — auto-exclusion
-    # must not silently escalate to maintenance.
-    assert device.hold == DeviceHold.reserved
+    # Auto-exclusion must not silently escalate the device into maintenance.
+    assert device.operational_state != DeviceOperationalState.maintenance
 
 
 async def test_exclude_run_if_needed_no_run_is_noop(
@@ -135,7 +132,6 @@ async def test_exclude_run_if_needed_no_run_is_noop(
 
     assert returned_run is None
     assert device.operational_state == DeviceOperationalState.available
-    assert device.hold is None
 
 
 async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
@@ -145,10 +141,10 @@ async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
     device, _run = device_with_active_run
 
     await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.hold == DeviceHold.reserved
+    assert device.operational_state != DeviceOperationalState.maintenance
 
     await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
-    assert device.hold == DeviceHold.reserved
+    assert device.operational_state != DeviceOperationalState.maintenance
 
 
 async def test_exclude_run_if_needed_clears_desired_grid_run_id(

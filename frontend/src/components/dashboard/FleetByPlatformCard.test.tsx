@@ -20,7 +20,7 @@ function device(overrides: Partial<DeviceRead>): DeviceRead {
     model: null,
     os_version: '14',
     host_id: 'h',
-    operational_state: 'available', hold: null,
+    operational_state: 'available',
     needs_attention: false,
     tags: null,
     device_type: 'real_device',
@@ -96,11 +96,11 @@ function makeQueryResult(devices: DeviceRead[]) {
 }
 
 const defaultDevices = () => [
-  device({ id: 'a', operational_state: 'available', hold: null }),
-  device({ id: 'b', operational_state: 'busy', hold: null }),
-  device({ id: 'r', operational_state: 'available', hold: 'reserved' }),
-  device({ id: 'm', operational_state: 'available', hold: 'maintenance' }),
-  device({ id: 'o', operational_state: 'offline', hold: null }),
+  device({ id: 'a', operational_state: 'available' }),
+  device({ id: 'b', operational_state: 'busy' }),
+  device({ id: 'r', operational_state: 'available', is_reserved: true }),
+  device({ id: 'm', operational_state: 'maintenance' }),
+  device({ id: 'o', operational_state: 'offline' }),
 ];
 
 function renderCard() {
@@ -148,7 +148,7 @@ beforeEach(() => {
 });
 
 describe('FleetByPlatformCard palette', () => {
-  it('renders 5 distinct segments with correct tokens', () => {
+  it('renders 4 operational segments with correct tokens (reserved is not a segment)', () => {
     const { container } = renderCard();
 
     const segments = container.querySelectorAll('[class*="bg-"][aria-label]');
@@ -160,9 +160,10 @@ describe('FleetByPlatformCard palette', () => {
 
     expect(classMap.get('Available')).toContain('bg-success-strong');
     expect(classMap.get('Busy')).toContain('bg-warning-strong');
-    expect(classMap.get('Reserved')).toContain('bg-info-strong');
     expect(classMap.get('Maintenance')).toContain('bg-neutral-strong');
     expect(classMap.get('Offline')).toContain('bg-danger-strong');
+    // Reservation is rendered as a separate annotation, not a bar segment.
+    expect(classMap.has('Reserved')).toBe(false);
   });
 
   it('segment links use status query param', () => {
@@ -172,9 +173,15 @@ describe('FleetByPlatformCard palette', () => {
     const hrefs = links.map((l) => l.getAttribute('href') ?? '');
     expect(hrefs).toContain('/devices?status=available');
     expect(hrefs).toContain('/devices?status=busy');
-    expect(hrefs).toContain('/devices?status=reserved');
     expect(hrefs).toContain('/devices?status=maintenance');
     expect(hrefs).toContain('/devices?status=offline');
+  });
+
+  it('renders reservation as a separate annotation link from is_reserved', () => {
+    renderCard();
+
+    const reservedLink = screen.getByRole('link', { name: /reserved/i });
+    expect(reservedLink).toHaveAttribute('href', '/devices?status=reserved');
   });
 });
 
@@ -193,8 +200,8 @@ describe('FleetByPlatformCard with fleet health history', () => {
   it('uses the live fleet state for the current health point', async () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'online-1', operational_state: 'available', hold: null }),
-        device({ id: 'online-2', operational_state: 'busy', hold: null }),
+        device({ id: 'online-1', operational_state: 'available' }),
+        device({ id: 'online-2', operational_state: 'busy' }),
       ]),
     );
 
@@ -232,8 +239,8 @@ describe('FleetByPlatformCard Needs attention link', () => {
   it('shows Needs attention link when count > 0', () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'a', operational_state: 'available', hold: null, needs_attention: true }),
-        device({ id: 'b', operational_state: 'available', hold: null, needs_attention: false }),
+        device({ id: 'a', operational_state: 'available', needs_attention: true }),
+        device({ id: 'b', operational_state: 'available', needs_attention: false }),
       ]),
     );
 
@@ -245,8 +252,8 @@ describe('FleetByPlatformCard Needs attention link', () => {
   it('omits Needs attention link when count is 0', () => {
     mockUseDevices.mockReturnValue(
       makeQueryResult([
-        device({ id: 'a', operational_state: 'available', hold: null, needs_attention: false }),
-        device({ id: 'b', operational_state: 'busy', hold: null, needs_attention: false }),
+        device({ id: 'a', operational_state: 'available', needs_attention: false }),
+        device({ id: 'b', operational_state: 'busy', needs_attention: false }),
       ]),
     );
 

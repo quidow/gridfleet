@@ -27,13 +27,6 @@ const BAR_SEGMENTS = [
     to: '/devices?status=busy',
   },
   {
-    key: 'reserved',
-    label: 'Reserved',
-    barClassName: 'bg-info-strong',
-    dotClassName: 'bg-info-strong',
-    to: '/devices?status=reserved',
-  },
-  {
     key: 'maintenance',
     label: 'Maintenance',
     barClassName: 'bg-neutral-strong',
@@ -85,7 +78,6 @@ export function FleetByPlatformCard() {
     busy: fleet.busy,
     offline: fleet.offline,
     maintenance: fleet.maintenance,
-    reserved: fleet.reserved,
   };
   const total = fleet.total;
   const platformChips = Object.keys(fleet.platformCounts)
@@ -98,15 +90,26 @@ export function FleetByPlatformCard() {
       if (bOrder !== undefined) return 1;
       return a.localeCompare(b);
     });
-  const attentionLink = fleet.needsAttention > 0
-    ? {
-        key: 'needs_attention',
-        label: 'Needs attention',
-        count: fleet.needsAttention,
-        to: '/devices?needs_attention=true',
-        dotClass: 'bg-danger-strong',
-      }
-    : null;
+  const annotations = [
+    fleet.reserved > 0
+      ? {
+          key: 'reserved',
+          label: 'Reserved',
+          count: fleet.reserved,
+          to: '/devices?status=reserved',
+          dotClass: 'bg-info-strong',
+        }
+      : null,
+    fleet.needsAttention > 0
+      ? {
+          key: 'needs_attention',
+          label: 'Needs attention',
+          count: fleet.needsAttention,
+          to: '/devices?needs_attention=true',
+          dotClass: 'bg-danger-strong',
+        }
+      : null,
+  ].filter((item) => item !== null);
 
   return (
     <Card padding="lg" className="flex h-full flex-col">
@@ -134,16 +137,19 @@ export function FleetByPlatformCard() {
             }))}
           />
 
-          {attentionLink ? (
+          {annotations.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
-              <Link
-                to={attentionLink.to}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-text-2 transition-colors hover:border-border-strong hover:bg-surface-1"
-              >
-                <span className={`inline-block h-1.5 w-1.5 rounded-full ${attentionLink.dotClass}`} />
-                <span>{attentionLink.label}</span>
-                <span className="font-mono tabular-nums text-text-1">{attentionLink.count}</span>
-              </Link>
+              {annotations.map((annotation) => (
+                <Link
+                  key={annotation.key}
+                  to={annotation.to}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-text-2 transition-colors hover:border-border-strong hover:bg-surface-1"
+                >
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${annotation.dotClass}`} />
+                  <span>{annotation.label}</span>
+                  <span className="font-mono tabular-nums text-text-1">{annotation.count}</span>
+                </Link>
+              ))}
             </div>
           ) : null}
 

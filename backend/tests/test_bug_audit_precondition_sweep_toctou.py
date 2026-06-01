@@ -40,10 +40,8 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
     db_session_maker: async_sessionmaker[AsyncSession],
     client: AsyncClient,
 ) -> None:
-    from app.devices.models import (
-        DeviceHold,
-        DeviceIntent,
-    )
+    from app.devices.models import DeviceIntent
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 
     host = await create_host(client)
     device = await create_device(
@@ -51,13 +49,17 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
         host_id=uuid.UUID(host["id"]),
         name="precondition-toctou",
         operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.maintenance,
         verified=True,
     )
+    # Give the device an active maintenance_reason so that a maintenance_active
+    # precondition targeting this device evaluates to True (used by the concurrent
+    # re-registration below).
+    set_maintenance_reason(device, "test")
+    await db_session.flush()
     device_id = device.id
 
     # Seed an intent whose precondition targets a non-existent device — so
-    # ``_eval_device_hold`` returns False and the sweep would delete the row.
+    # ``_eval_maintenance_active`` returns False and the sweep would delete the row.
     intent_source = f"test_precondition:{device.id}"
     nonexistent_device_id = uuid.uuid4()
     seed_intent = DeviceIntent(
@@ -66,9 +68,8 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
         axis=NODE_PROCESS,
         payload={"action": "start", "priority": 10},
         precondition={
-            "kind": "device_hold",
+            "kind": "maintenance_active",
             "device_id": str(nonexistent_device_id),
-            "hold": "maintenance",
         },
         expires_at=None,
         created_at=datetime.now(UTC),
@@ -99,9 +100,8 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
                         axis=NODE_PROCESS,
                         payload={"action": "start", "priority": 10, "regenerated": True},
                         precondition={
-                            "kind": "device_hold",
+                            "kind": "maintenance_active",
                             "device_id": str(device_id),
-                            "hold": "maintenance",
                         },
                         created_at=datetime.now(UTC),
                         updated_at=datetime.now(UTC),
@@ -112,9 +112,8 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
                             "axis": NODE_PROCESS,
                             "payload": {"action": "start", "priority": 10, "regenerated": True},
                             "precondition": {
-                                "kind": "device_hold",
+                                "kind": "maintenance_active",
                                 "device_id": str(device_id),
-                                "hold": "maintenance",
                             },
                             "updated_at": datetime.now(UTC),
                         },

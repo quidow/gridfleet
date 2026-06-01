@@ -17,7 +17,7 @@ from app.appium_nodes.services.reconciler_agent import (
     restart_node_via_agent,
     start_remote_node,
 )
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
@@ -401,17 +401,16 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
 
 
 @pytest.mark.parametrize(
-    ("label", "operational_state", "hold"),
+    ("label", "operational_state"),
     [
-        ("busy", DeviceOperationalState.busy, None),
-        ("reserved", DeviceOperationalState.available, DeviceHold.reserved),
+        ("busy", DeviceOperationalState.busy),
+        ("available", DeviceOperationalState.available),
     ],
 )
-async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
+async def test_mark_node_stopped_marks_operational_offline(
     db_session: AsyncSession,
     label: str,
     operational_state: DeviceOperationalState,
-    hold: DeviceHold | None,
 ) -> None:
 
     host = Host(
@@ -435,7 +434,6 @@ async def test_mark_node_stopped_marks_operational_offline_and_preserves_hold(
             os_version="14",
             host_id=host.id,
             operational_state=operational_state,
-            hold=hold,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )

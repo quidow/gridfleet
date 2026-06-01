@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.state import ready_operational_state, set_operational_state
 from app.devices.services.verification import VerificationService
@@ -127,7 +127,7 @@ async def test_set_operational_state_publishes_only_on_change(db_session: AsyncS
     assert events[0]["data"]["reason"] == "Probe started"
 
 
-async def test_ready_operational_state_leaves_hold_independent(
+async def test_ready_operational_state_returns_offline_for_reserved_device(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -174,9 +174,6 @@ async def test_ready_operational_state_leaves_hold_independent(
     db_session.add(run)
     await db_session.commit()
 
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.reserved
     restored = await ready_operational_state(db_session, device)
 
     assert restored == DeviceOperationalState.offline
-    assert device.hold == DeviceHold.reserved

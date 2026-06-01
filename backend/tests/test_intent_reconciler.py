@@ -541,5 +541,27 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
         await run_device_intent_reconciler_once(
             db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock()
         )
-
     reconcile_expired.assert_not_awaited()
+
+
+async def test_maintenance_signal_suppresses_baseline_idle_injection(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Baseline:idle must NOT be injected when the maintenance_reason signal is set,
+    even if hold is NULL (i.e., the derived hold column has not yet been written)."""
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    device = await create_device(db_session, host_id=db_host.id, name="maintenance-idle")
+    node = await _seed_node(db_session, device.id)
+
+    # Set maintenance_reason signal directly; leave device.hold as NULL.
+    set_maintenance_reason(device, "test maintenance")
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    # Node must remain stopped — no baseline:idle should have been injected.
+    assert node.desired_state == AppiumDesiredState.stopped

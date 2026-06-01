@@ -1,6 +1,16 @@
-import type { DeviceChipStatus, DeviceHold, DeviceOperationalState } from '../types';
+import type { DeviceFilterStatus, DeviceOperationalState } from '../types';
 
-export const DEVICE_STATUSES: DeviceChipStatus[] = [
+export const DEVICE_STATUSES: DeviceOperationalState[] = [
+  'available',
+  'busy',
+  'offline',
+  'maintenance',
+  'verifying',
+];
+
+// Device-list status filter values. Superset of operational states: 'reserved'
+// is a server-side filter (active reservation), not an operational state.
+export const DEVICE_FILTER_STATUSES: DeviceFilterStatus[] = [
   'available',
   'busy',
   'offline',
@@ -11,10 +21,6 @@ export const DEVICE_STATUSES: DeviceChipStatus[] = [
 
 export function deviceChipStatus(device: {
   operational_state: DeviceOperationalState;
-  hold: DeviceHold | null;
-}): DeviceChipStatus {
-  if (device.operational_state === 'busy' || device.operational_state === 'verifying') {
-    return device.operational_state;
-  }
-  return device.hold ?? device.operational_state;
+}): DeviceOperationalState {
+  return device.operational_state;
 }

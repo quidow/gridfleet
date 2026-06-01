@@ -15,6 +15,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
 from app.devices.services.intent import IntentService
+from app.devices.services.reservation_query import active_reservation_exists, device_is_reserved
 from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
@@ -184,10 +185,11 @@ class SessionViabilityService:
         if not acquired:
             raise ValueError("Session viability check already in progress for this device")
         await db.commit()
-        can_probe = (device.operational_state == DeviceOperationalState.available and device.hold is None) or (
+        device_reserved = await device_is_reserved(db, device.id)
+        can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
             checked_by == SessionViabilityCheckedBy.recovery
             and device.operational_state == DeviceOperationalState.offline
-            and device.hold is None
+            and not device_reserved
         )
         if not can_probe:
             await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -220,8 +222,8 @@ class SessionViabilityService:
 
             locked = await device_locking.lock_device(db, device.id)
             # Re-validate can_probe under the row lock. The pre-lock check
-            # ran on an unlocked snapshot, so a concurrent maintenance-enter
-            # (or any other writer of ``Device.hold``/``operational_state``)
+            # ran on an unlocked snapshot, so a concurrent allocation (a new
+            # reservation) or a writer of ``Device.operational_state``
             # may have changed the state between the gate and this lock.
             # Raise to match the pre-lock branch's contract: manual callers
             # surface as HTTP 409, recovery callers retry via the policy
@@ -229,12 +231,13 @@ class SessionViabilityService:
             # ``consecutive_failures`` on a race the device is not
             # responsible for and could push a healthy device closer to the
             # escalation threshold.
+            locked_reserved = await device_is_reserved(db, locked.id)
             locked_can_probe = (
-                locked.operational_state == DeviceOperationalState.available and locked.hold is None
+                locked.operational_state == DeviceOperationalState.available and not locked_reserved
             ) or (
                 checked_by == SessionViabilityCheckedBy.recovery
                 and locked.operational_state == DeviceOperationalState.offline
-                and locked.hold is None
+                and not locked_reserved
             )
             if not locked_can_probe:
                 raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
@@ -314,7 +317,7 @@ class SessionViabilityService:
         interval_sec = self._settings.get("general.session_viability_interval_sec")
         stmt = (
             select(Device)
-            .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+            .where(Device.operational_state == DeviceOperationalState.available, ~active_reservation_exists())
             .options(selectinload(Device.host), selectinload(Device.appium_node))
         )
         result = await db.execute(stmt)
@@ -419,7 +422,7 @@ async def _is_probe_running(db: AsyncSession, device_key: str) -> bool:
 async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval_sec: int) -> bool:
     if interval_sec <= 0:
         return False
-    if device.operational_state != DeviceOperationalState.available or device.hold is not None:
+    if device.operational_state != DeviceOperationalState.available or await device_is_reserved(db, device.id):
         return False
     if not await is_ready_for_use_async(db, device):
         return False

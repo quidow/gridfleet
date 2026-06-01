@@ -1,7 +1,7 @@
 import type {
   ConnectionType,
   DeviceGroupFilters,
-  DeviceChipStatus,
+  DeviceFilterStatus,
   DeviceType,
 } from '../types';
 import { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS } from '../pages/devices/devicePageHelpers';
@@ -15,7 +15,7 @@ type DeviceGroupTagDraft = {
 export type DeviceGroupFilterDraft = {
   pack_id: string;
   platform_id: string;
-  status: DeviceChipStatus | '';
+  status: DeviceFilterStatus | '';
   host_id: string;
   identity_value: string;
   connection_target: string;

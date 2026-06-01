@@ -1,7 +1,6 @@
 from app.devices.models.device import (
     ConnectionType,
     Device,
-    DeviceHold,
     DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
@@ -25,7 +24,6 @@ __all__ = [
     "DeviceEventType",
     "DeviceGroup",
     "DeviceGroupMembership",
-    "DeviceHold",
     "DeviceIntent",
     "DeviceIntentDirty",
     "DeviceOperationalState",

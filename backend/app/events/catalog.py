@@ -46,7 +46,7 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         description="Device hold changed.",
         default_severity="info",
         allowed_severities=frozenset({"info", "neutral"}),
-        typical_data_fields=("device_id", "device_name", "old_hold", "new_hold", "reason"),
+        typical_data_fields=("device_id", "device_name", "reason"),
     ),
     PublicEventDefinition(
         name="device.verification.updated",

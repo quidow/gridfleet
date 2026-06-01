@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from app.core.errors import InvalidTransitionError
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.lifecycle_state_machine_types import (
     DeviceStateModel,
     TransitionEvent,
     TransitionHook,
 )
-from app.devices.services.state import set_hold, set_operational_state
+from app.devices.services.state import set_operational_state
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -17,9 +17,8 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 
-# Operational-axis transitions. Hold is ignored unless the event explicitly
-# names it (MAINTENANCE_ENTERED / MAINTENANCE_EXITED). This keeps reserved
-# devices fully usable for connectivity/session events.
+# Operational-axis transitions. Reserved/maintenance no longer ride a separate
+# hold axis; maintenance is derived onto the operational axis by the reconciler.
 _OPERATIONAL_TRANSITIONS: dict[
     DeviceOperationalState,
     dict[TransitionEvent, DeviceOperationalState],
@@ -51,8 +50,6 @@ _OPERATIONAL_TRANSITIONS: dict[
 
 # Per-transition severity for operational-axis events.
 _OPERATIONAL_SEVERITY: dict[TransitionEvent, EventSeverity] = {
-    TransitionEvent.MAINTENANCE_ENTERED: "info",
-    TransitionEvent.MAINTENANCE_EXITED: "info",
     TransitionEvent.CONNECTIVITY_LOST: "warning",
     TransitionEvent.CONNECTIVITY_RESTORED: "success",
     TransitionEvent.SESSION_STARTED: "info",
@@ -63,60 +60,34 @@ _OPERATIONAL_SEVERITY: dict[TransitionEvent, EventSeverity] = {
     TransitionEvent.VERIFICATION_FAILED: "warning",
 }
 
-# Per-transition severity for hold-axis events.
-_HOLD_SEVERITY: dict[TransitionEvent, EventSeverity] = {
-    TransitionEvent.MAINTENANCE_ENTERED: "info",
-    TransitionEvent.MAINTENANCE_EXITED: "info",
-}
-
 # Idempotent self-loops the caller is allowed to re-issue without raising.
-_IDEMPOTENT_NOOPS: set[tuple[DeviceOperationalState, DeviceHold | None, TransitionEvent]] = {
-    (DeviceOperationalState.offline, DeviceHold.maintenance, TransitionEvent.MAINTENANCE_ENTERED),
-    (DeviceOperationalState.busy, None, TransitionEvent.SESSION_STARTED),
-    (DeviceOperationalState.busy, DeviceHold.reserved, TransitionEvent.SESSION_STARTED),
-    (DeviceOperationalState.available, None, TransitionEvent.SESSION_ENDED),
-    (DeviceOperationalState.available, DeviceHold.reserved, TransitionEvent.SESSION_ENDED),
-    (DeviceOperationalState.offline, None, TransitionEvent.CONNECTIVITY_LOST),
-    (DeviceOperationalState.offline, DeviceHold.reserved, TransitionEvent.CONNECTIVITY_LOST),
-    (DeviceOperationalState.offline, DeviceHold.maintenance, TransitionEvent.CONNECTIVITY_LOST),
-    (DeviceOperationalState.available, None, TransitionEvent.CONNECTIVITY_RESTORED),
-    (DeviceOperationalState.available, DeviceHold.reserved, TransitionEvent.CONNECTIVITY_RESTORED),
-    (DeviceOperationalState.offline, None, TransitionEvent.AUTO_STOP_EXECUTED),
-    (DeviceOperationalState.offline, DeviceHold.reserved, TransitionEvent.AUTO_STOP_EXECUTED),
-    (DeviceOperationalState.offline, DeviceHold.maintenance, TransitionEvent.AUTO_STOP_EXECUTED),
+_IDEMPOTENT_NOOPS: set[tuple[DeviceOperationalState, TransitionEvent]] = {
+    (DeviceOperationalState.busy, TransitionEvent.SESSION_STARTED),
+    (DeviceOperationalState.available, TransitionEvent.SESSION_ENDED),
+    (DeviceOperationalState.offline, TransitionEvent.CONNECTIVITY_LOST),
+    (DeviceOperationalState.available, TransitionEvent.CONNECTIVITY_RESTORED),
+    (DeviceOperationalState.offline, TransitionEvent.AUTO_STOP_EXECUTED),
 }
 
 
 class DeviceStateMachine:
-    """Single sanctioned mutator for ``Device.operational_state`` and ``Device.hold``.
+    """Single sanctioned mutator for ``Device.operational_state``.
 
     Caller contract: device must be loaded under ``device_locking.lock_device``
     in the current transaction. The machine routes mutations through
-    ``set_operational_state`` / ``set_hold`` so event-bus messages keep firing
-    on commit.
+    ``set_operational_state`` so event-bus messages keep firing on commit.
     """
 
     def __init__(self, hooks: list[TransitionHook] | None = None) -> None:
         self._hooks = list(hooks or [])
 
     @staticmethod
-    def _resolve_targets(
-        before: DeviceStateModel, event: TransitionEvent
-    ) -> tuple[DeviceOperationalState, DeviceHold | None] | None:
-        """Return target (operational, hold). None signals invalid transition."""
-        if event is TransitionEvent.MAINTENANCE_ENTERED:
-            return (before.operational, DeviceHold.maintenance)
-        if event is TransitionEvent.MAINTENANCE_EXITED:
-            if before.hold is not DeviceHold.maintenance:
-                return None
-            return (DeviceOperationalState.offline, None)
-        target_operational = _OPERATIONAL_TRANSITIONS.get(before.operational, {}).get(event)
-        if target_operational is None:
-            return None
-        return (target_operational, before.hold)
+    def _resolve_target(before: DeviceStateModel, event: TransitionEvent) -> DeviceOperationalState | None:
+        """Return the target operational state. None signals invalid transition."""
+        return _OPERATIONAL_TRANSITIONS.get(before.operational, {}).get(event)
 
     def is_valid(self, before: DeviceStateModel, event: TransitionEvent) -> bool:
-        return self._resolve_targets(before, event) is not None
+        return self._resolve_target(before, event) is not None
 
     async def transition(
         self,
@@ -130,26 +101,23 @@ class DeviceStateMachine:
     ) -> bool:
         """Apply ``event`` to ``device``. Returns True iff state actually changed.
 
-        ``reason`` is forwarded to ``set_operational_state`` / ``set_hold`` for
-        the bus payload. ``suppress_events=True`` mirrors the existing
-        ``publish_event=False`` flag (used by session_sync to avoid double-emission).
-        ``skip_hooks=True`` skips registered hooks (used by tests + idempotent
-        no-op early-returns).
+        ``reason`` is forwarded to ``set_operational_state`` for the bus payload.
+        ``suppress_events=True`` mirrors the existing ``publish_event=False`` flag
+        (used by session_sync to avoid double-emission). ``skip_hooks=True`` skips
+        registered hooks (used by tests + idempotent no-op early-returns).
         """
         before = DeviceStateModel.from_device(device)
 
-        if (before.operational, before.hold, event) in _IDEMPOTENT_NOOPS:
+        if (before.operational, event) in _IDEMPOTENT_NOOPS:
             return False
 
-        targets = self._resolve_targets(before, event)
-        if targets is None:
+        target_operational = self._resolve_target(before, event)
+        if target_operational is None:
             raise InvalidTransitionError(event=event.value, current_state=before.label())
 
-        target_operational, target_hold = targets
         changed = False
 
         op_severity: EventSeverity = _OPERATIONAL_SEVERITY.get(event, "info")
-        hold_severity: EventSeverity = _HOLD_SEVERITY.get(event, "info")
 
         if target_operational != before.operational:
             changed = (
@@ -159,18 +127,6 @@ class DeviceStateMachine:
                     reason=reason,
                     publish_event=not suppress_events,
                     severity=op_severity,
-                    publisher=publisher,
-                )
-                or changed
-            )
-        if target_hold != before.hold:
-            changed = (
-                await set_hold(
-                    device,
-                    target_hold,
-                    reason=reason,
-                    publish_event=not suppress_events,
-                    severity=hold_severity,
                     publisher=publisher,
                 )
                 or changed

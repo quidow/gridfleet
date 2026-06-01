@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import Device, DeviceHold
+from app.devices.models import Device
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
@@ -24,6 +24,7 @@ from app.devices.services.lifecycle_policy_state import (
     set_maintenance_reason,
     state,
 )
+from app.devices.services.reservation_query import device_is_reserved
 
 if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
@@ -80,9 +81,9 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 class MaintenanceService:
     def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher | None" = None) -> None:
         self._settings = settings
-        # Publisher is needed so the reconciler's derived hold change emits
-        # device.hold_changed (SSE/webhooks) on maintenance enter/exit. Optional
-        # for unit tests that do not assert on emitted events.
+        # Publisher is needed so the reconciler's derived maintenance enter/exit
+        # emits device.operational_state_changed (SSE/webhooks). Optional for unit
+        # tests that do not assert on emitted events.
         self._publisher = publisher
 
     async def enter_maintenance(
@@ -94,7 +95,7 @@ class MaintenanceService:
         allow_reserved: bool = False,
         maintenance_reason: str = "Operator entered maintenance",
     ) -> Device:
-        if not allow_reserved and device.hold == DeviceHold.reserved:
+        if not allow_reserved and await device_is_reserved(db, device.id):
             raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
         set_maintenance_reason(device, maintenance_reason)
@@ -113,7 +114,7 @@ class MaintenanceService:
 
     async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
         if state(device).get("maintenance_reason") is None:
-            raise ValueError(f"Device is not in maintenance (hold: {device.hold!r})")
+            raise ValueError("Device is not in maintenance")
 
         clear_maintenance_recovery_suppression(device)
         clear_maintenance_reason(device)

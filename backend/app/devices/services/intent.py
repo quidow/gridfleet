@@ -143,8 +143,8 @@ class IntentService:
         instead of the stale DB snapshot that would otherwise be returned by the
         lock_device(populate_existing=True) re-read inside reconcile_device.
 
-        Pass ``publisher`` to emit ``operational_state_changed`` / ``hold_changed``
-        events inline; omit it (or pass None) to write state silently.
+        Pass ``publisher`` to emit ``operational_state_changed`` events inline;
+        omit it (or pass None) to write state silently.
 
         Pass ``observed_reason`` to carry the known cause of the transition so the
         reconciler records the matching typed DeviceEvent audit row (§6). Omit it

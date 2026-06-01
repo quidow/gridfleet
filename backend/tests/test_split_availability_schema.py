@@ -3,9 +3,9 @@
 Uses a dedicated Alembic-driven engine (NOT the metadata.create_all-based
 db_session fixture) so this guards the migration, not the model.
 
-After migration, `devices` has columns `operational_state` and `hold`,
-the legacy `availability_status` is gone, and the enum type
-`deviceavailabilitystatus` is dropped from Postgres.
+After migration, `devices` has the `operational_state` column, the legacy
+`availability_status` and `hold` columns are gone, and the enum types
+`deviceavailabilitystatus` and `devicehold` are dropped from Postgres.
 """
 
 from __future__ import annotations
@@ -74,10 +74,9 @@ async def test_devices_has_operational_state_and_hold(alembic_session: AsyncSess
         insp = inspect(sync_conn)
         cols = {c["name"]: c for c in insp.get_columns("devices")}
         assert "operational_state" in cols, "operational_state must exist"
-        assert "hold" in cols, "hold must exist"
+        assert "hold" not in cols, "hold must be dropped"
         assert "availability_status" not in cols, "Legacy availability_status must be dropped"
         assert cols["operational_state"]["nullable"] is False
-        assert cols["hold"]["nullable"] is True
 
     await alembic_session.run_sync(lambda s: _inspect(s.connection()))
 
@@ -101,15 +100,14 @@ async def test_legacy_enum_type_is_gone(alembic_session: AsyncSession) -> None:
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_new_enum_types_exist(alembic_session: AsyncSession) -> None:
-    for typname in ("deviceoperationalstate", "devicehold"):
-        res = await alembic_session.execute(
-            text(
-                """
-                SELECT 1 FROM pg_type t
-                JOIN pg_namespace n ON n.oid = t.typnamespace
-                WHERE t.typname = :typname AND n.nspname = current_schema()
-                """
-            ),
-            {"typname": typname},
-        )
-        assert res.scalar() == 1, f"Expected enum {typname}"
+    res = await alembic_session.execute(
+        text(
+            """
+            SELECT 1 FROM pg_type t
+            JOIN pg_namespace n ON n.oid = t.typnamespace
+            WHERE t.typname = :typname AND n.nspname = current_schema()
+            """
+        ),
+        {"typname": "deviceoperationalstate"},
+    )
+    assert res.scalar() == 1, "Expected enum deviceoperationalstate"

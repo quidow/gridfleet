@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from app.devices.models import DeviceHold, DeviceOperationalState  # noqa: TC001
+from app.devices.models import DeviceOperationalState  # noqa: TC001
 
 if TYPE_CHECKING:
     from app.devices.models import Device
@@ -25,19 +25,18 @@ class TransitionEvent(StrEnum):
 
 
 class DeviceStateModel(BaseModel):
-    """Frozen snapshot of the two state-machine-managed Device columns."""
+    """Frozen snapshot of the state-machine-managed Device operational axis."""
 
     model_config = ConfigDict(frozen=True)
 
     operational: DeviceOperationalState
-    hold: DeviceHold | None
 
     @classmethod
     def from_device(cls, device: Device) -> DeviceStateModel:
-        return cls(operational=device.operational_state, hold=device.hold)
+        return cls(operational=device.operational_state)
 
     def label(self) -> str:
-        return f"{self.operational.value}/{self.hold.value if self.hold else 'None'}"
+        return self.operational.value
 
 
 class TransitionHook(Protocol):

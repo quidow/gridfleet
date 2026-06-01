@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
@@ -35,7 +35,6 @@ async def test_connectivity_loss_keeps_device_in_run(
             name="Connectivity Loss D1 Device",
             os_version="14",
             host_id=db_host.id,
-            hold=DeviceHold.reserved,
             operational_state=DeviceOperationalState.available,
             verified_at=datetime.now(UTC),
             device_type=DeviceType.real_device,

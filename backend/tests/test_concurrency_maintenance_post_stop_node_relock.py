@@ -43,17 +43,12 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     target = await device_locking.lock_device(db_session, device_id)
     await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, target)
 
-    final_status = (
-        await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-    ).one()
+    final_status = (await db_session.execute(select(Device.operational_state).where(Device.id == device_id))).one()
     node_status = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    # After Task 10: reconciler derives offline when maintenance stop intent is registered
-    # (stop_in_flight=True). The device will be available again after the node stops.
-    assert final_status.operational_state in (
-        DeviceOperationalState.available,
-        DeviceOperationalState.offline,
-    )
+    # §4 (Phase 2): maintenance derives onto the operational axis and outranks the
+    # offline that the in-flight stop intent would otherwise produce.
+    assert final_status.operational_state is DeviceOperationalState.maintenance
     # hold is now derived by the reconciler (Task 7+8); check maintenance_reason signal instead
     device_refreshed = (await db_session.execute(select(Device).where(Device.id == device_id))).scalar_one()
     from app.devices.services.lifecycle_policy_state import state as ps

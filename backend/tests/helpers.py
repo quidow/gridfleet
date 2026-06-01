@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.hosts.models import Host, HostStatus, OSType
@@ -76,7 +76,6 @@ async def create_device_record(
     os_version: str = "14",
     connection_target: str | None = None,
     operational_state: str | DeviceOperationalState = DeviceOperationalState.offline,
-    hold: str | DeviceHold | None = None,
     device_type: str = "real_device",
     connection_type: str | None = None,
     verified: bool = True,
@@ -152,7 +151,6 @@ async def create_device_record(
             if isinstance(operational_state, DeviceOperationalState)
             else DeviceOperationalState(operational_state)
         )
-        device.hold = hold if isinstance(hold, DeviceHold) or hold is None else DeviceHold(hold)
     if verified:
         device.verified_at = datetime.now(UTC)
 
@@ -197,10 +195,6 @@ async def create_reserved_run(
     excluded_device_ids = excluded_device_ids or set()
     released_at = datetime.now(UTC) if mark_released else None
     for device in devices:
-        if released_at is None:
-            with state_write_guard.bypass():
-                # Seed hold for test fixture reservation — bypass is valid here.
-                device.hold = DeviceHold.reserved
         reservation = DeviceReservation(
             run=run,
             device_id=device.id,
@@ -221,6 +215,41 @@ async def create_reserved_run(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
     return run
+
+
+async def create_reservation(
+    db_session: AsyncSession,
+    *,
+    device_id: uuid.UUID,
+    run_id: uuid.UUID | None = None,
+) -> DeviceReservation:
+    """Create an active (released_at IS NULL) DeviceReservation for the given device.
+
+    Creates a minimal TestRun if ``run_id`` is not supplied.
+    """
+    if run_id is None:
+        run = TestRun(
+            name="test-run-for-reservation",
+            state=RunState.active,
+            requirements=[{"platform_id": "android_mobile", "count": 1}],
+            ttl_minutes=60,
+            heartbeat_timeout_sec=120,
+        )
+        db_session.add(run)
+        await db_session.flush()
+        run_id = run.id
+
+    res = DeviceReservation(
+        run_id=run_id,
+        device_id=device_id,
+        identity_value="test-device",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        os_version="14",
+    )
+    db_session.add(res)
+    await db_session.flush()
+    return res
 
 
 async def settle_after_commit_tasks() -> None:
@@ -249,7 +278,6 @@ async def seed_host_and_device(
     *,
     identity: str,
     operational_state: DeviceOperationalState = DeviceOperationalState.available,
-    hold: DeviceHold | None = None,
 ) -> tuple[Host, Device]:
     """Seed a Host + a single Device on it. Used by event-bus contract tests."""
     host = Host(
@@ -267,7 +295,6 @@ async def seed_host_and_device(
         identity_value=identity,
         name=f"Device {identity}",
         operational_state=operational_state,
-        hold=hold,
     )
     return host, device
 

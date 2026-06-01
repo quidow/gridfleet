@@ -4,10 +4,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.state_derivation import (
     DeviceStateFacts,
-    evaluate_hold,
     evaluate_operational_state,
     gather_device_state_facts,
 )
@@ -20,7 +19,6 @@ _BASELINE = dict(
     in_maintenance=False,
     stop_in_flight=False,
     ready=True,
-    is_reserved=False,
 )
 
 
@@ -40,27 +38,17 @@ def _facts(**overrides: bool) -> DeviceStateFacts:
         (_facts(has_running_session=True, has_verification_lease=True), DeviceOperationalState.busy),
         # precedence: verification beats offline
         (_facts(has_verification_lease=True, stop_in_flight=True), DeviceOperationalState.verifying),
-        # maintenance/reservation never affect the operational axis in Stage 1
-        (_facts(in_maintenance=True), DeviceOperationalState.available),
-        (_facts(is_reserved=True), DeviceOperationalState.available),
+        # §4: maintenance derives onto the operational axis when idle
+        (_facts(in_maintenance=True), DeviceOperationalState.maintenance),
+        # busy/verifying outrank maintenance
+        (_facts(in_maintenance=True, has_running_session=True), DeviceOperationalState.busy),
+        (_facts(in_maintenance=True, has_verification_lease=True), DeviceOperationalState.verifying),
+        # maintenance outranks offline: a maintenance device whose node is down stays maintenance
+        (_facts(in_maintenance=True, stop_in_flight=True, ready=False), DeviceOperationalState.maintenance),
     ],
 )
 def test_evaluate_operational_state(facts: DeviceStateFacts, expected: DeviceOperationalState) -> None:
     assert evaluate_operational_state(facts) is expected
-
-
-@pytest.mark.parametrize(
-    "facts,expected",
-    [
-        (_facts(), None),
-        (_facts(in_maintenance=True), DeviceHold.maintenance),
-        (_facts(is_reserved=True), DeviceHold.reserved),
-        # maintenance outranks reserved
-        (_facts(in_maintenance=True, is_reserved=True), DeviceHold.maintenance),
-    ],
-)
-def test_evaluate_hold(facts: DeviceStateFacts, expected: DeviceHold | None) -> None:
-    assert evaluate_hold(facts) is expected
 
 
 @pytest.mark.db
@@ -86,6 +74,5 @@ async def test_gather_facts_available_device(
     assert facts.has_verification_lease is False
     assert facts.in_maintenance is False
     assert facts.stop_in_flight is False
-    assert facts.is_reserved is False
     assert facts.ready is True
     assert evaluate_operational_state(facts) is DeviceOperationalState.available

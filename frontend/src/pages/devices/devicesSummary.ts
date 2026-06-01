@@ -1,6 +1,7 @@
 import type { SummaryPillTone } from '../../components/ui';
 import type {
   DeviceChipStatus,
+  DeviceFilterStatus,
   DeviceRead,
   HardwareHealthStatus,
   HardwareTelemetryState,
@@ -28,7 +29,7 @@ export interface DevicesSummaryStats {
 }
 
 interface DevicesSummaryHrefOptions {
-  status?: DeviceChipStatus | null;
+  status?: DeviceFilterStatus | null;
   needsAttention?: boolean;
   hardwareHealthStatus?: HardwareHealthStatus | null;
   hardwareTelemetryState?: HardwareTelemetryState | null;
@@ -37,6 +38,9 @@ interface DevicesSummaryHrefOptions {
 function countByAvailabilityStatus(devices: DeviceRead[], status: DeviceChipStatus) {
   return devices.filter((device) => {
     const chipStatus = deviceChipStatus(device);
+    // Reserved devices are excluded from the 'available' bucket to mirror the
+    // backend status=available filter (active reservations are listed separately).
+    if (status === 'available') return chipStatus === 'available' && !device.is_reserved;
     return status === 'busy' ? chipStatus === 'busy' || chipStatus === 'verifying' : chipStatus === status;
   }).length;
 }
@@ -46,7 +50,7 @@ export function deriveDevicesSummaryStats(devices: DeviceRead[]): DevicesSummary
     total: devices.length,
     available: countByAvailabilityStatus(devices, 'available'),
     busy: countByAvailabilityStatus(devices, 'busy'),
-    reserved: countByAvailabilityStatus(devices, 'reserved'),
+    reserved: devices.filter((device) => device.is_reserved).length,
     offline: countByAvailabilityStatus(devices, 'offline'),
     maintenance: countByAvailabilityStatus(devices, 'maintenance'),
     attentionCount: devices.filter((device) => device.needs_attention).length,

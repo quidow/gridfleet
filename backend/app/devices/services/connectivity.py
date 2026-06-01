@@ -17,12 +17,13 @@ from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -55,8 +56,8 @@ LOOP_NAME = "device_connectivity"
 
 
 def _audit_label(device: Device) -> str:
-    """Flat label for log output only — hold takes precedence over operational state."""
-    return device.hold.value if device.hold is not None else device.operational_state.value
+    """Flat label for log output only — operational_state now carries maintenance."""
+    return device.operational_state.value
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -356,7 +357,7 @@ class ConnectivityService:
                         else:
                             others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
                         gated_ip_ping_ok = True
-                        if ip_ping_entry is not None and device.hold != DeviceHold.maintenance:
+                        if ip_ping_entry is not None and device.operational_state != DeviceOperationalState.maintenance:
                             gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                                 db,
                                 device,
@@ -467,7 +468,10 @@ class ConnectivityService:
                             else:
                                 others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
                             gated_ip_ping_ok = True
-                            if ip_ping_entry is not None and device.hold != DeviceHold.maintenance:
+                            if (
+                                ip_ping_entry is not None
+                                and device.operational_state != DeviceOperationalState.maintenance
+                            ):
                                 gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                                     db,
                                     device,
@@ -543,13 +547,16 @@ class ConnectivityService:
                     # Maintenance devices are placed there by operators; transient
                     # disconnects are not actionable — skip silently to match pre-PR
                     # behavior (no connectivity_lost event, no lifecycle write).
-                    if device.hold == DeviceHold.maintenance:
+                    if device.operational_state == DeviceOperationalState.maintenance:
                         continue
                     await assert_current_leader(db, settings=self._settings)
                     await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
                     if device.operational_state == DeviceOperationalState.offline:
                         continue
-                    if device.operational_state == DeviceOperationalState.busy or device.hold is not None:
+                    if device.operational_state in (
+                        DeviceOperationalState.busy,
+                        DeviceOperationalState.maintenance,
+                    ) or await device_is_reserved(db, device.id):
                         logger.warning(
                             "Device %s (%s) appears disconnected on host %s but is %s",
                             device.name,
@@ -561,7 +568,8 @@ class ConnectivityService:
                         locked_device = await device_locking.lock_device(db, device.id)
                         if (
                             locked_device.operational_state == DeviceOperationalState.busy
-                            or locked_device.hold is not None
+                            or locked_device.operational_state == DeviceOperationalState.maintenance
+                            or await device_is_reserved(db, locked_device.id)
                         ):
                             await IntentService(db).mark_dirty_and_reconcile(
                                 locked_device.id,
@@ -590,7 +598,11 @@ class ConnectivityService:
                     )
                     await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
-                    if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
+                    if (
+                        locked_device.operational_state != DeviceOperationalState.busy
+                        and locked_device.operational_state != DeviceOperationalState.maintenance
+                        and not await device_is_reserved(db, locked_device.id)
+                    ):
                         await IntentService(db).mark_dirty_and_reconcile(
                             locked_device.id,
                             reason="Device disconnected",

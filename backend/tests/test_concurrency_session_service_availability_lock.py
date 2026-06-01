@@ -99,9 +99,7 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
     )
 
     async with db_session_maker() as verify:
-        final = (
-            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-        ).one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
 
     assert final.operational_state == DeviceOperationalState.busy
     # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal
@@ -143,9 +141,7 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
         await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     async with db_session_maker() as verify:
-        final = (
-            await verify.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
-        ).one()
+        final = (await verify.execute(select(Device.operational_state).where(Device.id == device_id))).one()
 
     # After session end, device is offline (no running node, not verified pack available).
     # The reconciler derives the correct state from durable facts.

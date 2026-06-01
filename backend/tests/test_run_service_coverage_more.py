@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.core.pagination import encode_cursor
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
@@ -476,7 +476,6 @@ async def test_release_devices_branches_and_session_counts(
         name="Release Device",
         identity_value="run-release-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     run = await create_reserved_run(db_session, name="release-run", devices=[device], state=RunState.active)
     db_session.add_all(
@@ -523,7 +522,6 @@ async def test_mark_running_sessions_released_success_path(
         name="Release Session Device",
         identity_value="run-release-session-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     run = await create_reserved_run(db_session, name="release-session-run", devices=[device], state=RunState.cancelled)
     session = Session(session_id="release-success", device_id=device.id, run_id=run.id, status=SessionStatus.running)
@@ -647,8 +645,7 @@ async def test_release_devices_unusual_restore_branches(
         host_id=db_host.id,
         name="Maintenance Release Device",
         identity_value="run-release-maint-001",
-        operational_state=DeviceOperationalState.available,
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
     )
     busy = await create_device(
         db_session,
@@ -656,7 +653,6 @@ async def test_release_devices_unusual_restore_branches(
         name="Busy Release Device",
         identity_value="run-release-busy-001",
         operational_state=DeviceOperationalState.busy,
-        hold=DeviceHold.reserved,
     )
     odd = await create_device(
         db_session,
@@ -664,7 +660,6 @@ async def test_release_devices_unusual_restore_branches(
         name="Odd Release Device",
         identity_value="run-release-odd-001",
         operational_state=DeviceOperationalState.offline,
-        hold=None,
     )
     run = await create_reserved_run(
         db_session,
@@ -692,11 +687,11 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
 ) -> None:
     missing_id = uuid.uuid4()
     maintenance_id = uuid.uuid4()
-    restored_id = uuid.uuid4()
+    not_reserved_id = uuid.uuid4()
     reservations = [
         SimpleNamespace(id=uuid.uuid4(), device_id=missing_id, released_at=None),
         SimpleNamespace(id=uuid.uuid4(), device_id=maintenance_id, released_at=None),
-        SimpleNamespace(id=uuid.uuid4(), device_id=restored_id, released_at=None),
+        SimpleNamespace(id=uuid.uuid4(), device_id=not_reserved_id, released_at=None),
     ]
     run = SimpleNamespace(
         id=uuid.uuid4(),
@@ -711,19 +706,27 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
         f"{RUN_RELEASE_MODULE}.device_locking.lock_devices",
         AsyncMock(
             return_value=[
+                # maintenance_id uses operational_state=maintenance (the new signal)
                 SimpleNamespace(
                     id=maintenance_id,
-                    hold=DeviceHold.maintenance,
-                    operational_state=DeviceOperationalState.available,
+                    operational_state=DeviceOperationalState.maintenance,
                 ),
-                SimpleNamespace(id=restored_id, hold=None, operational_state=DeviceOperationalState.available),
+                # not_reserved_id: device with no active reservation (was_reserved=False) and not busy
+                SimpleNamespace(id=not_reserved_id, operational_state=DeviceOperationalState.available),
             ]
         ),
+    )
+    # device_is_reserved is called before reservation.released_at is set;
+    # patch it so maintenance_id returns True (was reserved) and not_reserved_id returns False.
+    device_reservation_map = {maintenance_id: True, not_reserved_id: False}
+    monkeypatch.setattr(
+        f"{RUN_RELEASE_MODULE}.device_is_reserved",
+        AsyncMock(side_effect=lambda _db, device_id: device_reservation_map[device_id]),
     )
 
     pending = await _release_svc.release_devices(db, run, commit=True)
 
-    assert pending == [maintenance_id, restored_id]
+    assert pending == [maintenance_id, not_reserved_id]
     assert all(reservation.released_at is not None for reservation in reservations)
     db.commit.assert_awaited_once()
 
@@ -796,5 +799,91 @@ async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monk
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", revoke)
 
     await _release_svc.clear_desired_grid_run_id_for_run(db, run=run, caller="run_completed")
-
     revoke.assert_not_awaited()
+
+
+# ── Task 3.6: hold=None readers migrated to operational_state + reservation row ──
+
+
+@pytest.mark.db
+async def test_release_maintenance_device_uses_operational_state_not_hold(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device in operational_state=maintenance with hold=None must land in
+    devices_pending_lifecycle_cleanup — not get restored to available."""
+    maintenance_device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maint-no-hold",
+        identity_value="run-release-maint-no-hold-001",
+        operational_state=DeviceOperationalState.maintenance,
+    )
+    run = await create_reserved_run(
+        db_session,
+        name="release-maint-no-hold-run",
+        devices=[maintenance_device],
+        state=RunState.cancelled,
+    )
+    await db_session.refresh(run, attribute_names=["device_reservations"])
+
+    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+    pending = await _release_svc.release_devices(db_session, run, commit=False)
+
+    assert maintenance_device.id in pending
+    # Operational state must not be overwritten — device stays in maintenance.
+    assert maintenance_device.operational_state == DeviceOperationalState.maintenance
+
+
+@pytest.mark.db
+async def test_release_reserved_device_uses_reservation_row_not_hold(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device with an active reservation row is restored via the reservation query.
+
+    Reserved state is detected via ``device_is_reserved(db, device.id)`` rather than the
+    ``hold`` column (which is no longer written). The release path restores the operational
+    state and queues the device for lifecycle cleanup; it performs no hold write.
+    """
+    from app.devices.models import DeviceReservation
+
+    reserved_device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reserved-no-hold",
+        identity_value="run-release-reserved-no-hold-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = TestRun(
+        name="release-reserved-no-hold-run",
+        state=RunState.cancelled,
+        requirements=[{"platform_id": reserved_device.platform_id, "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    reservation = DeviceReservation(
+        run=run,
+        device_id=reserved_device.id,
+        identity_value=reserved_device.identity_value,
+        connection_target=reserved_device.connection_target,
+        pack_id=reserved_device.pack_id,
+        platform_id=reserved_device.platform_id,
+        os_version=reserved_device.os_version,
+        released_at=None,
+    )
+    db_session.add(reservation)
+    await db_session.commit()
+    await db_session.refresh(run, attribute_names=["device_reservations"])
+
+    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+
+    pending = await _release_svc.release_devices(db_session, run, commit=False)
+
+    # The reservation row drives the branch: the device is queued for lifecycle cleanup
+    # and its operational state is restored, with no hold write.
+    assert reserved_device.id in pending

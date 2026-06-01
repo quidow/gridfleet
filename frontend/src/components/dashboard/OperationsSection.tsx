@@ -79,7 +79,6 @@ function availabilityTone(status: DeviceChipStatus) {
     case 'verifying': return 'warning' as const;
     case 'offline': return 'critical' as const;
     case 'maintenance': return 'neutral' as const;
-    case 'reserved': return 'info' as const;
   }
 }
 

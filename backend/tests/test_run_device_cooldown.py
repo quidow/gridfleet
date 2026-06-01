@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
@@ -704,7 +704,8 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
 
     # Operator puts device in maintenance after cooldown began
     with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+        device.lifecycle_policy_state = {"maintenance_reason": "manual"}
+        device.operational_state = DeviceOperationalState.maintenance
     await db_session.commit()
 
     await ConnectivityService(

@@ -31,7 +31,11 @@ from app.sessions.service_viability import (
 )
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
-from tests.helpers import get_session_viability_control_plane_state, set_session_viability_control_plane_entry
+from tests.helpers import (
+    create_reservation,
+    get_session_viability_control_plane_state,
+    set_session_viability_control_plane_entry,
+)
 from tests.helpers import test_event_bus as _test_event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -553,6 +557,39 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
     assert str(recent.id) in control_plane_state["state"]
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_check_due_devices_excludes_reserved_device(db_session: AsyncSession, db_host: Host) -> None:
+    """A device with hold=NULL but an active reservation must not be probed."""
+    settings_service._cache["general.session_viability_interval_sec"] = 86400
+
+    with state_write_guard.bypass():
+        reserved = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="probe-reserved",
+            connection_target="probe-reserved",
+            name="Reserved Device",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(reserved)
+    await db_session.commit()
+    await create_reservation(db_session, device_id=reserved.id)
+    await db_session.commit()
+
+    with patch.object(SessionViabilityService, "run_session_viability_probe", new_callable=AsyncMock) as mock_probe:
+        await _check_due_devices(db_session)
+
+    assert mock_probe.await_count == 0
+
+
 async def test_probe_session_via_grid_includes_exception_type_for_blank_http_error() -> None:
     request = httpx.Request("POST", "http://hub:4444/session")
     mock_client = MagicMock()
@@ -1065,6 +1102,8 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
         device_config={"session_viability": {"status": "legacy"}},
     )
     fake_db = AsyncMock()
+    # device_is_reserved calls db.execute(...).first(); return None so the device reads as unreserved.
+    fake_db.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))

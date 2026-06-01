@@ -14,7 +14,6 @@ from app.devices.models import (
     Device,
     DeviceEvent,
     DeviceEventType,
-    DeviceHold,
     DeviceIntent,
     DeviceOperationalState,
     DeviceType,
@@ -30,12 +29,12 @@ from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
 )
+from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
-from tests.helpers import settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -168,7 +167,6 @@ async def test_reserved_idle_failure_excludes_run(db_session: AsyncSession, db_h
             name="Reserved Device",
             os_version="14",
             host_id=db_host.id,
-            hold=DeviceHold.reserved,
             device_type=DeviceType.real_device,
             connection_type=ConnectionType.usb,
         )
@@ -382,7 +380,8 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
     await db_session.refresh(run, ["device_reservations"])
     await db_session.refresh(device)
     assert recovered is True
-    assert device.hold == DeviceHold.reserved
+    # Reserved state now lives on the reservation row, not the (removed) hold axis.
+    assert await device_is_reserved(db_session, device.id)
     assert run.reserved_devices is not None
     assert run.reserved_devices[0]["excluded"] is False
     assert run.device_reservations[0].excluded is False
@@ -540,104 +539,6 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
         assert row.precondition == expected_precondition, (
             f"{row.source} missing node_running precondition: {row.precondition!r}"
         )
-
-
-async def test_recovery_rejoin_publishes_availability_event(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: list[tuple[str, dict[str, object]]] = []
-
-    async def fake_publish(name: str, payload: dict[str, object], *, severity: object = None) -> None:
-        captured.append((name, payload))
-
-    from tests.helpers import test_event_bus as event_bus
-
-    monkeypatch.setattr(event_bus, "publish", fake_publish)
-
-    from app.devices.services import state as state_mod
-
-    _orig_set_hold = state_mod.set_hold
-
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        if kwargs.get("publisher") is None:
-            kwargs["publisher"] = event_bus
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("app.devices.services.lifecycle_policy.set_hold", _wrapped_set_hold)
-
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="policy-recover-event",
-            connection_target="policy-recover-event",
-            name="Recovering Device Event",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.offline,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.flush()
-    run = TestRun(
-        name="Recovering Run Event",
-        state=RunState.active,
-        requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
-        ttl_minutes=60,
-        heartbeat_timeout_sec=120,
-        reserved_devices=[
-            {
-                "device_id": str(device.id),
-                "identity_value": device.identity_value,
-                "connection_target": device.connection_target,
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "os_version": device.os_version,
-                "host_ip": None,
-                "excluded": True,
-                "exclusion_reason": "Health probe failed",
-                "excluded_at": datetime.now(UTC).isoformat(),
-            }
-        ],
-    )
-    db_session.add(run)
-    await db_session.commit()
-
-    register_recovery = AsyncMock(side_effect=partial(_mark_device_available, db_session))
-    probe_mock = AsyncMock(
-        return_value={
-            "status": "passed",
-            "last_attempted_at": datetime.now(UTC).isoformat(),
-            "last_succeeded_at": datetime.now(UTC).isoformat(),
-            "error": None,
-            "checked_by": "recovery",
-        }
-    )
-    viability = AsyncMock()
-    viability.run_session_viability_probe = probe_mock
-    svc = _make_svc(publisher=event_bus, viability=viability)
-    with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
-        recovered = await svc.attempt_auto_recovery(
-            db_session,
-            device,
-            source="device_checks",
-            reason="Healthy again",
-        )
-
-    await settle_after_commit_tasks()
-    assert recovered is True
-    hold_events = [payload for name, payload in captured if name == "device.hold_changed"]
-    assert hold_events, "Recovery rejoin must publish hold_changed"
-    rejoin_events = [p for p in hold_events if p.get("new_hold") == "reserved"]
-    assert rejoin_events, f"Expected a 'reserved' transition; got: {hold_events}"
-    # After Task 10: reason may be "derived" (from reconciler) or "Rejoined run..." (from explicit set_hold).
-    assert rejoin_events[0].get("reason") is not None
 
 
 async def test_recovery_reloads_device_before_starting_node(
@@ -1651,8 +1552,7 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     db = AsyncMock()
     device = SimpleNamespace(
         id=uuid.uuid4(),
-        hold=DeviceHold.maintenance,
-        lifecycle_policy_state={},
+        lifecycle_policy_state={"maintenance_reason": "maintenance opened"},
         recovery_allowed=True,
         review_required=False,
         review_reason=None,
@@ -1680,18 +1580,15 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
     mock_has_running = AsyncMock(return_value=False)
     monkeypatch.setattr(LifecyclePolicyActionsService, "has_running_client_session", mock_has_running)
 
-    with state_write_guard.bypass():
-        device.hold = None
+    device.lifecycle_policy_state = {}
     device.recovery_allowed = False
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
     device.recovery_allowed = True
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+    device.lifecycle_policy_state = {"maintenance_reason": "maintenance opened"}
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
-    with state_write_guard.bypass():
-        device.hold = None
+    device.lifecycle_policy_state = {}
     mock_has_running.return_value = True
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") == "suppressed"
 
@@ -1700,6 +1597,34 @@ async def test_lifecycle_policy_suppression_guard_branches(monkeypatch: pytest.M
         device.lifecycle_policy_state = {"backoff_until": (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is False
     db.commit.assert_awaited()
+
+
+async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery suppression triggers on the durable ``maintenance_reason`` signal
+    alone, without the device carrying a legacy maintenance hold."""
+    db = AsyncMock()
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
+        recovery_allowed=True,
+        review_required=False,
+        review_reason=None,
+        recovery_blocked_reason=None,
+        operational_state=DeviceOperationalState.offline,
+        appium_node=None,
+    )
+    monkeypatch.setattr(lifecycle_policy_module, "_reload_device", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
+    )
+    suppressed = AsyncMock(return_value="suppressed")
+    monkeypatch.setattr(LifecyclePolicyActionsService, "record_recovery_suppressed", suppressed)
+
+    svc = _make_svc(publisher=event_bus)
+    assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
+    suppressed.assert_awaited_once()
 
 
 async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
@@ -1713,7 +1638,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     device = SimpleNamespace(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
         review_required=False,
@@ -1740,8 +1664,6 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     mock_restore_run = AsyncMock(return_value=(run, excluded_entry))
     monkeypatch.setattr(LifecyclePolicyActionsService, "restore_run_if_needed", mock_restore_run)
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
-    mock_set_hold = AsyncMock()
-    monkeypatch.setattr(lifecycle_policy_module, "set_hold", mock_set_hold)
     monkeypatch.setattr(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
@@ -1756,18 +1678,10 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
     svc = _make_svc(publisher=event_bus, viability=viability)
     assert await svc.attempt_auto_recovery(db, device, source="checks", reason="reconnected") is True
     mock_restore_run.assert_awaited_once()
-    mock_set_hold.assert_awaited_with(
-        device,
-        DeviceHold.reserved,
-        reason="Rejoined run after checks: reconnected",
-        severity="info",
-        publisher=event_bus,
-    )
 
     busy = SimpleNamespace(
         id=uuid.uuid4(),
         host_id=uuid.uuid4(),
-        hold=None,
         lifecycle_policy_state={},
         recovery_allowed=True,
         review_required=False,
@@ -1808,7 +1722,6 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
-        hold=None,
         host_id=None,
         appium_node=None,
     )
@@ -1876,7 +1789,6 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
         recovery_blocked_reason=None,
         lifecycle_policy_state={},
         operational_state=DeviceOperationalState.offline,
-        hold=None,
         host_id=uuid.uuid4(),
         appium_node=None,
     )

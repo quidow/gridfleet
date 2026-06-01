@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 
 
 class GridRegistryDeviceRead(BaseModel):
@@ -12,7 +12,6 @@ class GridRegistryDeviceRead(BaseModel):
     name: str
     platform_id: str
     operational_state: DeviceOperationalState
-    hold: DeviceHold | None = None
     node_state: str | None = None
     node_port: int | None = None
 

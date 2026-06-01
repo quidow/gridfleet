@@ -18,7 +18,7 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     needs_attention: false,
     os_version: '14',
     host_id: 'host-1',
-    operational_state: 'available', hold: null,
+    operational_state: 'available',
     tags: null,
     device_type: 'real_device',
     connection_type: 'usb',
@@ -114,7 +114,7 @@ describe('deriveDeviceDetailTriage', () => {
       makeDevice({
         device_type: 'emulator',
         connection_type: 'virtual',
-        operational_state: 'offline', hold: null,
+        operational_state: 'offline',
         emulator_state: 'stopped',
       }),
       {},
@@ -133,7 +133,7 @@ describe('deriveDeviceDetailTriage', () => {
         platform_id: 'ios',
         device_type: 'simulator',
         connection_type: 'virtual',
-        operational_state: 'offline', hold: null,
+        operational_state: 'offline',
         emulator_state: 'shutdown',
       }),
       {},
@@ -184,8 +184,7 @@ describe('deriveDeviceDetailTriage', () => {
   it('shows maintenance with exit action and reason', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
-        operational_state: 'offline',
-        hold: 'maintenance',
+        operational_state: 'maintenance',
         appium_node: null,
         lifecycle_policy_summary: {
           state: 'idle',
@@ -211,7 +210,6 @@ describe('deriveDeviceDetailTriage', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'offline',
-        hold: null,
         health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
         appium_node: {
           ...makeDevice().appium_node!,
@@ -231,7 +229,7 @@ describe('deriveDeviceDetailTriage', () => {
   it('shows reserved card with run link', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
-        hold: 'reserved',
+        is_reserved: true,
         reservation: {
           run_id: 'run-1',
           run_name: 'my-test-run',
@@ -253,7 +251,7 @@ describe('deriveDeviceDetailTriage', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'busy',
-        hold: 'reserved',
+        is_reserved: true,
         reservation: {
           run_id: 'run-1',
           run_name: 'my-test-run',
@@ -275,7 +273,6 @@ describe('deriveDeviceDetailTriage', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'busy',
-        hold: 'maintenance',
         lifecycle_policy_summary: {
           state: 'idle',
           label: 'Idle',
@@ -415,7 +412,7 @@ describe('deriveDeviceDetailTriage', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'offline',
-        hold: 'reserved',
+        is_reserved: true,
         health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
         appium_node: { ...makeDevice().appium_node!, effective_state: 'error' },
         reservation: {

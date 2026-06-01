@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
@@ -166,6 +166,61 @@ async def test_find_matching_devices_excludes_review_required(
     ids = {d.id for d in devices}
     assert eligible.id in ids
     assert shelved.id not in ids
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_find_matching_devices_excludes_reserved_device_with_null_hold(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Allocator excludes devices with an active reservation row even when hold=NULL (post-collapse state)."""
+    from app.runs.models import RunState, TestRun
+
+    # A device with hold=NULL but an active reservation row — simulates post-collapse state.
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="reserved-null-hold",
+        connection_target="reserved-null-hold",
+        name="Reserved Null Hold",
+        operational_state="available",
+    )
+    # Add an active reservation row without setting hold.
+    run = TestRun(
+        name="existing-run",
+        state=RunState.preparing,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run=run,
+            device_id=reserved.id,
+            identity_value=reserved.identity_value,
+            connection_target=reserved.connection_target,
+            pack_id=reserved.pack_id,
+            platform_id=reserved.platform_id,
+            platform_label=None,
+            os_version=reserved.os_version,
+            host_ip=None,
+            excluded=False,
+            released_at=None,
+        )
+    )
+    await db_session.flush()
+
+    devices = await _find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+    )
+
+    assert reserved.id not in {d.id for d in devices}, (
+        "device with active reservation row must be excluded even when hold=NULL"
+    )
 
 
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
@@ -772,9 +827,10 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 
     reserved_resp = await client.get(f"/api/devices/{reserved['id']}")
     assert reserved_resp.status_code == 200
-    # hold is derived by the inline reconciler; the device that was reserved
-    # for the OTHER run still has hold=reserved from its own allocation.
-    assert reserved_resp.json()["hold"] in (None, "reserved")
+    # The device that was reserved for the OTHER run still carries an active
+    # reservation row from its own allocation, surfaced via is_reserved.
+    assert "hold" not in reserved_resp.json()
+    assert reserved_resp.json()["is_reserved"] is True
 
 
 async def test_complete_run_releases_reservation_rows(
@@ -1193,13 +1249,14 @@ async def test_allocator_does_not_write_hold(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """Allocator derives hold=reserved through the reconciler, not by writing it directly.
+    """Allocator never writes hold; reserved state lives on the DeviceReservation row.
 
-    After Task 10, reconcile_device is called inline during create_run (via
-    register_intents_and_reconcile). For a device without an AppiumNode row,
-    the no-node code path runs apply_derived_state which reads the DeviceReservation
-    row and derives hold=reserved.
+    Hold derivation has been removed. Reserving a device for a run creates a reservation
+    row and leaves the device's operational axis untouched — the device is reserved per
+    ``device_is_reserved``, with no hold write.
     """
+    from app.devices.services.reservation_query import device_is_reserved
+
     device = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -1217,6 +1274,5 @@ async def test_allocator_does_not_write_hold(
         ),
     )
 
-    # After Task 10: the inline reconciler derives hold=reserved from the reservation row.
     await db_session.refresh(device)
-    assert device.hold is DeviceHold.reserved, "reconciler must derive hold=reserved from reservation row"
+    assert await device_is_reserved(db_session, device.id), "reservation row must drive reserved state"

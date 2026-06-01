@@ -43,8 +43,6 @@ async def test_apply_derived_state_writes_and_emits(
     assert changed is True
     # Column was updated in-memory by the sanctioned writer.
     assert device.operational_state is DeviceOperationalState.available
-    # No hold change expected (both None before and after).
-    assert device.hold is None
 
     # Commit so the after_commit hook fires and publisher.publish is scheduled.
     await db_session.commit()

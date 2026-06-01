@@ -14,10 +14,10 @@ if TYPE_CHECKING:
 
 # Map state-machine transitions to event-log row types. Verification transitions
 # (VERIFICATION_STARTED, VERIFICATION_PASSED, VERIFICATION_FAILED) have no mapping
-# and do not record a DeviceEvent row.
+# and do not record a DeviceEvent row. Maintenance enter/exit is derived onto the
+# operational axis by the reconciler (which records its own audit rows), so the
+# state machine never emits those events here.
 _EVENT_TYPE_MAP: dict[TransitionEvent, DeviceEventType] = {
-    TransitionEvent.MAINTENANCE_ENTERED: DeviceEventType.maintenance_entered,
-    TransitionEvent.MAINTENANCE_EXITED: DeviceEventType.maintenance_exited,
     TransitionEvent.CONNECTIVITY_LOST: DeviceEventType.connectivity_lost,
     TransitionEvent.CONNECTIVITY_RESTORED: DeviceEventType.connectivity_restored,
     TransitionEvent.SESSION_STARTED: DeviceEventType.session_started,

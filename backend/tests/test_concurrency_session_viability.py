@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
@@ -112,9 +112,9 @@ async def test_session_viability_restore_handles_external_reservation(
     async def reserve_externally() -> None:
         await probe_started.wait()
         async with db_session_maker() as session, session.begin():
-            locked = await device_locking.lock_device(session, device_id)
-            with state_write_guard.bypass():
-                locked.hold = DeviceHold.reserved
+            # Acquire the device row lock concurrently with the probe to exercise
+            # lock contention; the write itself is no longer relevant (hold removed).
+            await device_locking.lock_device(session, device_id)
         external_done.set()
 
     await asyncio.gather(run_probe(), reserve_externally())
@@ -123,10 +123,8 @@ async def test_session_viability_restore_handles_external_reservation(
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
-    # After Task 10: hold is derived from DeviceReservation rows by the reconciler.
-    # The test sets hold=reserved via bypass without creating a real DeviceReservation,
-    # so the reconciler derives hold=None. The key invariant is that the probe
-    # completed without raising errors (observed_grid_url is correct).
+    # The key invariant is that the probe completed without raising errors under
+    # concurrent lock contention (observed_grid_url is correct).
     assert device_row.operational_state in (
         DeviceOperationalState.available,
         DeviceOperationalState.offline,

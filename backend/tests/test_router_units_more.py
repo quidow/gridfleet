@@ -20,7 +20,7 @@ from app.appium_nodes.routers import admin as admin_appium_nodes
 from app.appium_nodes.routers import nodes as nodes_router
 from app.core.errors import AgentCallError, PackDisabledError, PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
-from app.devices.models import ConnectionType, DeviceHold, DeviceType
+from app.devices.models import ConnectionType, DeviceType
 from app.devices.routers import (
     bulk as bulk,
 )
@@ -49,7 +49,6 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
-from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.devices.services.intent import IntentService
 from app.events import router as events
@@ -1846,7 +1845,6 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             name="Pixel",
             platform_id="android_mobile",
             operational_state=SimpleNamespace(value="available"),
-            hold=None,
             appium_node=running_node,
         ),
         SimpleNamespace(
@@ -1856,7 +1854,6 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             name="Tablet",
             platform_id="android_mobile",
             operational_state=SimpleNamespace(value="offline"),
-            hold=SimpleNamespace(value="maintenance"),
             appium_node=stopped_node,
         ),
     ]
@@ -1889,7 +1886,8 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
 
     assert status["registry"]["device_count"] == 2
     assert status["registry"]["devices"][0]["node_state"] == "running"
-    assert status["registry"]["devices"][1]["hold"] == "maintenance"
+    assert "hold" not in status["registry"]["devices"][1]
+    assert status["registry"]["devices"][1]["operational_state"] == "offline"
     assert status["active_sessions"] == 1
     assert status["queue_size"] == 1
     assert queue == {"queue_size": 1, "requests": [{"requestId": "queued"}]}
@@ -1909,13 +1907,11 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router._assert_device_not_reserved(device, db=object())
     assert exc.value.status_code == 409
 
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+    device.lifecycle_policy_state = {"maintenance_reason": "manual"}
     with pytest.raises(HTTPException) as exc:
         nodes_router._assert_startable_outside_maintenance(device)
     assert exc.value.status_code == 409
-    with state_write_guard.bypass():
-        device.hold = None
+    device.lifecycle_policy_state = None
 
     setup_required = SimpleNamespace(readiness_state="setup_required", missing_setup_fields=["identity_value"])
     with patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=setup_required)):

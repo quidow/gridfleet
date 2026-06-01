@@ -7,11 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
-from app.devices.services.state import DeviceStateService, set_hold, set_operational_state
+from app.devices.services.state import DeviceStateService, set_operational_state
 from app.hosts.models import Host
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
@@ -39,22 +39,15 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
 
 @pytest.fixture
 def inject_publisher_into_state_machine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Inject publisher=event_bus into state machine set_operational_state/set_hold."""
+    """Inject publisher=event_bus into state machine set_operational_state."""
     _orig_set_op = set_operational_state
-    _orig_set_hold = set_hold
 
     async def _wrapped_set_op(device: object, new_state: object, **kwargs: object) -> object:
         if kwargs.get("publisher") is None:
             kwargs["publisher"] = event_bus
         return await _orig_set_op(device, new_state, **kwargs)  # type: ignore[arg-type]
 
-    async def _wrapped_set_hold(device: object, new_hold: object, **kwargs: object) -> object:
-        if kwargs.get("publisher") is None:
-            kwargs["publisher"] = event_bus
-        return await _orig_set_hold(device, new_hold, **kwargs)  # type: ignore[arg-type]
-
     monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_operational_state", _wrapped_set_op)
-    monkeypatch.setattr("app.devices.services.lifecycle_state_machine.set_hold", _wrapped_set_hold)
 
 
 async def test_update_session_status_restores_busy_device_when_last_session_finishes(
@@ -152,7 +145,15 @@ async def test_update_session_status_restores_reserved_when_active_run_owns_devi
 
     assert updated is not None
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+    active_reservation = (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device.id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    assert active_reservation is not None
 
     result = await db_session.execute(select(Session).where(Session.session_id == "reserved-sess"))
     stored = result.scalar_one()
@@ -391,7 +392,7 @@ async def test_update_session_status_clears_stop_pending_on_non_busy_device(
     # maintenance while the session row is still ``running``.
     await db_session.refresh(device)
     with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
+        device.operational_state = DeviceOperationalState.maintenance
     await db_session.commit()
 
     crud = SessionCrudService(

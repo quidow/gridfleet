@@ -1,54 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { deviceChipStatus } from './deviceState';
-import type { DeviceHold, DeviceOperationalState } from '../types';
+import type { DeviceOperationalState } from '../types';
 
 describe('deviceChipStatus', () => {
-  it('returns hold when operational_state is not busy', () => {
-    expect(deviceChipStatus({
-      operational_state: 'available' as DeviceOperationalState,
-      hold: 'reserved' as DeviceHold,
-    })).toBe('reserved');
-    expect(deviceChipStatus({
-      operational_state: 'offline' as DeviceOperationalState,
-      hold: 'reserved' as DeviceHold,
-    })).toBe('reserved');
-    expect(deviceChipStatus({
-      operational_state: 'available' as DeviceOperationalState,
-      hold: 'maintenance' as DeviceHold,
-    })).toBe('maintenance');
+  it('returns operational_state directly', () => {
+    const states: DeviceOperationalState[] = [
+      'available',
+      'busy',
+      'offline',
+      'maintenance',
+      'verifying',
+    ];
+    for (const state of states) {
+      expect(deviceChipStatus({ operational_state: state })).toBe(state);
+    }
   });
 
-  it('returns busy-like operational state regardless of hold', () => {
-    expect(deviceChipStatus({
-      operational_state: 'busy' as DeviceOperationalState,
-      hold: 'reserved' as DeviceHold,
-    })).toBe('busy');
-    expect(deviceChipStatus({
-      operational_state: 'busy' as DeviceOperationalState,
-      hold: 'maintenance' as DeviceHold,
-    })).toBe('busy');
-    expect(deviceChipStatus({
-      operational_state: 'verifying' as DeviceOperationalState,
-      hold: 'maintenance' as DeviceHold,
-    })).toBe('verifying');
-  });
-
-  it('returns operational_state when hold is null', () => {
+  it('ignores reservation: a reserved+available device chips as available', () => {
     expect(deviceChipStatus({
       operational_state: 'available' as DeviceOperationalState,
-      hold: null,
     })).toBe('available');
-    expect(deviceChipStatus({
-      operational_state: 'busy' as DeviceOperationalState,
-      hold: null,
-    })).toBe('busy');
-    expect(deviceChipStatus({
-      operational_state: 'offline' as DeviceOperationalState,
-      hold: null,
-    })).toBe('offline');
-    expect(deviceChipStatus({
-      operational_state: 'verifying' as DeviceOperationalState,
-      hold: null,
-    })).toBe('verifying');
   });
 });

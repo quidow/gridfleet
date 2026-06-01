@@ -19,13 +19,14 @@ if TYPE_CHECKING:
     from app.runs.protocols import DeviceDeferredStop, DeviceStateWriter
 
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_FORCED_RELEASE,
     IntentRegistration,
 )
+from app.devices.services.reservation_query import device_is_reserved
 from app.devices.services.state import ready_operational_state
 from app.sessions.models import Session, SessionStatus
 
@@ -87,28 +88,25 @@ class RunReleaseService:
         devices_pending_lifecycle_cleanup: list[uuid.UUID] = []
 
         for reservation in active_reservations:
-            reservation.released_at = released_at
             device = locked_devices.get(reservation.device_id)
             if device is None:
+                reservation.released_at = released_at
                 logger.warning(
                     "Reservation %s references missing device %s; skipping availability restore",
                     reservation.id,
                     reservation.device_id,
                 )
                 continue
-            if device.hold == DeviceHold.maintenance:
+            # Snapshot reservation status before marking this row released so that
+            # device_is_reserved queries (which auto-flush) see the pre-release state.
+            was_reserved = await device_is_reserved(db, device.id)
+            reservation.released_at = released_at
+            if device.operational_state == DeviceOperationalState.maintenance:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if device.hold != DeviceHold.reserved and device.operational_state != DeviceOperationalState.busy:
+            if not was_reserved and device.operational_state != DeviceOperationalState.busy:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if device.hold == DeviceHold.reserved:
-                await self._device_state.set_hold(
-                    device,
-                    None,
-                    reason=f"Run '{run.name}' ended ({run.state.value})",
-                    severity="info",
-                )
             if device.operational_state == DeviceOperationalState.busy and await self._device_has_running_session(
                 db, device.id
             ):

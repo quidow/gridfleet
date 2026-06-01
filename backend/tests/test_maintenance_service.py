@@ -5,9 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
-from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.events.protocols import EventPublisher
 from app.hosts.models import Host
@@ -17,12 +16,13 @@ from tests.helpers import create_device, settle_after_commit_tasks
 pytestmark = pytest.mark.asyncio
 
 
-async def test_enter_maintenance_emits_hold_changed_and_audit_row(
+async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Entering maintenance must still emit device.hold_changed (SSE/webhooks) and record a
-    maintenance_entered audit row — the reconciler is now the writer, so it must carry both."""
+    """Entering maintenance must emit device.operational_state_changed (SSE/webhooks) and record a
+    maintenance_entered audit row — maintenance now lives on the operational axis, derived by the
+    reconciler, which carries both."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -37,7 +37,7 @@ async def test_enter_maintenance_emits_hold_changed_and_audit_row(
     await settle_after_commit_tasks()
 
     emitted = [call.args[0] for call in publisher.publish.call_args_list]
-    assert "device.hold_changed" in emitted
+    assert "device.operational_state_changed" in emitted
 
     rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
     assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)
@@ -47,12 +47,15 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    from tests.helpers import create_reservation
+
     device = await create_device(
         db_session,
         host_id=db_host.id,
         name="reserved-target",
-        hold=DeviceHold.reserved,
     )
+    await db_session.commit()
+    await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
@@ -60,20 +63,48 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
         await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, locked)
 
     assert "reserved" in str(exc.value).lower()
-    await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+
+
+async def test_enter_maintenance_rejects_device_with_reservation_row_no_hold(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Reserved guard must use the reservation row, not device.hold.
+
+    Device has hold=NULL but an active DeviceReservation row — this is the
+    future state after hold is removed. The guard must still reject it.
+    """
+    from tests.helpers import create_reservation
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reservation-row-target",
+    )
+    await db_session.commit()
+    await create_reservation(db_session, device_id=device.id)
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    with pytest.raises(ValueError) as exc:
+        await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, locked)
+
+    assert "reserved" in str(exc.value).lower()
 
 
 async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    from tests.helpers import create_reservation
+
     device = await create_device(
         db_session,
         host_id=db_host.id,
         name="forced-target",
-        hold=DeviceHold.reserved,
     )
+    await db_session.commit()
+    await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
@@ -122,7 +153,7 @@ async def test_exit_maintenance_clears_maintenance_recovery_suppression(
         db_session,
         host_id=db_host.id,
         name="exit-clears-suppression",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={
             "last_action": "recovery_suppressed",
             "last_action_at": "2026-05-09T21:14:19+00:00",
@@ -165,7 +196,7 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
         db_session,
         host_id=db_host.id,
         name="exit-preserves-backoff-suppression",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={
             "last_action": "recovery_suppressed",
             "last_action_at": "2026-05-09T21:14:19+00:00",
@@ -229,7 +260,7 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
         db_session,
         host_id=db_host.id,
         name="maintenance-schedules-recovery",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
     await db_session.commit()
@@ -240,8 +271,6 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
     await svc.exit_maintenance(db_session, device)
     schedule.assert_awaited_once_with(db_session, device.id)
 
-    with state_write_guard.bypass():
-        device.hold = DeviceHold.maintenance
     from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 
     set_maintenance_reason(device, "Operator entered maintenance")
@@ -280,7 +309,7 @@ async def test_exit_maintenance_clears_maintenance_reason(
         db_session,
         host_id=db_host.id,
         name="clear-reason-target",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={
             "last_action": None,
             "last_action_at": None,

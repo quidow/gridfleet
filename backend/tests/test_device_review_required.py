@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
@@ -107,7 +107,7 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
         db_session,
         host_id=db_host.id,
         name="review-cleared-on-exit",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")

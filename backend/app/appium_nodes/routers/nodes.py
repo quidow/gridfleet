@@ -8,7 +8,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceHold
+from app.devices.models import Device
 from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
 from app.devices.services.lifecycle_policy_state import state as lps_state
@@ -29,9 +29,7 @@ async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
 
 
 def _assert_startable_outside_maintenance(device: Device) -> None:
-    # Check both the persisted hold column (legacy/Task7+8 derived path) and the
-    # maintenance_reason signal (Task 6+: signal is the source of truth).
-    in_maintenance = device.hold == DeviceHold.maintenance or lps_state(device).get("maintenance_reason") is not None
+    in_maintenance = lps_state(device).get("maintenance_reason") is not None
     if in_maintenance:
         raise HTTPException(status_code=409, detail="Device is in maintenance mode")
 

@@ -1,7 +1,6 @@
-"""Writers + helpers for the orthogonal device state model.
+"""Writers + helpers for the device operational-state axis.
 
-operational_state -- what the device is doing (available/busy/offline).
-hold              -- what is blocking use (maintenance/reserved/null).
+operational_state -- what the device is doing (available/busy/verifying/maintenance/offline).
 
 Events are queued through the SQLAlchemy session so they fire on commit, not
 before. Bypassing the queue causes ghost transitions when the surrounding
@@ -16,7 +15,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import is_ready_for_use_async
 from app.events import queue_event_for_session
@@ -75,33 +74,6 @@ async def set_operational_state(
     return True
 
 
-async def set_hold(
-    device: Device,
-    new_hold: DeviceHold | None,
-    *,
-    reason: str | None = None,
-    publish_event: bool = True,
-    severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
-) -> bool:
-    session = _persistent_session(device)
-    old = device.hold
-    if old == new_hold:
-        return False
-    device.hold = new_hold
-    if publish_event and publisher is not None:
-        payload = {
-            "device_id": str(device.id),
-            "device_name": device.name,
-            "old_hold": old.value if old is not None else None,
-            "new_hold": new_hold.value if new_hold is not None else None,
-        }
-        if reason is not None:
-            payload["reason"] = reason
-        queue_event_for_session(session, "device.hold_changed", payload, severity=severity, publisher=publisher)
-    return True
-
-
 def appium_node_stop_in_flight(device: Device) -> bool:
     """Return True when a stop intent has been written to the device's Appium
     node row but the agent has not yet finished tearing the relay down.
@@ -145,12 +117,12 @@ async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOpe
 
 
 class DeviceStateService:
-    """Injectable facade over the sanctioned device-state writers.
+    """Injectable facade over the sanctioned device-state writer.
 
-    Delegates to the module-level ``set_operational_state`` / ``set_hold``
-    (which remain the real implementation while the state machine and still-free
-    devices modules call them bare). Injecting ``publisher`` lets already-
-    converted callers drop per-call ``publisher=`` threading.
+    Delegates to the module-level ``set_operational_state`` (which remains the
+    real implementation while the state machine and still-free devices modules
+    call it bare). Injecting ``publisher`` lets already-converted callers drop
+    per-call ``publisher=`` threading.
     """
 
     def __init__(self, *, publisher: EventPublisher) -> None:
@@ -168,24 +140,6 @@ class DeviceStateService:
         return await set_operational_state(
             device,
             new_state,
-            reason=reason,
-            publish_event=publish_event,
-            severity=severity,
-            publisher=self._publisher,
-        )
-
-    async def set_hold(
-        self,
-        device: Device,
-        new_hold: DeviceHold | None,
-        *,
-        reason: str | None = None,
-        publish_event: bool = True,
-        severity: EventSeverity | None = None,
-    ) -> bool:
-        return await set_hold(
-            device,
-            new_hold,
             reason=reason,
             publish_event=publish_event,
             severity=severity,

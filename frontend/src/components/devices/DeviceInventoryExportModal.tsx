@@ -23,7 +23,7 @@ const COLUMN_GROUPS: { label: string; columns: string[] }[] = [
     ],
   },
   { label: "Host", columns: ["host.id", "host.hostname"] },
-  { label: "State", columns: ["operational_state", "hold", "review_required"] },
+  { label: "State", columns: ["operational_state", "review_required"] },
   {
     label: "Hardware",
     columns: [
@@ -60,7 +60,6 @@ const DEFAULT_COLUMNS = [
   "platform_id",
   "os_version",
   "operational_state",
-  "hold",
   "verification.verified_at",
 ];
 
