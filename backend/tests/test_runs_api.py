@@ -135,6 +135,28 @@ async def test_find_matching_devices_filters_tags_before_readiness(
     assert nonmatching.id not in readiness_checked
 
 
+async def test_find_matching_devices_excludes_review_required(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="review-required-device",
+        connection_target="review-required-device",
+        name="Review Required Device",
+        operational_state="available",
+        review_required=True,
+    )
+
+    devices = await _find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+    )
+
+    assert devices == []
+
+
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/runs",
