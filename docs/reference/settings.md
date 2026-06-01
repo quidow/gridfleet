@@ -42,7 +42,7 @@ This page documents the shipped settingss registry. Each setting has a persisted
 | `appium_reconciler.transition_default_window_sec` | `grid` | `int` | `120` | none | `30..600` | Default lease window for desired-state Appium node transitions; Phase 3 writers use it when populating `transition_deadline` |
 | `appium_reconciler.start_failure_threshold` | `grid` | `int` | `5` | none | `1..100` | Consecutive reconciler start failures before the device is backoff-suppressed; suppression lasts `appium.startup_timeout_sec * 4` seconds |
 | `appium.session_override` | `grid` | `bool` | `true` | none | boolean | Whether managed Appium nodes force-close lingering sessions before opening a new one |
-| `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","device.hold_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
+| `notifications.toast_events` | `notifications` | `json` | `["node.crash","host.heartbeat_lost","device.operational_state_changed","run.expired"]` | none | event catalog item list | Event names eligible for frontend toast display |
 | `notifications.toast_auto_dismiss_sec` | `notifications` | `int` | `5` | none | `0..60` | Auto-dismiss delay for success toasts; `0` means manual dismissal |
 | `notifications.toast_severity_threshold` | `notifications` | `string` | `warning` | none | `info`, `warning`, `error` | Minimum toast severity shown in the UI |
 | `agent.min_version` | `agent` | `string` | `0.1.0` | `GRIDFLEET_MIN_AGENT_VERSION` | none | Minimum accepted agent version; empty disables the version check |

@@ -41,14 +41,6 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         ),
     ),
     PublicEventDefinition(
-        name="device.hold_changed",
-        category="device_and_node_lifecycle",
-        description="Device hold changed.",
-        default_severity="info",
-        allowed_severities=frozenset({"info", "neutral"}),
-        typical_data_fields=("device_id", "device_name", "reason"),
-    ),
-    PublicEventDefinition(
         name="device.verification.updated",
         category="device_and_node_lifecycle",
         description="Verification job progress or completion changed.",
@@ -356,7 +348,6 @@ DEFAULT_TOAST_EVENT_NAMES: tuple[str, ...] = (
     "node.crash",
     "host.heartbeat_lost",
     "device.operational_state_changed",
-    "device.hold_changed",
     "device.hardware_health_changed",
     "run.expired",
 )

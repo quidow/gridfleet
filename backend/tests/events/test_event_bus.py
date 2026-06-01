@@ -186,7 +186,7 @@ async def test_from_system_event_falls_back_to_default() -> None:
     from unittest.mock import MagicMock
 
     row = MagicMock()
-    row.type = "device.hold_changed"
+    row.type = "device.operational_state_changed"
     row.data = {"device_id": "d1", "device_name": "D1"}
     row.event_id = "evt-001"
     row.severity = None
@@ -194,7 +194,7 @@ async def test_from_system_event_falls_back_to_default() -> None:
 
     event = Event.from_system_event(row)
 
-    # device.hold_changed has default_severity="info"
+    # device.operational_state_changed has default_severity="info"
     assert event.severity == "info"
 
 

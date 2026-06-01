@@ -255,9 +255,9 @@ async def test_small_service_guard_branches(tmp_path, monkeypatch: pytest.Monkey
     )
 
     assert event_catalog.normalize_public_event_names("bad") == []
-    assert event_catalog.normalize_public_event_names(["bad", 1, "device.hold_changed", "device.hold_changed"]) == [
-        "device.hold_changed"
-    ]
+    assert event_catalog.normalize_public_event_names(
+        ["bad", 1, "device.operational_state_changed", "device.operational_state_changed"]
+    ) == ["device.operational_state_changed"]
     assert host_versioning.normalize_agent_version_setting(123) is None
 
     assert node_service_common.get_default_plugins(settings=FakeSettingsReader({"appium.default_plugins": []})) == []
@@ -418,7 +418,9 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
     monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
-    await event_bus_mod._publish_pending_events([("device.hold_changed", {"device_id": "d"}, None)], event_bus)
+    await event_bus_mod._publish_pending_events(
+        [("device.operational_state_changed", {"device_id": "d"}, None)], event_bus
+    )
     event_bus_mod.logger.exception.assert_called_once()
 
     listeners: dict[str, object] = {}
@@ -428,8 +430,12 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
     sync_session = SimpleNamespace(info={})
-    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
-    event_bus_mod.queue_event_for_session(sync_session, "device.hold_changed", {"device_id": "d"}, publisher=event_bus)
+    event_bus_mod.queue_event_for_session(
+        sync_session, "device.operational_state_changed", {"device_id": "d"}, publisher=event_bus
+    )
+    event_bus_mod.queue_event_for_session(
+        sync_session, "device.operational_state_changed", {"device_id": "d"}, publisher=event_bus
+    )
     listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
     assert listener is True
     event_bus._handler_tasks.clear()

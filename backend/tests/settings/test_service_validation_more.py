@@ -15,7 +15,6 @@ def test_settings_service_validation_and_normalization_edges() -> None:
 
     assert service._normalize_value("notifications.toast_events", ["device.availability_changed"]) == [
         "device.operational_state_changed",
-        "device.hold_changed",
     ]
     assert service._normalize_value("notifications.toast_events", ["unknown.event"]) == ["host.status_changed"]
 

@@ -43,7 +43,6 @@ async def test_get_toast_events_setting_includes_catalog_validation(client: Asyn
         "node.crash",
         "host.heartbeat_lost",
         "device.operational_state_changed",
-        "device.hold_changed",
         "device.hardware_health_changed",
         "run.expired",
     ]
@@ -51,7 +50,6 @@ async def test_get_toast_events_setting_includes_catalog_validation(client: Asyn
         "node.crash",
         "host.heartbeat_lost",
         "device.operational_state_changed",
-        "device.hold_changed",
         "device.hardware_health_changed",
         "run.expired",
     ]
