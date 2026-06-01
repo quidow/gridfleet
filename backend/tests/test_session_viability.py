@@ -19,8 +19,10 @@ from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
+    _PROBE_ALWAYS_MATCH_KEYS,
     SessionViabilityService,
     _extract_session_error,
+    _filter_probe_always_match,
     _format_http_error,
     _parse_timestamp,
     _should_run_scheduled_probe,
@@ -1446,3 +1448,31 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
     )
     await db_session.refresh(loaded_device)
     assert loaded_device.operational_state == DeviceOperationalState.available
+
+
+def test_probe_always_match_routes_on_device_id_not_udid() -> None:
+    """Probes must pin on the stable gridfleet:deviceId, never appium:udid.
+
+    The slot stereotype no longer advertises appium:udid (it is a driver
+    connection detail, not a routing key), so sending it in alwaysMatch would
+    make Selenium's DefaultSlotMatcher reject the slot.
+    """
+    full_caps = {
+        "platformName": "Android",
+        "appium:automationName": "UiAutomator2",
+        "appium:udid": "emulator-5554",
+        "appium:deviceName": "Pixel",
+        "appium:gridfleet:deviceId": "abc-123",
+        "gridfleet:probeSession": True,
+        "gridfleet:testName": "gridfleet-probe",
+    }
+
+    filtered = _filter_probe_always_match(full_caps)
+
+    assert "appium:udid" not in filtered
+    assert "appium:deviceName" not in filtered
+    assert filtered["appium:gridfleet:deviceId"] == "abc-123"
+    assert filtered["platformName"] == "Android"
+    assert filtered["gridfleet:probeSession"] is True
+    assert "appium:udid" not in _PROBE_ALWAYS_MATCH_KEYS
+    assert "appium:deviceName" not in _PROBE_ALWAYS_MATCH_KEYS
