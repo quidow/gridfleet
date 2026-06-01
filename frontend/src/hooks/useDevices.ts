@@ -18,8 +18,6 @@ import {
   runDeviceLifecycleAction,
   runDeviceSessionTest,
   restartNode,
-  startExistingDeviceVerificationJob,
-  startDeviceVerificationJob,
   startNode,
   stopNode,
   updateDevice,
@@ -27,6 +25,7 @@ import {
   replaceDeviceTestData,
   getTestDataHistory,
 } from '../api/devices';
+import { startDeviceVerificationJob, startExistingDeviceVerificationJob } from '../api/verification';
 import type { DeviceSortBy, DeviceSortDir } from '../api/devices';
 import type {
   ConnectionType,
