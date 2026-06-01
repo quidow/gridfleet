@@ -19,7 +19,6 @@ from app.devices import locking as device_locking
 from app.devices.models import (
     Device,
     DeviceEventType,
-    DeviceHold,
     DeviceIntent,
     DeviceIntentDirty,
     DeviceOperationalState,
@@ -35,6 +34,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
+from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.state_derivation import apply_derived_state
 from app.sessions.models import Session, SessionStatus
 
@@ -333,7 +333,11 @@ async def reconcile_device(
         for intent in intents
         if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
     ]
-    if not active_node_intents and device.verified_at is not None and device.hold != DeviceHold.maintenance:
+    if (
+        not active_node_intents
+        and device.verified_at is not None
+        and policy_state(device).get("maintenance_reason") is None
+    ):
         intents = [
             *intents,
             DeviceIntent(
