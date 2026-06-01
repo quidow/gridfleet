@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.21.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.0...gridfleet-agent-v0.21.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **agent:** abort appium auto-restart when target served by another node ([facb76d](https://github.com/quidow/gridfleet/commit/facb76db816cbdbb2e33e8e891510d9f06f06d91))
+* reap orphan/duplicate appium nodes (backend) and abort racing auto-restart (agent) ([aabdc19](https://github.com/quidow/gridfleet/commit/aabdc198315ecb0da14a90fec3fc26cd67fb3757))
+
 ## [0.21.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.20.1...gridfleet-agent-v0.21.0) (2026-06-01)
 
 
