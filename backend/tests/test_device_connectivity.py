@@ -653,7 +653,9 @@ async def test_reappeared_device_auto_start_failure(db_session: AsyncSession) ->
 
 async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
     """Maintenance devices should stay in maintenance when disconnected."""
-    _host, device, _ = await _setup_host_and_device(db_session, device_hold=DeviceHold.maintenance)
+    _host, device, _ = await _setup_host_and_device(
+        db_session, device_operational_state=DeviceOperationalState.maintenance
+    )
 
     with patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()):
         await ConnectivityService(
@@ -665,7 +667,46 @@ async def test_maintenance_device_not_touched(db_session: AsyncSession) -> None:
         ).check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.maintenance  # unchanged
+    assert device.operational_state == DeviceOperationalState.maintenance  # unchanged
+
+
+async def test_connectivity_maintenance_disconnect_skipped_silently(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A disconnected maintenance device (operational_state=maintenance, hold NULL) is
+    skipped before any lifecycle write — gating reads operational_state, not hold."""
+    from app.devices.services import connectivity as device_connectivity
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-skip",
+        operational_state=DeviceOperationalState.maintenance,
+        verified=True,
+    )
+    await db_session.commit()
+
+    async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
+        del settings, circuit_breaker
+        return set()
+
+    monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
+
+    mock_lifecycle_policy = AsyncMock()
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=mock_lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    ).check_connectivity(db_session)
+
+    mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.maintenance
 
 
 async def test_connectivity_marks_busy_device_offline(
@@ -703,21 +744,25 @@ async def test_connectivity_marks_busy_device_offline(
     assert device.operational_state == DeviceOperationalState.offline
 
 
-async def test_connectivity_does_not_overwrite_reserved_with_offline(
+async def test_connectivity_reserved_device_takes_warning_path_not_idle(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A device with an active reservation row (hold NULL) that disconnects must take the
+    busy/reserved warning path — marking checks unhealthy and routing through the lifecycle
+    note — not the idle offline-reconcile path."""
     from app.devices.services import connectivity as device_connectivity
-    from tests.helpers import create_device
+    from tests.helpers import create_device, create_reservation
 
     device = await create_device(
         db_session,
         host_id=db_host.id,
         name="reserved-on-blip",
-        hold=DeviceHold.reserved,
+        operational_state=DeviceOperationalState.available,
         verified=True,
     )
+    await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
     async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
@@ -726,16 +771,17 @@ async def test_connectivity_does_not_overwrite_reserved_with_offline(
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
 
+    mock_lifecycle_policy = AsyncMock()
     await ConnectivityService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        lifecycle_policy=AsyncMock(),
+        lifecycle_policy=mock_lifecycle_policy,
         health=DeviceHealthService(publisher=Mock()),
     ).check_connectivity(db_session)
 
-    await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+    # Reserved device routes through note_connectivity_loss (warning path), not the idle path.
+    mock_lifecycle_policy.note_connectivity_loss.assert_awaited_once()
 
 
 async def test_unhealthy_connected_device_triggers_policy_stop(db_session: AsyncSession) -> None:
@@ -785,7 +831,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
         db_session,
         host_id=db_host.id,
         name="maintenance-blip",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
         verified=True,
     )
     await db_session.commit()
@@ -805,7 +851,7 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     ).check_connectivity(db_session)
 
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.maintenance
+    assert device.operational_state == DeviceOperationalState.maintenance
 
     # No connectivity_lost event recorded
     events = (
@@ -925,12 +971,12 @@ async def make_device(db_session: AsyncSession, db_host: Host) -> Callable[..., 
 
     async def _factory(**kwargs: object) -> Device:
         identity = f"ip-dev-{_uuid.uuid4().hex[:8]}"
+        kwargs.setdefault("operational_state", "available")
         return await create_device_record(
             db_session,
             host_id=db_host.id,
             identity_value=identity,
             name=f"Test Device {identity}",
-            operational_state="available",
             **kwargs,  # type: ignore[arg-type]
         )
 
@@ -1171,7 +1217,9 @@ async def test_ip_ping_skipped_for_held_device(
     from app.core.leader import state_store as control_plane_state_store
     from app.devices.services.connectivity import IP_PING_NAMESPACE
 
-    device = await make_device(connection_type="usb", ip_address="10.0.0.7", hold=DeviceHold.maintenance)
+    device = await make_device(
+        connection_type="usb", ip_address="10.0.0.7", operational_state=DeviceOperationalState.maintenance
+    )
     settings = _stub_settings(monkeypatch, threshold=3, timeout=2.0, count=1)
     _stub_get_health(monkeypatch, healthy_payload(adb=True, ip_ping=False))
     _stub_agent_devices(monkeypatch, {device.identity_value})
