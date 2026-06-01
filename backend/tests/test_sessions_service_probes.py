@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.state import DeviceStateService
 from app.hosts.models import Host
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -60,9 +59,7 @@ async def _seed(db_session: AsyncSession, db_host: Host, suffix: str) -> tuple[S
 @pytest.mark.db
 async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "default")
-    crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-    )
+    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     sessions, _total = await crud.list_sessions(db_session)
     ids = {s.id for s in sessions}
     assert real.id in ids
@@ -72,9 +69,7 @@ async def test_list_sessions_hides_probes_by_default(db_session: AsyncSession, d
 @pytest.mark.db
 async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "include")
-    crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-    )
+    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     sessions, _total = await crud.list_sessions(db_session, include_probes=True)
     ids = {s.id for s in sessions}
     assert real.id in ids
@@ -84,9 +79,7 @@ async def test_list_sessions_includes_probes_when_requested(db_session: AsyncSes
 @pytest.mark.db
 async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSession, db_host: Host) -> None:
     real, _ = await _seed(db_session, db_host, "cursor-default")
-    crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-    )
+    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     page = await crud.list_sessions_cursor(db_session)
     ids = {s.id for s in page.items}
     assert real.id in ids
@@ -96,9 +89,7 @@ async def test_list_sessions_cursor_hides_probes_by_default(db_session: AsyncSes
 @pytest.mark.db
 async def test_list_sessions_cursor_includes_probes_when_requested(db_session: AsyncSession, db_host: Host) -> None:
     real, probe = await _seed(db_session, db_host, "cursor-include")
-    crud = SessionCrudService(
-        publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-    )
+    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     page = await crud.list_sessions_cursor(db_session, include_probes=True)
     ids = {s.id for s in page.items}
     assert real.id in ids

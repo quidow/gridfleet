@@ -23,7 +23,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -90,7 +89,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             _maintenance_svc = MaintenanceService(settings=settings_service)
             _crud_svc = DeviceCrudService(settings=settings_service)
             return DeviceServices(
-                state=DeviceStateService(publisher=event_bus),
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -158,7 +156,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 publisher=event_bus,
                 settings=settings_service,
                 grid=grid,
-                device_state=DeviceStateService(publisher=event_bus),
                 deferred_stop=AsyncMock(),
             )
             run_lifecycle = RunLifecycleService(
@@ -167,7 +164,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             run_allocator = RunAllocatorService(
                 publisher=event_bus,
                 settings=settings_service,
-                device_state=DeviceStateService(publisher=event_bus),
             )
             run_failure = RunFailureService(
                 publisher=event_bus,

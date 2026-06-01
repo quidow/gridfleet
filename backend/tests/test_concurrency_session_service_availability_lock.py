@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.state import DeviceStateService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService
 from tests.fakes import FakeSettingsReader
@@ -60,6 +59,7 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
     entered_busy_write = asyncio.Event()
     allow_busy_write = asyncio.Event()
     import app.devices.services.state as _device_state_mod
+    import app.sessions.service as _session_service_mod
 
     original_set = _device_state_mod.set_operational_state
 
@@ -74,12 +74,11 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
         return await original_set(dev, new_status, **kwargs)
 
     monkeypatch.setattr(_device_state_mod, "set_operational_state", gated_set)
+    monkeypatch.setattr(_session_service_mod, "set_operational_state", gated_set)
 
     async def register_running_session() -> None:
         async with db_session_maker() as session:
-            crud = SessionCrudService(
-                publisher=event_bus, device_state=DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
-            )
+            crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
             await crud.register_session(
                 session,
                 session_id="register-race-session",
@@ -135,9 +134,7 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
     await db_session.commit()
 
     async with db_session_maker() as session:
-        crud = SessionCrudService(
-            publisher=Mock(), device_state=DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-        )
+        crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
         await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
 
     async with db_session_maker() as verify:

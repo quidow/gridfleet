@@ -114,34 +114,3 @@ async def ready_operational_state(db: AsyncSession, device: Device) -> DeviceOpe
     if await is_ready_for_use_async(db, device) and device_allows_allocation(device):
         return DeviceOperationalState.available
     return DeviceOperationalState.offline
-
-
-class DeviceStateService:
-    """Injectable facade over the sanctioned device-state writer.
-
-    Delegates to the module-level ``set_operational_state`` (which remains the
-    real implementation while the state machine and still-free devices modules
-    call it bare). Injecting ``publisher`` lets already-converted callers drop
-    per-call ``publisher=`` threading.
-    """
-
-    def __init__(self, *, publisher: EventPublisher) -> None:
-        self._publisher = publisher
-
-    async def set_operational_state(
-        self,
-        device: Device,
-        new_state: DeviceOperationalState,
-        *,
-        reason: str | None = None,
-        publish_event: bool = True,
-        severity: EventSeverity | None = None,
-    ) -> bool:
-        return await set_operational_state(
-            device,
-            new_state,
-            reason=reason,
-            publish_event=publish_event,
-            severity=severity,
-            publisher=self._publisher,
-        )

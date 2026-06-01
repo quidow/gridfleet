@@ -9,7 +9,6 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
@@ -26,7 +25,6 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
@@ -100,7 +98,6 @@ async def test_force_release_clears_stop_pending(
         publisher=event_bus,
         settings=_settings,
         grid=fake_grid,
-        device_state=DeviceStateService(publisher=event_bus),
         deferred_stop=real_deferred_stop,
     )
     test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
@@ -191,7 +188,6 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
         publisher=event_bus,
         settings=_settings,
         grid=fake_grid_2,
-        device_state=DeviceStateService(publisher=event_bus),
         deferred_stop=spy_deferred_stop,
     )
     spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)

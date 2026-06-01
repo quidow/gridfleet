@@ -23,7 +23,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -186,7 +185,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_crud = DeviceCrudService(settings=_fc_settings)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_fc_publisher),
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),

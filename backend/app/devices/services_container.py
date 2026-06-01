@@ -19,7 +19,6 @@ if TYPE_CHECKING:
         DeviceGroupsProtocol,
         DeviceHealthProtocol,
         DevicePresenterProtocol,
-        DeviceStateWriter,
         FleetCapacityProtocol,
         MaintenanceProtocol,
         PortabilityExportProtocol,
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class DeviceServices:
-    state: DeviceStateWriter
     fleet_capacity: FleetCapacityProtocol
     data_cleanup: DataCleanupProtocol
     property_refresh: PropertyRefreshProtocol

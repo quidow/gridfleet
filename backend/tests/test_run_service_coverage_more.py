@@ -13,7 +13,6 @@ from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service as run_service
@@ -48,7 +47,6 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
@@ -533,7 +531,6 @@ async def test_mark_running_sessions_released_success_path(
         publisher=event_bus,
         settings=_settings,
         grid=make_fake_grid(),
-        device_state=DeviceStateService(publisher=event_bus),
         deferred_stop=AsyncMock(),
     )
     await release_with_fake_grid._mark_running_sessions_released(
@@ -759,7 +756,6 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
             settings=FakeSettingsReader(
                 {"reservations.max_ttl_minutes": 10, "reservations.default_heartbeat_timeout_sec": 30}
             ),
-            device_state=DeviceStateService(publisher=event_bus),
         )
         from app.runs.schemas import RunCreate as _RunCreate
 

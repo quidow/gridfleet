@@ -13,8 +13,8 @@ from app.appium_nodes.models import AppiumNode
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import state as device_state
 from app.devices.services.intent import IntentService
+from app.devices.services.state import set_operational_state
 from app.events import queue_event_for_session
 from app.runs import service as run_service
 from app.runs.models import RunState
@@ -27,9 +27,7 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.sessions.protocols import DeviceSessionLifecycle, DeviceStateWriter
-
-ready_operational_state = device_state.ready_operational_state
+    from app.sessions.protocols import DeviceSessionLifecycle
 
 
 def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
@@ -217,11 +215,8 @@ async def _lock_resolved_device_for_session(
 
 
 class SessionCrudService:
-    def __init__(
-        self, *, publisher: EventPublisher, device_state: DeviceStateWriter, lifecycle: DeviceSessionLifecycle
-    ) -> None:
+    def __init__(self, *, publisher: EventPublisher, lifecycle: DeviceSessionLifecycle) -> None:
         self._publisher = publisher
-        self._device_state = device_state
         self._lifecycle = lifecycle
 
     async def list_sessions(
@@ -476,8 +471,12 @@ class SessionCrudService:
             session = await db.get(Session, inserted_id)
             assert session is not None
             if device is not None:
-                await self._device_state.set_operational_state(
-                    device, DeviceOperationalState.busy, publish_event=False, severity="info"
+                await set_operational_state(
+                    device,
+                    DeviceOperationalState.busy,
+                    publish_event=False,
+                    severity="info",
+                    publisher=self._publisher,
                 )
             queue_session_started_event(
                 db,

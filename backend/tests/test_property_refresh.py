@@ -18,7 +18,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshLoop, PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -153,7 +152,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     _pr_crud = DeviceCrudService(settings=_pr_settings)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_pr_publisher),
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,

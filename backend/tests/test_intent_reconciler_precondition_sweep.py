@@ -296,14 +296,11 @@ async def test_forced_release_registers_run_active_precondition(
 
     from unittest.mock import AsyncMock as _AsyncMock
 
-    from app.devices.services.state import DeviceStateService as _DeviceStateService
-
     _pub = _AsyncMock()
     _release_svc = RunReleaseService(
         publisher=_pub,
         settings=FakeSettingsReader({}),
         grid=_AsyncMock(),
-        device_state=_DeviceStateService(publisher=_pub),
         deferred_stop=_AsyncMock(),
     )
     await _release_svc.clear_desired_grid_run_id_for_run(

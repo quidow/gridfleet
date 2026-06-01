@@ -34,23 +34,9 @@ if TYPE_CHECKING:
     from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
     from app.devices.schemas.portability import ExportBundle
-    from app.events.catalog import EventSeverity
     from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
-
-
-@runtime_checkable
-class DeviceStateWriter(Protocol):
-    async def set_operational_state(
-        self,
-        device: Device,
-        new_state: DeviceOperationalState,
-        *,
-        reason: str | None = ...,
-        publish_event: bool = ...,
-        severity: EventSeverity | None = ...,
-    ) -> bool: ...
 
 
 @runtime_checkable

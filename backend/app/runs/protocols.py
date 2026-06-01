@@ -11,9 +11,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.pagination import CursorPage
-    from app.devices.models import Device, DeviceOperationalState
+    from app.devices.models import Device
     from app.devices.models.reservation import DeviceReservation
-    from app.events.catalog import EventSeverity
     from app.runs.models import RunState, TestRun
     from app.runs.schemas import ReservedDeviceInfo, RunCreate, SessionCounts
 
@@ -99,19 +98,6 @@ class RunQueryProtocol(Protocol):
     async def hydrate_reserved_device_infos(
         self, db: AsyncSession, pairs: list[tuple[ReservedDeviceInfo, Device]], *, includes: set[str]
     ) -> None: ...
-
-
-@runtime_checkable
-class DeviceStateWriter(Protocol):
-    async def set_operational_state(
-        self,
-        device: Device,
-        new_state: DeviceOperationalState,
-        *,
-        reason: str | None = ...,
-        publish_event: bool = ...,
-        severity: EventSeverity | None = ...,
-    ) -> bool: ...
 
 
 @runtime_checkable

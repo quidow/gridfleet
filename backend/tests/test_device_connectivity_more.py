@@ -29,7 +29,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -294,7 +293,6 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_crud = DeviceCrudService(settings=_fake_settings)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_fake_publisher),
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),

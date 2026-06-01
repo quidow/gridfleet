@@ -12,7 +12,6 @@ from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
@@ -33,12 +32,12 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
 _allocator_svc = RunAllocatorService(
-    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
 )
 _failure_svc = RunFailureService(
     publisher=event_bus,
