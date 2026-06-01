@@ -281,6 +281,7 @@ class SessionSyncService:
                     )
                 ],
                 reason=f"Session {sid} started",
+                publisher=self._publisher,
             )
             session_service.queue_session_started_event(
                 db,
@@ -505,6 +506,7 @@ class SessionSyncService:
                 )
             ],
             reason=f"Session {sid} hydrated",
+            publisher=self._publisher,
         )
         session_service.queue_session_started_event(
             db,

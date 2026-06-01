@@ -129,7 +129,7 @@ class IntentService:
         device_id: UUID,
         *,
         reason: str,
-        publisher: EventPublisher | None = None,
+        publisher: EventPublisher,
         observed_reason: ObservationReason | None = None,
     ) -> None:
         """Mark device dirty and immediately reconcile.
@@ -142,9 +142,6 @@ class IntentService:
         reconciler sees the updated observation columns (e.g. device_checks_healthy)
         instead of the stale DB snapshot that would otherwise be returned by the
         lock_device(populate_existing=True) re-read inside reconcile_device.
-
-        Pass ``publisher`` to emit ``operational_state_changed`` events inline;
-        omit it (or pass None) to write state silently.
 
         Pass ``observed_reason`` to carry the known cause of the transition so the
         reconciler records the matching typed DeviceEvent audit row (§6). Omit it
@@ -161,7 +158,7 @@ class IntentService:
         device_id: UUID,
         intents: list[IntentRegistration],
         reason: str,
-        publisher: EventPublisher | None = None,
+        publisher: EventPublisher,
     ) -> None:
         await self.register_intents(device_id=device_id, intents=intents, reason=reason)
         await reconcile_device(self._db, device_id, publisher=publisher)
@@ -172,7 +169,7 @@ class IntentService:
         device_id: UUID,
         sources: list[str],
         reason: str,
-        publisher: EventPublisher | None = None,
+        publisher: EventPublisher,
     ) -> None:
         await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
         await reconcile_device(self._db, device_id, publisher=publisher)

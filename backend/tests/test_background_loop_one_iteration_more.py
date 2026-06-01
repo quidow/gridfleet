@@ -185,8 +185,8 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_settings = FakeSettingsReader({})
     _fc_grid = Mock()
     _fc_publisher = AsyncMock()
-    _fc_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
-    _fc_crud = DeviceCrudService(settings=_fc_settings, identity=DeviceIdentityConflictService())
+    _fc_maintenance = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _fc_crud = DeviceCrudService(settings=_fc_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
@@ -200,7 +200,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
                 circuit_breaker=Mock(),
                 maintenance=_fc_maintenance,
                 crud=_fc_crud,
-                operator=OperatorNodeLifecycleService(settings=_fc_settings),
+                operator=OperatorNodeLifecycleService(settings=_fc_settings, publisher=event_bus),
             ),
             presenter=DevicePresenterService(settings=_fc_settings),
             test_data=TestDataService(publisher=_fc_publisher),

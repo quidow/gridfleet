@@ -180,7 +180,7 @@ def compose_app(
         capability=device_capability_svc,
         health=device_health_svc,
     )
-    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc)
+    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc, publisher=bus)
     reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc, operator=operator_node_lifecycle_svc)
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus,
@@ -195,7 +195,7 @@ def compose_app(
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus)
-    crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc)
+    crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc, publisher=bus)
     connectivity_svc = ConnectivityService(
         publisher=bus,
         settings=settings_svc,

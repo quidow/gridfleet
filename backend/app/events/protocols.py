@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     import asyncio
 
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import Session
+
     from app.events.catalog import EventSeverity
 
 
@@ -21,6 +24,15 @@ class EventPublisher(Protocol):
     ) -> None: ...
 
     def track_task(self, task: asyncio.Task[None]) -> None: ...
+
+    def queue_for_session(
+        self,
+        db: AsyncSession | Session,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        severity: EventSeverity | None = None,
+    ) -> None: ...
 
 
 @runtime_checkable

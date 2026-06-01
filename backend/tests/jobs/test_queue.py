@@ -21,6 +21,7 @@ from app.jobs.models import Job
 from app.jobs.protocols import DurableJobProtocol
 from app.jobs.queue import DurableJobService
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -43,14 +44,18 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
             preparation=VerificationPreparationService(
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

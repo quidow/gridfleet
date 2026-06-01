@@ -15,7 +15,6 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
 from app.devices.services.state import set_operational_state
-from app.events import queue_event_for_session
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
@@ -101,11 +100,10 @@ def queue_session_started_event(
     run_id: str | None = None,
     publisher: EventPublisher,
 ) -> None:
-    queue_event_for_session(
+    publisher.queue_for_session(
         db,
         "session.started",
         build_session_started_event_payload(session, device=device, run_id=run_id),
-        publisher=publisher,
     )
 
 
@@ -116,12 +114,11 @@ def queue_session_ended_event(
     device: Device | None,
     publisher: EventPublisher,
 ) -> None:
-    queue_event_for_session(
+    publisher.queue_for_session(
         db,
         "session.ended",
         build_session_ended_event_payload(session, device=device),
         severity=_session_ended_severity(str(session.status), session.error_type),
-        publisher=publisher,
     )
 
 

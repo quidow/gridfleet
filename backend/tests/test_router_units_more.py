@@ -1482,7 +1482,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     device = _control_device(id=device_id)
     settings_services = _mock_settings_svc(FakeSettingsReader({}))
     _reconnect_ac = SimpleNamespace(circuit_breaker=Mock())
-    _mock_ds_reconnect = SimpleNamespace(crud=AsyncMock())
+    _mock_ds_reconnect = SimpleNamespace(crud=AsyncMock(), publisher=event_bus)
 
     _noop_appium_svc = SimpleNamespace(reconciler_agent=AsyncMock())
     with (
@@ -1757,7 +1757,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         reconnect = await devices_control.reconnect_device(
             device_id,
             db=db,
-            device_services=SimpleNamespace(crud=AsyncMock()),
+            device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),
             appium_services=SimpleNamespace(reconciler_agent=mock_reconciler_agent_ctrl),
@@ -1774,6 +1774,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
             f"health_failure:recovery:{device_id}",
         ],
         reason="Operator reconnect succeeded",
+        publisher=event_bus,
     )
     assert device.recovery_allowed is False
     assert device.recovery_blocked_reason == "Node health failure"
@@ -2950,7 +2951,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             await devices_control.reconnect_device(
                 device_id,
                 db=reconnect_db,
-                device_services=SimpleNamespace(crud=AsyncMock()),
+                device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
                 settings_services=_health_ss,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),

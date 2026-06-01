@@ -17,6 +17,7 @@ from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 from app.runs.models import RunState
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     import uuid
@@ -146,7 +147,9 @@ async def test_sweep_and_expires_at_are_independent_paths(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
     await db_session.commit()
 
     remaining = (
@@ -274,6 +277,7 @@ async def test_forced_release_registers_run_active_precondition(
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
         reason: str,
+        publisher: object,
     ) -> None:
         captured.extend(intents)
 
@@ -283,6 +287,7 @@ async def test_forced_release_registers_run_active_precondition(
         device_id: uuid.UUID,
         sources: list[str],
         reason: str,
+        publisher: object,
     ) -> None:
         return None
 
@@ -328,6 +333,7 @@ async def test_allocator_registers_reservation_active_precondition(
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
         reason: str,
+        publisher: object,
     ) -> None:
         captured.extend(intents)
 
@@ -337,11 +343,7 @@ async def test_allocator_registers_reservation_active_precondition(
     run = await create_reserved_run(db_session, name="alloc-reg-run", devices=[device])
     await db_session.commit()
 
-    await service_allocator._register_run_grid_intent(
-        db_session,
-        run=run,
-        device_id=device.id,
-    )
+    await service_allocator._register_run_grid_intent(db_session, run=run, device_id=device.id, publisher=event_bus)
 
     run_routing = [intent for intent in captured if intent.source == f"run:{run.id}"]
     assert len(run_routing) == 1
@@ -386,6 +388,7 @@ async def test_node_health_registers_node_running_precondition(
         device_id: uuid.UUID,
         intents: list[IntentRegistration],
         reason: str,
+        publisher: object,
     ) -> None:
         captured.extend(intents)
 
@@ -526,7 +529,7 @@ async def test_verification_node_not_stopped_when_operator_start_intent_swept(
     # Simulate one device_intent_reconciler tick mid-probe.
     await reconcile_unsatisfied_preconditions(db_session)
     await db_session.commit()
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     intents_remaining = (

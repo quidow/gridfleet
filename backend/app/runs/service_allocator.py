@@ -18,7 +18,6 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
-from app.events import queue_event_for_session
 from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -176,7 +175,9 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
     return f"count={requirement.count}"
 
 
-async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id: uuid.UUID) -> None:
+async def _register_run_grid_intent(
+    db: AsyncSession, *, run: TestRun, device_id: uuid.UUID, publisher: EventPublisher
+) -> None:
     await IntentService(db).register_intents_and_reconcile(
         device_id=device_id,
         intents=[
@@ -193,6 +194,7 @@ async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id
             )
         ],
         reason=f"reserved for run {run.id}",
+        publisher=publisher,
     )
 
 
@@ -213,7 +215,7 @@ class RunAllocatorService:
                 ttl_minutes=ttl_minutes,
                 heartbeat_timeout_sec=heartbeat_timeout_sec,
             )
-            queue_event_for_session(
+            self._publisher.queue_for_session(
                 db,
                 "run.created",
                 {
@@ -222,7 +224,6 @@ class RunAllocatorService:
                     "device_count": len(device_infos),
                     "created_by": run.created_by,
                 },
-                publisher=self._publisher,
             )
             await db.commit()
         except _UnmetRequirementError as exc:
@@ -328,6 +329,6 @@ class RunAllocatorService:
         await db.flush()
 
         for device in all_matched:
-            await _register_run_grid_intent(db, run=run, device_id=device.id)
+            await _register_run_grid_intent(db, run=run, device_id=device.id, publisher=self._publisher)
 
         return run, device_infos

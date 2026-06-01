@@ -37,11 +37,11 @@ async def test_set_operational_state_writes_and_queues_event(
     captured: list[tuple[str, dict[str, object]]] = []
 
     def fake_queue(
-        session: object, name: str, payload: dict[str, object], *, severity: object = None, publisher: object = None
+        self: object, session: object, name: str, payload: dict[str, object], *, severity: object = None
     ) -> None:
         captured.append((name, payload))
 
-    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", fake_queue)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", fake_queue)
 
     changed = await device_state.set_operational_state(
         device, DeviceOperationalState.available, reason="test", publisher=event_bus

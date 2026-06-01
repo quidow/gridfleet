@@ -19,7 +19,7 @@ from app.devices.services.identity import (
 from app.devices.services.identity_conflicts import (
     DeviceIdentityConflictError,
 )
-from app.devices.services.verification_job_state import set_stage, should_keep_verified_node_running
+from app.devices.services.verification_job_state import set_stage
 from app.hosts.models import Host
 from app.packs.services import platform_resolver as pack_platform_resolver
 
@@ -46,7 +46,6 @@ class PreparedVerificationContext:
     existing_device: Device | None = None
     save_device_id: uuid.UUID | None = None
     host: Host | None = None
-    keep_running_after_verify: bool = True
 
 
 class VerificationPreparationService:
@@ -132,7 +131,6 @@ class VerificationPreparationService:
                 save_payload=payload,
                 save_device_id=saved_device.id,
                 host=host,
-                keep_running_after_verify=should_keep_verified_node_running(),
             ),
             None,
         )
@@ -246,7 +244,6 @@ class VerificationPreparationService:
                 existing_device=existing,
                 save_device_id=existing.id,
                 host=host,
-                keep_running_after_verify=should_keep_verified_node_running(),
             ),
             None,
         )

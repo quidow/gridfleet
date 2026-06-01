@@ -21,6 +21,7 @@ from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 DEVICE_PAYLOAD = {
@@ -810,7 +811,9 @@ async def test_device_detail_surfaces_emulator_state(
 async def test_device_create_payload_preserves_explicit_unified_platform_lane(
     db_session: AsyncSession, default_host_id: str
 ) -> None:
-    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     payload = await crud.prepare_device_create_payload(
         db_session,
         DeviceVerificationCreate(
@@ -876,7 +879,9 @@ async def test_update_device_returns_none_when_device_missing(client: AsyncClien
     import uuid
 
     missing_id = uuid.uuid4()
-    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     result = await crud.update_device(
         db_session,
         missing_id,

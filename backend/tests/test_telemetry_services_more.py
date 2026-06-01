@@ -185,10 +185,10 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
         ),
         patch("app.hosts.service_hardware_telemetry.control_plane_state_store.delete_value", new=AsyncMock()),
         patch("app.hosts.service_hardware_telemetry.record_event", new=AsyncMock()) as record_event,
-        patch("app.hosts.service_hardware_telemetry.queue_event_for_session", new=Mock()) as queue_event,
     ):
+        publisher = Mock()
         svc = HardwareTelemetryService(
-            publisher=Mock(),
+            publisher=publisher,
             settings=FakeSettingsReader(
                 {
                     "general.hardware_temperature_critical_c": 50,
@@ -216,7 +216,7 @@ async def test_apply_hardware_telemetry_sample_records_warning_transition() -> N
     assert device.battery_temperature_c == 45.5
     assert device.charging_state == HardwareChargingState.charging
     record_event.assert_awaited_once()
-    queue_event.assert_called_once()
+    publisher.queue_for_session.assert_called_once()
 
 
 async def test_effective_hardware_health_requires_consecutive_samples() -> None:

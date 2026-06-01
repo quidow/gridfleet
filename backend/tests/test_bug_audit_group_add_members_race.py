@@ -88,7 +88,9 @@ async def test_add_members_races_concurrent_duplicate_insert(
             await DeviceGroupsService(
                 publisher=event_bus,
                 settings=_settings,
-                crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
             ).add_members(db_session, group_id, [device_id])
         except IntegrityError as exc:
             pytest.fail(f"add_members raised IntegrityError on concurrent duplicate insert: {exc}")

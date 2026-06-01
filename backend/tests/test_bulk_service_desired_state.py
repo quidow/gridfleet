@@ -79,7 +79,10 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
     assert node.transition_token is None
 
     await bulk_service._bulk_restart_one(
-        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+        db_session,
+        device,
+        caller="bulk",
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.refresh(node)
 
@@ -105,7 +108,10 @@ async def test_operator_start_intent_carries_node_running_precondition(
     device = await create_device(db_session, host_id=db_host.id, name="op-start-prec", verified=True)
     device.appium_node = None  # avoid lazy-load in the same async context
     await bulk_service._bulk_start_one(
-        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+        db_session,
+        device,
+        caller="bulk",
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.commit()
 
@@ -150,7 +156,10 @@ async def test_operator_restart_intent_carries_node_running_precondition(
     device.appium_node = node
 
     await bulk_service._bulk_restart_one(
-        db_session, device, caller="bulk", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+        db_session,
+        device,
+        caller="bulk",
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.commit()
 
@@ -205,8 +214,8 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
         settings=_settings_bulk,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_bulk, identity=DeviceIdentityConflictService()),
-        operator=OperatorNodeLifecycleService(settings=_settings_bulk),
+        crud=DeviceCrudService(settings=_settings_bulk, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=_settings_bulk, publisher=event_bus),
     ).bulk_start_nodes(db_session, [device.id], caller="bulk")
 
     assert captured == ["bulk"]
@@ -245,8 +254,8 @@ async def test_bulk_start_nodes_accepts_group_caller(
         settings=_settings_group,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_group, identity=DeviceIdentityConflictService()),
-        operator=OperatorNodeLifecycleService(settings=_settings_group),
+        crud=DeviceCrudService(settings=_settings_group, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=_settings_group, publisher=event_bus),
     ).bulk_start_nodes(db_session, [device.id], caller="group")
 
     assert captured == ["group"]

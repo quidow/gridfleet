@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.devices.services.event import build_device_crashed_payload
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.events import queue_device_crashed_event
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -22,15 +22,17 @@ async def test_device_crashed_dispatches_after_commit(
     _, device = await seed_host_and_device(db_session, identity="crash-1")
     event_bus_capture.clear()
 
-    queue_device_crashed_event(
+    event_bus.queue_for_session(
         db_session,
-        device_id=str(device.id),
-        device_name=device.name,
-        source="appium_crash",
-        reason="exit code 137",
-        will_restart=True,
-        process="appium",
-        publisher=event_bus,
+        "device.crashed",
+        build_device_crashed_payload(
+            device_id=str(device.id),
+            device_name=device.name,
+            source="appium_crash",
+            reason="exit code 137",
+            will_restart=True,
+            process="appium",
+        ),
     )
     await settle_after_commit_tasks()
     assert event_bus_capture == [], "must not dispatch before commit"
@@ -57,14 +59,16 @@ async def test_device_crashed_dropped_on_rollback(
     _, device = await seed_host_and_device(db_session, identity="crash-2")
     event_bus_capture.clear()
 
-    queue_device_crashed_event(
+    event_bus.queue_for_session(
         db_session,
-        device_id=str(device.id),
-        device_name=device.name,
-        source="connectivity_lost",
-        reason="adb disconnect",
-        will_restart=False,
-        publisher=event_bus,
+        "device.crashed",
+        build_device_crashed_payload(
+            device_id=str(device.id),
+            device_name=device.name,
+            source="connectivity_lost",
+            reason="adb disconnect",
+            will_restart=False,
+        ),
     )
     await db_session.rollback()
     await settle_after_commit_tasks()

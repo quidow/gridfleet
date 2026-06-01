@@ -172,7 +172,7 @@ class VerificationExecutionService:
         self, job: dict[str, Any], db: AsyncSession, device: Device, *, probe_session_fn: ProbeSessionFn
     ) -> tuple[AppiumNode | None, str | None]:
         await set_stage(job, "node_start", "running")
-        await _register_verification_node_intent(db, device, settings=self._settings)
+        await _register_verification_node_intent(db, device, settings=self._settings, publisher=self._publisher)
         await db.commit()
         try:
             try:
@@ -186,13 +186,10 @@ class VerificationExecutionService:
             # Drive an immediate convergence pass so verification does not have to wait up
             # to appium_reconciler.interval_sec for the leader loop to start the node.
             # Mirrors what the operator "start node" route does in app/appium_nodes/routers/nodes.py.
-            if self._publisher is not None:
-                try:
-                    await self._reconciler.converge_device_now(device.id, db=db)
-                except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
-                    logger.warning(
-                        "verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)}
-                    )
+            try:
+                await self._reconciler.converge_device_now(device.id, db=db)
+            except Exception:  # noqa: BLE001 — best-effort kick; reconciler tick remains the durable fallback
+                logger.warning("verification_converge_kick_failed", exc_info=True, extra={"device_id": str(device.id)})
 
             timeout = int(self._settings.get("appium.startup_timeout_sec"))
             started_node = await self._node_manager.wait_for_node_running(db, node.id, timeout_sec=timeout)
@@ -386,7 +383,9 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
 _verification_intent_source = verification_intent_source
 
 
-async def _register_verification_node_intent(db: AsyncSession, device: Device, *, settings: SettingsReader) -> None:
+async def _register_verification_node_intent(
+    db: AsyncSession, device: Device, *, settings: SettingsReader, publisher: EventPublisher
+) -> None:
     """Register a standing ``node_process`` start intent that survives the
     operator:start auto-retire precondition.
 
@@ -421,19 +420,18 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device, *
             )
         ],
         reason="verification probe in progress",
+        publisher=publisher,
     )
 
 
-async def _revoke_verification_node_intent(
-    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
-) -> None:
+async def _revoke_verification_node_intent(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> None:
     """Revoke the standing verification node_process intent. Safe to call even
     if registration never succeeded — ``revoke_intent`` no-ops on missing rows.
     Caller commits.
 
-    The revoke triggers an inline reconcile; pass ``publisher`` on the
-    reconciler-authoritative terminal paths (verification passed / update-mode
-    failed) so the derived operational-state change emits ``operational_state_changed``.
+    The revoke triggers an inline reconcile; ``publisher`` is required so the
+    derived operational-state change emits ``operational_state_changed`` on every
+    terminal path (verification passed / failed).
     """
     await IntentService(db).revoke_intents_and_reconcile(
         device_id=device.id,
@@ -526,34 +524,14 @@ async def _finalize_success(
     else:
         locked = await device_locking.lock_device(db, context.save_device_id)
         _restore_create_payload_fields(locked, context.save_payload)
-    if not context.keep_running_after_verify:
-        cleanup_error = await _stop_verification_node_if_running(job, db, locked, node, node_manager)
-        if cleanup_error is not None:
-            if context.mode == "create":
-                await crud.delete_device(db, context.save_device_id)
-                await db.commit()
-                return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
-            await _revoke_verification_node_intent(db, locked)
-            await set_operational_state(
-                locked,
-                DeviceOperationalState.offline,
-                reason="verification",
-                severity="warning",
-                publisher=publisher,
-            )
-            await db.commit()
-            return VerificationExecutionOutcome(
-                status="failed", error=cleanup_error, device_id=str(context.save_device_id)
-            )
-    else:
-        data = {"port": node.port, "pid": node.pid} if node is not None else None
-        await set_stage(
-            job,
-            "cleanup",
-            "passed",
-            detail="Verified node retained as the managed Appium node",
-            data=data,
-        )
+    data = {"port": node.port, "pid": node.pid} if node is not None else None
+    await set_stage(
+        job,
+        "cleanup",
+        "passed",
+        detail="Verified node retained as the managed Appium node",
+        data=data,
+    )
 
     locked.verified_at = datetime.now(UTC)
     # Reconciler-authoritative terminal: no direct set_operational_state push. Set

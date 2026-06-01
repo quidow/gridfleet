@@ -16,6 +16,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -79,7 +80,10 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
                 device_id,
                 db=session,
                 device_services=SimpleNamespace(
-                    crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService())
+                    crud=DeviceCrudService(
+                        settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
+                    publisher=event_bus,
                 ),
                 settings_services=SimpleNamespace(service=FakeSettingsReader({})),
                 agent_comm=SimpleNamespace(circuit_breaker=Mock()),
@@ -90,7 +94,9 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(session, locked)
+            await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).enter_maintenance(
+                session, locked
+            )
         allow_restart.set()
 
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())

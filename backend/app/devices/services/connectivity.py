@@ -283,6 +283,7 @@ async def _stop_disconnected_node(
             )
         ],
         reason="Device disconnected",
+        publisher=publisher,
     )
     await health.apply_node_state_transition(db, locked_device, mark_offline=True)
     return None
@@ -627,7 +628,9 @@ class ConnectivityService:
 
     async def check_expired_cooldowns(self, db: AsyncSession) -> None:
         """Delegate expired cooldown cleanup to the intent reconciler."""
-        await _reconcile_expired_intents(db, settings=self._settings, circuit_breaker=self._circuit_breaker)
+        await _reconcile_expired_intents(
+            db, settings=self._settings, circuit_breaker=self._circuit_breaker, publisher=self._publisher
+        )
         now = datetime.now(UTC)
         # Transitional cleanup for pre-intent cooldown reservations. Remove once
         # all cooldown writes are guaranteed to flow through DeviceIntent rows.
@@ -657,7 +660,7 @@ class ConnectivityService:
             # makes the escalation threshold unreachable for slow-burn flakes
             # where each cooldown TTL expires before the next failure lands.
             # Only ``restore_device_to_run`` (operator-driven) resets the counter.
-            await reconcile_device(db, entry.device_id)
+            await reconcile_device(db, entry.device_id, publisher=self._publisher)
         await db.commit()
 
 

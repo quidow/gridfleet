@@ -79,7 +79,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -98,7 +100,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -115,7 +119,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(
+                settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+            ),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -134,7 +140,9 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(
+                settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+            ),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -179,7 +187,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -194,7 +204,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -217,7 +229,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -252,7 +266,9 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -322,7 +338,9 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=SimpleNamespace(converge_device_now=converge_mock),
@@ -389,7 +407,9 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -448,7 +468,9 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(
+                settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+            ),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -592,7 +614,9 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -620,63 +644,17 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         verified_at=None,
     )
     context = PreparedVerificationContext(
-        mode="create",
+        mode="update",
         transient_device=locked,
-        save_payload={"name": "created"},
+        save_payload={"name": "updated", "host_id": __import__("uuid").uuid4()},
         save_device_id=device_id,
-        keep_running_after_verify=False,
     )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.device_locking.lock_device", AsyncMock(return_value=locked)
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution._restore_create_payload_fields", lambda *args: None
-    )
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution._stop_verification_node_if_running",
-        AsyncMock(return_value="cleanup failed"),
-    )
-    mock_crud_del = AsyncMock()
-    mock_crud_del.delete_device = AsyncMock()
     monkeypatch.setattr("app.devices.services.verification_execution._revoke_verification_node_intent", AsyncMock())
-
-    outcome = await execution._finalize_success(
-        db,
-        context,
-        job=_job(),
-        node=None,
-        publisher=event_bus,
-        crud=mock_crud_del,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    assert outcome.status == "failed"
-    assert outcome.device_id is None
-
-    context.mode = "update"
-    context.save_payload = {"name": "updated", "host_id": __import__("uuid").uuid4()}
-    context.keep_running_after_verify = False
+    machine_spy = AsyncMock()
+    monkeypatch.setattr("app.devices.services.verification_execution.set_operational_state", machine_spy)
     mock_crud_upd = AsyncMock()
     mock_crud_upd.update_device = AsyncMock(return_value=locked)
-    machine_spy = AsyncMock()
-    monkeypatch.setattr(
-        "app.devices.services.verification_execution.set_operational_state",
-        machine_spy,
-    )
-    outcome = await execution._finalize_success(
-        db,
-        context,
-        job=_job(),
-        node=None,
-        publisher=event_bus,
-        crud=mock_crud_upd,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    assert outcome.status == "failed"
-    assert outcome.device_id == str(device_id)
 
-    context.keep_running_after_verify = True
     node = SimpleNamespace(port=4723, pid=22)
     viability_mock = AsyncMock()
     viability_mock.record_session_viability_result = AsyncMock()
@@ -691,8 +669,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         node_manager=AsyncMock(),
     )
     assert outcome.status == "completed"
-    # PASS is reconciler-authoritative now: the revoke (carrying the publisher) is the writer,
+    # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer,
     # not a direct set_operational_state.
+    machine_spy.assert_not_awaited()
     execution._revoke_verification_node_intent.assert_awaited()
 
     update_device = SimpleNamespace(id=device_id, identity_value="update-device", name="old")
@@ -711,7 +690,9 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -762,7 +743,9 @@ async def test_preparation_resolution_and_validation_error_paths(
     _prep_svc = VerificationPreparationService(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     assert await _prep_svc.resolve_host_derived_payload({}, None, http_client_factory=object, db=db_session) == (
@@ -844,7 +827,9 @@ async def test_preparation_resolution_and_validation_error_paths(
     _prep_svc2 = VerificationPreparationService(
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     context, error = await _prep_svc2.validate_create_request(
@@ -890,7 +875,9 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
     _prep_svc = VerificationPreparationService(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     for exc in (AgentCallError("10.0.0.1", "down"), LookupError("missing"), TypeError("bad mock")):
@@ -957,7 +944,9 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
     _prep_svc2 = VerificationPreparationService(
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     monkeypatch.setattr(
@@ -982,7 +971,9 @@ async def test_preparation_more_resolution_and_create_conflict_branches(
     _prep_svc3 = VerificationPreparationService(
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     context, error = await _prep_svc3.validate_create_request(
@@ -1050,7 +1041,9 @@ async def test_preparation_normalization_success_and_resolution_errors(
     _prep_svc = VerificationPreparationService(
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     assert (
@@ -1153,7 +1146,9 @@ async def test_preparation_validation_conflict_and_update_branches(
     _prep_svc = VerificationPreparationService(
         settings=FakeSettingsReader(),
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
         identity=DeviceIdentityConflictService(),
     )
     monkeypatch.setattr(

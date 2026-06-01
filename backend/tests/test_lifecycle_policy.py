@@ -607,6 +607,7 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
             )
         ],
         reason="node crash",
+        publisher=event_bus,
     )
     await db_session.commit()
 
@@ -1560,7 +1561,7 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     await db_session.commit()
 
     # Held while the session is running.
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running

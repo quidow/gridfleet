@@ -8,7 +8,6 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters, DeviceQueryFilters
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     import uuid
@@ -35,11 +34,10 @@ class DeviceGroupsService:
         )
         db.add(group)
         await db.flush()
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "device_group.updated",
             {"group_id": str(group.id), "action": "created"},
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(group)
@@ -104,11 +102,10 @@ class DeviceGroupsService:
             updates.pop("filters")
         for field, value in updates.items():
             setattr(group, field, value)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "device_group.updated",
             {"group_id": str(group.id), "action": "updated"},
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(group)
@@ -121,11 +118,10 @@ class DeviceGroupsService:
         if group is None:
             return False
         await db.delete(group)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "device_group.updated",
             {"group_id": str(group_id), "action": "deleted"},
-            publisher=self._publisher,
         )
         await db.commit()
         return True
@@ -147,11 +143,10 @@ class DeviceGroupsService:
         result = await db.execute(stmt)
         added = len(result.scalars().all())
         if added:
-            queue_event_for_session(
+            self._publisher.queue_for_session(
                 db,
                 "device_group.members_changed",
                 {"group_id": str(group_id), "added": added},
-                publisher=self._publisher,
             )
         await db.commit()
         return added
@@ -163,11 +158,10 @@ class DeviceGroupsService:
         result = await db.execute(stmt)
         removed = int(getattr(result, "rowcount", 0) or 0)
         if removed:
-            queue_event_for_session(
+            self._publisher.queue_for_session(
                 db,
                 "device_group.members_changed",
                 {"group_id": str(group_id), "removed": removed},
-                publisher=self._publisher,
             )
         await db.commit()
         return removed

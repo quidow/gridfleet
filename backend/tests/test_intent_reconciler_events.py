@@ -11,6 +11,7 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import GRID_ROUTING, RECOVERY, IntentRegistration
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 from tests.test_intent_reconciler import _seed_node
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     events = (

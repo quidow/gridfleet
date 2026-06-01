@@ -31,6 +31,7 @@ from app.jobs.queue import DurableJobService
 from app.runs.service_reservation import RunReservationService
 from tests.conftest import settings_service
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.asyncio
 
@@ -102,14 +103,18 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),
@@ -184,7 +189,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.
     locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(settings=settings_service).exit_maintenance(db_session, locked)
+    await MaintenanceService(settings=settings_service, publisher=event_bus).exit_maintenance(db_session, locked)
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
@@ -201,7 +206,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     lc_viability.run_session_viability_probe = probe_mock
 
     async def _register_and_make_available(
-        _self: IntentService, *, device_id: object, intents: object, reason: str
+        _self: IntentService, *, device_id: object, intents: object, reason: str, publisher: object
     ) -> None:
         db = _self._db
         dev = await db.get(Device, device_id)
@@ -234,14 +239,18 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     viability=AsyncMock(),
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -321,14 +330,18 @@ async def test_device_recovery_job_completed_when_device_missing(
             preparation=VerificationPreparationService(
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
-                crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                crud=DeviceCrudService(
+                    settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
                 reconciler=AsyncMock(),

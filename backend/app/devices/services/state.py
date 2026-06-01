@@ -18,7 +18,6 @@ from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import is_ready_for_use_async
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,14 +47,14 @@ async def set_operational_state(
     reason: str | None = None,
     publish_event: bool = True,
     severity: EventSeverity | None = None,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> bool:
     session = _persistent_session(device)
     old = device.operational_state
     if old == new_state:
         return False
     device.operational_state = new_state
-    if publish_event and publisher is not None:
+    if publish_event:
         payload = {
             "device_id": str(device.id),
             "device_name": device.name,
@@ -64,12 +63,11 @@ async def set_operational_state(
         }
         if reason is not None:
             payload["reason"] = reason
-        queue_event_for_session(
+        publisher.queue_for_session(
             session,
             "device.operational_state_changed",
             payload,
             severity=severity,
-            publisher=publisher,
         )
     return True
 

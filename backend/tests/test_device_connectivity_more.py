@@ -293,8 +293,10 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_grid = Mock()
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
-    _fake_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
-    _fake_crud = DeviceCrudService(settings=_fake_settings, identity=DeviceIdentityConflictService())
+    _fake_maintenance = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _fake_crud = DeviceCrudService(
+        settings=_fake_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
@@ -308,7 +310,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
                 circuit_breaker=Mock(),
                 maintenance=_fake_maintenance,
                 crud=_fake_crud,
-                operator=OperatorNodeLifecycleService(settings=_fake_settings),
+                operator=OperatorNodeLifecycleService(settings=_fake_settings, publisher=event_bus),
             ),
             presenter=DevicePresenterService(settings=_fake_settings),
             test_data=TestDataService(publisher=_fake_publisher),

@@ -15,6 +15,7 @@ from app.appium_nodes.services.reconciler_agent import start_remote_node
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -46,7 +47,9 @@ async def db_with_pending_device(
         identity_scope="host",
         os_version="14",
     )
-    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     loaded = await crud.get_device(db_session, device.id)
     assert loaded is not None
     yield db_session, loaded

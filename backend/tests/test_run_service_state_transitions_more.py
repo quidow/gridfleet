@@ -50,7 +50,7 @@ def _make_lifecycle(release: AsyncMock | None = None) -> RunLifecycleService:
 async def test_signal_active_and_device_session_state_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     db = _db()
     run = _run(RunState.preparing)
-    monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=run))
     monkeypatch.setattr("app.runs.service_lifecycle.get_run", AsyncMock(return_value=run))
 
@@ -84,7 +84,7 @@ async def test_signal_active_and_device_session_state_branches(monkeypatch: pyte
 
 async def test_run_terminal_transitions_success_and_guard_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = _db()
-    monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
 
     mock_release = _mock_release()
     lifecycle = _make_lifecycle(mock_release)

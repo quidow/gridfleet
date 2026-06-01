@@ -16,7 +16,6 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.events import queue_event_for_session
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
@@ -205,7 +204,7 @@ class BulkOperationsService:
                 device.tags = merged
             else:
                 device.tags = tags
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "bulk.operation_completed",
             {
@@ -215,7 +214,6 @@ class BulkOperationsService:
                 "failed": 0,
             },
             severity=_bulk_severity(len(devices), len(devices), 0),
-            publisher=self._publisher,
         )
         await db.commit()
         return _result(len(devices), len(devices), {})
@@ -257,7 +255,7 @@ class BulkOperationsService:
         succeeded = len(ordered_ids) - len(errors)
         failed = len(errors)
         total = len(ordered_ids)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "bulk.operation_completed",
             {
@@ -267,7 +265,6 @@ class BulkOperationsService:
                 "failed": failed,
             },
             severity=_bulk_severity(total, succeeded, failed),
-            publisher=self._publisher,
         )
         await db.commit()
         return _result(len(ordered_ids), succeeded, errors)
@@ -287,7 +284,7 @@ class BulkOperationsService:
         succeeded = len(devices) - len(errors)
         failed = len(errors)
         total = len(devices)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "bulk.operation_completed",
             {
@@ -297,7 +294,6 @@ class BulkOperationsService:
                 "failed": failed,
             },
             severity=_bulk_severity(total, succeeded, failed),
-            publisher=self._publisher,
         )
         await db.commit()
 

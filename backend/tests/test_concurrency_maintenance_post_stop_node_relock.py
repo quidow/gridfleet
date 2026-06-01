@@ -10,6 +10,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -41,7 +42,7 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     device_id = device.id
 
     target = await device_locking.lock_device(db_session, device_id)
-    await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, target)
+    await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).enter_maintenance(db_session, target)
 
     final_status = (await db_session.execute(select(Device.operational_state).where(Device.id == device_id))).one()
     node_status = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()

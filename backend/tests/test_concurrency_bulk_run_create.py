@@ -90,8 +90,10 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _grid_svc = GridService(settings=settings_service)
-            _maintenance_svc = MaintenanceService(settings=settings_service)
-            _crud_svc = DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService())
+            _maintenance_svc = MaintenanceService(settings=settings_service, publisher=event_bus)
+            _crud_svc = DeviceCrudService(
+                settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+            )
             return DeviceServices(
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
@@ -104,7 +106,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
                     crud=_crud_svc,
-                    operator=OperatorNodeLifecycleService(settings=settings_service),
+                    operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                 ),
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),
@@ -176,7 +178,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 publisher=event_bus,
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
-                maintenance=MaintenanceService(settings=settings_service),
+                maintenance=MaintenanceService(settings=settings_service, publisher=event_bus),
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(),
                 health=AsyncMock(),

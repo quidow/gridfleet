@@ -115,8 +115,10 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             settings=_settings_runner,
             circuit_breaker=MagicMock(),
             maintenance=MagicMock(),
-            crud=DeviceCrudService(settings=_settings_runner, identity=DeviceIdentityConflictService()),
-            operator=OperatorNodeLifecycleService(settings=_settings_runner),
+            crud=DeviceCrudService(
+                settings=_settings_runner, identity=DeviceIdentityConflictService(), publisher=event_bus
+            ),
+            operator=OperatorNodeLifecycleService(settings=_settings_runner, publisher=event_bus),
         ).bulk_start_nodes(db_session, [device_a_id, device_b_id])
 
     runner_task = asyncio.create_task(runner())

@@ -144,7 +144,7 @@ class RunFailureService:
             raise ValueError("Device not found") from None
 
         run = await self._reservation.exclude_device_from_run(
-            db, device.id, reason=reason, revoke_run_intents=True, commit=False
+            db, device.id, reason=reason, revoke_run_intents=True, commit=False, publisher=self._publisher
         )
         assert run is not None
 
@@ -264,6 +264,7 @@ class RunFailureService:
                     expires_at=excluded_until,
                 ),
                 reason=f"Cooldown: {clean_reason}",
+                publisher=self._publisher,
             )
 
         await db.commit()

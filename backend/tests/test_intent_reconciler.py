@@ -26,6 +26,7 @@ from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVE
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +52,7 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     device = await create_device(db_session, host_id=db_host.id, name="baseline")
     await _seed_node(db_session, device.id)
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
@@ -110,7 +111,7 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
@@ -147,7 +148,9 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
 
     intents = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
@@ -194,7 +197,7 @@ async def test_expired_running_metadata_change_is_delivered(
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
 
     settings = FakeSettingsReader()
-    await _reconcile_expired_intents(db_session, settings=settings, circuit_breaker=Mock())
+    await _reconcile_expired_intents(db_session, settings=settings, circuit_breaker=Mock(), publisher=event_bus)
 
     reconfigure.assert_awaited_once_with(
         db_host.ip,
@@ -243,14 +246,18 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
         ],
     )
     await db_session.commit()
-    await _reconcile_dirty_devices(db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_dirty_devices(
+        db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
     intent.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await db_session.commit()
     reconfigure = AsyncMock(side_effect=[AgentUnreachableError(db_host.ip, "offline"), {"port": 4723}])
     monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
     monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
 
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     dirty_rows = (await db_session.execute(select(DeviceIntentDirty))).scalars().all()
@@ -263,7 +270,7 @@ async def test_pending_reconfigure_from_expired_last_intent_is_retried(
     assert intents == []
 
     await run_device_intent_reconciler_once(
-        db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
     )
 
     await db_session.refresh(outbox)
@@ -303,7 +310,7 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -357,7 +364,7 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -402,7 +409,7 @@ async def test_graceful_stop_applies_once_session_ends(
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
@@ -410,7 +417,7 @@ async def test_graceful_stop_applies_once_session_ends(
     session.status = SessionStatus.passed
     session.ended_at = datetime.now(UTC)
     await db_session.commit()
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(node)
@@ -441,7 +448,7 @@ async def test_metadata_only_running_change_stages_outbox(db_session: AsyncSessi
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
@@ -491,7 +498,9 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
 
-    await _reconcile_dirty_devices(db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_dirty_devices(
+        db_session, limit=10, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
     await db_session.commit()
 
     assert await db_session.get(DeviceIntentDirty, device.id) is not None
@@ -520,7 +529,9 @@ async def test_full_scan_reconciles_each_intent_device(
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
     monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", deliver)
 
-    await _reconcile_all_devices_once(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_all_devices_once(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
 
     assert set(reconciled) == {first.id, second.id}
     assert deliver.await_count == 2
@@ -539,7 +550,7 @@ async def test_reconciler_cycle_checks_leadership_before_writes(
 
     with pytest.raises(LeadershipLost):
         await run_device_intent_reconciler_once(
-            db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+            db_session, cycle=1, settings=FakeSettingsReader({}), circuit_breaker=Mock(), publisher=event_bus
         )
     reconcile_expired.assert_not_awaited()
 
@@ -559,7 +570,7 @@ async def test_maintenance_signal_suppresses_baseline_idle_injection(
     set_maintenance_reason(device, "test maintenance")
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(node)

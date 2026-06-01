@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         ImportCommitResult,
         ImportPreview,
     )
+    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -297,6 +298,7 @@ class RunReservationWriter(Protocol):
         device_id: uuid.UUID,
         *,
         reason: str,
+        publisher: EventPublisher,
         revoke_run_intents: bool = ...,
         commit: bool = ...,
     ) -> TestRun | None: ...

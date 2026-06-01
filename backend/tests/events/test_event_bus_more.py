@@ -149,7 +149,7 @@ async def test_shutdown_handler_tasks_cancels_pending_tasks() -> None:
 
 
 async def test_shutdown_handler_tasks_drains_tasks_spawned_during_shutdown() -> None:
-    # ``after_commit`` hooks (queue_event_for_session) spawn a tracked task
+    # ``after_commit`` hooks (queue_for_session) spawn a tracked task
     # whose body awaits ``event_bus.publish``, which in turn schedules another
     # tracked task via ``_remember_and_dispatch``. Shutdown must await the
     # chain — otherwise the child task survives and may run queries against a

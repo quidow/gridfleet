@@ -45,6 +45,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.reservation_query import active_reservation_exists
+from app.events.protocols import EventPublisher
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.runs import service as run_service
@@ -56,9 +57,12 @@ DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
 
 
 class DeviceCrudService:
-    def __init__(self, *, settings: SettingsReader, identity: DeviceIdentityConflictService) -> None:
+    def __init__(
+        self, *, settings: SettingsReader, identity: DeviceIdentityConflictService, publisher: EventPublisher
+    ) -> None:
         self._settings = settings
         self._identity = identity
+        self._publisher = publisher
 
     async def prepare_device_create_payload(self, db: AsyncSession, data: DeviceVerificationCreate) -> dict[str, Any]:
         return await device_write.prepare_device_create_payload_async(db, data)
@@ -240,7 +244,7 @@ class DeviceCrudService:
 
         # Stop the running Appium node on the agent before deleting
         if device.appium_node and device.appium_node.observed_running:
-            device = await _stop_running_node_for_delete(db, device, device_id)
+            device = await _stop_running_node_for_delete(db, device, device_id, publisher=self._publisher)
             if device is None:
                 return True
 
@@ -370,7 +374,9 @@ def _device_delete_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
     ]
 
 
-async def _stop_node(db: AsyncSession, device: Device, *, caller: str = "device_delete") -> AppiumNode:
+async def _stop_node(
+    db: AsyncSession, device: Device, *, publisher: EventPublisher, caller: str = "device_delete"
+) -> AppiumNode:
     """Register stop intent for a single device."""
     node: AppiumNode | None = device.appium_node
     if node is None or not node.observed_running:
@@ -379,16 +385,19 @@ async def _stop_node(db: AsyncSession, device: Device, *, caller: str = "device_
         device_id=device.id,
         intents=_device_delete_intents(device.id),
         reason=f"{caller} requested",
+        publisher=publisher,
     )
     await db.commit()
     await db.refresh(node)
     return node
 
 
-async def _stop_running_node_for_delete(db: AsyncSession, device: Device, device_id: uuid.UUID) -> Device | None:
+async def _stop_running_node_for_delete(
+    db: AsyncSession, device: Device, device_id: uuid.UUID, *, publisher: EventPublisher
+) -> Device | None:
     while device.appium_node and device.appium_node.observed_running:
         try:
-            await _stop_node(db, device, caller="device_delete")
+            await _stop_node(db, device, caller="device_delete", publisher=publisher)
         except Exception as e:  # noqa: BLE001 — best-effort node stop before device delete; delete must proceed
             logger.warning(
                 "Failed to stop node for device %s before delete: %s",

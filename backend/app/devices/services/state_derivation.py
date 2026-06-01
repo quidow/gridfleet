@@ -138,7 +138,7 @@ async def apply_derived_state(
     device: Device,
     *,
     now: datetime,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
 ) -> bool:
     """Derive ``operational_state`` and write it when it differs from the persisted column.

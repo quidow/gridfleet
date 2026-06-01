@@ -26,7 +26,6 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.client import AgentClientFactory, AgentHttpClient
 from app.agent_comm.client import request as agent_request
 from app.core.errors import AgentCallError
-from app.events import queue_event_for_session
 from app.hosts.models import Host
 from app.packs.adapter import FeatureActionResult
 from app.packs.models import DriverPack, DriverPackRelease, HostPackFeatureStatus
@@ -207,8 +206,8 @@ class FeatureService:
         if existing is not None:
             await session.refresh(existing)
 
-        if event_type is not None and self._publisher is not None:
-            queue_event_for_session(
+        if event_type is not None:
+            self._publisher.queue_for_session(
                 session,
                 event_type,
                 {
@@ -218,7 +217,6 @@ class FeatureService:
                     "ok": ok,
                     "detail": detail,
                 },
-                publisher=self._publisher,
             )
 
         return transitioned

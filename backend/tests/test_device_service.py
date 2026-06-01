@@ -7,6 +7,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -26,7 +27,9 @@ async def test_create_device_persists_initial_operational_state(db_session: Asyn
         host_id=db_host.id,
     )
 
-    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     device = await crud.create_device(
         db_session,
         data,

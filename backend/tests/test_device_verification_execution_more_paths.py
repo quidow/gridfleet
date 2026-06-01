@@ -48,7 +48,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             publisher=event_bus,
             settings=settings,
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -67,7 +67,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             publisher=event_bus,
             settings=_s2,
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=_s2, identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(settings=_s2, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -82,7 +82,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
         publisher=event_bus,
         settings=_s3,
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=_s3, identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(settings=_s3, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -96,7 +96,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
             publisher=event_bus,
             settings=_s4,
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=_s4, identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(settings=_s4, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),
@@ -173,7 +173,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         publisher=event_bus,
         settings=_s5,
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=_s5, identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(settings=_s5, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -193,7 +193,6 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         save_device_id=uuid.uuid4(),
         transient_device=_device(),
         save_payload={},
-        keep_running_after_verify=False,
     )
     finalize = AsyncMock(return_value=execution.VerificationExecutionOutcome(status="failed"))
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
@@ -202,7 +201,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
         publisher=event_bus,
         settings=_s6,
         circuit_breaker=Mock(),
-        crud=DeviceCrudService(settings=_s6, identity=DeviceIdentityConflictService()),
+        crud=DeviceCrudService(settings=_s6, identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
         reconciler=AsyncMock(),
@@ -245,7 +244,6 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
         transient_device=locked,
         save_payload={"name": "created"},
         save_device_id=device_id,
-        keep_running_after_verify=True,
     )
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
@@ -351,7 +349,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
             publisher=event_bus,
             settings=settings,
             circuit_breaker=Mock(),
-            crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
+            crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
             viability=Mock(),
             capability=DeviceCapabilityService(),
             reconciler=AsyncMock(),

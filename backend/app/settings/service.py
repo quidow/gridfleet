@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, select
 
-from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names, queue_event_for_session
+from app.events import DEFAULT_TOAST_EVENT_NAMES, normalize_public_event_names
 from app.settings.models import Setting
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ from app.settings.registry import (
 
 
 def _queue_settings_changed(db: AsyncSession, payload: dict[str, Any], *, publisher: EventPublisher) -> None:
-    queue_event_for_session(db, "settings.changed", payload, publisher=publisher)
+    publisher.queue_for_session(db, "settings.changed", payload)
 
 
 if TYPE_CHECKING:

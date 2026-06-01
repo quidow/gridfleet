@@ -53,7 +53,6 @@ from app.devices.services.lifecycle_policy_actions import (
     reset_reconciler_start_failure_state,
 )
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
-from app.events import queue_event_for_session
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -230,20 +229,18 @@ async def mark_node_started(
             )
         )
         await db.flush()
-    if publisher is not None:
-        queue_event_for_session(
-            db,
-            "node.state_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_state": "stopped",
-                "new_state": "running",
-                "port": port,
-            },
-            severity=node_state_severity("stopped", "running"),
-            publisher=publisher,
-        )
+    publisher.queue_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "stopped",
+            "new_state": "running",
+            "port": port,
+        },
+        severity=node_state_severity("stopped", "running"),
+    )
     await db.commit()
     await db.refresh(node)
     return node
@@ -265,19 +262,17 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
         device,
         mark_offline=False,
     )
-    if publisher is not None:
-        queue_event_for_session(
-            db,
-            "node.state_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_state": "running",
-                "new_state": "stopped",
-            },
-            severity=node_state_severity("running", "stopped"),
-            publisher=publisher,
-        )
+    publisher.queue_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "running",
+            "new_state": "stopped",
+        },
+        severity=node_state_severity("running", "stopped"),
+    )
     await db.commit()
     await db.refresh(node)
     return node

@@ -29,6 +29,7 @@ from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 
 def _reconnect_device(**overrides: object) -> SimpleNamespace:
@@ -59,7 +60,7 @@ def _settings_services() -> SimpleNamespace:
 
 
 def _device_services() -> SimpleNamespace:
-    return SimpleNamespace(crud=AsyncMock())
+    return SimpleNamespace(crud=AsyncMock(), publisher=event_bus)
 
 
 @pytest.mark.db
@@ -115,7 +116,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             ),
         ],
     )
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(device)
     assert device.session_viability_status == "failed"
@@ -130,7 +131,10 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             device.id,
             db=db_session,
             device_services=SimpleNamespace(
-                crud=DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService())
+                crud=DeviceCrudService(
+                    settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+                ),
+                publisher=event_bus,
             ),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock()),

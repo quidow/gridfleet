@@ -35,7 +35,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,6 +225,7 @@ class NodeHealthService:
                 ),
             ],
             reason="Max node health failures reached",
+            publisher=self._publisher,
         )
         await db.commit()
 
@@ -310,20 +310,18 @@ class NodeHealthService:
                     reason="Node health checks recovered",
                     record_incident=False,
                 )
-                if self._publisher is not None:
-                    queue_event_for_session(
-                        db,
-                        "node.state_changed",
-                        {
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "old_state": "error",
-                            "new_state": "running",
-                            "port": node.port,
-                        },
-                        severity=node_state_severity("error", "running"),
-                        publisher=self._publisher,
-                    )
+                self._publisher.queue_for_session(
+                    db,
+                    "node.state_changed",
+                    {
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "old_state": "error",
+                        "new_state": "running",
+                        "port": node.port,
+                    },
+                    severity=node_state_severity("error", "running"),
+                )
                 await record_event(
                     db,
                     device.id,

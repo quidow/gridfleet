@@ -55,7 +55,7 @@ _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
     circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+    maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
     health=AsyncMock(),
@@ -288,7 +288,7 @@ async def test_run_terminal_transition_paths(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
 
     mock_release = AsyncMock()
     mock_release.release_devices = AsyncMock(return_value=[])
@@ -361,7 +361,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     entry = run.device_reservations[0]
     svc = RunReservationService()
 
-    assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
+    assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing", publisher=event_bus) is None
     assert await run_service.get_device_reservation(db_session, device.id) == run
     reservation_map = await run_service.get_device_reservation_map(db_session, [device.id])
     assert reservation_map[device.id] == run
@@ -369,10 +369,14 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert run_service.get_reservation_context_for_device(run, uuid.uuid4()) == (run, None)
 
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
-    excluded = await svc.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
+    excluded = await svc.exclude_device_from_run(
+        db_session, device.id, reason="bad device", commit=False, publisher=event_bus
+    )
     assert excluded is not None
     assert entry.excluded is True
-    same_exclusion = await svc.exclude_device_from_run(db_session, device.id, reason="bad device", commit=False)
+    same_exclusion = await svc.exclude_device_from_run(
+        db_session, device.id, reason="bad device", commit=False, publisher=event_bus
+    )
     assert same_exclusion is excluded
 
     entry.excluded_until = datetime.now(UTC) + timedelta(minutes=5)
@@ -387,7 +391,9 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert await svc.restore_device_to_run(db_session, device.id, commit=False) is excluded
 
     monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
-    committed_excluded = await svc.exclude_device_from_run(db_session, device.id, reason="missing lock")
+    committed_excluded = await svc.exclude_device_from_run(
+        db_session, device.id, reason="missing lock", publisher=event_bus
+    )
     assert committed_excluded is not None
     committed_restored = await svc.restore_device_to_run(db_session, device.id)
     assert committed_restored is not None
@@ -418,7 +424,7 @@ async def test_cooldown_device_guard_paths(
         publisher=event_bus,
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),
@@ -489,7 +495,7 @@ async def test_release_devices_branches_and_session_counts(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
     pending_ids = await _release_svc.release_devices(
         db_session,
         run,
@@ -604,7 +610,7 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
             {"general.device_cooldown_max_sec": 60, "general.device_cooldown_escalation_threshold": 1}
         ),
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),
@@ -672,7 +678,7 @@ async def test_release_devices_unusual_restore_branches(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
     pending = await _release_svc.release_devices(
         db_session,
         run,
@@ -828,7 +834,7 @@ async def test_release_maintenance_device_uses_operational_state_not_hold(
     )
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
     pending = await _release_svc.release_devices(db_session, run, commit=False)
 
     assert maintenance_device.id in pending
@@ -880,7 +886,7 @@ async def test_release_reserved_device_uses_reservation_row_not_hold(
     await db_session.commit()
     await db_session.refresh(run, attribute_names=["device_reservations"])
 
-    monkeypatch.setattr("app.devices.services.state.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
 
     pending = await _release_svc.release_devices(db_session, run, commit=False)
 
