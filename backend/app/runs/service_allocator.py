@@ -69,7 +69,7 @@ async def _find_matching_devices(
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
         .where(
             or_(
@@ -108,7 +108,7 @@ async def _find_matching_devices(
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id.in_(candidate_ids))
-        .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
         .where(
             or_(

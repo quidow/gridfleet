@@ -168,6 +168,62 @@ async def test_find_matching_devices_excludes_review_required(
     assert shelved.id not in ids
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_find_matching_devices_excludes_reserved_device_with_null_hold(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Allocator excludes devices with an active reservation row even when hold=NULL (post-collapse state)."""
+    from app.runs.models import RunState, TestRun
+
+    # A device with hold=NULL but an active reservation row — simulates post-collapse state.
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="reserved-null-hold",
+        connection_target="reserved-null-hold",
+        name="Reserved Null Hold",
+        operational_state="available",
+        hold=None,
+    )
+    # Add an active reservation row without setting hold.
+    run = TestRun(
+        name="existing-run",
+        state=RunState.preparing,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run=run,
+            device_id=reserved.id,
+            identity_value=reserved.identity_value,
+            connection_target=reserved.connection_target,
+            pack_id=reserved.pack_id,
+            platform_id=reserved.platform_id,
+            platform_label=None,
+            os_version=reserved.os_version,
+            host_ip=None,
+            excluded=False,
+            released_at=None,
+        )
+    )
+    await db_session.flush()
+
+    devices = await _find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+    )
+
+    assert reserved.id not in {d.id for d in devices}, (
+        "device with active reservation row must be excluded even when hold=NULL"
+    )
+
+
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/runs",
