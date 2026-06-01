@@ -93,7 +93,7 @@ async def run_device_intent_reconciler_once(
     cycle: int,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     await assert_current_leader(db, settings=settings)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
@@ -125,7 +125,7 @@ async def _reconcile_all_devices_once(
     *,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     for device_id in rows:
@@ -140,7 +140,7 @@ async def _reconcile_dirty_devices(
     settings: SettingsReader,
     limit: int = 100,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
     metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
@@ -163,7 +163,7 @@ async def _reconcile_expired_intents(
     *,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     now = datetime.now(UTC)
     device_ids = (
@@ -262,7 +262,7 @@ async def _reconcile_terminal_run_intents(
     *,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
 ) -> None:
     """Defense-in-depth sweep for intents tied to runs that are already terminal.
 
@@ -300,7 +300,7 @@ async def reconcile_device(
     db: AsyncSession,
     device_id: uuid.UUID,
     *,
-    publisher: EventPublisher | None = None,
+    publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
 ) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()

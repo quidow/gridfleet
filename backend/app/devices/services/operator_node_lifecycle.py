@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
+    from app.events.protocols import EventPublisher
 
 
 def operator_start_source(device_id: uuid.UUID) -> str:
@@ -101,8 +102,9 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class OperatorNodeLifecycleService:
-    def __init__(self, *, settings: SettingsReader) -> None:
+    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher) -> None:
         self._settings = settings
+        self._publisher = publisher
 
     async def request_start(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
@@ -143,11 +145,13 @@ class OperatorNodeLifecycleService:
             device_id=device.id,
             sources=revoke_sources,
             reason=reason,
+            publisher=self._publisher,
         )
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=[operator_start_intent(device, desired_port)],
             reason=reason,
+            publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
             await clear_review_required(db, device, reason="Operator started Appium node", source="start_node")
@@ -178,6 +182,7 @@ class OperatorNodeLifecycleService:
             device_id=device.id,
             intents=operator_stop_intents(device.id),
             reason=reason,
+            publisher=self._publisher,
         )
         await db.refresh(node)
         return node
@@ -198,6 +203,7 @@ class OperatorNodeLifecycleService:
             device_id=device.id,
             intents=[operator_restart_intent(device, node.port, settings=self._settings)],
             reason=reason,
+            publisher=self._publisher,
         )
         if caller == "operator_restart":
             await clear_review_required(db, device, reason="Operator restarted Appium node", source="restart_node")

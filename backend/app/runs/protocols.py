@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.devices.models import Device, DeviceEvent, DeviceEventType
     from app.devices.models.reservation import DeviceReservation
     from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+    from app.events.protocols import EventPublisher
     from app.runs.models import RunState, TestRun
     from app.runs.schemas import ReservedDeviceInfo, RunCreate, SessionCounts
 
@@ -148,6 +149,7 @@ class RunReservationProtocol(Protocol):
         device_id: uuid.UUID,
         *,
         reason: str,
+        publisher: EventPublisher,
         revoke_run_intents: bool = ...,
         commit: bool = ...,
     ) -> TestRun | None: ...

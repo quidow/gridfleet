@@ -156,6 +156,7 @@ class LifecyclePolicyService:
                     f"health_failure:recovery:{device.id}",
                 ],
                 reason=reason,
+                publisher=self._publisher,
             )
             return False
 
@@ -328,6 +329,7 @@ class LifecyclePolicyService:
                         ),
                     ],
                     reason=reason,
+                    publisher=self._publisher,
                 )
                 await db.commit()
                 await db.refresh(device.appium_node)

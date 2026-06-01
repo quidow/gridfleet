@@ -225,6 +225,7 @@ class NodeHealthService:
                 ),
             ],
             reason="Max node health failures reached",
+            publisher=self._publisher,
         )
         await db.commit()
 
@@ -309,19 +310,18 @@ class NodeHealthService:
                     reason="Node health checks recovered",
                     record_incident=False,
                 )
-                if self._publisher is not None:
-                    self._publisher.queue_for_session(
-                        db,
-                        "node.state_changed",
-                        {
-                            "device_id": str(device.id),
-                            "device_name": device.name,
-                            "old_state": "error",
-                            "new_state": "running",
-                            "port": node.port,
-                        },
-                        severity=node_state_severity("error", "running"),
-                    )
+                self._publisher.queue_for_session(
+                    db,
+                    "node.state_changed",
+                    {
+                        "device_id": str(device.id),
+                        "device_name": device.name,
+                        "old_state": "error",
+                        "new_state": "running",
+                        "port": node.port,
+                    },
+                    severity=node_state_severity("error", "running"),
+                )
                 await record_event(
                     db,
                     device.id,

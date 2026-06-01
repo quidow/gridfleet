@@ -8,7 +8,7 @@ from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType, DeviceOperationalState
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services.event import record_event
+from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
@@ -27,7 +27,6 @@ from app.devices.services.lifecycle_policy_state import (
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.events import queue_device_crashed_event
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.models import Session, SessionStatus
@@ -120,18 +119,18 @@ class LifecyclePolicyActionsService:
                 DeviceEventType.node_crash,
                 {"error": reason, "source": source, "will_restart": True},
             )
-            if self._publisher is not None:
-                queue_device_crashed_event(
-                    db,
+            self._publisher.queue_for_session(
+                db,
+                "device.crashed",
+                build_device_crashed_payload(
                     device_id=str(device.id),
                     device_name=device.name,
                     source=source,
                     reason=reason,
                     will_restart=True,
-                    process=None,
-                    severity="warning",
-                    publisher=self._publisher,
-                )
+                ),
+                severity="warning",
+            )
 
         if node is not None and node.observed_running:
             await IntentService(db).register_intents_and_reconcile(
@@ -182,7 +181,9 @@ class LifecyclePolicyActionsService:
             return None, entry
 
         was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        run = await self._reservation.exclude_device_from_run(
+            db, device.id, reason=reason, commit=False, publisher=self._publisher
+        )
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             await IntentService(db).register_intents_and_reconcile(
@@ -200,9 +201,10 @@ class LifecyclePolicyActionsService:
                     )
                 ],
                 reason=reason,
+                publisher=self._publisher,
             )
             await IntentService(db).revoke_intents_and_reconcile(
-                device_id=device.id, sources=[f"run:{run.id}"], reason=reason
+                device_id=device.id, sources=[f"run:{run.id}"], reason=reason, publisher=self._publisher
             )
         if run is not None and not was_excluded:
             await self._incidents.record_lifecycle_incident(
@@ -255,6 +257,7 @@ class LifecyclePolicyActionsService:
                     )
                 ],
                 reason=reason,
+                publisher=self._publisher,
             )
             await self._incidents.record_lifecycle_incident(
                 db,

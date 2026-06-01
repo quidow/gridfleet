@@ -163,11 +163,13 @@ class RunReleaseService:
                         )
                     ],
                     reason=reason or f"force release run {run.id}",
+                    publisher=self._publisher,
                 )
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=sources,
                 reason=reason or f"clear run {run.id} intents",
+                publisher=self._publisher,
             )
 
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None:

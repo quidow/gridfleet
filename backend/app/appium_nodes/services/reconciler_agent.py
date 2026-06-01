@@ -229,19 +229,18 @@ async def mark_node_started(
             )
         )
         await db.flush()
-    if publisher is not None:
-        publisher.queue_for_session(
-            db,
-            "node.state_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_state": "stopped",
-                "new_state": "running",
-                "port": port,
-            },
-            severity=node_state_severity("stopped", "running"),
-        )
+    publisher.queue_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "stopped",
+            "new_state": "running",
+            "port": port,
+        },
+        severity=node_state_severity("stopped", "running"),
+    )
     await db.commit()
     await db.refresh(node)
     return node
@@ -263,18 +262,17 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
         device,
         mark_offline=False,
     )
-    if publisher is not None:
-        publisher.queue_for_session(
-            db,
-            "node.state_changed",
-            {
-                "device_id": str(device.id),
-                "device_name": device.name,
-                "old_state": "running",
-                "new_state": "stopped",
-            },
-            severity=node_state_severity("running", "stopped"),
-        )
+    publisher.queue_for_session(
+        db,
+        "node.state_changed",
+        {
+            "device_id": str(device.id),
+            "device_name": device.name,
+            "old_state": "running",
+            "new_state": "stopped",
+        },
+        severity=node_state_severity("running", "stopped"),
+    )
     await db.commit()
     await db.refresh(node)
     return node

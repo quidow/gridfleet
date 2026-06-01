@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.protocols import EventPublisher
+
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
@@ -162,6 +164,7 @@ class RunReservationService:
         device_id: uuid.UUID,
         *,
         reason: str,
+        publisher: EventPublisher,
         revoke_run_intents: bool = False,
         commit: bool = True,
     ) -> TestRun | None:
@@ -189,6 +192,7 @@ class RunReservationService:
                     device_id=device.id,
                     sources=[f"run:{run.id}"],
                     reason=reason,
+                    publisher=publisher,
                 )
         if commit:
             await db.commit()

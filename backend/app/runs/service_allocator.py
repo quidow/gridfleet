@@ -175,7 +175,9 @@ def _format_requirement_count(requirement: DeviceRequirement) -> str:
     return f"count={requirement.count}"
 
 
-async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id: uuid.UUID) -> None:
+async def _register_run_grid_intent(
+    db: AsyncSession, *, run: TestRun, device_id: uuid.UUID, publisher: EventPublisher
+) -> None:
     await IntentService(db).register_intents_and_reconcile(
         device_id=device_id,
         intents=[
@@ -192,6 +194,7 @@ async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id
             )
         ],
         reason=f"reserved for run {run.id}",
+        publisher=publisher,
     )
 
 
@@ -326,6 +329,6 @@ class RunAllocatorService:
         await db.flush()
 
         for device in all_matched:
-            await _register_run_grid_intent(db, run=run, device_id=device.id)
+            await _register_run_grid_intent(db, run=run, device_id=device.id, publisher=self._publisher)
 
         return run, device_infos
