@@ -41,6 +41,12 @@ platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_act
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 logger = get_logger(__name__)
+# DB-backed flag (control_plane_state_store, namespace key per device identity_value).
+# Written here when a device goes offline or reconnect is attempted; read here to pick
+# a more descriptive recovery-reason string ("reconnected" vs "startup recovery").
+# Also deleted by app.devices.services.service.delete_device on device removal.
+# Not read by the reconciler — the reconciler derives state from durable facts, not
+# this flag.  Keep as long as lifecycle_policy.attempt_auto_recovery uses the reason.
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 IP_PING_CHECK_ID = "ip_ping"

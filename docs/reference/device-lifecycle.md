@@ -1,92 +1,114 @@
 # Device Lifecycle
 
-## DeviceStateMachine
+## Writer model (Phase 2B and later)
 
-GridFleet centralizes composite device state transitions in
-`backend/app/services/lifecycle_state_machine.py`. The machine exposes a single
-`transition(device, event, *, reason=None, suppress_events=False, skip_hooks=False) -> bool`
-entry point. It mutates `Device.operational_state` and `Device.hold` through
-the existing `app.services.device_state` writers so
-`device.operational_state_changed` and `device.hold_changed` events keep firing
-on commit.
+`Device.operational_state` and `Device.hold` are **derived** by a single authoritative
+writer: the `device_intent_reconciler` loop
+(`app/devices/services/intent_reconciler.py`).
 
-### Caller contract
+### Derivation flow
 
-- The device must be loaded under
-  `app.services.device_locking.lock_device(...)` in the current transaction.
-  The machine does not lock.
-- Background loops and API mutators are forbidden from writing
-  `Device.operational_state` or `Device.hold` directly. The two `device_state`
-  writers (`set_operational_state`, `set_hold`) and the machine are the only
-  sanctioned mutators; everything else routes through `transition(...)`.
-- This rule is enforced at runtime by a SQLAlchemy attribute-event guardrail.
-  The authoritative allowlist of sanctioned writers lives in
-  `backend/app/devices/services/state_write_guard.py::ALLOWLIST`. Any new
-  writer must be added there; the guard raises
-  `StateWriteOutsideSanctionedWriterError` on any unlisted caller. Test
-  fixtures that need to seed state directly use the `state_write_guard.bypass()`
-  context manager — production code must never call `bypass()`.
+1. **Observation loops** (`device_connectivity`, `node_health`, `session_sync`,
+   `session_viability`) write durable facts — health flags, session rows,
+   `maintenance_reason` in `lifecycle_policy_state` — then call
+   `IntentService.mark_dirty_and_reconcile` (or `mark_dirty`) to signal that the
+   reconciler should re-derive state on its next tick.
+2. **Reconciler tick** calls `apply_derived_state` in
+   `app/devices/services/state_derivation.py`, which:
+   - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
+     intent, reservation row, maintenance flag, readiness, stop-in-flight).
+   - Evaluates `evaluate_operational_state(facts)` → `DeviceOperationalState`.
+   - Evaluates `evaluate_hold(facts)` → `DeviceHold | None`.
+   - Writes the new values through `set_operational_state` / `set_hold`
+     (`app.devices.services.state`) only when the derived value differs from the
+     persisted column.
+   - Emits the mapped event for each axis that actually changed.
 
-### Events
+### Derived axes at a glance
 
-| Event | Source operational state | Target | Notes |
-|-------|--------------------------|--------|-------|
-| `MAINTENANCE_ENTERED` | any | `(<unchanged>, maintenance)` | Hold-only mutation; operational follows from any subsequent `stop_node` cascade. Idempotent from `(*, maintenance)`. |
-| `MAINTENANCE_EXITED` | `(*, maintenance)` | `(offline, None)` | Raises if hold is not maintenance. |
-| `CONNECTIVITY_LOST` | `available`, `busy` | `offline` (hold preserved) | Idempotent from `offline` for any hold. |
-| `CONNECTIVITY_RESTORED` | `offline` | `available` (hold preserved) | Idempotent from `available` for `None` / `reserved` hold. |
-| `SESSION_STARTED` | `available`, `offline` | `busy` (hold preserved) | The `offline → busy` arc covers the production race where a Grid session arrives on a reserved-but-offline device before the connectivity loop catches up. Idempotent from `busy`. |
-| `SESSION_ENDED` | `busy` | `available` (hold preserved) | Idempotent from `available` for `None` / `reserved` hold. The session_sync caller uses a fallback writer when `ready_operational_state` returns `offline` (probe failed). |
-| `AUTO_STOP_EXECUTED` | `available`, `busy` | `offline` (hold preserved) | Idempotent from `offline` for any hold (handles concurrent connectivity-loop offlining). |
-| `PREPARATION_FAILED` | `available`, `busy` | `offline` (hold preserved) | Modeled but no producer migrated yet — currently set by direct writers in run_service. |
-| `CLOUD_ESCROW` | `available`, `busy` | `offline` (hold preserved) | Modeled; no producer migrated yet. |
-| `AUTO_STOP_DEFERRED` | any | unchanged | Lifecycle JSON owns the `stop_pending` flag; transition is a no-op for the operational/hold axes. |
-| `DEVICE_DISCOVERED` | any | unchanged | Initial registration is owned by ingestion code; the machine just records it. |
+| Column | Derived from |
+|--------|-------------|
+| `operational_state` | Session row, verification intent, appium-node stop-in-flight, device readiness |
+| `hold` | `maintenance_reason` in `lifecycle_policy_state` (maintenance) or active `DeviceReservation` row (reserved) |
 
-### Reserved-hold transparency
+### Key rules
 
-`hold == DeviceHold.reserved` is set by `run_reservation_service` and means a
-run owns the device. The machine treats reserved as orthogonal to non-
-maintenance events: connectivity, session, and auto-stop transitions all
-preserve the reserved hold value.
+- **Observation loops MUST NOT call `DeviceStateMachine.transition` directly.**
+  Direct `_MACHINE.transition` calls from observation loops have been removed.
+  Instead they write facts and call `mark_dirty`.
+- **Maintenance mode** is driven by the `maintenance_reason` signal in
+  `lifecycle_policy_state`.  `enter_maintenance` / `exit_maintenance` write to that
+  JSON column; the reconciler observes the flag when deriving `hold=maintenance`.
+- **`reserved` hold** is derived from the existence of an active `DeviceReservation`
+  row, not from a direct `hold` write.
+- **Direct attribute assignment** (`device.operational_state = ...`) is still
+  **forbidden** outside the sanctioned writers.  This rule is enforced at runtime
+  by the SQLAlchemy attribute-event guardrail in
+  `backend/app/devices/services/state_write_guard.py`.
 
-### Maintenance-hold transparency
+### Sanctioned writers
 
-`hold == DeviceHold.maintenance` is set by operator-driven `enter_maintenance`. The
-machine treats maintenance as orthogonal to non-maintenance events: connectivity,
-session, and auto-stop transitions all preserve the maintenance hold. The
-operational axis only flips to `offline` via the stop_node cascade triggered by
-`enter_maintenance` when a node is running, or via `MAINTENANCE_EXITED` (which
-forces operational to `offline` on exit so the recovery path can re-promote).
+The `ALLOWLIST` dict in `state_write_guard.py` is the single source of truth for
+which production modules may write each protected column.
 
-### Errors
+| Column | Sanctioned module |
+|--------|------------------|
+| `Device.operational_state` | `app.devices.services.state` (called by `apply_derived_state`); `app.devices.services.write` (initial device creation only) |
+| `Device.hold` | `app.devices.services.state` (called by `apply_derived_state`) |
+| `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` |
+| `AppiumNode.desired_state` / `desired_port` / `transition_token` / `transition_deadline` | `app.appium_nodes.services.desired_state_writer` |
 
-Invalid transitions raise `app.errors.InvalidTransitionError`, mapped to HTTP
-409 by the global exception handler with the standard `{"error": {"code": ...,
-"message": ..., "details": {"event": ..., "current_state": ...}}}` envelope.
+Any new sanctioned writer must be added to `ALLOWLIST`; unlisted callers get
+`StateWriteOutsideSanctionedWriterError`.  Test fixtures seed state using
+`state_write_guard.bypass()` — production code must never call `bypass()`.
+
+### Row locking
+
+Any code that writes `Device.operational_state`, `Device.hold`, or
+`Device.lifecycle_policy_state` MUST acquire the row lock first via
+`app.devices.locking.lock_device` (or `lock_devices` for batch) inside the same
+transaction.  Routers should use `get_device_for_update_or_404` for state-mutating
+endpoints.  Background loops commit per device after the locked write window.  The
+leader advisory lock alone is NOT sufficient — API mutators run on every worker and
+bypass it.
+
+## Legacy: DeviceStateMachine
+
+`DeviceStateMachine` (`app/devices/services/lifecycle_state_machine.py`) still exists
+but its role is reduced.  The machine's `transition(device, event, ...)` entry point
+is no longer called by observation loops.  The machine remains active only where it is
+still directly wired — see the `state_write_guard.py` ALLOWLIST for the current
+authoritative list of callers.
+
+### Still-active machine events
+
+| Event | Notes |
+|-------|-------|
+| `MAINTENANCE_ENTERED` / `MAINTENANCE_EXITED` | Maintenance enter/exit routes through the lifecycle policy; the machine itself is no longer called — maintenance state is now driven by `maintenance_reason` in `lifecycle_policy_state` and derived by the reconciler. |
+
+### Removed machine events (Phase 2B)
+
+The following events no longer have active producers:
+
+| Event | Removed from |
+|-------|-------------|
+| `CONNECTIVITY_LOST` | Connectivity loop now calls `mark_dirty_and_reconcile` instead |
+| `CONNECTIVITY_RESTORED` | Connectivity loop uses `attempt_auto_recovery` → `mark_dirty` |
+| `SESSION_STARTED` / `SESSION_ENDED` | `session_sync` now calls `mark_dirty` |
+| `AUTO_STOP_EXECUTED` | Lifecycle policy loop calls `mark_dirty` |
 
 ### Hooks
 
-`DeviceStateMachine(hooks=[...])` accepts a list of `TransitionHook`
-implementations. Hooks fire after the writer mutations complete, in
-registration order, only when the transition actually changed state
-(`changed and not skip_hooks`).
+`DeviceStateMachine(hooks=[...])` still accepts `TransitionHook` implementations.
 
 Built-in hooks:
 
 - `EventLogHook` — records one `DeviceEvent` row per state-changing transition.
-  Writes the corresponding `DeviceEventType` (e.g. `session_started`,
-  `maintenance_entered`, `connectivity_lost`, `auto_stopped`) with a
-  `{"from": before.label(), "to": after.label()}` detail payload. Sources the
-  AsyncSession from `sa_inspect(device).session`.
-- `IncidentHook`, `RunExclusionHook` — currently no-op skeletons. Lifecycle
-  incidents stay at their original call sites (rich payloads are not generic
-  enough to centralize), and `exclude_run_if_needed` returns `(run, entry)`
-  that callers consume.
+- `IncidentHook`, `RunExclusionHook` — currently no-op skeletons.
 
-### Lifecycle JSON axis (out of scope)
+### Lifecycle JSON axis
 
 `Device.lifecycle_policy_state` (the JSON column for `stop_pending`,
-`backoff_until`, `recovery_suppressed_reason`, etc.) is NOT modeled by the
-machine. Helpers in `app.services.lifecycle_policy_state` continue to manage
-that column directly under the same row lock.
+`backoff_until`, `maintenance_reason`, `recovery_suppressed_reason`, etc.) is NOT
+managed by the state machine.  Helpers in `app.services.lifecycle_policy_state`
+manage that column directly under the same row lock.
