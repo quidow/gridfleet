@@ -9,7 +9,6 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
-from app.devices.models.reservation import DeviceReservation
 from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
@@ -42,7 +41,6 @@ class DeviceStateFacts:
     in_maintenance: bool  # lifecycle_policy_state["maintenance_reason"] set (§16.1)
     stop_in_flight: bool  # appium_node_stop_in_flight(device)
     ready: bool  # is_ready_for_use ∧ device_allows_allocation ∧ ¬review_required
-    is_reserved: bool  # an active device_reservations row
 
 
 def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalState:
@@ -97,17 +95,6 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
         )
     ).first() is not None
 
-    is_reserved = (
-        await db.execute(
-            select(DeviceReservation.id)
-            .where(
-                DeviceReservation.device_id == device.id,
-                DeviceReservation.released_at.is_(None),
-            )
-            .limit(1)
-        )
-    ).first() is not None
-
     in_maintenance = policy_state(device).get("maintenance_reason") is not None
     ready = await is_ready_for_use_async(db, device) and device_allows_allocation(device) and not device.review_required
 
@@ -117,7 +104,6 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
         in_maintenance=in_maintenance,
         stop_in_flight=appium_node_stop_in_flight(device),
         ready=ready,
-        is_reserved=is_reserved,
     )
 
 

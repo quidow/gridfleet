@@ -19,7 +19,6 @@ _BASELINE = dict(
     in_maintenance=False,
     stop_in_flight=False,
     ready=True,
-    is_reserved=False,
 )
 
 
@@ -46,8 +45,6 @@ def _facts(**overrides: bool) -> DeviceStateFacts:
         (_facts(in_maintenance=True, has_verification_lease=True), DeviceOperationalState.verifying),
         # maintenance outranks offline: a maintenance device whose node is down stays maintenance
         (_facts(in_maintenance=True, stop_in_flight=True, ready=False), DeviceOperationalState.maintenance),
-        # reservation never affects the operational axis
-        (_facts(is_reserved=True), DeviceOperationalState.available),
     ],
 )
 def test_evaluate_operational_state(facts: DeviceStateFacts, expected: DeviceOperationalState) -> None:
@@ -77,6 +74,5 @@ async def test_gather_facts_available_device(
     assert facts.has_verification_lease is False
     assert facts.in_maintenance is False
     assert facts.stop_in_flight is False
-    assert facts.is_reserved is False
     assert facts.ready is True
     assert evaluate_operational_state(facts) is DeviceOperationalState.available

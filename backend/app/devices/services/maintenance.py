@@ -81,9 +81,9 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 class MaintenanceService:
     def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher | None" = None) -> None:
         self._settings = settings
-        # Publisher is needed so the reconciler's derived hold change emits
-        # device.hold_changed (SSE/webhooks) on maintenance enter/exit. Optional
-        # for unit tests that do not assert on emitted events.
+        # Publisher is needed so the reconciler's derived maintenance enter/exit
+        # emits device.operational_state_changed (SSE/webhooks). Optional for unit
+        # tests that do not assert on emitted events.
         self._publisher = publisher
 
     async def enter_maintenance(
