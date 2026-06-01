@@ -17,7 +17,6 @@ DeviceSortBy = Literal[
     "host",
     "status",
     "operational_state",
-    "hold",
     "created_at",
 ]
 DeviceSortDir = Literal["asc", "desc"]

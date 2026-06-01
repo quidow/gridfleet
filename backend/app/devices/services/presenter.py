@@ -102,7 +102,6 @@ class DevicePresenterService:
             "software_versions": device.software_versions,
             "host_id": device.host_id,
             "operational_state": device.operational_state,
-            "hold": device.hold,
             "is_reserved": reservation is not None,
             "tags": device.tags,
             "device_type": device.device_type,

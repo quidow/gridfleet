@@ -36,7 +36,6 @@ def test_inventory_column_enum_has_expected_dot_paths() -> None:
         "model_number",
         "software_versions",
         "operational_state",
-        "hold",
         "tags",
         "device_config",
         "test_data",

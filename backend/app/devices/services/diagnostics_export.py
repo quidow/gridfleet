@@ -76,7 +76,6 @@ def _project_device(device: Device) -> dict[str, Any]:
         "connection_type": device.connection_type.value if device.connection_type else None,
         "ip_address": device.ip_address,
         "operational_state": device.operational_state.value if device.operational_state else None,
-        "hold": device.hold.value if device.hold else None,
         "tags": device.tags,
         "verified_at": device.verified_at.isoformat() if device.verified_at else None,
         "emulator_state": device.emulator_state,

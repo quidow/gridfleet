@@ -828,9 +828,10 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 
     reserved_resp = await client.get(f"/api/devices/{reserved['id']}")
     assert reserved_resp.status_code == 200
-    # hold is derived by the inline reconciler; the device that was reserved
-    # for the OTHER run still has hold=reserved from its own allocation.
-    assert reserved_resp.json()["hold"] in (None, "reserved")
+    # The device that was reserved for the OTHER run still carries an active
+    # reservation row from its own allocation, surfaced via is_reserved.
+    assert "hold" not in reserved_resp.json()
+    assert reserved_resp.json()["is_reserved"] is True
 
 
 async def test_complete_run_releases_reservation_rows(

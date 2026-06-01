@@ -23,7 +23,6 @@ class InventoryColumn(enum.StrEnum):
     MODEL_NUMBER = "model_number"
     SOFTWARE_VERSIONS = "software_versions"
     OPERATIONAL_STATE = "operational_state"
-    HOLD = "hold"
     TAGS = "tags"
     DEVICE_CONFIG = "device_config"
     TEST_DATA = "test_data"
@@ -46,7 +45,6 @@ DEFAULT_INVENTORY_COLUMNS = (
     InventoryColumn.PLATFORM_ID,
     InventoryColumn.OS_VERSION,
     InventoryColumn.OPERATIONAL_STATE,
-    InventoryColumn.HOLD,
     InventoryColumn.VERIFICATION_VERIFIED_AT,
 )
 

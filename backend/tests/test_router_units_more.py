@@ -1845,7 +1845,6 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             name="Pixel",
             platform_id="android_mobile",
             operational_state=SimpleNamespace(value="available"),
-            hold=None,
             appium_node=running_node,
         ),
         SimpleNamespace(
@@ -1855,7 +1854,6 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             name="Tablet",
             platform_id="android_mobile",
             operational_state=SimpleNamespace(value="offline"),
-            hold=SimpleNamespace(value="maintenance"),
             appium_node=stopped_node,
         ),
     ]
@@ -1888,7 +1886,8 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
 
     assert status["registry"]["device_count"] == 2
     assert status["registry"]["devices"][0]["node_state"] == "running"
-    assert status["registry"]["devices"][1]["hold"] == "maintenance"
+    assert "hold" not in status["registry"]["devices"][1]
+    assert status["registry"]["devices"][1]["operational_state"] == "offline"
     assert status["active_sessions"] == 1
     assert status["queue_size"] == 1
     assert queue == {"queue_size": 1, "requests": [{"requestId": "queued"}]}

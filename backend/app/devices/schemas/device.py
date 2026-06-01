@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, fi
 
 from app.devices.models import (
     ConnectionType,
-    DeviceHold,
     DeviceOperationalState,
     DeviceType,
     HardwareChargingState,
@@ -335,7 +334,6 @@ class DeviceRead(BaseModel):
     os_version_display: str | None = None
     host_id: uuid.UUID
     operational_state: DeviceOperationalState
-    hold: DeviceHold | None
     is_reserved: bool = False
     tags: DeviceTags | None
     manufacturer: str | None

@@ -321,7 +321,6 @@ def _device_order_clause(filters: DeviceQueryFilters) -> list[Any]:
         "host": func.lower(func.coalesce(Host.hostname, "")),
         "status": chip_case,
         "operational_state": Device.operational_state,
-        "hold": Device.hold,
         "created_at": Device.created_at,
     }
     primary = order_map.get(filters.sort_by, Device.created_at)

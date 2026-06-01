@@ -25,7 +25,6 @@ async def grid_status(db: DbDep, grid_services: GridServicesDep, device_services
             "name": device.name,
             "platform_id": device.platform_id,
             "operational_state": device.operational_state.value,
-            "hold": device.hold.value if device.hold else None,
             "node_state": ("running" if device.appium_node and device.appium_node.observed_running else "stopped")
             if device.appium_node
             else None,
