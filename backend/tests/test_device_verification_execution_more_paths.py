@@ -308,6 +308,12 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     mark_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(execution, "mark_review_required", mark_mock)
 
+    # Track call order between mark_review_required and db.commit.
+    call_order_manager = MagicMock()
+    db.commit = AsyncMock()
+    call_order_manager.attach_mock(mark_mock, "mark")
+    call_order_manager.attach_mock(db.commit, "commit")
+
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
     outcome = await execution._finalize_failure(
         db,
@@ -326,6 +332,10 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     assert call_args.args[1] is locked  # mark_review_required(db, device, *, ...)
     assert "verification" in call_args.kwargs.get("reason", "")
     assert call_args.kwargs.get("source") == "verification"
+
+    # Ordering: mark_review_required must be called before db.commit.
+    call_names = [c[0] for c in call_order_manager.mock_calls]
+    assert call_names.index("mark") < call_names.index("commit")
 
 
 async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: pytest.MonkeyPatch) -> None:
