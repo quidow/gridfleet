@@ -12,7 +12,6 @@ from app.core.errors import PackUnavailableError
 from app.core.pagination import CursorPage, CursorPaginationError
 from app.devices.routers import core as devices_core
 from app.devices.routers import groups as device_groups
-from app.devices.routers import verification as devices_verification
 from app.devices.schemas.device import BulkMaintenanceEnter, DevicePatch, DeviceVerificationCreate
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
@@ -20,6 +19,7 @@ from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
 from app.settings.services_container import SettingsServices
+from app.verification import router as devices_verification
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:

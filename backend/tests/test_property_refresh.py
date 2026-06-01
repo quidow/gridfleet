@@ -175,7 +175,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_pr_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

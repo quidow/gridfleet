@@ -207,7 +207,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_fc_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

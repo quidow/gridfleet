@@ -96,7 +96,6 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_svc_crud_1,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
@@ -159,7 +158,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_svc_crud_2,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
@@ -291,7 +289,6 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_svc_crud_3,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
@@ -400,7 +397,6 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_svc_crud_4,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

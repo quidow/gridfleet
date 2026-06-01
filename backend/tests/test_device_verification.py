@@ -91,7 +91,7 @@ async def test_create_verification_requires_pack_id(client: AsyncClient, default
     payload = device_payload(default_host_id)
     payload.pop("pack_id")
 
-    resp = await client.post("/api/devices/verification-jobs", json=payload)
+    resp = await client.post("/api/verification/jobs", json=payload)
 
     assert resp.status_code == 422
 
@@ -100,7 +100,7 @@ async def test_create_verification_requires_platform_id(client: AsyncClient, def
     payload = device_payload(default_host_id)
     payload.pop("platform_id")
 
-    resp = await client.post("/api/devices/verification-jobs", json=payload)
+    resp = await client.post("/api/verification/jobs", json=payload)
 
     assert resp.status_code == 422
 
@@ -114,7 +114,7 @@ async def _wait_for_job(
     node_manager: object = None,
 ) -> dict[str, Any]:
     for _ in range(100):
-        resp = await client.get(f"/api/devices/verification-jobs/{job_id}")
+        resp = await client.get(f"/api/verification/jobs/{job_id}")
         assert resp.status_code == 200
         job = resp.json()
         if job["status"] in {"completed", "failed"}:
@@ -305,7 +305,7 @@ async def test_verification_job_success_keeps_verified_node(
         patch.object(ReconcilerAgentService, "stop_node", stop_mock),
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
-        resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
+        resp = await client.post("/api/verification/jobs", json=device_payload(default_host_id))
         assert resp.status_code == 202
         assert resp.json()["current_stage"] is None
         assert resp.json()["current_stage_status"] is None
@@ -349,7 +349,7 @@ async def test_create_verification_refreshes_retained_temporary_node_with_saved_
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
-        resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
+        resp = await client.post("/api/verification/jobs", json=device_payload(default_host_id))
         assert resp.status_code == 202
         job_id = resp.json()["job_id"]
         job = await _wait_for_job(client, job_id, session_factory=session_factory)
@@ -390,7 +390,7 @@ async def test_retain_verified_node_acquires_row_lock(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
         patch("app.verification.services.execution.device_locking.lock_device", spy),
     ):
-        resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
+        resp = await client.post("/api/verification/jobs", json=device_payload(default_host_id))
         assert resp.status_code == 202
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
@@ -410,7 +410,7 @@ async def test_create_verification_marks_cleanup_failed_when_restart_intent_rais
         _patch_running_node(active_connection_target=DEVICE_PAYLOAD["identity_value"]),
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
-        resp = await client.post("/api/devices/verification-jobs", json=device_payload(default_host_id))
+        resp = await client.post("/api/verification/jobs", json=device_payload(default_host_id))
         assert resp.status_code == 202
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
@@ -441,7 +441,7 @@ async def test_avd_verification_uses_live_serial_but_saves_stable_avd_identity(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=health_http_client) as client_factory,
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(
                 default_host_id,
                 identity_value="avd:Pixel_8_API_35",
@@ -482,7 +482,7 @@ async def test_avd_verification_probe_uses_node_resolved_serial_when_already_run
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=health_http_client),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(
                 default_host_id,
                 identity_value="avd:Pixel_8_API_35",
@@ -528,7 +528,7 @@ async def test_avd_verification_preserves_explicit_virtual_lane_after_normalize(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=http_client),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(
                 default_host_id,
                 identity_value="avd:Pixel_8_API_35",
@@ -573,7 +573,7 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         first_resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(
                 default_host_id,
                 identity_value="avd:Pixel_8_API_35",
@@ -583,7 +583,7 @@ async def test_avd_verification_allows_same_avd_name_on_different_hosts(
             ),
         )
         second_resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(
                 other_host_id,
                 identity_value="avd:Pixel_8_API_35",
@@ -613,7 +613,7 @@ async def test_verification_rejects_virtual_connection_type_for_real_device(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
 
     resp = await client.post(
-        "/api/devices/verification-jobs",
+        "/api/verification/jobs",
         json=device_payload(
             default_host_id,
             identity_value="verify-virtual-real-device",
@@ -651,7 +651,7 @@ async def test_verification_job_health_failure_blocks_save(
 
     with patch("app.verification.services.runner.httpx.AsyncClient", return_value=mock_http_client):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-health"),
         )
         assert resp.status_code == 202
@@ -677,7 +677,7 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-probe-fail"),
         )
         job = await _wait_for_job(
@@ -713,7 +713,7 @@ async def test_verification_job_duplicate_identity_is_reported_during_validation
         new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-dup"),
         )
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
@@ -754,7 +754,7 @@ async def test_verification_rejects_global_scoped_duplicate_identity_across_host
         new=AsyncMock(side_effect=AssertionError("duplicate stable identities must not call the agent")),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json={
                 "host_id": other_host_id,
                 "identity_value": "ios-udid-dup-001",
@@ -788,7 +788,7 @@ async def test_verification_with_host_still_reports_node_start_failures(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-node-fail"),
         )
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
@@ -814,7 +814,7 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
         patch.object(VerificationExecutionService, "run_device_health", new_callable=AsyncMock, return_value=None),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-node-unreachable"),
         )
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
@@ -864,7 +864,7 @@ async def test_existing_device_verification_marks_device_verified(
         ),
     ):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={"host_id": default_host_id},
         )
         assert resp.status_code == 202
@@ -916,7 +916,7 @@ async def test_existing_running_device_verification_can_enter_verifying(
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
     ):
-        resp = await client.post(f"/api/devices/{device.id}/verification-jobs", json={"host_id": default_host_id})
+        resp = await client.post(f"/api/verification/devices/{device.id}/jobs", json={"host_id": default_host_id})
         assert resp.status_code == 202
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
@@ -953,7 +953,7 @@ async def test_update_verification_probe_failure_stops_persisted_node(
         ),
     ):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={
                 "host_id": default_host_id,
                 "name": "Should Not Persist",
@@ -1008,7 +1008,7 @@ async def test_existing_device_verification_requires_missing_setup_fields(
 
     with patch("app.verification.services.preparation.normalize_pack_device", new=AsyncMock(return_value=None)):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={"host_id": default_host_id},
         )
         assert resp.status_code == 202
@@ -1053,7 +1053,7 @@ async def test_existing_device_verification_can_replace_device_config(
         ),
     ):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={
                 "host_id": default_host_id,
                 "device_config": {"new": True},
@@ -1108,7 +1108,7 @@ async def test_existing_device_verification_config_replace_writes_verbatim(
         ),
     ):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={
                 "host_id": default_host_id,
                 "device_config": {"roku_password": "rotated-secret", "label": "living room"},
@@ -1217,7 +1217,7 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         ),
     ):
         resp = await client.post(
-            f"/api/devices/{device.id}/verification-jobs",
+            f"/api/verification/devices/{device.id}/jobs",
             json={
                 "host_id": default_host_id,
                 "device_config": {"newCommandTimeout": 120},
@@ -1259,7 +1259,7 @@ async def test_android_network_verification_resolves_stable_identity_before_save
         patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json={
                 "host_id": default_host_id,
                 "name": "Network Pixel",
@@ -1311,7 +1311,7 @@ async def test_roku_verification_resolves_identity_from_ip_before_save(
         patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json={
                 "host_id": default_host_id,
                 "name": "Living Room Roku",
@@ -1349,7 +1349,7 @@ async def test_android_network_verification_fails_when_stable_identity_cannot_be
 
     with patch("app.verification.services.runner.httpx.AsyncClient", return_value=http_client):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json={
                 "host_id": default_host_id,
                 "name": "Broken Network Pixel",
@@ -1381,7 +1381,7 @@ async def test_android_network_verification_fails_when_resolution_lacks_identity
 
     with patch("app.verification.services.runner.httpx.AsyncClient", return_value=http_client):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json={
                 "host_id": default_host_id,
                 "name": "Broken Fire TV",
@@ -1418,7 +1418,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
         patch("app.verification.services.runner.httpx.AsyncClient", return_value=healthy_http_client),
     ):
         resp = await client.post(
-            "/api/devices/verification-jobs",
+            "/api/verification/jobs",
             json=device_payload(default_host_id, identity_value="verify-stale"),
         )
         assert resp.status_code == 202
@@ -1520,7 +1520,7 @@ async def test_verification_rejects_disabled_pack(client: AsyncClient, db_sessio
         **DEVICE_PAYLOAD,
         "host_id": str(db_host.id),
     }
-    resp = await client.post("/api/devices/verification-jobs", json=payload)
+    resp = await client.post("/api/verification/jobs", json=payload)
     assert resp.status_code == 422
     body = resp.json()
     assert body["error"]["details"]["code"] == "pack_disabled"

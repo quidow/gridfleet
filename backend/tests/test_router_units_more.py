@@ -42,7 +42,6 @@ from app.devices.routers import (
 from app.devices.routers import (
     test_data as devices_test_data,
 )
-from app.devices.routers import verification as devices_verification_router
 from app.devices.schemas.device import (
     BulkMaintenanceEnter,
     BulkTagsUpdate,
@@ -84,6 +83,7 @@ from app.sessions import router as sessions
 from app.settings import router as settings_router
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
+from app.verification import router as devices_verification_router
 from app.webhooks import router as webhooks
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader

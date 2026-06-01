@@ -24,7 +24,7 @@ from app.verification.services.job_state import public_snapshot
 
 DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
 
-router = APIRouter(responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
+router = APIRouter(prefix="/api/verification", tags=["verification"], responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
 
 
 async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
@@ -37,7 +37,7 @@ async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
             _ = await asyncio.gather(get_task, return_exceptions=True)
 
 
-@router.post("/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)
+@router.post("/jobs", response_model=DeviceVerificationJobRead, status_code=202)
 async def create_device_verification_job(
     data: DeviceVerificationCreate,
     db: DbDep,
@@ -50,7 +50,7 @@ async def create_device_verification_job(
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
-@router.post("/{device_id}/verification-jobs", response_model=DeviceVerificationJobRead, status_code=202)
+@router.post("/devices/{device_id}/jobs", response_model=DeviceVerificationJobRead, status_code=202)
 async def create_existing_device_verification_job(
     device_id: uuid.UUID,
     data: DeviceVerificationUpdate,
@@ -69,7 +69,7 @@ async def create_existing_device_verification_job(
     )
 
 
-@router.get("/verification-jobs/{job_id}", response_model=DeviceVerificationJobRead)
+@router.get("/jobs/{job_id}", response_model=DeviceVerificationJobRead)
 async def get_device_verification_job(
     job_id: str, db: DbDep, verification_services: VerificationServicesDep
 ) -> dict[str, Any]:
@@ -80,7 +80,7 @@ async def get_device_verification_job(
     return job
 
 
-@router.get("/verification-jobs/{job_id}/events")
+@router.get("/jobs/{job_id}/events")
 async def stream_device_verification_job_events(
     job_id: str,
     request: Request,

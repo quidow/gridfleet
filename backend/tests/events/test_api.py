@@ -11,9 +11,9 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
-from app.devices.routers.verification import stream_device_verification_job_events
 from app.events.router import event_stream
 from app.events.services_container import EventServices
+from app.verification.router import stream_device_verification_job_events
 from app.verification.services.job_state import new_job
 from app.verification.services.service import VerificationService
 from tests.helpers import reset_event_bus, store_verification_job_for_test
