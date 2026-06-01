@@ -423,8 +423,11 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
-                        publisher=test_event_bus, reservation=RunReservationService()
+                        publisher=test_event_bus,
+                        reservation=RunReservationService(),
+                        incidents=LifecycleIncidentService(),
                     ),
+                    incidents=LifecycleIncidentService(),
                     viability=AsyncMock(),
                     node_manager=AsyncMock(),
                 ),
@@ -480,7 +483,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
+            ),
+            incidents=LifecycleIncidentService(),
             viability=_viability_svc,
             node_manager=AsyncMock(),
         )
@@ -511,7 +519,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
-            actions=LifecyclePolicyActionsService(publisher=test_event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
+            ),
+            incidents=LifecycleIncidentService(),
             viability=Mock(),
             node_manager=AsyncMock(),
         )
@@ -534,7 +547,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(settings=settings_service, publisher=test_event_bus),
             lifecycle_actions=LifecyclePolicyActionsService(
-                publisher=test_event_bus, reservation=RunReservationService()
+                publisher=test_event_bus,
+                reservation=RunReservationService(),
+                incidents=LifecycleIncidentService(),
             ),
             reservation=RunReservationService(),
             health=DeviceHealthService(publisher=test_event_bus),

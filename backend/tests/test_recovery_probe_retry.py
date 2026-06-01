@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -23,7 +24,10 @@ def _make_svc(viability: object) -> object:
     return LifecyclePolicyService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=viability,  # type: ignore[arg-type]
         node_manager=AsyncMock(),
     )
@@ -179,7 +183,10 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     svc = LifecyclePolicyService(
         publisher=publisher,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=publisher, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=publisher, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )

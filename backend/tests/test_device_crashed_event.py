@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.events import queue_device_crashed_event
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -83,7 +84,9 @@ async def test_handle_node_crash_queues_device_crashed(
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
+    await LifecyclePolicyActionsService(
+        publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+    ).handle_node_crash(
         db_session,
         locked,
         source="connectivity_lost",
@@ -117,7 +120,9 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
 
-    await LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()).handle_node_crash(
+    await LifecyclePolicyActionsService(
+        publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+    ).handle_node_crash(
         db_session,
         locked,
         source="session_viability",

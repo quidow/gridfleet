@@ -162,7 +162,9 @@ def compose_app(
     device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
     incidents_svc = LifecycleIncidentService()
-    lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
+    lifecycle_actions_svc = LifecyclePolicyActionsService(
+        publisher=bus, reservation=reservation_svc, incidents=incidents_svc
+    )
     device_health_svc = DeviceHealthService(publisher=bus)
     viability_svc = SessionViabilityService(
         publisher=bus,
@@ -177,6 +179,7 @@ def compose_app(
         publisher=bus,
         settings=settings_svc,
         actions=lifecycle_actions_svc,
+        incidents=incidents_svc,
         viability=viability_svc,
         node_manager=reconciler_agent_svc,
     )

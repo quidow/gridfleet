@@ -21,6 +21,7 @@ from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -93,7 +94,10 @@ async def test_health_failure_intent_payload_shape(
     _svc = LifecyclePolicyService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )
@@ -318,7 +322,10 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
         recovered = await LifecyclePolicyService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+            actions=LifecyclePolicyActionsService(
+                publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            ),
+            incidents=LifecycleIncidentService(),
             viability=viability,
             node_manager=AsyncMock(),
         ).attempt_auto_recovery(

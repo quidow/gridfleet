@@ -9,12 +9,15 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 
-_actions = LifecyclePolicyActionsService(publisher=Mock(), reservation=RunReservationService())
+_actions = LifecyclePolicyActionsService(
+    publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+)
 
 
 def _make_device(

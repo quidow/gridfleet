@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.grid.service import GridService
@@ -84,7 +85,10 @@ async def test_force_release_clears_stop_pending(
     real_deferred_stop = LifecyclePolicyService(
         publisher=event_bus,
         settings=_settings,
-        actions=LifecyclePolicyActionsService(publisher=event_bus, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )

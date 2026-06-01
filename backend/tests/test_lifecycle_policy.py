@@ -23,6 +23,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import DeferredStopOutcome, LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.lifecycle_policy_summary import (
@@ -55,7 +56,10 @@ def _make_svc(
     return LifecyclePolicyService(
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
-        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),  # type: ignore[arg-type]
+        actions=LifecyclePolicyActionsService(
+            publisher=pub, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),  # type: ignore[arg-type]
+        incidents=LifecycleIncidentService(),
         viability=via,  # type: ignore[arg-type]
         node_manager=nm,  # type: ignore[arg-type]
     )
@@ -1668,7 +1672,7 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         lifecycle_policy_module, "write_state", lambda target, state: setattr(target, "lifecycle_policy_state", state)
     )
     monkeypatch.setattr(
-        lifecycle_policy_module.lifecycle_incident_service,
+        LifecycleIncidentService,
         "record_lifecycle_incident",
         AsyncMock(),
     )
@@ -1741,10 +1745,11 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     )
     monkeypatch.setattr(lifecycle_policy_module, "loaded_node", lambda _device: None)
     monkeypatch.setattr(lifecycle_policy_module, "is_ready_for_use_async", AsyncMock(return_value=True))
+    mock_record_incident = AsyncMock()
     monkeypatch.setattr(
-        lifecycle_policy_module.lifecycle_incident_service,
+        LifecycleIncidentService,
         "record_lifecycle_incident",
-        AsyncMock(),
+        mock_record_incident,
     )
 
     assert (
@@ -1759,7 +1764,7 @@ async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
 
     assert device.state["last_action"] == "recovery_failed"
     assert device.state["recovery_suppressed_reason"] == "Automatic restart failed"
-    assert lifecycle_policy_module.lifecycle_incident_service.record_lifecycle_incident.await_count == 2
+    assert mock_record_incident.await_count == 2
     db.commit.assert_awaited()
 
 
@@ -1820,7 +1825,7 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     # mark_dirty_and_reconcile is called instead.
     mark_dirty2 = AsyncMock()
     monkeypatch.setattr(lifecycle_policy_module.IntentService, "mark_dirty_and_reconcile", mark_dirty2)
-    monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
+    monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", AsyncMock())
     probe_order: list[str] = []
 
     async def probe_after_wait(*_args: object, **_kwargs: object) -> dict[str, str]:

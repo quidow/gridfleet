@@ -20,6 +20,7 @@ from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventT
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host, HostStatus
@@ -36,7 +37,10 @@ def _make_real_recovery_control(publisher: object = None) -> LifecyclePolicyServ
     return LifecyclePolicyService(
         publisher=pub,
         settings=FakeSettingsReader({}),
-        actions=LifecyclePolicyActionsService(publisher=pub, reservation=RunReservationService()),
+        actions=LifecyclePolicyActionsService(
+            publisher=pub, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        ),
+        incidents=LifecycleIncidentService(),
         viability=Mock(),
         node_manager=AsyncMock(),
     )

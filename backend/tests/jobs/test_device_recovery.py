@@ -14,6 +14,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -252,7 +253,10 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 lifecycle_policy=LifecyclePolicyService(
                     publisher=AsyncMock(),
                     settings=settings_service,
-                    actions=LifecyclePolicyActionsService(publisher=AsyncMock(), reservation=RunReservationService()),
+                    actions=LifecyclePolicyActionsService(
+                        publisher=AsyncMock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                    ),
+                    incidents=LifecycleIncidentService(),
                     viability=lc_viability,
                     node_manager=AsyncMock(),
                 ),
