@@ -46,7 +46,6 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     os_version: '15',
     host_id: 'host-1',
     operational_state: 'available',
-    hold: null,
     tags: null,
     device_type: 'real_device',
     connection_type: 'usb',

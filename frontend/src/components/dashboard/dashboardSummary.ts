@@ -66,6 +66,9 @@ interface GroupedLifecycleIncident {
 function countByAvailability(devices: DeviceRead[], status: DeviceChipStatus) {
   return devices.filter((device) => {
     const chipStatus = deviceChipStatus(device);
+    // Reserved devices are excluded from the 'available' bucket to mirror the
+    // backend status=available filter (active reservations are listed separately).
+    if (status === 'available') return chipStatus === 'available' && !device.is_reserved;
     return status === 'busy' ? chipStatus === 'busy' || chipStatus === 'verifying' : chipStatus === status;
   }).length;
 }
@@ -92,7 +95,7 @@ export function deriveDashboardFleetSummary(devices: DeviceRead[] = []): Dashboa
     busy: countByAvailability(devices, 'busy'),
     offline: countByAvailability(devices, 'offline'),
     maintenance: countByAvailability(devices, 'maintenance'),
-    reserved: countByAvailability(devices, 'reserved'),
+    reserved: devices.filter((device) => device.is_reserved).length,
     needsAttention,
     hardwareWarning,
     hardwareCritical,

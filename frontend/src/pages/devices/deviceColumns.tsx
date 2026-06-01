@@ -25,7 +25,6 @@ function availabilityTone(status: DeviceChipStatus): BadgeTone {
     case 'verifying': return 'warning';
     case 'offline': return 'critical';
     case 'maintenance': return 'neutral';
-    case 'reserved': return 'info';
   }
 }
 
@@ -137,7 +136,7 @@ export function buildDeviceMenuItems(
 ): RowActionItem[] {
   const rowBusy = pendingAction !== null;
   return [
-    device.hold === 'maintenance'
+    device.operational_state === 'maintenance'
       ? {
           key: 'exit-maintenance',
           label: pendingAction === 'exiting-maintenance' ? 'Exiting Maintenance...' : 'Exit Maintenance',
@@ -158,13 +157,13 @@ export function buildDeviceMenuItems(
       icon: <Play size={15} />,
       onSelect: () => onAction({ type: 'start-node', deviceId: device.id }),
       disabled:
-        rowBusy || !!device.reservation || device.hold === 'maintenance' ||
+        rowBusy || !!device.reservation || device.operational_state === 'maintenance' ||
         device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
       title: isEmulatorStopped(device.emulator_state)
         ? 'Emulator/simulator is not running'
         : device.reservation
           ? `Reserved by ${device.reservation.run_name}`
-          : device.hold === 'maintenance'
+          : device.operational_state === 'maintenance'
             ? 'Disabled during maintenance'
             : device.readiness_state !== 'verified'
               ? 'Complete setup and verification first'
@@ -188,13 +187,13 @@ export function buildDeviceMenuItems(
       icon: <RefreshCw size={15} />,
       onSelect: () => onAction({ type: 'restart-node', deviceId: device.id }),
       disabled:
-        rowBusy || !!device.reservation || device.hold === 'maintenance' ||
+        rowBusy || !!device.reservation || device.operational_state === 'maintenance' ||
         device.readiness_state !== 'verified' || isEmulatorStopped(device.emulator_state),
       title: isEmulatorStopped(device.emulator_state)
         ? 'Emulator/simulator is not running'
         : device.reservation
           ? `Reserved by ${device.reservation.run_name}`
-          : device.hold === 'maintenance'
+          : device.operational_state === 'maintenance'
             ? 'Disabled during maintenance'
             : device.readiness_state !== 'verified'
               ? 'Complete setup and verification first'

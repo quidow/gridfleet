@@ -14,7 +14,7 @@ const device = {
   name: 'Roku',
   os_version: '12',
   host_id: 'host-1',
-  operational_state: 'available', hold: null,
+  operational_state: 'available',
   needs_attention: false,
   tags: {},
   manufacturer: 'Roku',

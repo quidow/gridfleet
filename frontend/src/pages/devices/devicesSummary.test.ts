@@ -22,7 +22,7 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     model: null,
     os_version: '14',
     host_id: 'host-1',
-    operational_state: 'available', hold: null,
+    operational_state: 'available',
     needs_attention: false,
     tags: null,
     device_type: 'real_device',
@@ -60,12 +60,12 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
 describe('devicesSummary', () => {
   it('counts availability and attention totals', () => {
     const stats = deriveDevicesSummaryStats([
-      makeDevice({ id: 'available', operational_state: 'available', hold: null }),
-      makeDevice({ id: 'busy', operational_state: 'busy', hold: null }),
-      makeDevice({ id: 'verifying', operational_state: 'verifying', hold: null }),
-      makeDevice({ id: 'reserved', operational_state: 'available', hold: 'reserved' }),
-      makeDevice({ id: 'offline', operational_state: 'offline', hold: null }),
-      makeDevice({ id: 'maintenance', operational_state: 'available', hold: 'maintenance' }),
+      makeDevice({ id: 'available', operational_state: 'available' }),
+      makeDevice({ id: 'busy', operational_state: 'busy' }),
+      makeDevice({ id: 'verifying', operational_state: 'verifying' }),
+      makeDevice({ id: 'reserved', operational_state: 'available', is_reserved: true }),
+      makeDevice({ id: 'offline', operational_state: 'offline' }),
+      makeDevice({ id: 'maintenance', operational_state: 'maintenance' }),
       makeDevice({ id: 'attn', needs_attention: true }),
     ]);
 
@@ -111,16 +111,16 @@ describe('devicesSummary', () => {
 
 function fleet(): DeviceRead[] {
   const base = {
-    operational_state: 'available', hold: null,
+    operational_state: 'available',
     needs_attention: false,
     hardware_health_status: 'healthy',
     hardware_telemetry_state: 'fresh',
   } as unknown as DeviceRead;
   return [
     { ...base } as DeviceRead,
-    { ...base, operational_state: 'busy', hold: null } as DeviceRead,
-    { ...base, operational_state: 'offline', hold: null, needs_attention: true } as DeviceRead,
-    { ...base, operational_state: 'offline', hold: null, needs_attention: true } as DeviceRead,
+    { ...base, operational_state: 'busy' } as DeviceRead,
+    { ...base, operational_state: 'offline', needs_attention: true } as DeviceRead,
+    { ...base, operational_state: 'offline', needs_attention: true } as DeviceRead,
   ];
 }
 

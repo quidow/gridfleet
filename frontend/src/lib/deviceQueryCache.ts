@@ -81,10 +81,12 @@ export function invalidatePatchedDeviceQueries(
   qc.invalidateQueries({ queryKey: ['device', deviceId] });
 }
 
-export function updateHold(hold: DeviceRead['hold']): DeviceCacheUpdater {
+export function updateOperationalState(
+  operational_state: DeviceRead['operational_state'],
+): DeviceCacheUpdater {
   return <T extends DeviceRead>(device: T): T => ({
     ...device,
-    hold,
+    operational_state,
   });
 }
 

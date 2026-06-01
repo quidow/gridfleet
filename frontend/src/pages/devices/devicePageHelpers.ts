@@ -10,16 +10,16 @@ import type {
   ConnectionType,
   DevicePatch,
   DeviceRead,
-  DeviceChipStatus,
+  DeviceFilterStatus,
   DeviceType,
   HardwareHealthStatus,
   HardwareTelemetryState,
   DeviceVerificationUpdate,
   PlatformDescriptor,
 } from '../../types';
-import { DEVICE_STATUSES } from '../../lib/deviceState';
+import { DEVICE_FILTER_STATUSES } from '../../lib/deviceState';
 
-export const CHIP_STATUSES: DeviceChipStatus[] = DEVICE_STATUSES;
+export const CHIP_STATUSES: DeviceFilterStatus[] = DEVICE_FILTER_STATUSES;
 export const DEVICE_TYPES: DeviceType[] = DEVICE_TYPE_OPTIONS;
 export const CONNECTION_TYPES: ConnectionType[] = CONNECTION_TYPE_OPTIONS;
 export const HARDWARE_HEALTH_STATUSES: HardwareHealthStatus[] = ['unknown', 'healthy', 'warning', 'critical'];

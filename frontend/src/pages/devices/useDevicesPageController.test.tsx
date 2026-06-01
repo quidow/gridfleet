@@ -15,7 +15,7 @@ vi.mock('../../context/EventStreamContext', () => ({
 function makeDevice(overrides: Partial<DeviceRead>): DeviceRead {
   return {
     id: overrides.id ?? `d-${Math.random()}`,
-    operational_state: 'available', hold: null,
+    operational_state: 'available',
     needs_attention: false,
     hardware_health_status: 'healthy',
     hardware_telemetry_state: 'fresh',
@@ -47,9 +47,9 @@ describe('useDevicesPageController', () => {
 
   it('summary stats reflect the full triage base, not the paginated page', () => {
     const triage: DeviceRead[] = [
-      makeDevice({ id: 'a', operational_state: 'available', hold: null }),
-      makeDevice({ id: 'b', operational_state: 'busy', hold: null }),
-      makeDevice({ id: 'c', operational_state: 'offline', hold: null, needs_attention: true }),
+      makeDevice({ id: 'a', operational_state: 'available' }),
+      makeDevice({ id: 'b', operational_state: 'busy' }),
+      makeDevice({ id: 'c', operational_state: 'offline', needs_attention: true }),
     ];
     const page = [triage[0]];
 

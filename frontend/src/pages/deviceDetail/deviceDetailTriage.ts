@@ -124,7 +124,7 @@ export function deriveDeviceDetailTriage(
   }
 
   if (!node || node.effective_state !== 'running') {
-    const inMaintenance = device.hold === 'maintenance';
+    const inMaintenance = device.operational_state === 'maintenance';
     const connectivityFailed = device.health_summary.connectivity_status === 'failed';
 
     let nodeAction: DeviceDetailTriageAction;
@@ -214,9 +214,9 @@ export function deriveDeviceDetailTriage(
     };
   }
 
-  if (device.hold === 'maintenance') {
-    const mr = device.lifecycle_policy_summary.maintenance_reason;
-    const draining = device.operational_state === 'busy';
+  const mr = device.lifecycle_policy_summary.maintenance_reason;
+  const draining = device.operational_state === 'busy' && !!mr;
+  if (device.operational_state === 'maintenance' || draining) {
     return {
       tone: draining ? 'warn' : 'neutral',
       eyebrow: draining ? 'Draining' : 'Maintenance',

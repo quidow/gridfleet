@@ -1,4 +1,4 @@
-import type { ConnectionType, DeviceChipStatus, DeviceType, SessionStatus } from '../types';
+import type { ConnectionType, DeviceFilterStatus, DeviceType, SessionStatus } from '../types';
 
 /**
  * Resolve a human-readable platform label from the catalog label (preferred),
@@ -39,7 +39,7 @@ function formatIdentifierPart(part: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
-export const DEVICE_STATUS_LABELS: Record<DeviceChipStatus, string> = {
+export const DEVICE_STATUS_LABELS: Record<DeviceFilterStatus, string> = {
   available: 'Available',
   busy: 'Busy',
   offline: 'Offline',

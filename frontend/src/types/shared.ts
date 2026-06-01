@@ -29,6 +29,9 @@ export type DeviceVerificationStageStatus = NonNullable<
 export type SortDirection = 'asc' | 'desc';
 export type CursorDirection = 'older' | 'newer';
 export type DeviceChipStatus = DeviceOperationalState;
+// Device-list status filter. Superset of chip statuses: 'reserved' is a
+// server-side filter (active reservation), not an operational state.
+export type DeviceFilterStatus = NonNullable<Schemas['DeviceGroupFilters']['status']>;
 
 export type PaginatedResponse<T> = {
   items: T[];

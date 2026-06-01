@@ -33,7 +33,7 @@ import type {
   DevicePatch,
   HardwareHealthStatus,
   HardwareTelemetryState,
-  DeviceChipStatus,
+  DeviceFilterStatus,
   DeviceType,
   DeviceVerificationCreate,
   DeviceVerificationUpdate,
@@ -47,14 +47,14 @@ import {
   patchDeviceQueries,
   rollbackOptimisticDeviceQueries,
   updateEmulatorState,
-  updateHold,
+  updateOperationalState,
   updateNodeOperationalState,
 } from '../lib/deviceQueryCache';
 
 export function useDevices(params?: {
   pack_id?: string;
   platform_id?: string;
-  status?: DeviceChipStatus;
+  status?: DeviceFilterStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -75,7 +75,7 @@ export function useDevices(params?: {
 export function useDevicesPaginated(params: {
   pack_id?: string;
   platform_id?: string;
-  status?: DeviceChipStatus;
+  status?: DeviceFilterStatus;
   host_id?: string;
   device_type?: DeviceType;
   connection_type?: ConnectionType;
@@ -253,7 +253,7 @@ export function useEnterDeviceMaintenance() {
   return useMutation({
     mutationKey: ['devices', 'enter-maintenance'],
     mutationFn: ({ id }: { id: string }) => enterDeviceMaintenance(id),
-    onMutate: ({ id }) => patchDeviceQueries(qc, id, updateHold('maintenance')),
+    onMutate: ({ id }) => patchDeviceQueries(qc, id, updateOperationalState('maintenance')),
     onError: (error, { id }, context) => {
       rollbackOptimisticDeviceQueries(qc, context);
       toast.error(getErrorMessage(error, `Failed to enter maintenance for device ${id}`));
@@ -269,9 +269,7 @@ export function useExitDeviceMaintenance() {
   return useMutation({
     mutationKey: ['devices', 'exit-maintenance'],
     mutationFn: (id: string) => exitDeviceMaintenance(id),
-    onMutate: (id) => patchDeviceQueries(qc, id, updateHold(null)),
-    onError: (error, id, context) => {
-      rollbackOptimisticDeviceQueries(qc, context);
+    onError: (error, id) => {
       toast.error(getErrorMessage(error, `Failed to exit maintenance for device ${id}`));
     },
     onSettled: (_data, _error, id) => {
