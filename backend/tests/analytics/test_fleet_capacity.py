@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.fleet_capacity import (
     FleetCapacityService,
@@ -20,7 +20,7 @@ from app.devices.services.fleet_capacity import (
 )
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, create_reservation
 
 
 def test_align_window_to_buckets_pads_partial_bounds() -> None:
@@ -522,7 +522,7 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
         host_id=online_host.id,
         identity_value="fleet-maintenance",
         name="Fleet Maintenance Phone",
-        hold=DeviceHold.maintenance,
+        operational_state=DeviceOperationalState.maintenance,
     )
 
     # Count hosts after all seeds — default_host_id fixture adds one more online host,
@@ -562,3 +562,54 @@ async def test_capacity_timeline_endpoint_validates_date_range(client: AsyncClie
     )
 
     assert response.status_code == 422
+
+
+async def test_count_devices_excludes_reserved_from_available(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with hold=NULL but an active reservation must not appear in devices_available."""
+    reserved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="fleet-reserved-device",
+        name="Reserved Device",
+        operational_state=DeviceOperationalState.available,
+    )
+    await create_reservation(db_session, device_id=reserved.id)
+
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"value": {"ready": True, "nodes": [], "sessionQueueRequests": []}})
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
+    snapshot = await FleetCapacityService(grid=fake_grid).collect_capacity_snapshot_once(
+        db_session,
+        captured_at=datetime(2026, 4, 18, 14, tzinfo=UTC),
+    )
+
+    assert snapshot is not None
+    assert snapshot.devices_available == 0
+
+
+async def test_count_devices_counts_maintenance_by_operational_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with operational_state=maintenance (hold=NULL) must appear in devices_maintenance."""
+    await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="fleet-maintenance-opstate",
+        name="Maintenance OpState Device",
+        operational_state=DeviceOperationalState.maintenance,
+    )
+
+    fake_grid = AsyncMock()
+    fake_grid.get_status = AsyncMock(return_value={"value": {"ready": True, "nodes": [], "sessionQueueRequests": []}})
+    fake_grid.available_node_device_ids = MagicMock(return_value=None)
+    snapshot = await FleetCapacityService(grid=fake_grid).collect_capacity_snapshot_once(
+        db_session,
+        captured_at=datetime(2026, 4, 18, 15, tzinfo=UTC),
+    )
+
+    assert snapshot is not None
+    assert snapshot.devices_maintenance == 1

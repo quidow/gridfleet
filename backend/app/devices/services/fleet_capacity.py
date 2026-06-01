@@ -11,7 +11,8 @@ from app.analytics import schemas as analytics_schemas
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.appium_nodes.models import AppiumNode
 from app.core.observability import get_logger, observe_background_loop
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
+from app.devices.services.reservation_query import active_reservation_exists
 from app.hosts.models import Host, HostStatus
 from app.sessions.filters import exclude_non_test_sessions
 from app.sessions.models import Session, SessionStatus
@@ -168,7 +169,7 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
         .where(
             Device.verified_at.is_not(None),
             Device.operational_state != DeviceOperationalState.offline,
-            Device.hold.is_(None),
+            ~active_reservation_exists(),
             AppiumNode.pid.is_not(None),
             AppiumNode.active_connection_target.is_not(None),
         )
@@ -189,12 +190,12 @@ async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
     stmt = select(
         func.count().label("total"),
         func.count()
-        .filter(and_(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None)))
+        .filter(and_(Device.operational_state == DeviceOperationalState.available, ~active_reservation_exists()))
         .label("available"),
         func.count()
-        .filter(and_(Device.operational_state == DeviceOperationalState.offline, Device.hold.is_(None)))
+        .filter(and_(Device.operational_state == DeviceOperationalState.offline, ~active_reservation_exists()))
         .label("offline"),
-        func.count().filter(Device.hold == DeviceHold.maintenance).label("maintenance"),
+        func.count().filter(Device.operational_state == DeviceOperationalState.maintenance).label("maintenance"),
     ).select_from(Device)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.available or 0), int(row.offline or 0), int(row.maintenance or 0)
