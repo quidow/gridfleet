@@ -483,18 +483,19 @@ async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval
 
 
 # Selenium hub's DefaultSlotMatcher rejects matches when ``alwaysMatch`` carries
-# extension caps that the slot stereotype does not declare (notably
-# ``appium:platformVersion``). Probes don't need the full driver cap set in
-# ``alwaysMatch`` — every relay-managed Appium process is started with the same
-# caps as ``--default-capabilities``, so any session matched to that slot
-# already inherits them. Routing only needs the stereotype-side keys plus the
-# probe markers so ``session_sync`` can filter the probe out.
+# extension caps that the slot stereotype does not declare. The slot stereotype
+# advertises identity via ``appium:gridfleet:deviceId`` (stable, backend-owned)
+# and deliberately omits ``appium:udid`` / ``appium:deviceName`` — those are
+# driver connection details, not routing keys, and for emulators the stored
+# udid (AVD name) never matched the live serial. Probes therefore pin on
+# ``appium:gridfleet:deviceId`` plus the platform and probe markers so
+# ``session_sync`` can filter the probe out. The full driver cap set is not
+# needed in ``alwaysMatch`` — every relay-managed Appium process is started with
+# the same caps as ``--default-capabilities``.
 _PROBE_ALWAYS_MATCH_KEYS = frozenset(
     {
         "platformName",
         "appium:automationName",
-        "appium:udid",
-        "appium:deviceName",
         "appium:gridfleet:deviceId",
         "gridfleet:probeSession",
         "gridfleet:testName",
