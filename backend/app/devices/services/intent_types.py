@@ -56,7 +56,18 @@ class DeviceHoldPrecondition(TypedDict):
     hold: Literal["maintenance", "reserved"]
 
 
-Precondition = RunActivePrecondition | ReservationActivePrecondition | NodeRunningPrecondition | DeviceHoldPrecondition
+class MaintenanceActivePrecondition(TypedDict):
+    kind: Literal["maintenance_active"]
+    device_id: str
+
+
+Precondition = (
+    RunActivePrecondition
+    | ReservationActivePrecondition
+    | NodeRunningPrecondition
+    | DeviceHoldPrecondition
+    | MaintenanceActivePrecondition
+)
 
 
 @dataclass(frozen=True)

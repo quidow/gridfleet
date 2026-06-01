@@ -15,10 +15,6 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state as device_state
 from app.devices.services.intent import IntentService
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.devices.services.state import appium_node_stop_in_flight
 from app.events import queue_event_for_session
 from app.runs import service as run_service
 from app.runs.models import RunState
@@ -34,8 +30,6 @@ if TYPE_CHECKING:
     from app.sessions.protocols import DeviceSessionLifecycle, DeviceStateWriter
 
 ready_operational_state = device_state.ready_operational_state
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
@@ -560,6 +554,7 @@ class SessionCrudService:
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",
+                publisher=self._publisher,
             )
 
             # handle_session_finished re-locks the device row internally via
@@ -616,6 +611,7 @@ class SessionCrudService:
                 device_id=session.device_id,
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",
+                publisher=self._publisher,
             )
 
             locked_device = await device_locking.lock_device(db, session.device_id)
@@ -629,41 +625,14 @@ class SessionCrudService:
             running_result = await db.execute(running_stmt)
             still_running = running_result.scalars().first() is not None
             if not still_running:
-                # Restore from busy via the state machine. The transition is
-                # decided BEFORE firing so the device never passes through a
-                # phantom ``available`` snapshot when a graceful stop is already
-                # in flight: SESSION_ENDED would map busy → available, then a
-                # follow-up AUTO_STOP_EXECUTED would map available → offline,
-                # producing two events back-to-back and an intermediate state
-                # that was never reality. Branch up front:
-                #
-                #   * stop-in-flight (relay deregistering, graceful health-failure
-                #     deferral): single AUTO_STOP_EXECUTED, busy → offline.
-                #   * healthy session-end: single SESSION_ENDED, busy → available.
-                #
-                # Transient signals (stale ``health_running``, in-flight node
-                # restart that has NOT been promoted to ``stop_pending``) must
-                # not flap the device offline at session-end; the connectivity
-                # and node_health loops are authoritative for those offline
-                # transitions and emit their own reasons.
-                #
-                # Lifecycle cleanup runs for any non-busy state too, so capture
-                # ``deferred_stop_target`` outside the busy branch.
+                # Mark the device dirty so the reconciler derives the correct
+                # operational state (available or offline) from durable facts.
+                # The old state-machine branch (SESSION_ENDED / AUTO_STOP_EXECUTED)
+                # is replaced by reconciler-authoritative derivation.
                 if locked_device.operational_state == DeviceOperationalState.busy:
-                    if appium_node_stop_in_flight(locked_device):
-                        await _MACHINE.transition(
-                            locked_device,
-                            TransitionEvent.AUTO_STOP_EXECUTED,
-                            reason="Session ended with pending node stop",
-                            publisher=self._publisher,
-                        )
-                    else:
-                        await _MACHINE.transition(
-                            locked_device,
-                            TransitionEvent.SESSION_ENDED,
-                            reason="Session ended",
-                            publisher=self._publisher,
-                        )
+                    await IntentService(db).mark_dirty_and_reconcile(
+                        locked_device.id, reason="Session ended", publisher=self._publisher
+                    )
                 deferred_stop_target = locked_device
 
         if should_publish_ended:

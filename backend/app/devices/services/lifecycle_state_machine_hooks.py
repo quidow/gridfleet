@@ -12,9 +12,9 @@ if TYPE_CHECKING:
     from app.devices.services.lifecycle_state_machine_types import DeviceStateModel
 
 
-# Map state-machine transitions to event-log row types. Transitions without a
-# mapping (DEVICE_DISCOVERED, AUTO_STOP_DEFERRED, PREPARATION_FAILED, CLOUD_ESCROW)
-# do not record a DeviceEvent row.
+# Map state-machine transitions to event-log row types. Verification transitions
+# (VERIFICATION_STARTED, VERIFICATION_PASSED, VERIFICATION_FAILED) have no mapping
+# and do not record a DeviceEvent row.
 _EVENT_TYPE_MAP: dict[TransitionEvent, DeviceEventType] = {
     TransitionEvent.MAINTENANCE_ENTERED: DeviceEventType.maintenance_entered,
     TransitionEvent.MAINTENANCE_EXITED: DeviceEventType.maintenance_exited,

@@ -483,7 +483,7 @@ async def test_dirty_generation_not_deleted_when_incremented_during_reconcile(
     db_session.add(dirty)
     await db_session.commit()
 
-    async def fake_reconcile(db: AsyncSession, device_id: object) -> None:
+    async def fake_reconcile(db: AsyncSession, device_id: object, *, publisher: object = None) -> None:
         row = await db.get(DeviceIntentDirty, device_id)
         assert row is not None
         row.generation += 1
@@ -514,7 +514,7 @@ async def test_full_scan_reconciles_each_intent_device(
     reconciled: list[object] = []
     deliver = AsyncMock()
 
-    async def fake_reconcile(_db: AsyncSession, device_id: object) -> None:
+    async def fake_reconcile(_db: AsyncSession, device_id: object, *, publisher: object = None) -> None:
         reconciled.append(device_id)
 
     monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)

@@ -1897,7 +1897,9 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
 
 async def test_nodes_router_validation_branches() -> None:
     device_id = uuid.uuid4()
-    device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
+    device = SimpleNamespace(
+        id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4(), lifecycle_policy_state=None
+    )
 
     with patch(
         "app.appium_nodes.routers.nodes.run_service.get_device_reservation",
@@ -2003,7 +2005,7 @@ async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     assert exc.value.status_code == 400
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
-    running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node)
+    running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, lifecycle_policy_state=None)
     restarted = SimpleNamespace(id=uuid.uuid4())
     fake_db = SimpleNamespace(refresh=AsyncMock())
     mock_ra_restart = AsyncMock()
@@ -2038,7 +2040,9 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
     device_id = uuid.uuid4()
     verified = SimpleNamespace(readiness_state="verified", missing_setup_fields=[])
 
-    device = SimpleNamespace(id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4())
+    device = SimpleNamespace(
+        id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4(), lifecycle_policy_state=None
+    )
     with (
         patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
@@ -2072,7 +2076,9 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
             )
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
-    running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4())
+    running_device = SimpleNamespace(
+        id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4(), lifecycle_policy_state=None
+    )
     stopped_node = SimpleNamespace(desired_state=AppiumDesiredState.stopped)
     ra_stop = AsyncMock()
     ra_stop.stop_node = AsyncMock(return_value=stopped_node)
@@ -2109,6 +2115,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         hold=None,
         appium_node=SimpleNamespace(desired_state=AppiumDesiredState.stopped),
         host_id=uuid.uuid4(),
+        lifecycle_policy_state=None,
     )
     ra_fallback = AsyncMock()
     ra_fallback.start_node = AsyncMock(return_value=fallback_started)

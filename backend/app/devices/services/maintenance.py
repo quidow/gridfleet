@@ -1,5 +1,7 @@
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,26 +10,26 @@ from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
     NODE_PROCESS,
+    PRIORITY_AUTO_RECOVERY,
     PRIORITY_MAINTENANCE,
     RECOVERY,
-    DeviceHoldPrecondition,
     IntentRegistration,
+    MaintenanceActivePrecondition,
+    verification_intent_source,
 )
 from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_maintenance_reason,
     clear_maintenance_recovery_suppression,
     set_maintenance_reason,
+    state,
 )
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.devices.services.state import legacy_label_for_audit
-from app.events.protocols import EventPublisher
+
+if TYPE_CHECKING:
+    from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 def _maintenance_sources(device_id: uuid.UUID) -> list[str]:
@@ -39,10 +41,9 @@ def _maintenance_sources(device_id: uuid.UUID) -> list[str]:
 
 
 def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
-    precondition: DeviceHoldPrecondition = {
-        "kind": "device_hold",
+    precondition: MaintenanceActivePrecondition = {
+        "kind": "maintenance_active",
         "device_id": str(device_id),
-        "hold": "maintenance",
     }
     return [
         IntentRegistration(
@@ -77,7 +78,11 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class MaintenanceService:
-    def __init__(self, *, publisher: EventPublisher) -> None:
+    def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher | None" = None) -> None:
+        self._settings = settings
+        # Publisher is needed so the reconciler's derived hold change emits
+        # device.hold_changed (SSE/webhooks) on maintenance enter/exit. Optional
+        # for unit tests that do not assert on emitted events.
         self._publisher = publisher
 
     async def enter_maintenance(
@@ -92,19 +97,13 @@ class MaintenanceService:
         if not allow_reserved and device.hold == DeviceHold.reserved:
             raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
-        await _MACHINE.transition(
-            device,
-            TransitionEvent.MAINTENANCE_ENTERED,
-            reason=maintenance_reason,
-            publisher=self._publisher,
-        )
-
         set_maintenance_reason(device, maintenance_reason)
 
         await IntentService(db).register_intents_and_reconcile(
             device_id=device.id,
             intents=_maintenance_intents(device.id),
             reason=maintenance_reason,
+            publisher=self._publisher,
         )
 
         if commit:
@@ -113,15 +112,9 @@ class MaintenanceService:
         return device
 
     async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
-        if device.hold != DeviceHold.maintenance:
-            raise ValueError(f"Device is not in maintenance (status: {legacy_label_for_audit(device)})")
+        if state(device).get("maintenance_reason") is None:
+            raise ValueError(f"Device is not in maintenance (hold: {device.hold!r})")
 
-        await _MACHINE.transition(
-            device,
-            TransitionEvent.MAINTENANCE_EXITED,
-            reason="Operator exited maintenance",
-            publisher=self._publisher,
-        )
         clear_maintenance_recovery_suppression(device)
         clear_maintenance_reason(device)
         # Maintenance exit is a sanctioned "give it another chance" signal —
@@ -136,10 +129,32 @@ class MaintenanceService:
             source="exit_maintenance",
         )
 
+        # §14.4a: register a verification intent so the device starts re-verifying
+        # immediately rather than waiting for the next device_connectivity_loop tick.
+        # expires_at mirrors _register_verification_node_intent in verification_execution.py:
+        # startup_timeout_sec + session_viability_timeout_sec + 60 s safety margin.
+        startup_timeout = int(self._settings.get("appium.startup_timeout_sec"))
+        viability_timeout = int(self._settings.get("general.session_viability_timeout_sec"))
+        verify_intent_deadline = datetime.now(UTC) + timedelta(seconds=startup_timeout + viability_timeout + 60)
+        await IntentService(db).register_intents_and_reconcile(
+            device_id=device.id,
+            intents=[
+                IntentRegistration(
+                    source=verification_intent_source(device.id),
+                    axis=NODE_PROCESS,
+                    payload={"action": "start", "priority": PRIORITY_AUTO_RECOVERY},
+                    expires_at=verify_intent_deadline,
+                )
+            ],
+            reason="Operator exited maintenance",
+            publisher=self._publisher,
+        )
+
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=_maintenance_sources(device.id),
             reason="Operator exited maintenance",
+            publisher=self._publisher,
         )
 
         if commit:

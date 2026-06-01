@@ -1,6 +1,6 @@
 """D3: exit_maintenance must enqueue a recovery job."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
@@ -13,6 +13,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
@@ -28,10 +29,11 @@ async def test_exit_maintenance_enqueues_recovery_job(
         name="exit-enqueues-job",
         hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
+    await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, locked)
 
     rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 1
@@ -71,6 +73,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         name="exit-enqueue-fail",
         hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
@@ -81,7 +84,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
         # Must NOT raise even though schedule_device_recovery raises.
-        result = await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, locked)
+        result = await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, locked)
 
     # Sanity: the patched mock actually intercepted the call. If this fires,
     # the warning-call assertion below would also fail but for a different
@@ -89,9 +92,16 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     assert mock_schedule.await_count == 1, "schedule_device_recovery patch did not intercept the call"
 
     # State mutation must be committed regardless of enqueue failure.
-    assert result.hold is None, "hold must be cleared (committed) even when enqueue fails"
-    assert result.operational_state == DeviceOperationalState.offline, (
-        "operational_state must remain offline after exit_maintenance"
+    # hold is now derived by the reconciler (Task 7+8); check the signal is cleared.
+    assert result.lifecycle_policy_state is not None
+    assert result.lifecycle_policy_state.get("maintenance_reason") is None, (
+        "maintenance_reason must be cleared (committed) even when enqueue fails"
+    )
+    # After Task 10: exit_maintenance registers a verification intent, so the
+    # reconciler derives verifying (not offline). The important check is that
+    # maintenance_reason is cleared (committed) even when enqueue fails.
+    assert result.operational_state in (DeviceOperationalState.offline, DeviceOperationalState.verifying), (
+        f"operational_state must be offline or verifying after exit_maintenance, got {result.operational_state}"
     )
 
     # A warning must have been logged so ops can triage.

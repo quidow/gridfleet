@@ -49,11 +49,8 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.lifecycle_policy_state import (
     state as policy_state,
 )
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import ready_operational_state, set_hold
+from app.devices.services.state import set_hold
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
 from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -67,8 +64,6 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 class LifecyclePolicyService:
@@ -172,7 +167,7 @@ class LifecyclePolicyService:
                 suppression_reason="Device setup or verification is incomplete",
                 run=run,
             )
-        if device.hold == DeviceHold.maintenance:
+        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
@@ -248,6 +243,7 @@ class LifecyclePolicyService:
                         f"health_failure:recovery:{device.id}",
                     ],
                     reason=reason,
+                    publisher=self._publisher,
                 )
 
                 def _node_not_running_precondition() -> NodeRunningPrecondition:
@@ -491,31 +487,9 @@ class LifecyclePolicyService:
                 {"recovered_from": source, "reason": reason},
             )
             if device.operational_state != DeviceOperationalState.available:
-                target = await ready_operational_state(db, device)
-                if device.operational_state == DeviceOperationalState.offline:
-                    if target == DeviceOperationalState.available:
-                        await _MACHINE.transition(
-                            device,
-                            TransitionEvent.CONNECTIVITY_RESTORED,
-                            reason=f"Connectivity restored ({source}): {reason}",
-                            publisher=self._publisher,
-                        )
-                    # else: probe still failing — no state change. The next
-                    # device_connectivity_loop tick will retry recovery.
-                elif (
-                    device.operational_state == DeviceOperationalState.busy and target == DeviceOperationalState.offline
-                ):
-                    # Recovery on a busy device that probe says is unhealthy →
-                    # auto-stop. Hold preserved (reserved devices stay reserved).
-                    await _MACHINE.transition(
-                        device,
-                        TransitionEvent.AUTO_STOP_EXECUTED,
-                        reason=f"Recovery declared device unhealthy ({source}): {reason}",
-                        publisher=self._publisher,
-                    )
-                # else: busy device that probe says is available — extremely rare;
-                # leave state alone, the next device_connectivity_loop tick will
-                # reconcile via session_sync.
+                await IntentService(db).mark_dirty_and_reconcile(
+                    device.id, reason=f"Recovery ({source}): {reason}", publisher=self._publisher
+                )
             await db.commit()
 
         await db.commit()
@@ -574,7 +548,7 @@ class LifecyclePolicyService:
         # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
         write_state(device, current_state)
 
-        if device.hold == DeviceHold.maintenance:
+        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
             await self._actions.record_recovery_suppressed(
                 db,
                 device,
@@ -621,7 +595,7 @@ class LifecyclePolicyService:
         # before the ``policy_state["stop_pending"]`` path below — that path
         # tracks lifecycle-policy-driven deferrals; this one covers
         # intent-driven deferrals registered by any caller.
-        await reconcile_device(db, device.id)
+        await reconcile_device(db, device.id, publisher=self._publisher)
         current_state = policy_state(device)
 
         # Clear any stale "A client session is still running" suppression recorded by

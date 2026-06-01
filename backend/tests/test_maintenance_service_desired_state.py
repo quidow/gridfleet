@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -30,6 +31,9 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True)
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    set_maintenance_reason(device, "Operator entered maintenance")
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,
@@ -48,7 +52,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     from app.devices.services.maintenance import MaintenanceService
 
     monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", AsyncMock())
-    await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
+    await MaintenanceService(settings=FakeSettingsReader({})).exit_maintenance(db_session, device)
 
     events = (
         (
@@ -89,7 +93,7 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
 
     from app.devices.services.maintenance import MaintenanceService
 
-    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, device)
+    await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, device)
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped

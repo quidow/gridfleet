@@ -23,7 +23,7 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.lifecycle_state_machine import DeviceStateMachine
 from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.devices.services.state import ready_operational_state, set_operational_state
+from app.devices.services.review import mark_review_required
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
@@ -423,15 +423,22 @@ async def _register_verification_node_intent(db: AsyncSession, device: Device, *
     )
 
 
-async def _revoke_verification_node_intent(db: AsyncSession, device: Device) -> None:
+async def _revoke_verification_node_intent(
+    db: AsyncSession, device: Device, *, publisher: EventPublisher | None = None
+) -> None:
     """Revoke the standing verification node_process intent. Safe to call even
     if registration never succeeded — ``revoke_intent`` no-ops on missing rows.
     Caller commits.
+
+    The revoke triggers an inline reconcile; pass ``publisher`` on the
+    reconciler-authoritative terminal paths (verification passed / update-mode
+    failed) so the derived operational-state change emits ``operational_state_changed``.
     """
     await IntentService(db).revoke_intents_and_reconcile(
         device_id=device.id,
         sources=[_verification_intent_source(device.id)],
         reason="verification probe completed",
+        publisher=publisher,
     )
 
 
@@ -546,23 +553,15 @@ async def _finalize_success(
             data=data,
         )
 
-    await DeviceStateMachine().transition(
-        locked,
-        TransitionEvent.VERIFICATION_PASSED,
-        reason="verification",
-        publisher=publisher,
-    )
     locked.verified_at = datetime.now(UTC)
-    # Revoke the verification intent only after ``verified_at`` is set so the
-    # reconcile triggered by the revoke sees the device as verified and
-    # injects ``baseline:idle`` instead of computing ``desired_state=stopped``
-    # on an empty node_process intent set. Revoking earlier (e.g. in
-    # ``run_probe``'s finally block) causes a spurious ``available -> offline``
-    # transition right after registration.
-    await _revoke_verification_node_intent(db, locked)
-    next_state = await ready_operational_state(db, locked)
-    if next_state is not locked.operational_state:
-        await set_operational_state(locked, next_state, reason="verification", severity="info", publisher=publisher)
+    # Reconciler-authoritative terminal: no direct DeviceStateMachine push. Set
+    # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
+    # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
+    # via ``publisher``. Setting ``verified_at`` before the revoke is load-bearing: otherwise
+    # the reconcile sees ``verified_at IS NULL``, skips the ``baseline:idle`` injection, and
+    # computes ``desired_state=stopped`` on an empty node_process intent set — a spurious
+    # ``available -> offline`` flap right after registration.
+    await _revoke_verification_node_intent(db, locked, publisher=publisher)
     await viability.record_session_viability_result(
         db,
         locked,
@@ -603,12 +602,17 @@ async def _finalize_failure(
         locked = await device_locking.lock_device(db, context.save_device_id)
     _restore_update_original_fields(locked, original_fields)
     await _stop_verification_node_if_running(job, db, locked, node, node_manager)
-    await _revoke_verification_node_intent(db, locked)
-    await DeviceStateMachine().transition(
+    # Reconciler-authoritative terminal: no direct DeviceStateMachine push. Shelve the device
+    # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
+    # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
+    # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
+    # derived ``offline`` emits.
+    await mark_review_required(
+        db,
         locked,
-        TransitionEvent.VERIFICATION_FAILED,
-        reason="verification",
-        publisher=publisher,
+        reason=f"verification failed: {error}",
+        source="verification",
     )
+    await _revoke_verification_node_intent(db, locked, publisher=publisher)
     await db.commit()
     return VerificationExecutionOutcome(status="failed", error=error, device_id=str(context.save_device_id))

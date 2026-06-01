@@ -19,8 +19,10 @@ from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
+    _PROBE_ALWAYS_MATCH_KEYS,
     SessionViabilityService,
     _extract_session_error,
+    _filter_probe_always_match,
     _format_http_error,
     _parse_timestamp,
     _should_run_scheduled_probe,
@@ -933,15 +935,24 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
     db_session.add_all([device, node])
     await db_session.commit()
 
+    # After Task 10: no SESSION_STARTED/SESSION_ENDED transitions; mark_dirty_and_reconcile
+    # calls reconcile_device which calls lock_device again. Provide extra mocks.
     locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
-    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline, hold=None)
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
-    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
-    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
-    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
+    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
+    # Patch reconcile_device to avoid real DB ops with MagicMock objects.
+    monkeypatch.setattr(
+        session_viability,
+        "IntentService",
+        MagicMock(
+            return_value=MagicMock(
+                mark_dirty_and_reconcile=AsyncMock(),
+                mark_dirty=AsyncMock(),
+            )
+        ),
+    )
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(
@@ -1008,17 +1019,22 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
     await db_session.commit()
 
     locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.offline, hold=None)
-    relocked = MagicMock(id=device.id, operational_state=DeviceOperationalState.busy, hold=None)
     monkeypatch.setattr(session_viability.control_plane_state_store, "try_claim_value", AsyncMock(return_value=True))
     monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
-    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
-    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
-    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
-    set_state = AsyncMock()
-    # Exception-path restore (B2 scope) still calls set_operational_state directly.
-    monkeypatch.setattr(session_viability, "set_operational_state", set_state)
+    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
+    # After Task 10: no _MACHINE; exception path calls mark_dirty_and_reconcile. Patch IntentService.
+    mark_dirty = AsyncMock()
+    monkeypatch.setattr(
+        session_viability,
+        "IntentService",
+        MagicMock(
+            return_value=MagicMock(
+                mark_dirty_and_reconcile=mark_dirty,
+                mark_dirty=AsyncMock(),
+            )
+        ),
+    )
     monkeypatch.setattr(
         DeviceCapabilityService,
         "get_device_capabilities",
@@ -1032,7 +1048,8 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.offline
+    # Exception path calls mark_dirty_and_reconcile (not set_operational_state).
+    mark_dirty.assert_awaited()
 
 
 async def test_run_session_viability_probe_no_node_commit_and_available_exception_restore(
@@ -1068,14 +1085,19 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     available = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
     available.appium_node = MagicMock(observed_running=True)
     locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
-    relocked = MagicMock(id=device_id, operational_state=DeviceOperationalState.busy, hold=None)
-    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(side_effect=[locked, relocked]))
-    # Busy-mark now goes through _MACHINE.transition (SESSION_STARTED); patch the
-    # machine so MagicMock-locked objects don't fail DeviceStateModel validation.
-    monkeypatch.setattr(session_viability._MACHINE, "transition", AsyncMock(return_value=True))
-    set_state = AsyncMock()
-    # Exception-path restore (B2 scope) still calls set_operational_state directly.
-    monkeypatch.setattr(session_viability, "set_operational_state", set_state)
+    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
+    # After Task 10: no _MACHINE; exception path calls mark_dirty_and_reconcile.
+    mark_dirty2 = AsyncMock()
+    monkeypatch.setattr(
+        session_viability,
+        "IntentService",
+        MagicMock(
+            return_value=MagicMock(
+                mark_dirty_and_reconcile=mark_dirty2,
+                mark_dirty=AsyncMock(),
+            )
+        ),
+    )
     monkeypatch.setattr(
         DeviceCapabilityService,
         "get_device_capabilities",
@@ -1089,7 +1111,8 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    assert set_state.await_args_list[-1].args[1] == DeviceOperationalState.available
+    # Exception path calls mark_dirty_and_reconcile (not set_operational_state).
+    mark_dirty2.assert_awaited()
 
 
 def test_classify_session_error_recognises_grid_no_slot() -> None:
@@ -1425,3 +1448,31 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
     )
     await db_session.refresh(loaded_device)
     assert loaded_device.operational_state == DeviceOperationalState.available
+
+
+def test_probe_always_match_routes_on_device_id_not_udid() -> None:
+    """Probes must pin on the stable gridfleet:deviceId, never appium:udid.
+
+    The slot stereotype no longer advertises appium:udid (it is a driver
+    connection detail, not a routing key), so sending it in alwaysMatch would
+    make Selenium's DefaultSlotMatcher reject the slot.
+    """
+    full_caps = {
+        "platformName": "Android",
+        "appium:automationName": "UiAutomator2",
+        "appium:udid": "emulator-5554",
+        "appium:deviceName": "Pixel",
+        "appium:gridfleet:deviceId": "abc-123",
+        "gridfleet:probeSession": True,
+        "gridfleet:testName": "gridfleet-probe",
+    }
+
+    filtered = _filter_probe_always_match(full_caps)
+
+    assert "appium:udid" not in filtered
+    assert "appium:deviceName" not in filtered
+    assert filtered["appium:gridfleet:deviceId"] == "abc-123"
+    assert filtered["platformName"] == "Android"
+    assert filtered["gridfleet:probeSession"] is True
+    assert "appium:udid" not in _PROBE_ALWAYS_MATCH_KEYS
+    assert "appium:deviceName" not in _PROBE_ALWAYS_MATCH_KEYS

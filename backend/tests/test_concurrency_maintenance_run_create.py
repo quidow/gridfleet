@@ -82,7 +82,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _grid_svc = GridService(settings=settings_service)
-            _maintenance_svc = MaintenanceService(publisher=event_bus)
+            _maintenance_svc = MaintenanceService(settings=settings_service)
             _crud_svc = DeviceCrudService(settings=settings_service)
             return DeviceServices(
                 state=DeviceStateService(publisher=event_bus),
@@ -168,7 +168,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 publisher=event_bus,
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
-                maintenance=MaintenanceService(publisher=event_bus),
+                maintenance=MaintenanceService(settings=settings_service),
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(),
                 health=AsyncMock(),
@@ -229,7 +229,10 @@ async def test_run_create_and_maintenance_cannot_overlap(
         )
     else:
         if any(s in (200, 201) for s in statuses):
-            assert device_row.hold == DeviceHold.maintenance, (
-                f"No reservation but device row is {device_row.operational_state}; "
-                f"expected maintenance because at least one request succeeded. statuses={statuses}"
+            # hold is now derived by the reconciler (Task 7+8); check maintenance_reason signal
+            from app.devices.services.lifecycle_policy_state import state as ps
+
+            assert ps(device_row).get("maintenance_reason") is not None, (
+                f"No reservation but maintenance_reason not set; "
+                f"expected maintenance signal because at least one request succeeded. statuses={statuses}"
             )

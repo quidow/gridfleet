@@ -8,7 +8,7 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
-from app.devices.models import Device, DeviceHold, DeviceOperationalState, DeviceReservation
+from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -70,6 +70,7 @@ async def _find_matching_devices(
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(Device.review_required.is_(False))
         .where(
             or_(
                 AppiumNode.id.is_(None),
@@ -108,6 +109,7 @@ async def _find_matching_devices(
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id.in_(candidate_ids))
         .where(Device.operational_state == DeviceOperationalState.available, Device.hold.is_(None))
+        .where(Device.review_required.is_(False))
         .where(
             or_(
                 AppiumNode.id.is_(None),
@@ -286,12 +288,6 @@ class RunAllocatorService:
 
         device_infos: list[ReservedDeviceInfo] = []
         for device in all_matched:
-            await self._device_state.set_hold(
-                device,
-                DeviceHold.reserved,
-                reason=f"Reserved for run '{data.name}'",
-                severity="info",
-            )
             device_infos.append(
                 _build_device_info(
                     device,

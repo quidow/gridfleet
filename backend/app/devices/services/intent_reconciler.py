@@ -35,7 +35,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.state_derivation import compare_shadow_state
+from app.devices.services.state_derivation import apply_derived_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -46,7 +46,9 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.core.protocols import SettingsReader
+    from app.devices.services.observation_reason import ObservationReason
     from app.devices.services_container import DeviceServices
+    from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
@@ -70,6 +72,7 @@ class DeviceIntentReconcilerLoop:
                         cycle=cycle,
                         settings=self._services.settings,
                         circuit_breaker=self._services.circuit_breaker,
+                        publisher=self._services.publisher,
                     )
             except LeadershipLost as exc:
                 logger.error(
@@ -85,45 +88,59 @@ class DeviceIntentReconcilerLoop:
 
 
 async def run_device_intent_reconciler_once(
-    db: AsyncSession, *, cycle: int, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    cycle: int,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> None:
     await assert_current_leader(db, settings=settings)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
     await deliver_pending_agent_reconfigures(db, settings=settings, circuit_breaker=circuit_breaker)
-    await _reconcile_expired_intents(db, settings=settings, circuit_breaker=circuit_breaker)
+    await _reconcile_expired_intents(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
     try:
         await _sweep_orphaned_intents(db)
     except Exception:
         await db.rollback()
         logger.exception("stale_intent_sweep_failed")
-    await _reconcile_terminal_run_intents(db, settings=settings, circuit_breaker=circuit_breaker)
+    await _reconcile_terminal_run_intents(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
 
     precondition_affected = await reconcile_unsatisfied_preconditions(db)
     for affected_id in sorted(precondition_affected):
-        await reconcile_device(db, affected_id)
+        await reconcile_device(db, affected_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, affected_id, settings=settings, circuit_breaker=circuit_breaker)
     if cycle % full_scan_every == 0:
-        await _reconcile_all_devices_once(db, settings=settings, circuit_breaker=circuit_breaker)
+        await _reconcile_all_devices_once(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
     else:
-        await _reconcile_dirty_devices(db, settings=settings, circuit_breaker=circuit_breaker)
+        await _reconcile_dirty_devices(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
 
 
 async def _reconcile_all_devices_once(
-    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> None:
     rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     for device_id in rows:
-        await reconcile_device(db, device_id)
+        await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
 async def _reconcile_dirty_devices(
-    db: AsyncSession, *, settings: SettingsReader, limit: int = 100, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    limit: int = 100,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> None:
     queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
     metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
@@ -133,7 +150,7 @@ async def _reconcile_dirty_devices(
     for row in rows:
         device_id = row.device_id
         generation = row.generation
-        await reconcile_device(db, device_id)
+        await reconcile_device(db, device_id, publisher=publisher)
         current = await db.get(DeviceIntentDirty, device_id, populate_existing=True)
         if current is not None and current.generation == generation:
             await db.delete(current)
@@ -142,7 +159,11 @@ async def _reconcile_dirty_devices(
 
 
 async def _reconcile_expired_intents(
-    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> None:
     now = datetime.now(UTC)
     device_ids = (
@@ -160,7 +181,7 @@ async def _reconcile_expired_intents(
         return
     await db.execute(delete(DeviceIntent).where(DeviceIntent.expires_at.is_not(None), DeviceIntent.expires_at <= now))
     for device_id in sorted(set(device_ids)):
-        await reconcile_device(db, device_id)
+        await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
@@ -237,7 +258,11 @@ async def _sweep_orphaned_intents(db: AsyncSession) -> None:
 
 
 async def _reconcile_terminal_run_intents(
-    db: AsyncSession, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher | None = None,
 ) -> None:
     """Defense-in-depth sweep for intents tied to runs that are already terminal.
 
@@ -266,16 +291,29 @@ async def _reconcile_terminal_run_intents(
         delete(DeviceIntent).where(DeviceIntent.run_id.is_not(None)).where(DeviceIntent.run_id.in_(terminal_run_subq))
     )
     for device_id in sorted(set(device_ids)):
-        await reconcile_device(db, device_id)
+        await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
-async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
+async def reconcile_device(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    publisher: EventPublisher | None = None,
+    observed_reason: ObservationReason | None = None,
+) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     device = await device_locking.lock_device(db, device_id)
     node = device.appium_node
     if node is None:
+        # No Appium node — skip intent evaluation but still derive device state
+        # so operational_state / hold stay consistent with durable facts.
+        try:
+            now = datetime.now(UTC)
+            await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
+        except Exception:  # noqa: BLE001 - state derivation must never break reconcile
+            logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return
 
     now = datetime.now(UTC)
@@ -419,9 +457,9 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID) -> None:
     await db.flush()
 
     try:
-        await compare_shadow_state(db, device, now=now)
-    except Exception:  # noqa: BLE001 - shadow comparison must never break reconcile
-        logger.warning("device-state shadow comparison failed for %s", device_id, exc_info=True)
+        await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
+    except Exception:  # noqa: BLE001 - state derivation must never break reconcile
+        logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 
 
 async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:

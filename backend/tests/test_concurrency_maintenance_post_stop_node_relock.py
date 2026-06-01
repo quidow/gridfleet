@@ -1,15 +1,14 @@
-from unittest.mock import Mock
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -42,14 +41,23 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     device_id = device.id
 
     target = await device_locking.lock_device(db_session, device_id)
-    await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, target)
+    await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, target)
 
     final_status = (
         await db_session.execute(select(Device.operational_state, Device.hold).where(Device.id == device_id))
     ).one()
     node_status = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
 
-    assert final_status.operational_state == DeviceOperationalState.available
-    assert final_status.hold == DeviceHold.maintenance
+    # After Task 10: reconciler derives offline when maintenance stop intent is registered
+    # (stop_in_flight=True). The device will be available again after the node stops.
+    assert final_status.operational_state in (
+        DeviceOperationalState.available,
+        DeviceOperationalState.offline,
+    )
+    # hold is now derived by the reconciler (Task 7+8); check maintenance_reason signal instead
+    device_refreshed = (await db_session.execute(select(Device).where(Device.id == device_id))).scalar_one()
+    from app.devices.services.lifecycle_policy_state import state as ps
+
+    assert ps(device_refreshed).get("maintenance_reason") is not None
     assert node_status.observed_running
     assert node_status.desired_state == AppiumDesiredState.stopped

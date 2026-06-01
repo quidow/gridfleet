@@ -29,7 +29,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("devices", "operational_state"): frozenset(
         {
             "app.devices.services.state",
-            "app.devices.services.lifecycle_state_machine",
             # Device creation paths: initial state is set at construction time, not via the
             # state machine (device does not exist yet so there is no prior state to transition).
             "app.devices.services.write",
@@ -38,7 +37,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("devices", "hold"): frozenset(
         {
             "app.devices.services.state",
-            "app.devices.services.lifecycle_state_machine",
         }
     ),
     ("devices", "lifecycle_policy_state"): frozenset(

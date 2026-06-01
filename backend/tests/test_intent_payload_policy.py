@@ -181,7 +181,7 @@ async def test_cooldown_intent_payload_shape(
         publisher=event_bus,
         settings=_test_settings,
         circuit_breaker=_test_cb,
-        maintenance=MaintenanceService(publisher=event_bus),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),

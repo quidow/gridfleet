@@ -29,6 +29,8 @@ async def is_satisfied(db: AsyncSession, intent: DeviceIntent) -> bool:
         return await _eval_node_running(db, precondition)
     if kind == "device_hold":
         return await _eval_device_hold(db, precondition)
+    if kind == "maintenance_active":
+        return await _eval_maintenance_active(db, precondition)
     logger.warning("intent_precondition_unknown_kind", kind=kind, intent_id=str(intent.id))
     return True
 
@@ -162,3 +164,20 @@ async def _eval_device_hold(db: AsyncSession, precondition: dict[str, object]) -
     if device is None:
         return False
     return device.hold == expected
+
+
+async def _eval_maintenance_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
+    from app.devices.models import Device  # noqa: PLC0415
+    from app.devices.services.lifecycle_policy_state import state  # noqa: PLC0415
+
+    raw_device_id = precondition.get("device_id")
+    if not isinstance(raw_device_id, str):
+        return False
+    try:
+        device_uuid = UUID(raw_device_id)
+    except ValueError:
+        return False
+    device = await db.get(Device, device_uuid)
+    if device is None:
+        return False
+    return state(device).get("maintenance_reason") is not None

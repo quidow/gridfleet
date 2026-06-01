@@ -28,16 +28,12 @@ _OPERATIONAL_TRANSITIONS: dict[
         TransitionEvent.SESSION_STARTED: DeviceOperationalState.busy,
         TransitionEvent.CONNECTIVITY_LOST: DeviceOperationalState.offline,
         TransitionEvent.AUTO_STOP_EXECUTED: DeviceOperationalState.offline,
-        TransitionEvent.PREPARATION_FAILED: DeviceOperationalState.offline,
-        TransitionEvent.CLOUD_ESCROW: DeviceOperationalState.offline,
         TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
     },
     DeviceOperationalState.busy: {
         TransitionEvent.SESSION_ENDED: DeviceOperationalState.available,
         TransitionEvent.CONNECTIVITY_LOST: DeviceOperationalState.offline,
         TransitionEvent.AUTO_STOP_EXECUTED: DeviceOperationalState.offline,
-        TransitionEvent.PREPARATION_FAILED: DeviceOperationalState.offline,
-        TransitionEvent.CLOUD_ESCROW: DeviceOperationalState.offline,
         TransitionEvent.VERIFICATION_STARTED: DeviceOperationalState.verifying,
         TransitionEvent.VERIFICATION_FAILED: DeviceOperationalState.offline,
     },
@@ -55,17 +51,13 @@ _OPERATIONAL_TRANSITIONS: dict[
 
 # Per-transition severity for operational-axis events.
 _OPERATIONAL_SEVERITY: dict[TransitionEvent, EventSeverity] = {
-    TransitionEvent.DEVICE_DISCOVERED: "info",
     TransitionEvent.MAINTENANCE_ENTERED: "info",
     TransitionEvent.MAINTENANCE_EXITED: "info",
     TransitionEvent.CONNECTIVITY_LOST: "warning",
     TransitionEvent.CONNECTIVITY_RESTORED: "success",
     TransitionEvent.SESSION_STARTED: "info",
     TransitionEvent.SESSION_ENDED: "info",
-    TransitionEvent.AUTO_STOP_DEFERRED: "info",
     TransitionEvent.AUTO_STOP_EXECUTED: "info",
-    TransitionEvent.PREPARATION_FAILED: "warning",
-    TransitionEvent.CLOUD_ESCROW: "info",
     TransitionEvent.VERIFICATION_STARTED: "info",
     TransitionEvent.VERIFICATION_PASSED: "success",
     TransitionEvent.VERIFICATION_FAILED: "warning",
@@ -75,7 +67,6 @@ _OPERATIONAL_SEVERITY: dict[TransitionEvent, EventSeverity] = {
 _HOLD_SEVERITY: dict[TransitionEvent, EventSeverity] = {
     TransitionEvent.MAINTENANCE_ENTERED: "info",
     TransitionEvent.MAINTENANCE_EXITED: "info",
-    TransitionEvent.CLOUD_ESCROW: "info",
 }
 
 # Idempotent self-loops the caller is allowed to re-issue without raising.
@@ -119,11 +110,6 @@ class DeviceStateMachine:
             if before.hold is not DeviceHold.maintenance:
                 return None
             return (DeviceOperationalState.offline, None)
-        if event is TransitionEvent.AUTO_STOP_DEFERRED:
-            return (before.operational, before.hold)
-        if event is TransitionEvent.DEVICE_DISCOVERED:
-            return (before.operational, before.hold)
-
         target_operational = _OPERATIONAL_TRANSITIONS.get(before.operational, {}).get(event)
         if target_operational is None:
             return None

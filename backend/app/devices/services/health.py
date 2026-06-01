@@ -9,22 +9,18 @@ from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.health_view import (
     build_public_summary,
     device_allows_allocation,
-    node_running_signal,
     node_summary_label,
 )
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
-from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.intent import IntentService
 from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.models import Device
     from app.events.protocols import EventPublisher
 
 __all__ = [
@@ -36,9 +32,6 @@ __all__ = [
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 async def _lock(db: AsyncSession, device: Device) -> Device | None:
@@ -70,49 +63,6 @@ def _maybe_emit_health_changed(
     )
 
 
-async def _mark_offline_for_failed_signal(
-    locked: Device,
-    *,
-    failed: bool,
-    reason: str,
-    publisher: EventPublisher,
-) -> None:
-    if not failed:
-        return
-    if locked.operational_state != DeviceOperationalState.available:
-        return
-
-    await _MACHINE.transition(
-        locked,
-        TransitionEvent.CONNECTIVITY_LOST,
-        reason=reason,
-        publisher=publisher,
-    )
-
-
-async def _restore_available_for_healthy_signal(
-    db: AsyncSession,
-    locked: Device,
-    publisher: EventPublisher,
-) -> None:
-    if locked.operational_state != DeviceOperationalState.offline:
-        return
-    node = locked.appium_node
-    if node is None or not node_running_signal(node):
-        return
-    if not await is_ready_for_use_async(db, locked):
-        return
-    if not device_allows_allocation(locked):
-        return
-
-    await _MACHINE.transition(
-        locked,
-        TransitionEvent.CONNECTIVITY_RESTORED,
-        reason="Health checks recovered",
-        publisher=publisher,
-    )
-
-
 class DeviceHealthService:
     def __init__(self, *, publisher: EventPublisher) -> None:
         self._publisher = publisher
@@ -125,8 +75,15 @@ class DeviceHealthService:
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
         locked.device_checks_checked_at = _now()
-        await _mark_offline_for_failed_signal(locked, failed=not healthy, reason=summary, publisher=self._publisher)
-        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        # Reconcile immediately only on failure so the device goes offline right
+        # away. On success, defer to apply_node_state_transition (which always
+        # reconciles) or the background reconciler. This preserves the old
+        # behavior: a healthy device_checks signal alone does not restore an
+        # offline device — the node must also be observed running.
+        if not healthy:
+            await IntentService(db).mark_dirty_and_reconcile(locked.id, reason=summary, publisher=self._publisher)
+        else:
+            await IntentService(db).mark_dirty(locked.id, reason="device checks healthy")
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_session_viability(
@@ -139,13 +96,14 @@ class DeviceHealthService:
         locked.session_viability_status = status
         locked.session_viability_error = error
         locked.session_viability_checked_at = _now()
-        await _mark_offline_for_failed_signal(
-            locked,
-            failed=status == "failed",
-            reason=error or "Session viability failed",
-            publisher=self._publisher,
-        )
-        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        # Same asymmetry as update_device_checks: reconcile immediately on failure
+        # (device goes offline), defer on success (rely on apply_node_state_transition).
+        if status == "failed":
+            await IntentService(db).mark_dirty_and_reconcile(
+                locked.id, reason=error or "session viability failed", publisher=self._publisher
+            )
+        else:
+            await IntentService(db).mark_dirty(locked.id, reason="session viability passed")
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def apply_node_state_transition(
@@ -172,14 +130,22 @@ class DeviceHealthService:
         locked_node.health_state = health_state
         locked_node.last_health_checked_at = _now()
 
-        if mark_offline:
-            await _mark_offline_for_failed_signal(
-                locked,
-                failed=not node_running_signal(locked_node),
-                reason=reason or f"Node: {node_summary_label(locked_node)}",
+        # Reconcile when: (a) mark_offline=True (explicit offline intent), or
+        # (b) health_running=None (clearing a health signal → may restore to available).
+        # Do NOT reconcile when mark_offline=False and health_running=False (below-threshold
+        # failure recording — hysteresis: let the threshold be reached before offline derivation).
+        should_reconcile = mark_offline or health_running is None
+        if should_reconcile:
+            await IntentService(db).mark_dirty_and_reconcile(
+                locked.id,
+                reason=reason or f"node: {node_summary_label(locked_node)}",
                 publisher=self._publisher,
             )
-        await _restore_available_for_healthy_signal(db, locked, publisher=self._publisher)
+        else:
+            await IntentService(db).mark_dirty(
+                locked.id,
+                reason=reason or f"node: {node_summary_label(locked_node)}",
+            )
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def update_emulator_state(self, db: AsyncSession, device: Device, state: str | None) -> None:

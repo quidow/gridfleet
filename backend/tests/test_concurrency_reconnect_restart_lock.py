@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.routers import control as devices_control
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
@@ -87,7 +87,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await MaintenanceService(publisher=Mock()).enter_maintenance(session, locked)
+            await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(session, locked)
         allow_restart.set()
 
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())
@@ -98,4 +98,12 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         ).one()
 
     assert final.operational_state == DeviceOperationalState.offline
-    assert final.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal instead
+    from sqlalchemy import select as sa_select
+
+    from app.devices.models import Device as DeviceModel
+    from app.devices.services.lifecycle_policy_state import state as ps
+
+    async with db_session_maker() as verify2:
+        device_row = (await verify2.execute(sa_select(DeviceModel).where(DeviceModel.id == device_id))).scalar_one()
+        assert ps(device_row).get("maintenance_reason") is not None

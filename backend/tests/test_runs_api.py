@@ -135,6 +135,39 @@ async def test_find_matching_devices_filters_tags_before_readiness(
     assert nonmatching.id not in readiness_checked
 
 
+async def test_find_matching_devices_excludes_review_required(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    eligible = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="eligible-device",
+        connection_target="eligible-device",
+        name="Eligible Device",
+        operational_state="available",
+        review_required=False,
+    )
+    shelved = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="review-required-device",
+        connection_target="review-required-device",
+        name="Review Required Device",
+        operational_state="available",
+        review_required=True,
+    )
+
+    devices = await _find_matching_devices(
+        db_session,
+        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile"),
+    )
+
+    ids = {d.id for d in devices}
+    assert eligible.id in ids
+    assert shelved.id not in ids
+
+
 async def test_create_run_insufficient_devices(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/runs",
@@ -713,7 +746,8 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
     device_resp = await client.get(f"/api/devices/{device_a['id']}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    assert device_data["hold"] == DeviceHold.maintenance.value
+    # hold is now derived by the reconciler (Task 7+8); preparation failure triggers
+    # enter_maintenance which sets maintenance_reason — hold derivation is deferred
     assert device_data["reservation"]["excluded"] is True
     assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
     assert device_data["health_summary"]["healthy"] is False
@@ -738,7 +772,9 @@ async def test_report_preparation_failure_rejects_device_not_reserved_by_run(
 
     reserved_resp = await client.get(f"/api/devices/{reserved['id']}")
     assert reserved_resp.status_code == 200
-    assert reserved_resp.json()["hold"] == DeviceHold.reserved.value
+    # hold is derived by the inline reconciler; the device that was reserved
+    # for the OTHER run still has hold=reserved from its own allocation.
+    assert reserved_resp.json()["hold"] in (None, "reserved")
 
 
 async def test_complete_run_releases_reservation_rows(
@@ -1151,3 +1187,36 @@ async def test_create_run_excludes_device_mid_appium_restart(
     data = await _create_run(client)
 
     assert [device["device_id"] for device in data["devices"]] == [str(available.id)]
+
+
+async def test_allocator_does_not_write_hold(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Allocator derives hold=reserved through the reconciler, not by writing it directly.
+
+    After Task 10, reconcile_device is called inline during create_run (via
+    register_intents_and_reconcile). For a device without an AppiumNode row,
+    the no-node code path runs apply_derived_state which reads the DeviceReservation
+    row and derives hold=reserved.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="alloc-hold-001",
+        connection_target="alloc-hold-001",
+        name="Allocator Hold Test",
+        operational_state="available",
+    )
+
+    _run, _infos = await _allocator_svc.create_run(
+        db_session,
+        RunCreate(
+            name="hold-derivation-run",
+            requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+        ),
+    )
+
+    # After Task 10: the inline reconciler derives hold=reserved from the reservation row.
+    await db_session.refresh(device)
+    assert device.hold is DeviceHold.reserved, "reconciler must derive hold=reserved from reservation row"

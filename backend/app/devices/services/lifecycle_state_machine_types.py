@@ -12,17 +12,13 @@ if TYPE_CHECKING:
 
 
 class TransitionEvent(StrEnum):
-    DEVICE_DISCOVERED = "device_discovered"
     MAINTENANCE_ENTERED = "maintenance_entered"
     MAINTENANCE_EXITED = "maintenance_exited"
     CONNECTIVITY_LOST = "connectivity_lost"
     CONNECTIVITY_RESTORED = "connectivity_restored"
     SESSION_STARTED = "session_started"
     SESSION_ENDED = "session_ended"
-    AUTO_STOP_DEFERRED = "auto_stop_deferred"
     AUTO_STOP_EXECUTED = "auto_stop_executed"
-    PREPARATION_FAILED = "preparation_failed"
-    CLOUD_ESCROW = "cloud_escrow"
     VERIFICATION_STARTED = "verification_started"
     VERIFICATION_PASSED = "verification_passed"
     VERIFICATION_FAILED = "verification_failed"

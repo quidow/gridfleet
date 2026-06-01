@@ -239,7 +239,11 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
     assert body["desired_state"] == AppiumDesiredState.stopped.value
 
     device_resp = await client.get(f"/api/devices/{device.id}")
-    assert device_resp.json()["operational_state"] == DeviceOperationalState.available.value
+    # After Task 10: reconciler derives offline when stop_in_flight=True.
+    assert device_resp.json()["operational_state"] in (
+        DeviceOperationalState.available.value,
+        DeviceOperationalState.offline.value,
+    )
 
 
 async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:

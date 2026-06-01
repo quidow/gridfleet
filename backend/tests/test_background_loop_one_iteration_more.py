@@ -182,7 +182,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_settings = FakeSettingsReader({})
     _fc_grid = Mock()
     _fc_publisher = AsyncMock()
-    _fc_maintenance = MaintenanceService(publisher=_fc_publisher)
+    _fc_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
     _fc_crud = DeviceCrudService(settings=_fc_settings)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(

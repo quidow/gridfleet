@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -8,14 +7,16 @@ from prometheus_client import Counter
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceEventType, DeviceHold, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.reservation import DeviceReservation
+from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
 from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import appium_node_stop_in_flight
+from app.devices.services.state import appium_node_stop_in_flight, set_hold, set_operational_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -23,12 +24,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+    from app.events.protocols import EventPublisher
 
-SHADOW_STATE_MISMATCH = Counter(
-    "gridfleet_device_state_shadow_mismatch_total",
-    "Times the derived device state disagreed with the persisted column (shadow mode).",
-    labelnames=("axis",),  # "operational" | "hold"
+GATING_VIOLATION = Counter(
+    "gridfleet_device_state_gating_violation_total",
+    "An allocation landed on a device whose operational state forbade it (invariant breach).",
+    ["kind"],
 )
 
 
@@ -127,40 +128,97 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
     )
 
 
-async def compare_shadow_state(db: AsyncSession, device: Device, *, now: datetime) -> bool:
-    """Derive (operational_state, hold), compare to the persisted columns, record divergence.
+def _reason_for(
+    prev_op: DeviceOperationalState,
+    facts: DeviceStateFacts,
+    derived_op: DeviceOperationalState,
+) -> ObservationReason:
+    """Map gathered facts to the closest ObservationReason for the derived transition.
 
-    Writes NOTHING — observation only. Returns True if either axis diverged.
-
-    The snapshot of persisted values is taken *before* ``gather_device_state_facts``
-    because that function reloads the device row from DB via the same session, which
-    may update the in-memory object's attributes in-place (SQLAlchemy identity map).
-    Comparing against the snapshot preserves the original persisted values for the diff.
+    Priority mirrors evaluate_operational_state: session > verification_lease >
+    stop_in_flight / not_ready, then split the ``available`` destination by where
+    it came from: leaving ``busy`` is a session end, anything else recovering to
+    ``available`` is a recovery (so ``offline → available`` maps to
+    ``connectivity_restored``, not ``session_ended``).
     """
-    persisted_op = device.operational_state
-    persisted_hold = device.hold
+    if facts.has_running_session:
+        return ObservationReason.session
+    if facts.has_verification_lease:
+        return ObservationReason.verification_started
+    if facts.stop_in_flight:
+        return ObservationReason.auto_stopped
+    if not facts.ready:
+        return ObservationReason.disconnected
+    if prev_op is DeviceOperationalState.busy:
+        return ObservationReason.session_ended
+    return ObservationReason.recovered
 
+
+async def apply_derived_state(
+    db: AsyncSession,
+    device: Device,
+    *,
+    now: datetime,
+    publisher: EventPublisher | None = None,
+    observed_reason: ObservationReason | None = None,
+) -> bool:
+    """Derive (operational_state, hold) and write them when they differ from the persisted columns.
+
+    Emits the mapped operational/hold bus event for each axis that changes when ``publisher`` is
+    provided.
+
+    The typed DeviceEvent audit row is written only when the caller carries an ``observed_reason``
+    (§6: the cause rides on the observation, the reconciler maps ``(delta, reason) → event``). The
+    reconciler must NOT *guess* the cause from facts alone — a not-ready offline transition could be
+    a connectivity loss, a node crash, a health-probe failure or a verification failure, and each
+    has a different DeviceEventType. Mislabelling them all ``connectivity_lost`` would corrupt the
+    analytics reliability counts that query that type. Background reconciles (no carried reason)
+    still update state and emit the bus event, but record no audit row.
+
+    Returns True if either axis was written.
+    """
     facts = await gather_device_state_facts(db, device, now=now)
     derived_op = evaluate_operational_state(facts)
     derived_hold = evaluate_hold(facts)
 
-    mismatched = False
-    if derived_op is not persisted_op:
-        SHADOW_STATE_MISMATCH.labels(axis="operational").inc()
-        mismatched = True
-    if derived_hold is not persisted_hold:
-        SHADOW_STATE_MISMATCH.labels(axis="hold").inc()
-        mismatched = True
+    changed = False
 
-    if mismatched:
-        logger.warning(
-            "device-state shadow mismatch device_id=%s op(persisted=%s derived=%s) "
-            "hold(persisted=%s derived=%s) facts=%s",
-            device.id,
-            persisted_op.value,
-            derived_op.value,
-            persisted_hold.value if persisted_hold else None,
-            derived_hold.value if derived_hold else None,
-            facts,
+    if derived_op is not device.operational_state:
+        prev_op = device.operational_state
+        reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts, derived_op)
+        event_type, severity = map_transition_event(derived_op, reason)
+        # Persist the typed audit row the old EventLogHook used to write (§6) only when the cause was
+        # explicitly carried in by the observation site — never from the fact-based heuristic, which
+        # cannot tell connectivity loss from a node crash / health failure.
+        if observed_reason is not None and event_type is not None:
+            await record_event(
+                db,
+                device.id,
+                event_type,
+                {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
+            )
+        await set_operational_state(
+            device,
+            derived_op,
+            reason=(event_type.value if event_type is not None else reason.value),
+            severity=severity,
+            publisher=publisher,
         )
-    return mismatched
+        changed = True
+
+    if derived_hold is not device.hold:
+        prev_hold = device.hold
+        # Maintenance enter/exit are the only hold transitions the old EventLogHook audited
+        # (reserved hold churn from allocation/release recorded no row).
+        if derived_hold is DeviceHold.maintenance:
+            await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": "maintenance"})
+            hold_reason = "maintenance"
+        elif prev_hold is DeviceHold.maintenance:
+            await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
+            hold_reason = "exit maintenance"
+        else:
+            hold_reason = derived_hold.value if derived_hold is not None else "released"
+        await set_hold(device, derived_hold, reason=hold_reason, severity="info", publisher=publisher)
+        changed = True
+
+    return changed

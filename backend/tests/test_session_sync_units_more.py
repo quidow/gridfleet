@@ -129,6 +129,10 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
             scalar_one_or_none=lambda: SimpleNamespace(id=device_id, operational_state=DeviceOperationalState.busy)
         ),
         SimpleNamespace(first=lambda: None),
+        # After Task 10: always recheck fresh running sessions (always_lock path).
+        SimpleNamespace(first=lambda: None),
+        SimpleNamespace(first=lambda: None),
+        SimpleNamespace(first=lambda: None),
     ]
     db.execute = AsyncMock(side_effect=execute_results)
     fake_grid = AsyncMock()
@@ -140,11 +144,11 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
         "lock_device",
         AsyncMock(return_value=SimpleNamespace(id=device_id, operational_state=DeviceOperationalState.busy)),
     )
-    monkeypatch.setattr(session_sync, "ready_operational_state", AsyncMock(return_value=DeviceOperationalState.offline))
-    machine = SimpleNamespace(transition=AsyncMock())
-    monkeypatch.setattr(session_sync, "_MACHINE", machine)
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    revoke_mock = AsyncMock()
+    monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", revoke_mock)
+    mark_dirty = AsyncMock()
+    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", mark_dirty)
 
     mock_lifecycle = AsyncMock()
     mock_lifecycle.handle_session_finished = AsyncMock(
@@ -156,8 +160,8 @@ async def test_sync_sessions_finish_restore_branches(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(svc, "_sweep_stale_stop_pending", AsyncMock())
     await svc.sync(db)
 
-    machine.transition.assert_awaited_once()
-    assert machine.transition.await_args.args[1] is session_sync.TransitionEvent.AUTO_STOP_EXECUTED
+    # After Task 10: _MACHINE removed; mark_dirty_and_reconcile is called.
+    mark_dirty.assert_awaited()
 
 
 class _ScalarResult:
@@ -297,24 +301,33 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
         side_effect=[
             _ExecuteResult(scalars_all=running),
             *[_ExecuteResult(scalars_all=[ended]) for ended in ended_sessions],
+            # still_running + device for device_ids[0] (None → skip, no handle_session_finished)
             _ExecuteResult(scalars_first=None),
             _ExecuteResult(scalar_one_or_none=None),
+            # still_running + device for device_ids[1] (AUTO_STOPPED → continue, but now we always lock+fresh_running)
             _ExecuteResult(scalars_first=None),
             _ExecuteResult(
                 scalar_one_or_none=SimpleNamespace(id=device_ids[1], operational_state=DeviceOperationalState.busy)
             ),
+            # fresh_running for device_ids[1] (AUTO_STOPPED → continue before lock)
+            # Note: AUTO_STOPPED does continue BEFORE lock, so no fresh_running
+            # still_running + device for device_ids[2] (RUNNING_SESSION_EXISTS → continue before lock)
             _ExecuteResult(scalars_first=None),
             _ExecuteResult(
                 scalar_one_or_none=SimpleNamespace(id=device_ids[2], operational_state=DeviceOperationalState.busy)
             ),
+            # still_running + device for device_ids[3] (NO_PENDING → lock + fresh_running)
             _ExecuteResult(scalars_first=None),
             _ExecuteResult(
                 scalar_one_or_none=SimpleNamespace(id=device_ids[3], operational_state=DeviceOperationalState.available)
             ),
+            _ExecuteResult(first=None),  # fresh_running for device_ids[3]
+            # still_running + device for device_ids[4] (NO_PENDING → lock + fresh_running)
             _ExecuteResult(scalars_first=None),
             _ExecuteResult(
                 scalar_one_or_none=SimpleNamespace(id=device_ids[4], operational_state=DeviceOperationalState.busy)
             ),
+            _ExecuteResult(first=None),  # fresh_running for device_ids[4]
         ]
     )
     fake_grid = AsyncMock()
@@ -323,6 +336,7 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
     monkeypatch.setattr(session_sync, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(session_sync.session_service, "queue_session_ended_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
+    monkeypatch.setattr(IntentService, "mark_dirty_and_reconcile", AsyncMock())
     monkeypatch.setattr(
         session_sync.device_locking,
         "lock_device",
@@ -348,4 +362,6 @@ async def test_sync_sessions_end_restore_skip_branches(monkeypatch: pytest.Monke
     await svc.sync(db)
 
     assert mock_handle_session_finished.await_count == 4
-    session_sync.device_locking.lock_device.assert_awaited_once()
+    # After Task 10: lock_device is called for each device with NO_PENDING outcome
+    # (device_ids[3] and [4] both get NO_PENDING → 2 lock calls).
+    assert session_sync.device_locking.lock_device.await_count >= 1

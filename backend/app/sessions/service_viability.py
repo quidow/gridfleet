@@ -14,10 +14,7 @@ from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
-from app.devices.services import state as device_state
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_hooks import EventLogHook, IncidentHook, RunExclusionHook
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
+from app.devices.services.intent import IntentService
 from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
@@ -56,9 +53,6 @@ logger = get_logger(__name__)
 LOOP_NAME = "session_viability"
 is_ready_for_use_async = device_readiness.is_ready_for_use_async
 readiness_error_detail_async = device_readiness.readiness_error_detail_async
-set_operational_state = device_state.set_operational_state
-
-_MACHINE = DeviceStateMachine(hooks=[EventLogHook(), IncidentHook(), RunExclusionHook()])
 
 
 class SessionViabilityService:
@@ -245,12 +239,6 @@ class SessionViabilityService:
             if not locked_can_probe:
                 raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
             previous_state = locked.operational_state
-            await _MACHINE.transition(
-                locked,
-                TransitionEvent.SESSION_STARTED,
-                reason="Session viability probe running",
-                publisher=self._publisher,
-            )
             await db.commit()
 
             capabilities = build_probe_capabilities(await self._capability.get_device_capabilities(db, device))
@@ -284,46 +272,16 @@ class SessionViabilityService:
                 health=self._health,
             )
 
-            relocked = await device_locking.lock_device(db, device.id)
-            if relocked.operational_state == DeviceOperationalState.busy:
-                # Branch on probe outcome — the EVENT — not on
-                # ``ready_operational_state``'s projection. The previous code
-                # fed ``ready_op`` into ``set_operational_state``, which folded
-                # ``appium_node_stop_in_flight`` into the operational axis: a
-                # stale graceful-stop intent (e.g. a leftover ``connectivity:*``
-                # row whose recovery never revoked it) would flag stop_pending,
-                # and a passing probe would still flap the device offline with
-                # reason "Session viability probe finished". Operators saw a
-                # toast pair (offline → "Health checks recovered") every probe
-                # cycle even though the device was healthy.
-                #
-                # State transitions fire on probe outcome only. Real offline
-                # transitions for in-flight stops or unhealthy nodes are
-                # emitted by the connectivity / node_health / health writers
-                # on their own schedules with their own reasons.
-                if ok:
-                    await _MACHINE.transition(
-                        relocked,
-                        TransitionEvent.SESSION_ENDED,
-                        reason="Session viability probe finished",
-                        publisher=self._publisher,
-                    )
-                else:
-                    await _MACHINE.transition(
-                        relocked,
-                        TransitionEvent.AUTO_STOP_EXECUTED,
-                        reason="Session viability probe finished",
-                        publisher=self._publisher,
-                    )
+            # Mark dirty so the reconciler derives the correct post-probe state.
+            # The probe created and deleted a Grid session but left no running
+            # Session row; reconciler sees no running session and derives
+            # available or offline based on health signals and stop_in_flight.
+            await IntentService(db).mark_dirty_and_reconcile(
+                device.id, reason="session viability probe finished", publisher=self._publisher
+            )
+            await db.commit()
+            if config_changed:
                 await db.commit()
-            else:
-                logger.info(
-                    "Device %s availability changed during probe (now %s); skipping restore",
-                    device.id,
-                    relocked.operational_state.value,
-                )
-                if config_changed:
-                    await db.commit()
             if not ok and checked_by != SessionViabilityCheckedBy.recovery and self._health_failure_handler is not None:
                 threshold = max(1, int(self._settings.get("general.session_viability_failure_threshold")))
                 if int(state.get("consecutive_failures") or 0) >= threshold:
@@ -343,12 +301,10 @@ class SessionViabilityService:
             return state
         except Exception:
             if previous_state in {DeviceOperationalState.available, DeviceOperationalState.offline}:
-                relocked = await device_locking.lock_device(db, device.id)
-                if relocked.operational_state == DeviceOperationalState.busy:
-                    await set_operational_state(
-                        relocked, previous_state, publish_event=False, publisher=self._publisher
-                    )
-                    await db.commit()
+                await IntentService(db).mark_dirty_and_reconcile(
+                    device.id, reason="session viability probe exception", publisher=self._publisher
+                )
+                await db.commit()
             raise
         finally:
             await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
@@ -483,18 +439,19 @@ async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval
 
 
 # Selenium hub's DefaultSlotMatcher rejects matches when ``alwaysMatch`` carries
-# extension caps that the slot stereotype does not declare (notably
-# ``appium:platformVersion``). Probes don't need the full driver cap set in
-# ``alwaysMatch`` — every relay-managed Appium process is started with the same
-# caps as ``--default-capabilities``, so any session matched to that slot
-# already inherits them. Routing only needs the stereotype-side keys plus the
-# probe markers so ``session_sync`` can filter the probe out.
+# extension caps that the slot stereotype does not declare. The slot stereotype
+# advertises identity via ``appium:gridfleet:deviceId`` (stable, backend-owned)
+# and deliberately omits ``appium:udid`` / ``appium:deviceName`` — those are
+# driver connection details, not routing keys, and for emulators the stored
+# udid (AVD name) never matched the live serial. Probes therefore pin on
+# ``appium:gridfleet:deviceId`` plus the platform and probe markers so
+# ``session_sync`` can filter the probe out. The full driver cap set is not
+# needed in ``alwaysMatch`` — every relay-managed Appium process is started with
+# the same caps as ``--default-capabilities``.
 _PROBE_ALWAYS_MATCH_KEYS = frozenset(
     {
         "platformName",
         "appium:automationName",
-        "appium:udid",
-        "appium:deviceName",
         "appium:gridfleet:deviceId",
         "gridfleet:probeSession",
         "gridfleet:testName",

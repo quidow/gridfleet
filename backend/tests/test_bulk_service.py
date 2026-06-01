@@ -243,6 +243,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
             name=f"bulk-exit-recovery-{i}",
             hold=DeviceHold.maintenance,
             operational_state=DeviceOperationalState.offline,
+            lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
         )
         for i in range(3)
     ]
@@ -253,7 +254,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         publisher=event_bus,
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
-        maintenance=MaintenanceService(publisher=event_bus),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
         crud=DeviceCrudService(settings=_settings_exit),
         operator=OperatorNodeLifecycleService(settings=_settings_exit),
     ).bulk_exit_maintenance(db_session, [d.id for d in devices])

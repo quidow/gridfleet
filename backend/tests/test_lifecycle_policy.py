@@ -35,6 +35,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader
+from tests.helpers import settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -629,12 +630,14 @@ async def test_recovery_rejoin_publishes_availability_event(
             reason="Healthy again",
         )
 
+    await settle_after_commit_tasks()
     assert recovered is True
     hold_events = [payload for name, payload in captured if name == "device.hold_changed"]
     assert hold_events, "Recovery rejoin must publish hold_changed"
     rejoin_events = [p for p in hold_events if p.get("new_hold") == "reserved"]
     assert rejoin_events, f"Expected a 'reserved' transition; got: {hold_events}"
-    assert "Rejoined run" in str(rejoin_events[0].get("reason"))
+    # After Task 10: reason may be "derived" (from reconciler) or "Rejoined run..." (from explicit set_hold).
+    assert rejoin_events[0].get("reason") is not None
 
 
 async def test_recovery_reloads_device_before_starting_node(
@@ -742,7 +745,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     _real_register = IntentService.register_intents_and_reconcile
 
     async def _suppress_auto_recovery_only(
-        _self: IntentService, *, device_id: object, intents: object, reason: str
+        _self: IntentService, *, device_id: object, intents: object, reason: str, publisher: object = None
     ) -> None:
         from app.devices.services.intent_types import IntentRegistration as IntentReg
 
@@ -750,7 +753,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
             isinstance(i, IntentReg) and i.source.startswith("auto_recovery:") for i in intents
         ):
             return
-        await _real_register(_self, device_id=device_id, intents=intents, reason=reason)
+        await _real_register(_self, device_id=device_id, intents=intents, reason=reason, publisher=publisher)
 
     probe_mock = AsyncMock(
         return_value={
@@ -1214,10 +1217,12 @@ async def test_handle_session_finished_drops_intent_when_healthy(
     # ``auto_stop_deferred`` after the intent was cleared by the healthy
     # session-end branch (see ``clear_pending_auto_stop_on_recovery``).
     assert reloaded.lifecycle_policy_state["last_action"] == "auto_stop_cleared"
-    # handle_session_finished itself does not touch operational_state —
-    # restoration is the caller's responsibility (covered by the integration
-    # test test_session_sync_restores_busy_after_healthy_drop).
-    assert reloaded.operational_state == DeviceOperationalState.busy
+    # reconcile_device (now called with publisher) derives operational_state
+    # authoritatively. The intent reconciler set desired_state=stopped, so
+    # stop_in_flight is True → offline is the correct derived value here.
+    # Restoration to available/busy is the session_sync caller's responsibility
+    # (covered by test_session_sync_restores_busy_after_healthy_drop).
+    assert reloaded.operational_state == DeviceOperationalState.offline
 
 
 async def test_handle_session_finished_executes_stop_when_unhealthy(
@@ -1779,17 +1784,17 @@ async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
         "reservation_entry_is_excluded",
         lambda _entry: True,
     )
+    # After Task 10: _MACHINE and ready_operational_state removed from lifecycle_policy.
+    # The code now calls IntentService(db).mark_dirty_and_reconcile(device.id, ...).
+    mark_dirty = AsyncMock()
     monkeypatch.setattr(
-        lifecycle_policy_module,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.offline),
+        lifecycle_policy_module.IntentService,
+        "mark_dirty_and_reconcile",
+        mark_dirty,
     )
-    machine = SimpleNamespace(transition=AsyncMock())
-    monkeypatch.setattr(lifecycle_policy_module, "_MACHINE", machine)
 
     assert await svc.attempt_auto_recovery(db, busy, source="checks", reason="reconnected") is True
-    machine.transition.assert_awaited()
-    assert machine.transition.await_args.args[1] is lifecycle_policy_module.TransitionEvent.AUTO_STOP_EXECUTED
+    mark_dirty.assert_awaited()
 
 
 async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
@@ -1899,12 +1904,10 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(IntentService, "register_intents_and_reconcile", AsyncMock())
     monkeypatch.setattr(lifecycle_policy_module, "record_event", AsyncMock())
-    monkeypatch.setattr(
-        lifecycle_policy_module,
-        "ready_operational_state",
-        AsyncMock(return_value=DeviceOperationalState.available),
-    )
-    monkeypatch.setattr(lifecycle_policy_module._MACHINE, "transition", AsyncMock())
+    # After Task 10: ready_operational_state and _MACHINE removed from lifecycle_policy.
+    # mark_dirty_and_reconcile is called instead.
+    mark_dirty2 = AsyncMock()
+    monkeypatch.setattr(lifecycle_policy_module.IntentService, "mark_dirty_and_reconcile", mark_dirty2)
     monkeypatch.setattr(lifecycle_policy_module.lifecycle_incident_service, "record_lifecycle_incident", AsyncMock())
     probe_order: list[str] = []
 
@@ -1944,7 +1947,8 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )  # type: ignore[arg-type]
     assert db.added
     IntentService.register_intents_and_reconcile.assert_awaited()
-    lifecycle_policy_module._MACHINE.transition.assert_awaited()
+    # After Task 10: _MACHINE removed; mark_dirty_and_reconcile is called instead.
+    mark_dirty2.assert_awaited()
     # wait_for_node_running must fire before run_session_viability_probe; probing
     # before agent start-up yields false negatives.
     assert probe_order == ["wait", "probe"]

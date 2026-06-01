@@ -100,9 +100,13 @@ class TestEventLogHook:
         assert all(row.event_type != DeviceEventType.session_started for row in rows)
 
     async def test_unmapped_event_writes_nothing(self, db_session: AsyncSession, db_host: Host) -> None:
+        # VERIFICATION_PASSED is not in _EVENT_TYPE_MAP, so no DeviceEvent row is written.
         device = await _seed(db_session, db_host, "evt3")
+        with state_write_guard.bypass():
+            device.operational_state = DeviceOperationalState.verifying
+        await db_session.flush()
         machine = DeviceStateMachine(hooks=[EventLogHook()])
-        await machine.transition(device, TransitionEvent.DEVICE_DISCOVERED, publisher=event_bus)
+        await machine.transition(device, TransitionEvent.VERIFICATION_PASSED, publisher=event_bus)
         await db_session.flush()
         rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
         assert rows == []
