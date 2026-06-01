@@ -804,6 +804,7 @@ async def test_clear_desired_grid_run_id_skips_released_and_missing_devices(monk
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", revoke)
 
     await _release_svc.clear_desired_grid_run_id_for_run(db, run=run, caller="run_completed")
+    revoke.assert_not_awaited()
 
 
 # ── Task 3.6: hold=None readers migrated to operational_state + reservation row ──
