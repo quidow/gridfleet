@@ -341,7 +341,9 @@ def test_appium_node_stop_in_flight_predicate() -> None:
 
 def test_operational_state_and_hold_value_sets_are_disjoint() -> None:
     op_values = {v.value for v in DeviceOperationalState}
-    hold_values = {v.value for v in DeviceHold}
+    # DeviceHold.maintenance overlaps intentionally during the hold-collapse migration
+    # (Phase 1 adds maintenance to operational_state; Phase 5 removes DeviceHold.maintenance).
+    hold_values = {v.value for v in DeviceHold} - {"maintenance"}
     assert op_values.isdisjoint(hold_values), (
         "operational_state and hold value sets must not overlap; the chip "
         "projection `hold or operational_state` becomes ambiguous otherwise."
