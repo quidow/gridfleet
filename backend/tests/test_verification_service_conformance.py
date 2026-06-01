@@ -1,4 +1,4 @@
-from app.devices.protocols import VerificationProtocol
+from app.verification.protocols import VerificationProtocol
 from app.verification.services.service import VerificationService
 
 

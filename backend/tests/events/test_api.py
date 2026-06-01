@@ -160,7 +160,7 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
         event_services=event_services,
-        device_services=SimpleNamespace(verification=VerificationService()),
+        verification_services=SimpleNamespace(service=VerificationService()),
     )
     iterator = _event_stream_iterator(response.body_iterator)
 
@@ -221,7 +221,7 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
         request=AsyncMock(is_disconnected=AsyncMock(return_value=False)),
         db=db_session,
         event_services=event_services,
-        device_services=SimpleNamespace(verification=VerificationService()),
+        verification_services=SimpleNamespace(service=VerificationService()),
     )
     iterator = _event_stream_iterator(response.body_iterator)
 

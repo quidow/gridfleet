@@ -515,8 +515,8 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
 async def test_device_verification_router_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock(bind=object())
     device_id = uuid.uuid4()
-    mock_ds_pack_error = SimpleNamespace(
-        verification=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("pack")))
+    mock_vs_pack_error = SimpleNamespace(
+        service=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("pack")))
     )
     with pytest.raises(HTTPException) as pack_error:
         await devices_verification.create_device_verification_job(
@@ -529,13 +529,12 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
                 host_id=uuid.uuid4(),
             ),
             db=db,
-            device_services=mock_ds_pack_error,
+            verification_services=mock_vs_pack_error,
         )
     assert pack_error.value.status_code == 422
 
     mock_ds_none_crud = SimpleNamespace(
         crud=SimpleNamespace(get_device=AsyncMock(return_value=None)),
-        verification=SimpleNamespace(),
     )
     with pytest.raises(HTTPException):
         await devices_verification.create_existing_device_verification_job(
@@ -543,11 +542,12 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
             devices_verification.DeviceVerificationUpdate(host_id=uuid.uuid4()),
             db=db,
             device_services=mock_ds_none_crud,
+            verification_services=SimpleNamespace(service=SimpleNamespace()),
         )
 
-    mock_ds_no_job = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))
+    mock_vs_no_job = SimpleNamespace(service=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
-        await devices_verification.get_device_verification_job("job", db=db, device_services=mock_ds_no_job)
+        await devices_verification.get_device_verification_job("job", db=db, verification_services=mock_vs_no_job)
 
     queue: asyncio.Queue[devices_verification.Event] = asyncio.Queue()
     task = asyncio.create_task(devices_verification._read_queue_event(queue))
@@ -563,17 +563,15 @@ async def test_device_verification_event_stream_initial_completed_job(monkeypatc
     mock_event_services = SimpleNamespace(
         subscriber=SimpleNamespace(subscribe=MagicMock(return_value=queue), unsubscribe=unsubscribe)
     )
-    mock_ds = SimpleNamespace(
-        verification=SimpleNamespace(
-            get_verification_job=AsyncMock(return_value={"job_id": "job", "status": "completed"})
-        )
+    mock_vs = SimpleNamespace(
+        service=SimpleNamespace(get_verification_job=AsyncMock(return_value={"job_id": "job", "status": "completed"}))
     )
     response = await devices_verification.stream_device_verification_job_events(
         "job",
         SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
         db=db,
         event_services=mock_event_services,
-        device_services=mock_ds,
+        verification_services=mock_vs,
     )
 
     first = await response.body_iterator.__anext__()

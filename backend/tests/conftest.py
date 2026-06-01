@@ -100,7 +100,9 @@ from app.settings.registry import SETTINGS_REGISTRY, resolve_default
 from app.settings.service import SettingsService
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
+from app.verification.dependencies import get_verification_services
 from app.verification.services.service import VerificationService
+from app.verification.services_container import VerificationServices
 from app.webhooks.dependencies import get_webhook_services
 from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery
@@ -419,7 +421,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
             portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
-            verification=VerificationService(),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
@@ -447,6 +448,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             circuit_breaker=test_circuit_breaker,
             health=DeviceHealthService(publisher=test_event_bus),
             lifecycle_incidents=LifecycleIncidentService(),
+        )
+
+    def override_get_verification_services() -> VerificationServices:
+        return VerificationServices(
+            service=VerificationService(),
+            runner=AsyncMock(),
         )
 
     def override_get_host_services() -> HostServices:
@@ -672,6 +679,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_settings_services] = override_get_settings_services
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     app.dependency_overrides[get_device_services] = override_get_device_services
+    app.dependency_overrides[get_verification_services] = override_get_verification_services
     app.dependency_overrides[get_host_services] = override_get_host_services
     app.dependency_overrides[get_session_services] = override_get_session_services
     app.dependency_overrides[get_run_services] = override_get_run_services

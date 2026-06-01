@@ -482,8 +482,8 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         subscriber=SimpleNamespace(subscribe=Mock(return_value=queue), unsubscribe=Mock())
     )
 
-    mock_device_services_none = SimpleNamespace(
-        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
+    mock_verification_services_none = SimpleNamespace(
+        service=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.stream_device_verification_job_events(
@@ -491,12 +491,12 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
             request,
             db=SimpleNamespace(bind=None),
             event_services=mock_event_services,
-            device_services=mock_device_services_none,
+            verification_services=mock_verification_services_none,
         )
     assert exc.value.status_code == 404
 
-    mock_device_services = SimpleNamespace(
-        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=initial_job))
+    mock_verification_services = SimpleNamespace(
+        service=SimpleNamespace(get_verification_job=AsyncMock(return_value=initial_job))
     )
 
     response = await devices_verification_router.stream_device_verification_job_events(
@@ -504,7 +504,7 @@ async def test_device_verification_sse_filter_and_disconnect_branches(monkeypatc
         request,
         db=SimpleNamespace(bind=None),
         event_services=mock_event_services,
-        device_services=mock_device_services,
+        verification_services=mock_verification_services,
     )
     assert (await response.body_iterator.__anext__())["event"] == "device.verification.updated"
     with pytest.raises(StopAsyncIteration):
@@ -564,31 +564,34 @@ async def test_plugins_router_missing_host_and_plugin_paths() -> None:
 
 async def test_device_verification_router_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = SimpleNamespace(bind=None)
-    mock_device_services_pack_error = SimpleNamespace(
-        verification=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("pack")))
+    mock_verification_services_pack_error = SimpleNamespace(
+        service=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("pack")))
     )
     with pytest.raises(HTTPException) as caught:
         await devices_verification_router.create_device_verification_job(
-            Mock(), db=db, device_services=mock_device_services_pack_error
+            Mock(), db=db, verification_services=mock_verification_services_pack_error
         )
     assert caught.value.status_code == 422
 
     mock_device_services_none = SimpleNamespace(
         crud=SimpleNamespace(get_device=AsyncMock(return_value=None)),
-        verification=SimpleNamespace(),
     )
     with pytest.raises(HTTPException) as caught:
         await devices_verification_router.create_existing_device_verification_job(
-            uuid.uuid4(), Mock(), db=db, device_services=mock_device_services_none
+            uuid.uuid4(),
+            Mock(),
+            db=db,
+            device_services=mock_device_services_none,
+            verification_services=SimpleNamespace(service=SimpleNamespace()),
         )
     assert caught.value.status_code == 404
 
-    mock_device_services_no_job = SimpleNamespace(
-        verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
+    mock_verification_services_no_job = SimpleNamespace(
+        service=SimpleNamespace(get_verification_job=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException) as caught:
         await devices_verification_router.get_device_verification_job(
-            "missing", db=db, device_services=mock_device_services_no_job
+            "missing", db=db, verification_services=mock_verification_services_no_job
         )
     assert caught.value.status_code == 404
 
@@ -2805,19 +2808,18 @@ async def test_devices_verification_router_error_and_success_branches(db_session
         name="Router Verify",
         host_id=uuid.uuid4(),
     )
-    mock_device_services_pack_error = SimpleNamespace(
-        verification=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("missing")))
+    mock_verification_services_pack_error = SimpleNamespace(
+        service=SimpleNamespace(start_verification_job=AsyncMock(side_effect=PackUnavailableError("missing")))
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.create_device_verification_job(
-            create_payload, db=db_session, device_services=mock_device_services_pack_error
+            create_payload, db=db_session, verification_services=mock_verification_services_pack_error
         )
     assert exc.value.status_code == 422
 
     device_id = uuid.uuid4()
     mock_device_services_none = SimpleNamespace(
         crud=SimpleNamespace(get_device=AsyncMock(return_value=None)),
-        verification=SimpleNamespace(),
     )
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.create_existing_device_verification_job(
@@ -2825,6 +2827,7 @@ async def test_devices_verification_router_error_and_success_branches(db_session
             DeviceVerificationUpdate(name="verify", host_id=uuid.uuid4()),
             db=db_session,
             device_services=mock_device_services_none,
+            verification_services=SimpleNamespace(service=SimpleNamespace()),
         )
     assert exc.value.status_code == 404
 
@@ -2836,13 +2839,13 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
     mock_event_services = SimpleNamespace(
         subscriber=SimpleNamespace(subscribe=Mock(return_value=object()), unsubscribe=unsubscribe)
     )
-    mock_ds_terminal = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=job)))
+    mock_vs_terminal = SimpleNamespace(service=SimpleNamespace(get_verification_job=AsyncMock(return_value=job)))
     response = await devices_verification_router.stream_device_verification_job_events(
         "job-stream",
         request,  # type: ignore[arg-type]
         db=db_session,
         event_services=mock_event_services,
-        device_services=mock_ds_terminal,
+        verification_services=mock_vs_terminal,
     )
     first = await response.body_iterator.__anext__()
     await response.body_iterator.aclose()
@@ -2851,14 +2854,13 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
     unsubscribe.assert_called_once()
 
     device_id = uuid.uuid4()
-    mock_ds_existing = SimpleNamespace(
-        verification=SimpleNamespace(
+    mock_vs_existing = SimpleNamespace(
+        service=SimpleNamespace(
             start_existing_device_verification_job=AsyncMock(return_value={"id": "job", "status": "queued"})
         )
     )
     mock_ds_existing_with_crud = SimpleNamespace(
         crud=SimpleNamespace(get_device=AsyncMock(return_value=object())),
-        verification=mock_ds_existing.verification,
     )
     assert (
         await devices_verification_router.create_existing_device_verification_job(
@@ -2866,13 +2868,14 @@ async def test_devices_verification_event_stream_terminal_initial_event(db_sessi
             DeviceVerificationUpdate(name="verify", host_id=uuid.uuid4()),
             db=db_session,
             device_services=mock_ds_existing_with_crud,
+            verification_services=mock_vs_existing,
         )
     )["id"] == "job"
 
-    mock_ds_no_job = SimpleNamespace(verification=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))
+    mock_vs_no_job = SimpleNamespace(service=SimpleNamespace(get_verification_job=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException) as exc:
         await devices_verification_router.get_device_verification_job(
-            "missing", db=db_session, device_services=mock_ds_no_job
+            "missing", db=db_session, verification_services=mock_vs_no_job
         )
     assert exc.value.status_code == 404
 

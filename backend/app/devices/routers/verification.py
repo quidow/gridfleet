@@ -18,6 +18,7 @@ from app.devices.schemas.device import (
 )
 from app.events import Event
 from app.events.dependencies import EventServicesDep
+from app.verification.dependencies import VerificationServicesDep
 from app.verification.schemas import DeviceVerificationJobRead
 from app.verification.services.job_state import public_snapshot
 
@@ -40,11 +41,11 @@ async def _read_queue_event(queue: asyncio.Queue[Event]) -> Event:
 async def create_device_verification_job(
     data: DeviceVerificationCreate,
     db: DbDep,
-    device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     try:
-        return await device_services.verification.start_verification_job(data, session_factory=session_factory)
+        return await verification_services.service.start_verification_job(data, session_factory=session_factory)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
 
@@ -55,12 +56,13 @@ async def create_existing_device_verification_job(
     data: DeviceVerificationUpdate,
     db: DbDep,
     device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> dict[str, Any]:
     device = await device_services.crud.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    return await device_services.verification.start_existing_device_verification_job(
+    return await verification_services.service.start_existing_device_verification_job(
         device_id,
         data,
         session_factory=session_factory,
@@ -68,9 +70,11 @@ async def create_existing_device_verification_job(
 
 
 @router.get("/verification-jobs/{job_id}", response_model=DeviceVerificationJobRead)
-async def get_device_verification_job(job_id: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+async def get_device_verification_job(
+    job_id: str, db: DbDep, verification_services: VerificationServicesDep
+) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    job = await device_services.verification.get_verification_job(job_id, session_factory=session_factory)
+    job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
     if job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
     return job
@@ -82,10 +86,10 @@ async def stream_device_verification_job_events(
     request: Request,
     db: DbDep,
     event_services: EventServicesDep,
-    device_services: DeviceServicesDep,
+    verification_services: VerificationServicesDep,
 ) -> EventSourceResponse:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    initial_job = await device_services.verification.get_verification_job(job_id, session_factory=session_factory)
+    initial_job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
     if initial_job is None:
         raise HTTPException(status_code=404, detail="Verification job not found")
 

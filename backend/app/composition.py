@@ -89,6 +89,7 @@ from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.verification.services.service import VerificationService
+from app.verification.services_container import VerificationServices
 from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.service import WebhookCrudService
 from app.webhooks.services_container import WebhookServices
@@ -100,6 +101,7 @@ class AppServices:
     settings: SettingsServices
     agent_comm: AgentCommServices
     devices: DeviceServices
+    verification: VerificationServices
     hosts: HostServices
     packs: PackServices
     plugins: PluginServices
@@ -270,6 +272,10 @@ def compose_app(
     )
     verification_svc = VerificationService()
     portability_import_svc = PortabilityImportService(verification_enqueuer=verification_svc)
+    verification_services = VerificationServices(
+        service=verification_svc,
+        runner=verification_runner_svc,
+    )
 
     return AppServices(
         events=event_services,
@@ -287,7 +293,6 @@ def compose_app(
             portability_export=portability_export_svc,
             inventory_export=inventory_export_svc,
             portability_import=portability_import_svc,
-            verification=verification_svc,
             crud=crud_svc,
             capability=device_capability_svc,
             connectivity=connectivity_svc,
@@ -299,6 +304,7 @@ def compose_app(
             session_factory=session_factory,
             circuit_breaker=circuit_breaker,
         ),
+        verification=verification_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
             hardware_telemetry=HardwareTelemetryService(
