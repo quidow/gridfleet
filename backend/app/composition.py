@@ -44,7 +44,6 @@ from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services.verification_execution import VerificationExecutionService
@@ -159,7 +158,6 @@ def compose_app(
         serializer=presenter_svc,
     )
 
-    device_state_svc = DeviceStateService(publisher=bus)
     device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
     lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
@@ -207,11 +205,10 @@ def compose_app(
         publisher=bus,
         settings=settings_svc,
         grid=grid_svc,
-        device_state=device_state_svc,
         deferred_stop=lifecycle_policy_svc,
     )
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
-    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, device_state=device_state_svc)
+    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc)
     run_failure = RunFailureService(
         publisher=bus,
         settings=settings_svc,
@@ -266,7 +263,6 @@ def compose_app(
         settings=settings_services,
         agent_comm=agent_comm_services,
         devices=DeviceServices(
-            state=device_state_svc,
             fleet_capacity=fleet_capacity_svc,
             data_cleanup=data_cleanup_svc,
             property_refresh=property_refresh_svc,
@@ -303,7 +299,7 @@ def compose_app(
             session_factory=session_factory,
         ),
         sessions=SessionServices(
-            crud=SessionCrudService(publisher=bus, device_state=device_state_svc, lifecycle=lifecycle_policy_svc),
+            crud=SessionCrudService(publisher=bus, lifecycle=lifecycle_policy_svc),
             sync=SessionSyncService(
                 publisher=bus, settings=settings_svc, grid=grid_svc, lifecycle=lifecycle_policy_svc
             ),

@@ -56,7 +56,6 @@ def test_helpers_raise_for_unknown_event() -> None:
     ("event_name", "expected_default"),
     [
         ("device.operational_state_changed", "info"),
-        ("device.hold_changed", "info"),
         ("device.hardware_health_changed", "warning"),
         ("device.crashed", "critical"),
         ("node.crash", "critical"),

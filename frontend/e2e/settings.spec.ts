@@ -58,21 +58,18 @@ function createSettingsState(): MockSetting[] {
         'node.crash',
         'host.heartbeat_lost',
         'device.operational_state_changed',
-        'device.hold_changed',
         'run.expired',
       ],
       value: [
         'node.crash',
         'host.heartbeat_lost',
         'device.operational_state_changed',
-        'device.hold_changed',
         'run.expired',
       ],
       validation: {
         item_type: 'string',
         item_allowed_values: [
           'device.operational_state_changed',
-          'device.hold_changed',
           'node.crash',
           'session.started',
           'run.created',
@@ -195,13 +192,6 @@ async function mockSettingsPageApis(page: Page) {
       category: 'device_and_node_lifecycle',
       category_display_name: 'Device And Node Lifecycle',
       description: 'Device operational state changed.',
-      typical_data_fields: ['device_id'],
-    },
-    {
-      name: 'device.hold_changed',
-      category: 'device_and_node_lifecycle',
-      category_display_name: 'Device And Node Lifecycle',
-      description: 'Device hold changed.',
       typical_data_fields: ['device_id'],
     },
     {

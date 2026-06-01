@@ -168,7 +168,7 @@ async def apply_derived_state(
     prev_op = device.operational_state
     reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts, derived_op)
     event_type, severity = map_transition_event(derived_op, reason)
-    # Persist the typed audit row the old EventLogHook used to write (§6) only when the cause was
+    # Persist the typed audit row when the cause was
     # explicitly carried in by the observation site — never from the fact-based heuristic, which
     # cannot tell connectivity loss from a node crash / health failure.
     if observed_reason is not None and event_type is not None:

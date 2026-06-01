@@ -139,9 +139,8 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke_mock)
     mark_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(execution, "mark_review_required", mark_mock)
-    machine = MagicMock()
-    machine.transition = AsyncMock()
-    monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
+    machine_spy = AsyncMock()
+    monkeypatch.setattr(execution, "set_operational_state", machine_spy)
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
     outcome = await execution._finalize_failure(
         db,
@@ -155,10 +154,10 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
-    # Update-mode failure is reconciler-authoritative: no direct machine push. The durable
+    # Update-mode failure is reconciler-authoritative: no direct set_operational_state push. The durable
     # review_required fact is set before the revoke so the reconcile derives offline, and the
     # revoke carries the publisher for the derived emit.
-    machine.transition.assert_not_awaited()
+    machine_spy.assert_not_awaited()
     mark_mock.assert_awaited_once()
     revoke_mock.assert_awaited_once_with(db, locked, publisher=event_bus)
 
@@ -224,7 +223,7 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The PASS terminal transition is reconciler-authoritative: no direct
-    ``DeviceStateMachine`` push. ``_revoke_verification_node_intent`` must run only
+    ``set_operational_state`` push. ``_revoke_verification_node_intent`` must run only
     after ``locked.verified_at`` is set (otherwise the reconcile it triggers sees
     ``verified_at IS NULL`` and flaps ``available -> offline`` right after
     registration), and it must carry the ``publisher`` so the derived ``available``
@@ -251,8 +250,8 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     monkeypatch.setattr(execution, "_restore_create_payload_fields", lambda *args: None)
     monkeypatch.setattr(execution, "set_stage", AsyncMock())
 
-    machine = SimpleNamespace(transition=AsyncMock())
-    monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
+    machine_spy = AsyncMock()
+    monkeypatch.setattr(execution, "set_operational_state", machine_spy)
     _mock_viability = AsyncMock()
     _mock_viability.record_session_viability_result = AsyncMock()
 
@@ -277,7 +276,7 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
     )
 
     assert outcome.status == "completed"
-    machine.transition.assert_not_awaited()  # PASS no longer pushes through the state machine
+    machine_spy.assert_not_awaited()  # PASS no longer pushes through set_operational_state
     assert len(verified_at_when_revoked) == 1
     assert verified_at_when_revoked[0] is not None, "verified_at must be set before revoke"
     assert publisher_when_revoked[0] is event_bus, "revoke must carry the publisher for the derived emit"
@@ -298,9 +297,8 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     monkeypatch.setattr(execution, "_stop_verification_node_if_running", AsyncMock(return_value=None))
     monkeypatch.setattr(execution.device_locking, "lock_device", AsyncMock(return_value=locked))
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", AsyncMock())
-    machine = MagicMock()
-    machine.transition = AsyncMock()
-    monkeypatch.setattr(execution, "DeviceStateMachine", lambda: machine)
+    machine_spy = AsyncMock()
+    monkeypatch.setattr(execution, "set_operational_state", machine_spy)
 
     mark_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(execution, "mark_review_required", mark_mock)

@@ -15,7 +15,6 @@ from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.state import DeviceStateService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
@@ -83,7 +82,6 @@ async def test_start_node_locks_device_before_reservation_check(
             publisher=event_bus,
             settings=settings_service,
             grid=grid,
-            device_state=DeviceStateService(publisher=event_bus),
             deferred_stop=AsyncMock(),
         )
         run_lifecycle = RunLifecycleService(
@@ -92,7 +90,6 @@ async def test_start_node_locks_device_before_reservation_check(
         run_allocator = RunAllocatorService(
             publisher=event_bus,
             settings=settings_service,
-            device_state=DeviceStateService(publisher=event_bus),
         )
         run_failure = RunFailureService(
             publisher=event_bus,

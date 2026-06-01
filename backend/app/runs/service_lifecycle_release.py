@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.grid.protocols import GridServiceProtocol
     from app.runs.models import TestRun
-    from app.runs.protocols import DeviceDeferredStop, DeviceStateWriter
+    from app.runs.protocols import DeviceDeferredStop
 
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -27,7 +27,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.reservation_query import device_is_reserved
-from app.devices.services.state import ready_operational_state
+from app.devices.services.state import ready_operational_state, set_operational_state
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -40,13 +40,11 @@ class RunReleaseService:
         publisher: EventPublisher,
         settings: SettingsReader,
         grid: GridServiceProtocol,
-        device_state: DeviceStateWriter,
         deferred_stop: DeviceDeferredStop,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._grid = grid
-        self._device_state = device_state
         self._deferred_stop = deferred_stop
 
     async def release_devices(
@@ -112,11 +110,12 @@ class RunReleaseService:
             ):
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            await self._device_state.set_operational_state(
+            await set_operational_state(
                 device,
                 await ready_operational_state(db, device),
                 reason=f"Run '{run.name}' ended ({run.state.value})",
                 severity="info",
+                publisher=self._publisher,
             )
             devices_pending_lifecycle_cleanup.append(device.id)
         if commit:

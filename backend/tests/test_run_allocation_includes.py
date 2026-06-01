@@ -13,7 +13,6 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.devices.services.capability import DeviceCapabilityService
-from app.devices.services.state import DeviceStateService
 from app.runs import service as run_service
 from app.runs.models import TestRun
 from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
@@ -26,7 +25,8 @@ from tests.helpers import test_event_bus as event_bus
 _settings = FakeSettingsReader({})
 _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _allocator_svc = RunAllocatorService(
-    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
 )
 
 

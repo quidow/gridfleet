@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import write_desired_state
 from app.core.errors import AgentCallError
 from app.devices import locking as device_locking
+from app.devices.models import DeviceOperationalState
 from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
@@ -21,9 +22,8 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     verification_intent_source,
 )
-from app.devices.services.lifecycle_state_machine import DeviceStateMachine
-from app.devices.services.lifecycle_state_machine_types import TransitionEvent
 from app.devices.services.review import mark_review_required
+from app.devices.services.state import set_operational_state
 from app.devices.services.verification_job_state import enum_value, set_stage
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
@@ -266,10 +266,11 @@ class VerificationExecutionService:
                 if existing_stop_error is not None:
                     return VerificationExecutionOutcome(status="failed", error=existing_stop_error)
                 locked = await device_locking.lock_device(db, context.save_device_id)
-                await DeviceStateMachine().transition(
+                await set_operational_state(
                     locked,
-                    TransitionEvent.VERIFICATION_STARTED,
+                    DeviceOperationalState.verifying,
                     reason="verification",
+                    severity="info",
                     publisher=self._publisher,
                 )
                 await db.commit()
@@ -533,10 +534,11 @@ async def _finalize_success(
                 await db.commit()
                 return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
             await _revoke_verification_node_intent(db, locked)
-            await DeviceStateMachine().transition(
+            await set_operational_state(
                 locked,
-                TransitionEvent.VERIFICATION_FAILED,
+                DeviceOperationalState.offline,
                 reason="verification",
+                severity="warning",
                 publisher=publisher,
             )
             await db.commit()
@@ -554,7 +556,7 @@ async def _finalize_success(
         )
 
     locked.verified_at = datetime.now(UTC)
-    # Reconciler-authoritative terminal: no direct DeviceStateMachine push. Set
+    # Reconciler-authoritative terminal: no direct set_operational_state push. Set
     # ``verified_at`` first, then revoke the verification intent — the revoke triggers an
     # inline reconcile that derives ``available`` (verified + ready, lease cleared) and emits
     # via ``publisher``. Setting ``verified_at`` before the revoke is load-bearing: otherwise
@@ -602,7 +604,7 @@ async def _finalize_failure(
         locked = await device_locking.lock_device(db, context.save_device_id)
     _restore_update_original_fields(locked, original_fields)
     await _stop_verification_node_if_running(job, db, locked, node, node_manager)
-    # Reconciler-authoritative terminal: no direct DeviceStateMachine push. Shelve the device
+    # Reconciler-authoritative terminal: no direct set_operational_state push. Shelve the device
     # (review_required) BEFORE the revoke so the reconcile the revoke triggers reads the durable
     # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
     # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the

@@ -3,7 +3,7 @@
 This page documents the shipped live-event contract used by SSE subscribers, recent-notification polling, and webhook delivery.
 
 > [!IMPORTANT]
-> `device.availability_changed` was removed with the device-state split. Subscribe to `device.operational_state_changed` and `device.hold_changed` instead.
+> `device.availability_changed` was removed with the device-state split. Subscribe to `device.operational_state_changed` instead.
 
 ## Endpoints
 
@@ -80,7 +80,6 @@ The manager publishes one shared event object shape:
 | Event | Typical `data` fields | Default severity | Allowed severities | Source |
 | --- | --- | --- | --- | --- |
 | `device.operational_state_changed` | `device_id`, `device_name`, `old_operational_state`, `new_operational_state`, optional `reason` | `info` | all | node lifecycle, health recovery/failure, session-sync busy/idle flows |
-| `device.hold_changed` | `device_id`, `device_name`, `old_hold`, `new_hold`, optional `reason` | `info` | `info`, `neutral` | maintenance and run/reservation flows |
 | `device.verification.updated` | full verification job snapshot | `info` | `info`, `success`, `warning`, `critical` | verification pipeline |
 | `device.hardware_health_changed` | `device_id`, `device_name`, `old_status`, `new_status`, battery telemetry fields | `warning` | `warning`, `critical`, `success` | hardware telemetry loop |
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |

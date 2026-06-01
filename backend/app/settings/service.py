@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _LEGACY_EVENT_RENAMES = {
-    "device.availability_changed": ("device.operational_state_changed", "device.hold_changed"),
+    "device.availability_changed": ("device.operational_state_changed",),
 }
 
 

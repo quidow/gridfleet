@@ -34,7 +34,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -73,7 +72,6 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     _svc_crud_1 = DeviceCrudService(settings=_svc_settings_1)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_svc_pub_1),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
             data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -132,7 +130,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_crud_2 = DeviceCrudService(settings=_svc_settings_2)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_svc_pub_2),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -258,7 +255,6 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     _svc_crud_3 = DeviceCrudService(settings=_svc_settings_3)
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_svc_pub_3),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
             data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -363,7 +359,6 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     _svc_crud_4 = DeviceCrudService(settings=_svc_settings_4)
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
-            state=DeviceStateService(publisher=_svc_pub_4),
             fleet_capacity=FleetCapacityService(grid=_svc_grid_4),
             data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
             property_refresh=PropertyRefreshService(discovery=Mock()),

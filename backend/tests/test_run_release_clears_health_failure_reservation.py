@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
@@ -22,7 +21,6 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)

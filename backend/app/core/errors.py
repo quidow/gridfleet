@@ -124,21 +124,6 @@ class PlatformRemovedError(LookupError):
         self.platform_id = platform_id
 
 
-class InvalidTransitionError(AppError):
-    """Raised when a DeviceStateMachine transition is attempted from an invalid source state."""
-
-    status_code = 409
-    code = "INVALID_TRANSITION"
-
-    def __init__(self, event: str, current_state: str) -> None:
-        super().__init__(
-            f"Cannot {event} from state {current_state}",
-            details={"event": event, "current_state": current_state},
-        )
-        self.event = event
-        self.current_state = current_state
-
-
 def envelope_response(
     *,
     status_code: int,

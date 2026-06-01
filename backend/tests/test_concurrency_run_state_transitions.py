@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import DeviceReservation
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
@@ -22,7 +21,6 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)

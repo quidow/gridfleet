@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
@@ -22,7 +21,6 @@ _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     grid=_grid,
-    device_state=DeviceStateService(publisher=event_bus),
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
@@ -221,7 +219,6 @@ async def test_expire_run_deletes_active_grid_session(
         publisher=event_bus,
         settings=_settings,
         grid=fake_grid,
-        device_state=DeviceStateService(publisher=event_bus),
         deferred_stop=AsyncMock(),
     )
     lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=release)

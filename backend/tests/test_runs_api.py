@@ -15,7 +15,6 @@ from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.state import DeviceStateService
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
@@ -34,7 +33,8 @@ from tests.pack.factories import seed_test_packs
 _settings = FakeSettingsReader({})
 _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _allocator_svc = RunAllocatorService(
-    publisher=event_bus, settings=_settings, device_state=DeviceStateService(publisher=event_bus)
+    publisher=event_bus,
+    settings=_settings,
 )
 
 
@@ -1134,7 +1134,6 @@ async def test_sessions_straddle_active_signal_boundary(
 ) -> None:
     """Sessions started while a run is preparing carry run_id=NULL; sessions
     started after the explicit /active signal are linked to the run."""
-    from app.devices.services.state import DeviceStateService as _DeviceStateService
     from app.runs.models import RunState
     from app.sessions.service import SessionCrudService
     from tests.helpers import create_reserved_run
@@ -1152,9 +1151,7 @@ async def test_sessions_straddle_active_signal_boundary(
     await db_session.commit()
     run = await create_reserved_run(db_session, name="Straddle Run", devices=[device], state=RunState.preparing)
 
-    crud = SessionCrudService(
-        publisher=event_bus, device_state=_DeviceStateService(publisher=event_bus), lifecycle=AsyncMock()
-    )
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
     prep_session = await crud.register_session(
         db_session,
         session_id="sess-prep",
@@ -1163,16 +1160,13 @@ async def test_sessions_straddle_active_signal_boundary(
     )
     assert prep_session.run_id is None
 
-    crud_mock = SessionCrudService(
-        publisher=Mock(), device_state=_DeviceStateService(publisher=Mock()), lifecycle=AsyncMock()
-    )
+    crud_mock = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
     await crud_mock.update_session_status(db_session, "sess-prep", SessionStatus.passed)
 
     _release = RunReleaseService(
         publisher=event_bus,
         settings=_settings,
         grid=GridService(settings=_settings),
-        device_state=_DeviceStateService(publisher=event_bus),
         deferred_stop=AsyncMock(),
     )
     _lifecycle = RunLifecycleService(

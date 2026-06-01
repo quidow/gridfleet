@@ -47,7 +47,6 @@ from app.devices.services.portability_export import PortabilityExportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
-from app.devices.services.state import DeviceStateService
 from app.devices.services.test_data import TestDataService
 from app.devices.services.verification import VerificationService
 from app.devices.services_container import DeviceServices
@@ -396,7 +395,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _maintenance_svc = MaintenanceService(settings=settings_service, publisher=test_event_bus)
         _crud_svc = DeviceCrudService(settings=settings_service)
         return DeviceServices(
-            state=DeviceStateService(publisher=test_event_bus),
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -487,7 +485,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return SessionServices(
             crud=SessionCrudService(
                 publisher=test_event_bus,
-                device_state=DeviceStateService(publisher=test_event_bus),
                 lifecycle=_lifecycle_policy_svc,
             ),
             sync=SessionSyncService(
@@ -520,7 +517,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             grid=grid,
-            device_state=DeviceStateService(publisher=test_event_bus),
             deferred_stop=_lifecycle_policy_svc_runs,
         )
         run_lifecycle = RunLifecycleService(
@@ -529,7 +525,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         run_allocator = RunAllocatorService(
             publisher=test_event_bus,
             settings=settings_service,
-            device_state=DeviceStateService(publisher=test_event_bus),
         )
         run_failure = RunFailureService(
             publisher=test_event_bus,
@@ -690,7 +685,7 @@ def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[s
     Captures ``(name, payload)``; the ``severity`` kwarg is accepted but dropped
     so existing destructure-by-position tests stay compatible. Tests that need
     to assert severity should install their own monkeypatch (see
-    ``tests/test_device_state_severity.py`` for the pattern).
+    ``tests/test_observation_reason.py`` for the pattern).
     """
     captured: list[tuple[str, dict[str, Any]]] = []
 

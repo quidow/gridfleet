@@ -38,7 +38,6 @@ function appendReason(data: EventData): string {
 
 const LEGACY_FALLBACK: Record<string, EventSeverity> = {
   'device.operational_state_changed': 'warning',
-  'device.hold_changed': 'warning',
   'device.hardware_health_changed': 'warning',
   'device.verification.updated': 'info',
   'node.crash': 'critical',
@@ -81,14 +80,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
       const oldStatus = firstString(data, ['old_operational_state'], 'unknown');
       const newStatus = firstString(data, ['new_operational_state'], 'unknown');
       return `${device}: operational state ${oldStatus} -> ${newStatus}${appendReason(data)}`;
-    },
-  },
-  'device.hold_changed': {
-    render: (data) => {
-      const device = firstString(data, ['device_name', 'name'], 'Device');
-      const oldHold = firstString(data, ['old_hold'], 'none');
-      const newHold = firstString(data, ['new_hold'], 'none');
-      return `${device}: hold ${oldHold} -> ${newHold}${appendReason(data)}`;
     },
   },
   'device.hardware_health_changed': {

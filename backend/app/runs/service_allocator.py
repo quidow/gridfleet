@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.runs.protocols import DeviceStateWriter
 
 
 class _UnmetRequirementError(Exception):
@@ -198,10 +197,9 @@ async def _register_run_grid_intent(db: AsyncSession, *, run: TestRun, device_id
 
 
 class RunAllocatorService:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader, device_state: DeviceStateWriter) -> None:
+    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._device_state = device_state
 
     async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
         """Create a test run reservation. Returns (run, reserved_device_infos)."""
