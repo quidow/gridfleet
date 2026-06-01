@@ -35,6 +35,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
@@ -160,6 +161,7 @@ def compose_app(
 
     device_capability_svc = DeviceCapabilityService()
     reservation_svc = RunReservationService()
+    incidents_svc = LifecycleIncidentService()
     lifecycle_actions_svc = LifecyclePolicyActionsService(publisher=bus, reservation=reservation_svc)
     device_health_svc = DeviceHealthService(publisher=bus)
     viability_svc = SessionViabilityService(
@@ -277,6 +279,7 @@ def compose_app(
             capability=device_capability_svc,
             connectivity=connectivity_svc,
             health=device_health_svc,
+            lifecycle_incidents=incidents_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

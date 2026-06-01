@@ -177,3 +177,53 @@ async def list_lifecycle_incidents_paginated(
         prev_cursor = items[0].created_at.isoformat() if cursor else None
 
     return items, next_cursor, prev_cursor
+
+
+class LifecycleIncidentService:
+    """Container-held facade for the device lifecycle-incident surface."""
+
+    async def record_lifecycle_incident(
+        self,
+        db: AsyncSession,
+        device: Device,
+        event_type: DeviceEventType,
+        *,
+        summary_state: DeviceLifecyclePolicySummaryState,
+        reason: str | None = None,
+        detail: str | None = None,
+        source: str | None = None,
+        run_id: uuid.UUID | str | None = None,
+        run_name: str | None = None,
+        backoff_until: str | datetime | None = None,
+        ttl_seconds: int | None = None,
+        worker_id: str | None = None,
+        expires_at: str | datetime | None = None,
+    ) -> DeviceEvent:
+        return await record_lifecycle_incident(
+            db,
+            device,
+            event_type,
+            summary_state=summary_state,
+            reason=reason,
+            detail=detail,
+            source=source,
+            run_id=run_id,
+            run_name=run_name,
+            backoff_until=backoff_until,
+            ttl_seconds=ttl_seconds,
+            worker_id=worker_id,
+            expires_at=expires_at,
+        )
+
+    async def list_lifecycle_incidents_paginated(
+        self,
+        db: AsyncSession,
+        *,
+        limit: int = 50,
+        device_id: uuid.UUID | None = None,
+        cursor: str | None = None,
+        direction: str = "older",
+    ) -> tuple[list[LifecycleIncidentRead], str | None, str | None]:
+        return await list_lifecycle_incidents_paginated(
+            db, limit=limit, device_id=device_id, cursor=cursor, direction=direction
+        )
