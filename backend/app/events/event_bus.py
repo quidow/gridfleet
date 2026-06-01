@@ -143,6 +143,64 @@ class EventBus:
         self._handler_tasks.add(task)
         task.add_done_callback(self._handler_tasks.discard)
 
+    def queue_for_session(
+        self,
+        db: AsyncSession | Session,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        severity: EventSeverity | None = None,
+    ) -> None:
+        """Queue an event to dispatch after the outer transaction commits.
+
+        Accepts either an ``AsyncSession`` or the underlying sync ``Session`` —
+        callers that pull the session out of ``inspect(obj).session`` get the
+        sync object directly and can pass it without reconstructing the
+        ``AsyncSession``.
+
+        On commit, ``loop.create_task(self.publish(event_type, data))`` runs for
+        each queued event. On rollback, the queue is dropped — webhook/SSE
+        subscribers never see a transition that did not become durable. ``data``
+        is captured by reference — do not mutate it after queuing.
+
+        The running loop is captured at registration time (when this method is
+        called from inside an awaited coroutine). This is strictly safer than
+        resolving the loop inside the after_commit hook itself, which can fire
+        from non-greenlet contexts (sync fixture teardown) where
+        ``asyncio.get_running_loop()`` would raise ``RuntimeError``.
+        """
+        sync_session = db.sync_session if isinstance(db, AsyncSession) else db
+        loop = asyncio.get_running_loop()
+
+        pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
+            _PENDING_EVENTS_KEY, []
+        )
+        pending.append((event_type, data, severity))
+
+        if sync_session.info.get(_PENDING_EVENTS_LISTENER_KEY):
+            return
+        sync_session.info[_PENDING_EVENTS_LISTENER_KEY] = True
+
+        def _flush_on_commit(_session: object) -> None:
+            events: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.pop(
+                _PENDING_EVENTS_KEY, []
+            )
+            sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
+            if not events:
+                return
+            task = loop.create_task(_publish_pending_events(events, self))
+            self.track_task(task)
+
+        def _drop_on_rollback(_session: object) -> None:
+            sync_session.info.pop(_PENDING_EVENTS_KEY, None)
+            sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
+
+        # ``once=True`` makes SQLAlchemy auto-remove the listener after firing —
+        # avoids deque-mutation hazards if anything tried ``sa_event.remove`` from
+        # inside the callback.
+        sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
+        sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
+
     async def publish(self, event_type: str, data: dict[str, Any], severity: EventSeverity | None = None) -> None:
         if event_type in PUBLIC_EVENT_NAME_SET:
             resolved: EventSeverity = severity if severity is not None else default_severity_for(event_type)
@@ -378,53 +436,11 @@ def queue_event_for_session(
     severity: EventSeverity | None = None,
     publisher: EventPublisher,
 ) -> None:
-    """Queue an event to dispatch after the outer transaction commits.
+    """DEPRECATED shim — call ``publisher.queue_for_session(...)`` directly.
 
-    Accepts either an ``AsyncSession`` or the underlying sync ``Session`` —
-    callers that pull the session out of ``inspect(obj).session`` get the
-    sync object directly and can pass it without reconstructing the
-    ``AsyncSession``.
-
-    On commit, ``loop.create_task(publisher.publish(event_type, data))`` runs
-    for each queued event. On rollback, the queue is dropped — webhook/SSE
-    subscribers never see a transition that did not become durable. ``data``
-    is captured by reference — do not mutate it after queuing.
-
-    The running loop is captured at registration time (when this function is
-    called from inside an awaited coroutine). This is strictly safer than
-    resolving the loop inside the after_commit hook itself, which can fire
-    from non-greenlet contexts (sync fixture teardown) where
-    ``asyncio.get_running_loop()`` would raise ``RuntimeError``.
+    Removed in the same PR once all call sites migrate.
     """
-    sync_session = db.sync_session if isinstance(db, AsyncSession) else db
-    loop = asyncio.get_running_loop()
-
-    pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
-        _PENDING_EVENTS_KEY, []
-    )
-    pending.append((event_type, data, severity))
-
-    if sync_session.info.get(_PENDING_EVENTS_LISTENER_KEY):
-        return
-    sync_session.info[_PENDING_EVENTS_LISTENER_KEY] = True
-
-    def _flush_on_commit(_session: object) -> None:
-        events: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.pop(_PENDING_EVENTS_KEY, [])
-        sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
-        if not events:
-            return
-        task = loop.create_task(_publish_pending_events(events, publisher))
-        publisher.track_task(task)
-
-    def _drop_on_rollback(_session: object) -> None:
-        sync_session.info.pop(_PENDING_EVENTS_KEY, None)
-        sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
-
-    # ``once=True`` makes SQLAlchemy auto-remove the listener after firing —
-    # avoids deque-mutation hazards if anything tried ``sa_event.remove`` from
-    # inside the callback.
-    sa_event.listen(sync_session, "after_commit", _flush_on_commit, once=True)
-    sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
+    publisher.queue_for_session(db, event_type, data, severity=severity)
 
 
 def queue_device_crashed_event(

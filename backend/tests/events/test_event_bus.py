@@ -229,6 +229,23 @@ async def test_queue_event_for_session_carries_severity(
     assert severity == "warning"
 
 
+@pytest.mark.db
+async def test_queue_for_session_publishes_after_commit(db_session: AsyncSession) -> None:
+    bus = EventBus()
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def _fake_publish(event_type: str, data: dict[str, Any], *, severity: str | None = None) -> None:
+        captured.append((event_type, data))
+
+    bus.publish = _fake_publish  # type: ignore[method-assign]
+
+    bus.queue_for_session(db_session, "device.updated", {"id": "x"})
+    assert captured == []  # nothing before commit
+    await db_session.commit()
+    await drain_handlers(bus)  # let the after-commit task run
+    assert captured == [("device.updated", {"id": "x"})]
+
+
 async def test_event_bus_shutdown_waits_for_inflight_handlers(db_session: AsyncSession) -> None:
     engine = _session_bind_engine(db_session)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
