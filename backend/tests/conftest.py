@@ -40,6 +40,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
@@ -413,6 +414,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
             portability_export=PortabilityExportService(),
+            inventory_export=InventoryExportService(),
             verification=VerificationService(),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),

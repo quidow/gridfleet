@@ -36,6 +36,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
@@ -145,6 +146,7 @@ def compose_app(
     presenter_svc = DevicePresenterService(settings=settings_svc)
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
+    inventory_export_svc = InventoryExportService()
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
@@ -281,6 +283,7 @@ def compose_app(
             presenter=presenter_svc,
             test_data=test_data_svc,
             portability_export=portability_export_svc,
+            inventory_export=inventory_export_svc,
             verification=verification_svc,
             crud=crud_svc,
             capability=device_capability_svc,

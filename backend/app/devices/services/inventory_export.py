@@ -128,43 +128,47 @@ def _base_query(filters: DeviceQueryFilters | None) -> Select[tuple[Device]]:
     return stmt
 
 
-async def iter_inventory_json(
-    session: AsyncSession,
-    *,
-    columns: list[InventoryColumn],
-    filters: DeviceQueryFilters | None,
-) -> AsyncIterator[str]:
-    stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
-    result = await session.stream(stmt)
-    yield "["
-    first = True
-    async for partition in result.partitions(_CHUNK):
-        for (device,) in partition:
-            payload = _row_to_json_dict(device, columns)
-            chunk = json.dumps(payload, ensure_ascii=False)
-            yield ("" if first else ",") + chunk
-            first = False
-    yield "]"
+class InventoryExportService:
+    """Container-held streaming inventory export."""
 
+    async def iter_inventory_json(
+        self,
+        session: AsyncSession,
+        *,
+        columns: list[InventoryColumn],
+        filters: DeviceQueryFilters | None,
+    ) -> AsyncIterator[str]:
+        stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
+        result = await session.stream(stmt)
+        yield "["
+        first = True
+        async for partition in result.partitions(_CHUNK):
+            for (device,) in partition:
+                payload = _row_to_json_dict(device, columns)
+                chunk = json.dumps(payload, ensure_ascii=False)
+                yield ("" if first else ",") + chunk
+                first = False
+        yield "]"
 
-async def iter_inventory_csv(
-    session: AsyncSession,
-    *,
-    columns: list[InventoryColumn],
-    filters: DeviceQueryFilters | None,
-) -> AsyncIterator[str]:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([c.value for c in columns])
-    yield buffer.getvalue()
-    buffer.seek(0)
-    buffer.truncate(0)
-
-    stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
-    result = await session.stream(stmt)
-    async for partition in result.partitions(_CHUNK):
-        for (device,) in partition:
-            writer.writerow(_row_to_csv_values(device, columns))
+    async def iter_inventory_csv(
+        self,
+        session: AsyncSession,
+        *,
+        columns: list[InventoryColumn],
+        filters: DeviceQueryFilters | None,
+    ) -> AsyncIterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([c.value for c in columns])
         yield buffer.getvalue()
         buffer.seek(0)
         buffer.truncate(0)
+
+        stmt = _base_query(filters).execution_options(yield_per=_CHUNK)
+        result = await session.stream(stmt)
+        async for partition in result.partitions(_CHUNK):
+            for (device,) in partition:
+                writer.writerow(_row_to_csv_values(device, columns))
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
