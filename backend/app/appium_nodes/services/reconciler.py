@@ -39,6 +39,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     ObservedEntry,
     _execute_action,
     decide_convergence_action,
+    reap_orphan_nodes,
 )
 from app.core.config import reconciler_convergence_enabled
 from app.core.database import async_session
@@ -702,6 +703,12 @@ class ReconcilerService:
                         for entry in running
                     ]
                     await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
+                    # Reap stray agent nodes (duplicates for one target, or nodes
+                    # for a device not on this host) before convergence. Keyed off
+                    # ALL host rows (rows), not the active subset, so a node for a
+                    # device in recovery backoff is never mistaken for an orphan.
+                    # Runs even when active_rows is empty.
+                    await reap_orphan_nodes(observed, rows, stop_agent=self._make_stop_agent(host_ip, agent_port))
                     active_rows = active_rows_by_host.get(host_id, [])
                     if not active_rows:
                         return
@@ -840,7 +847,7 @@ class ReconcilerService:
         host_ip: str,
         agent_port: int,
     ) -> Callable[..., Awaitable[None]]:
-        async def _stop(*, row: DesiredRow, port: int | None) -> None:
+        async def _stop(*, row: DesiredRow | None = None, port: int | None) -> None:
             if port is None or port <= 0:
                 return
             try:
@@ -858,7 +865,8 @@ class ReconcilerService:
                 raise
             if not stopped:
                 APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
-                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {row.device_id} on port {port}")
+                device_ref = row.device_id if row is not None else "<orphan>"
+                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {device_ref} on port {port}")
 
         return _stop
 
