@@ -21,6 +21,7 @@ from app.hosts.models import Host, OSType
 from app.packs.services.start_shim import PackStartPayloadError
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -62,7 +63,7 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
     from app.devices.services.service import DeviceCrudService
 
     loaded = await DeviceCrudService(
-        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService()
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
     ).get_device(db_session, device.id)
     assert loaded is not None
     return loaded
@@ -703,7 +704,7 @@ async def test_start_stop_restart_node_guard_paths(
     _svc_settings = FakeSettingsReader({})
     svc = node_agent.ReconcilerAgentService(
         settings=_svc_settings,
-        operator=OperatorNodeLifecycleService(settings=_svc_settings),
+        operator=OperatorNodeLifecycleService(settings=_svc_settings, publisher=event_bus),
     )
     device = await _loaded_device(db_session, db_host, "start-stop-guards")
     with pytest.raises(NodeManagerError, match="No running node"):
@@ -741,7 +742,7 @@ async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
     _wait_settings = FakeSettingsReader({})
     svc = node_agent.ReconcilerAgentService(
         settings=_wait_settings,
-        operator=OperatorNodeLifecycleService(settings=_wait_settings),
+        operator=OperatorNodeLifecycleService(settings=_wait_settings, publisher=event_bus),
     )
     db = MagicMock()
     db.refresh = AsyncMock()
@@ -1032,7 +1033,7 @@ async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch)
     _guard_settings = FakeSettingsReader({})
     svc = node_agent.ReconcilerAgentService(
         settings=_guard_settings,
-        operator=OperatorNodeLifecycleService(settings=_guard_settings),
+        operator=OperatorNodeLifecycleService(settings=_guard_settings, publisher=event_bus),
     )
     db = MagicMock()
     db.refresh = AsyncMock()

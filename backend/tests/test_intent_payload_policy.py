@@ -185,7 +185,7 @@ async def test_cooldown_intent_payload_shape(
         publisher=event_bus,
         settings=_test_settings,
         circuit_breaker=_test_cb,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(),
         health=AsyncMock(),
@@ -259,7 +259,10 @@ async def test_operator_start_intent_payload_shape(
     # access triggers a lazy load in an async context and raises MissingGreenlet.
     device = await device_locking.lock_device(db_session, device.id)
     await _bulk_start_one(
-        db_session, device, caller="operator", operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+        db_session,
+        device,
+        caller="operator",
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")

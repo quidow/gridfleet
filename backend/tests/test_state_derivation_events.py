@@ -22,6 +22,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalSt
 from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.state_derivation import apply_derived_state
 from tests.helpers import create_device_record, create_host
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -49,7 +50,7 @@ async def test_carried_reason_writes_connectivity_lost_row(client: AsyncClient, 
     )
 
     changed = await apply_derived_state(
-        db_session, device, now=datetime.now(UTC), observed_reason=ObservationReason.disconnected
+        db_session, device, now=datetime.now(UTC), observed_reason=ObservationReason.disconnected, publisher=event_bus
     )
 
     assert changed is True
@@ -76,7 +77,7 @@ async def test_no_carried_reason_writes_no_operational_row(client: AsyncClient, 
         device_checks_healthy=False,
     )
 
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC))
+    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state is DeviceOperationalState.offline
@@ -98,7 +99,7 @@ async def test_enter_maintenance_writes_maintenance_entered_row(client: AsyncCli
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC))
+    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state is DeviceOperationalState.maintenance
@@ -120,7 +121,7 @@ async def test_exit_maintenance_writes_maintenance_exited_row(client: AsyncClien
         verified=True,
     )
 
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC))
+    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state is DeviceOperationalState.available

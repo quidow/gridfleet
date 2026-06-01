@@ -111,8 +111,8 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         settings=settings,
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService()),
-        operator=OperatorNodeLifecycleService(settings=settings),
+        crud=DeviceCrudService(settings=settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
     )
     started = await svc.bulk_start_nodes(db_session, [device.id for device in devices])
     stopped = await svc.bulk_stop_nodes(db_session, [device.id for device in devices])
@@ -176,8 +176,8 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         settings=_settings_rc,
         circuit_breaker=Mock(),
         maintenance=MagicMock(),
-        crud=DeviceCrudService(settings=_settings_rc, identity=DeviceIdentityConflictService()),
-        operator=OperatorNodeLifecycleService(settings=_settings_rc),
+        crud=DeviceCrudService(settings=_settings_rc, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=_settings_rc, publisher=event_bus),
     ).bulk_reconnect(db, [eligible_ok.id, eligible_fail.id, ineligible.id])
 
     assert result["succeeded"] == 1
@@ -215,7 +215,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance,
         crud=mock_crud,
-        operator=OperatorNodeLifecycleService(settings=_settings_del),
+        operator=OperatorNodeLifecycleService(settings=_settings_del, publisher=event_bus),
     )
     deleted = await svc.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
     entered = await svc.bulk_enter_maintenance(db, [device.id for device in devices])
@@ -254,9 +254,9 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         publisher=event_bus,
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
-        maintenance=MaintenanceService(settings=FakeSettingsReader({})),
-        crud=DeviceCrudService(settings=_settings_exit, identity=DeviceIdentityConflictService()),
-        operator=OperatorNodeLifecycleService(settings=_settings_exit),
+        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+        crud=DeviceCrudService(settings=_settings_exit, identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=_settings_exit, publisher=event_bus),
     ).bulk_exit_maintenance(db_session, [d.id for d in devices])
 
     assert result["succeeded"] == 3

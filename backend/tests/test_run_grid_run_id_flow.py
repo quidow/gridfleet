@@ -44,7 +44,7 @@ _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
     circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+    maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
     health=AsyncMock(),

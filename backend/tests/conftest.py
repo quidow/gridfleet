@@ -397,7 +397,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         _grid_svc = GridService(settings=settings_service)
         _maintenance_svc = MaintenanceService(settings=settings_service, publisher=test_event_bus)
-        _crud_svc = DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService())
+        _crud_svc = DeviceCrudService(
+            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=test_event_bus
+        )
         return DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
@@ -410,7 +412,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 maintenance=_maintenance_svc,
                 crud=_crud_svc,
-                operator=OperatorNodeLifecycleService(settings=settings_service),
+                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
             ),
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
@@ -631,7 +633,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,
-                operator=OperatorNodeLifecycleService(settings=settings_service),
+                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
             ),
             node_health=NodeHealthService(
                 publisher=test_event_bus,

@@ -199,12 +199,8 @@ async def test_from_system_event_falls_back_to_default() -> None:
 
 
 @pytest.mark.db
-async def test_queue_event_for_session_carries_severity(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """queue_event_for_session forwards the severity kwarg to event_bus.publish."""
-    from app.events.event_bus import queue_event_for_session
-
+async def test_queue_for_session_carries_severity(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    """queue_for_session forwards the severity kwarg to event_bus.publish."""
     captured: list[tuple[str, dict[str, Any], str | None]] = []
 
     async def fake_publish(event_type: str, data: dict[str, Any], severity: str | None = None) -> None:
@@ -212,12 +208,11 @@ async def test_queue_event_for_session_carries_severity(
 
     monkeypatch.setattr(event_bus, "publish", fake_publish)
 
-    queue_event_for_session(
+    event_bus.queue_for_session(
         db_session,
         "host.status_changed",
         {"host_id": "h1", "old_status": "online", "new_status": "offline"},
         severity="warning",
-        publisher=event_bus,
     )
     await db_session.commit()
     await drain_handlers(event_bus)

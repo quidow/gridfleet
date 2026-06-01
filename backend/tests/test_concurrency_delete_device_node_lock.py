@@ -16,6 +16,7 @@ from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
@@ -64,7 +65,9 @@ async def test_delete_device_locks_row_before_reading_node_state(
             await proceed_delete.wait()
         return locked
 
-    async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
+    async def observed_stop_node(
+        db: AsyncSession, dev: Device, *, publisher: object, caller: str = "device_delete"
+    ) -> AppiumNode:
         stop_called.set()
         assert dev.appium_node is not None
         with state_write_guard.bypass():
@@ -76,7 +79,9 @@ async def test_delete_device_locks_row_before_reading_node_state(
 
     async def deleter() -> bool:
         async with db_session_maker() as db:
-            crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+            crud = DeviceCrudService(
+                settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+            )
             with (
                 patch.object(device_locking, "lock_device", new=gated_lock_device),
                 patch(
@@ -174,7 +179,9 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
     starter_committed = asyncio.Event()
     stop_calls = 0
 
-    async def observed_stop_node(db: AsyncSession, dev: Device, *, caller: str = "device_delete") -> AppiumNode:
+    async def observed_stop_node(
+        db: AsyncSession, dev: Device, *, publisher: object, caller: str = "device_delete"
+    ) -> AppiumNode:
         nonlocal stop_calls
 
         stop_calls += 1
@@ -191,7 +198,9 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
 
     async def deleter() -> bool:
         async with db_session_maker() as db:
-            crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+            crud = DeviceCrudService(
+                settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+            )
             with patch(
                 "app.devices.services.service._stop_node",
                 new=observed_stop_node,

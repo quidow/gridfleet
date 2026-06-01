@@ -85,8 +85,10 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
             settings=_settings_enter,
             circuit_breaker=MagicMock(),
             maintenance=mock_maintenance,
-            crud=DeviceCrudService(settings=_settings_enter, identity=DeviceIdentityConflictService()),
-            operator=OperatorNodeLifecycleService(settings=_settings_enter),
+            crud=DeviceCrudService(
+                settings=_settings_enter, identity=DeviceIdentityConflictService(), publisher=event_bus
+            ),
+            operator=OperatorNodeLifecycleService(settings=_settings_enter, publisher=event_bus),
         ).bulk_enter_maintenance(session, device_ids)
 
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +13,7 @@ from app.devices.services.state_derivation import (
 )
 from app.events.protocols import EventPublisher
 from tests.helpers import create_device_record, create_host, settle_after_commit_tasks
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -23,6 +25,7 @@ def test_gating_counter_exists() -> None:
 async def test_apply_derived_state_writes_and_emits(
     client: AsyncClient,
     db_session: AsyncSession,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     """apply_derived_state writes the derived state and queues an event when diverged."""
     await seed_test_packs(db_session)
@@ -36,21 +39,20 @@ async def test_apply_derived_state_writes_and_emits(
         operational_state=DeviceOperationalState.offline,
         verified=True,
     )
+    event_bus_capture.clear()
 
-    publisher = AsyncMock(spec=EventPublisher)
-    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=publisher)
+    changed = await apply_derived_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     # Column was updated in-memory by the sanctioned writer.
     assert device.operational_state is DeviceOperationalState.available
 
-    # Commit so the after_commit hook fires and publisher.publish is scheduled.
+    # Commit so the after_commit hook fires and publish is invoked.
     await db_session.commit()
     await settle_after_commit_tasks()
 
-    publisher.publish.assert_called_once()
-    call_args = publisher.publish.call_args
-    assert call_args.args[0] == "device.operational_state_changed"
+    names = [name for name, _ in event_bus_capture]
+    assert "device.operational_state_changed" in names
 
 
 @pytest.mark.db

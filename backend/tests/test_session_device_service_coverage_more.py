@@ -382,7 +382,9 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         lambda *_args, **_kwargs: False,
     )
 
-    crud = DeviceCrudService(settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     filters = DeviceQueryFilters(
         status="available",
         host_id=available.host_id,
@@ -480,9 +482,16 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     monkeypatch.setattr("app.devices.services.service._stop_node", AsyncMock(side_effect=RuntimeError("stop failed")))
     monkeypatch.setattr("app.devices.services.service._lock_device_for_delete", AsyncMock(return_value=maintenance))
     fake_running = SimpleNamespace(id=maintenance.id, appium_node=SimpleNamespace(observed_running=True))
-    relocked = await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id)
+    relocked = await device_service._stop_running_node_for_delete(
+        db_session, fake_running, maintenance.id, publisher=event_bus
+    )
     assert relocked is not None
 
     monkeypatch.setattr("app.devices.services.service._stop_node", AsyncMock())
     monkeypatch.setattr("app.devices.services.service._lock_device_for_delete", AsyncMock(return_value=None))
-    assert await device_service._stop_running_node_for_delete(db_session, fake_running, maintenance.id) is None
+    assert (
+        await device_service._stop_running_node_for_delete(
+            db_session, fake_running, maintenance.id, publisher=event_bus
+        )
+        is None
+    )

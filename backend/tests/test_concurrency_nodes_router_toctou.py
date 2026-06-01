@@ -96,7 +96,7 @@ async def test_start_node_locks_device_before_reservation_check(
             publisher=event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
-            maintenance=MaintenanceService(settings=settings_service),
+            maintenance=MaintenanceService(settings=settings_service, publisher=event_bus),
             lifecycle_actions=AsyncMock(),
             reservation=RunReservationService(),
             health=AsyncMock(),
@@ -119,7 +119,7 @@ async def test_start_node_locks_device_before_reservation_check(
             reconciler=AsyncMock(),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,
-                operator=OperatorNodeLifecycleService(settings=settings_service),
+                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
             ),
             node_health=AsyncMock(),
             heartbeat=AsyncMock(),

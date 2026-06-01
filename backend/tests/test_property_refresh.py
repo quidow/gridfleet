@@ -28,6 +28,7 @@ from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 
 
 async def test_property_refresh_only_visits_online_hosts_and_non_offline_devices(
@@ -152,8 +153,8 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     mock_property_refresh_svc = Mock()
     mock_property_refresh_svc.refresh_all_properties = AsyncMock(side_effect=RuntimeError("boom"))
 
-    _pr_maintenance = MaintenanceService(settings=FakeSettingsReader({}))
-    _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService())
+    _pr_maintenance = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
@@ -167,7 +168,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
                 circuit_breaker=Mock(),
                 maintenance=_pr_maintenance,
                 crud=_pr_crud,
-                operator=OperatorNodeLifecycleService(settings=_pr_settings),
+                operator=OperatorNodeLifecycleService(settings=_pr_settings, publisher=event_bus),
             ),
             presenter=DevicePresenterService(settings=_pr_settings),
             test_data=TestDataService(publisher=_pr_publisher),

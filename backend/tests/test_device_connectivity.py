@@ -21,6 +21,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.hosts.models import Host, HostStatus
 from tests.fakes import FakeSettingsReader
 from tests.helpers import get_connectivity_control_plane_state, track_previously_offline_device
+from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -1306,7 +1307,9 @@ async def test_delete_device_clears_connectivity_and_ip_ping_namespaces(
     await control_plane_state_store.set_value(db_session, CONNECTIVITY_NAMESPACE, device.identity_value, True)
     await db_session.commit()
 
-    crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+    crud = DeviceCrudService(
+        settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus
+    )
     deleted = await crud.delete_device(db_session, device.id)
     assert deleted is True
 

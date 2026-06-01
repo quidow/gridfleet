@@ -33,6 +33,7 @@ from app.packs.models import DriverPack
 from app.sessions.service_viability import SessionViabilityService, get_session_viability
 from tests.conftest import settings_service
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 
@@ -139,14 +140,18 @@ async def _wait_for_job(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     viability=_viability,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
@@ -154,7 +159,7 @@ async def _wait_for_job(
                     if node_manager is not None
                     else ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(settings=settings_service),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
                 viability=_viability,
@@ -1454,20 +1459,24 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 preparation=VerificationPreparationService(
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
-                    crud=DeviceCrudService(settings=settings_service, identity=DeviceIdentityConflictService()),
+                    crud=DeviceCrudService(
+                        settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+                    ),
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(settings=settings_service),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
                 viability=_viability2,

@@ -17,6 +17,7 @@ from app.devices.services.intent_reconciler import _reconcile_expired_intents, r
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,7 +110,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     # to mis-assert desired_port=4724 because the precondition/expires_at sweeps
     # both skip rows where those columns are NULL. This documents the bug class
     # that pre-#301 stale rows fall into.
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.refresh(node)
     assert node.desired_port == 4724, (
         "pre-fix sanity check: the stale pre-#301 row should still mis-assert "
@@ -121,7 +122,7 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     # transition_deadline, expires_at, AND precondition — overwriting the stale
     # payload. Reconcile inside register_intents_and_reconcile then writes the
     # AppiumNode desired_port from the fresh payload (= node.port = 4725).
-    await OperatorNodeLifecycleService(settings=FakeSettingsReader({})).request_restart(
+    await OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus).request_restart(
         db_session, device, caller="operator_restart", reason="operator restart"
     )
     await db_session.refresh(node)
@@ -204,7 +205,9 @@ async def test_reconcile_expired_intents_deletes_expired_restart_intent(
     db_session.add(expired_intent)
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
     await db_session.commit()
 
     remaining = (
@@ -243,7 +246,7 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     # fixture is constructed so the model treats the node as running.
     assert node.observed_running, "test fixture must seed an observed-running node"
 
-    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_restart(db_session, device, caller="operator_restart", reason="first")
     intent_first = (
         await db_session.execute(
@@ -311,10 +314,11 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
             )
         ],
         reason="node crash",
+        publisher=event_bus,
     )
     await db_session.commit()
 
-    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}))
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
 

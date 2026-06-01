@@ -31,7 +31,9 @@ async def _enter_maintenance_after_gate(
     async def do_maintenance() -> None:
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(session, locked)
+            await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).enter_maintenance(
+                session, locked
+            )
 
     maintenance_task = asyncio.create_task(do_maintenance())
     await asyncio.sleep(0.05)

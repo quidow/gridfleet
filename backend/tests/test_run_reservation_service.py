@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from app.runs import service_reservation as run_reservation_service
+from tests.helpers import test_event_bus as event_bus
 
 
 class FakeSession:
@@ -61,7 +62,9 @@ async def test_exclude_device_from_run_updates_entry_without_commit(monkeypatch)
     )
 
     svc = run_reservation_service.RunReservationService()
-    result = await svc.exclude_device_from_run(FakeSession(), device_id, reason="bad", commit=False)
+    result = await svc.exclude_device_from_run(
+        FakeSession(), device_id, reason="bad", commit=False, publisher=event_bus
+    )
 
     assert result is run
     assert entry.excluded is True
@@ -81,7 +84,7 @@ async def test_exclude_device_from_run_noops_when_already_excluded_for_same_reas
     )
 
     svc = run_reservation_service.RunReservationService()
-    result = await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad")
+    result = await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad", publisher=event_bus)
 
     assert result is run
     assert db.committed is False
@@ -180,7 +183,7 @@ async def test_exclude_and_restore_commit_refresh_paths(monkeypatch) -> None:  #
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
     svc = run_reservation_service.RunReservationService()
-    assert await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad") is refreshed
+    assert await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad", publisher=event_bus) is refreshed
     assert db.committed is True
 
     entry.excluded = True

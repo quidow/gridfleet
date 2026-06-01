@@ -37,7 +37,7 @@ _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
     circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(settings=FakeSettingsReader({})),
+    maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
     reservation=RunReservationService(),
     health=AsyncMock(),
@@ -130,7 +130,9 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
             intent.expires_at = past
     await db_session.commit()
 
-    await _reconcile_expired_intents(db_session, settings=FakeSettingsReader(), circuit_breaker=Mock())
+    await _reconcile_expired_intents(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
     await db_session.commit()
 
     await db_session.refresh(reservation)
@@ -223,7 +225,7 @@ async def test_clear_via_reconciler_preserves_counter_under_other_exclusion(
     )
     await db_session.commit()
 
-    await reconcile_device(db_session, device.id)
+    await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
 
     await db_session.refresh(reservation)

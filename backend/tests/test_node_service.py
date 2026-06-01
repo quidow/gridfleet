@@ -25,8 +25,9 @@ from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
+from tests.helpers import test_event_bus as event_bus
 
-_crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService())
+_crud = DeviceCrudService(settings=FakeSettingsReader(), identity=DeviceIdentityConflictService(), publisher=event_bus)
 
 HOST_PAYLOAD = {
     "hostname": "remote-host",
@@ -177,7 +178,7 @@ async def test_start_node_with_verification_caller_skips_readiness(
     _svc_settings = FakeSettingsReader({})
     svc = ReconcilerAgentService(
         settings=_svc_settings,
-        operator=OperatorNodeLifecycleService(settings=_svc_settings),
+        operator=OperatorNodeLifecycleService(settings=_svc_settings, publisher=event_bus),
     )
     node = await svc.start_node(db_session, device, caller="verification")
     assert node.desired_state is AppiumDesiredState.running

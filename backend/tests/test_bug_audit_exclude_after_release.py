@@ -29,6 +29,7 @@ import app.runs.service_reservation as _reservation
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device, create_host
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -95,7 +96,7 @@ async def test_exclude_marks_released_reservation_as_excluded(
 
     with patch.object(_reservation, "get_device_reservation_with_entry", side_effect=_get_then_release):
         await _reservation.RunReservationService().exclude_device_from_run(
-            db_session, device_id, reason="test race", commit=True
+            db_session, device_id, reason="test race", commit=True, publisher=event_bus
         )
 
     # Re-read the reservation on a fresh session.

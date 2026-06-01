@@ -71,7 +71,7 @@ def test_no_unexpected_eager_event_bus_publish_sites() -> None:
     assert not new_sites, (
         "New eager `await event_bus.publish(` callsite(s) detected:\n  "
         + "\n  ".join(new_sites)
-        + "\n\nEither replace with `queue_event_for_session` or add a justified allowlist entry."
+        + "\n\nEither replace with `publisher.queue_for_session` or add a justified allowlist entry."
     )
 
     stale = sorted(expected - actual)
