@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
@@ -35,6 +35,7 @@ from app.devices.services import lifecycle_policy_summary
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
 from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
@@ -48,9 +49,6 @@ from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.models import Host
 from app.runs import service as run_service
 
-if TYPE_CHECKING:
-    from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-
 logger = logging.getLogger(__name__)
 DeviceListStatement = Select[tuple[Device]]
 DeviceCountStatement = Select[tuple[int]]
@@ -58,7 +56,7 @@ DeviceQueryStatement = DeviceListStatement | DeviceCountStatement
 
 
 class DeviceCrudService:
-    def __init__(self, *, settings: SettingsReader, identity: "DeviceIdentityConflictService") -> None:
+    def __init__(self, *, settings: SettingsReader, identity: DeviceIdentityConflictService) -> None:
         self._settings = settings
         self._identity = identity
 
