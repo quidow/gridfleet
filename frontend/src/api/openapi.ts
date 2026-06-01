@@ -2527,6 +2527,11 @@ export interface components {
             identity_value: string;
             /** Ip Address */
             ip_address: string | null;
+            /**
+             * Is Reserved
+             * @default false
+             */
+            is_reserved: boolean;
             lifecycle_policy_summary: components["schemas"]["DeviceLifecyclePolicySummaryRead"];
             /** Manufacturer */
             manufacturer: string | null;
@@ -2866,6 +2871,11 @@ export interface components {
             identity_value: string;
             /** Ip Address */
             ip_address: string | null;
+            /**
+             * Is Reserved
+             * @default false
+             */
+            is_reserved: boolean;
             lifecycle_policy_summary: components["schemas"]["DeviceLifecyclePolicySummaryRead"];
             /** Manufacturer */
             manufacturer: string | null;
