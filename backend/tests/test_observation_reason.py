@@ -10,58 +10,60 @@ def test_verification_passed_not_in_enum() -> None:
     assert not hasattr(ObservationReason, "verification_passed")
 
 
+def test_unmapped_transition_returns_no_event_type() -> None:
+    """A transition with no audit-row equivalent maps to (None, _).
+
+    The old EventLogHook wrote NO DeviceEvent row for verification transitions, so the
+    reconciler must not invent a spurious ``desired_state_changed`` audit row for them.
+    """
+    et, _sev = map_transition_event(S.verifying, ObservationReason.verification_started)
+    assert et is None
+
+
 def test_offline_disconnect_maps_to_connectivity_lost() -> None:
-    et, sev = map_transition_event(S.available, S.offline, ObservationReason.disconnected)
+    et, sev = map_transition_event(S.offline, ObservationReason.disconnected)
     assert et is DeviceEventType.connectivity_lost
     assert sev == "warning"
 
 
 def test_recovery_maps_to_connectivity_restored() -> None:
-    et, sev = map_transition_event(S.offline, S.available, ObservationReason.recovered)
+    et, sev = map_transition_event(S.available, ObservationReason.recovered)
     assert et is DeviceEventType.connectivity_restored
     assert sev == "success"
 
 
 def test_session_start_maps_to_session_started() -> None:
-    et, sev = map_transition_event(S.available, S.busy, ObservationReason.session)
+    et, sev = map_transition_event(S.busy, ObservationReason.session)
     assert et is DeviceEventType.session_started
     assert sev == "info"
 
 
 @pytest.mark.parametrize(
-    ("frm", "to", "reason", "expected_et", "expected_sev"),
+    ("to", "reason", "expected_et", "expected_sev"),
     [
         # to=offline transitions
-        (S.available, S.offline, ObservationReason.disconnected, DeviceEventType.connectivity_lost, "warning"),
-        (S.busy, S.offline, ObservationReason.disconnected, DeviceEventType.connectivity_lost, "warning"),
-        (S.available, S.offline, ObservationReason.auto_stopped, DeviceEventType.auto_stopped, "info"),
-        (S.available, S.offline, ObservationReason.node_crashed, DeviceEventType.node_crash, "warning"),
-        (S.verifying, S.offline, ObservationReason.verification_failed, DeviceEventType.health_check_fail, "warning"),
+        (S.offline, ObservationReason.disconnected, DeviceEventType.connectivity_lost, "warning"),
+        (S.offline, ObservationReason.auto_stopped, DeviceEventType.auto_stopped, "info"),
+        (S.offline, ObservationReason.node_crashed, DeviceEventType.node_crash, "warning"),
+        (S.offline, ObservationReason.verification_failed, DeviceEventType.health_check_fail, "warning"),
         # offline→available
-        (S.offline, S.available, ObservationReason.recovered, DeviceEventType.connectivity_restored, "success"),
+        (S.available, ObservationReason.recovered, DeviceEventType.connectivity_restored, "success"),
         # →busy
-        (S.available, S.busy, ObservationReason.session, DeviceEventType.session_started, "info"),
+        (S.busy, ObservationReason.session, DeviceEventType.session_started, "info"),
         # busy→available
-        (S.busy, S.available, ObservationReason.session_ended, DeviceEventType.session_ended, "info"),
-        # →verifying (no specific event type; falls through to default)
-        (
-            S.available,
-            S.verifying,
-            ObservationReason.verification_started,
-            DeviceEventType.desired_state_changed,
-            "info",
-        ),
-        # default fallback
-        (S.offline, S.verifying, ObservationReason.recovered, DeviceEventType.desired_state_changed, "info"),
+        (S.available, ObservationReason.session_ended, DeviceEventType.session_ended, "info"),
+        # →verifying (no specific event type; no audit row)
+        (S.verifying, ObservationReason.verification_started, None, "info"),
+        # default fallback — no audit row
+        (S.verifying, ObservationReason.recovered, None, "info"),
     ],
 )
 def test_map_transition_event_parametrized(
-    frm: S,
     to: S,
     reason: ObservationReason,
-    expected_et: DeviceEventType,
+    expected_et: DeviceEventType | None,
     expected_sev: str,
 ) -> None:
-    et, sev = map_transition_event(frm, to, reason)
+    et, sev = map_transition_event(to, reason)
     assert et is expected_et
     assert sev == expected_sev

@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.core.protocols import SettingsReader
+    from app.devices.services.observation_reason import ObservationReason
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
 
@@ -295,7 +296,13 @@ async def _reconcile_terminal_run_intents(
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
 
 
-async def reconcile_device(db: AsyncSession, device_id: uuid.UUID, *, publisher: EventPublisher | None = None) -> None:
+async def reconcile_device(
+    db: AsyncSession,
+    device_id: uuid.UUID,
+    *,
+    publisher: EventPublisher | None = None,
+    observed_reason: ObservationReason | None = None,
+) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     device = await device_locking.lock_device(db, device_id)
     node = device.appium_node
@@ -304,7 +311,7 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID, *, publisher:
         # so operational_state / hold stay consistent with durable facts.
         try:
             now = datetime.now(UTC)
-            await apply_derived_state(db, device, now=now, publisher=publisher)
+            await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
         except Exception:  # noqa: BLE001 - state derivation must never break reconcile
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return
@@ -450,7 +457,7 @@ async def reconcile_device(db: AsyncSession, device_id: uuid.UUID, *, publisher:
     await db.flush()
 
     try:
-        await apply_derived_state(db, device, now=now, publisher=publisher)
+        await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 

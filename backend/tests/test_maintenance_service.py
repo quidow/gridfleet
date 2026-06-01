@@ -1,18 +1,46 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceHold, DeviceOperationalState
+from app.devices.models import DeviceEvent, DeviceEventType, DeviceHold, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
+from app.events.protocols import EventPublisher
 from app.hosts.models import Host
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device
+from tests.helpers import create_device, settle_after_commit_tasks
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_enter_maintenance_emits_hold_changed_and_audit_row(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Entering maintenance must still emit device.hold_changed (SSE/webhooks) and record a
+    maintenance_entered audit row — the reconciler is now the writer, so it must carry both."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-emits",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    publisher = AsyncMock(spec=EventPublisher)
+    locked = await device_locking.lock_device(db_session, device.id)
+    await MaintenanceService(settings=FakeSettingsReader({}), publisher=publisher).enter_maintenance(db_session, locked)
+    await settle_after_commit_tasks()
+
+    emitted = [call.args[0] for call in publisher.publish.call_args_list]
+    assert "device.hold_changed" in emitted
+
+    rows = (await db_session.execute(select(DeviceEvent).where(DeviceEvent.device_id == device.id))).scalars().all()
+    assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)
 
 
 async def test_enter_maintenance_rejects_reserved_device_by_default(

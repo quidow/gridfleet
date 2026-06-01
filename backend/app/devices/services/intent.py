@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services.intent_types import IntentRegistration
+    from app.devices.services.observation_reason import ObservationReason
     from app.events.protocols import EventPublisher
 
 
@@ -129,6 +130,7 @@ class IntentService:
         *,
         reason: str,
         publisher: EventPublisher | None = None,
+        observed_reason: ObservationReason | None = None,
     ) -> None:
         """Mark device dirty and immediately reconcile.
 
@@ -143,10 +145,15 @@ class IntentService:
 
         Pass ``publisher`` to emit ``operational_state_changed`` / ``hold_changed``
         events inline; omit it (or pass None) to write state silently.
+
+        Pass ``observed_reason`` to carry the known cause of the transition so the
+        reconciler records the matching typed DeviceEvent audit row (§6). Omit it
+        when the cause is not known at this site — the reconciler then derives state
+        and emits the bus event but records no audit row (it must not guess the cause).
         """
         await self._db.flush()
         await self.mark_dirty(device_id, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher)
+        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
 
     async def register_intents_and_reconcile(
         self,
@@ -154,9 +161,10 @@ class IntentService:
         device_id: UUID,
         intents: list[IntentRegistration],
         reason: str,
+        publisher: EventPublisher | None = None,
     ) -> None:
         await self.register_intents(device_id=device_id, intents=intents, reason=reason)
-        await reconcile_device(self._db, device_id)  # TODO: pass publisher once IntentService is wired with one
+        await reconcile_device(self._db, device_id, publisher=publisher)
 
     async def revoke_intents_and_reconcile(
         self,

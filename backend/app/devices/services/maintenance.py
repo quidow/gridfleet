@@ -27,6 +27,7 @@ from app.devices.services.lifecycle_policy_state import (
 
 if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,12 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class MaintenanceService:
-    def __init__(self, *, settings: "SettingsReader") -> None:
+    def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher | None" = None) -> None:
         self._settings = settings
+        # Publisher is needed so the reconciler's derived hold change emits
+        # device.hold_changed (SSE/webhooks) on maintenance enter/exit. Optional
+        # for unit tests that do not assert on emitted events.
+        self._publisher = publisher
 
     async def enter_maintenance(
         self,
@@ -98,6 +103,7 @@ class MaintenanceService:
             device_id=device.id,
             intents=_maintenance_intents(device.id),
             reason=maintenance_reason,
+            publisher=self._publisher,
         )
 
         if commit:
@@ -141,12 +147,14 @@ class MaintenanceService:
                 )
             ],
             reason="Operator exited maintenance",
+            publisher=self._publisher,
         )
 
         await IntentService(db).revoke_intents_and_reconcile(
             device_id=device.id,
             sources=_maintenance_sources(device.id),
             reason="Operator exited maintenance",
+            publisher=self._publisher,
         )
 
         if commit:

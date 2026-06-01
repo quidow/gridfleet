@@ -745,7 +745,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     _real_register = IntentService.register_intents_and_reconcile
 
     async def _suppress_auto_recovery_only(
-        _self: IntentService, *, device_id: object, intents: object, reason: str
+        _self: IntentService, *, device_id: object, intents: object, reason: str, publisher: object = None
     ) -> None:
         from app.devices.services.intent_types import IntentRegistration as IntentReg
 
@@ -753,7 +753,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
             isinstance(i, IntentReg) and i.source.startswith("auto_recovery:") for i in intents
         ):
             return
-        await _real_register(_self, device_id=device_id, intents=intents, reason=reason)
+        await _real_register(_self, device_id=device_id, intents=intents, reason=reason, publisher=publisher)
 
     probe_mock = AsyncMock(
         return_value={

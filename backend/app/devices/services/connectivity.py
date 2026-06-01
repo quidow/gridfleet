@@ -21,6 +21,7 @@ from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperati
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
+from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
@@ -51,6 +52,11 @@ CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
+
+
+def _audit_label(device: Device) -> str:
+    """Flat label for log output only — hold takes precedence over operational state."""
+    return device.hold.value if device.hold is not None else device.operational_state.value
 
 
 def _add_avd_aliases(aliases: set[str], value: str) -> None:
@@ -549,7 +555,7 @@ class ConnectivityService:
                             device.name,
                             device.identity_value,
                             host.hostname,
-                            device.hold.value if device.hold is not None else device.operational_state.value,
+                            _audit_label(device),
                         )
                         await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                         locked_device = await device_locking.lock_device(db, device.id)
@@ -558,7 +564,10 @@ class ConnectivityService:
                             or locked_device.hold is not None
                         ):
                             await IntentService(db).mark_dirty_and_reconcile(
-                                locked_device.id, reason="Device disconnected"
+                                locked_device.id,
+                                reason="Device disconnected",
+                                publisher=self._publisher,
+                                observed_reason=ObservationReason.disconnected,
                             )
                             await self._lifecycle_policy.note_connectivity_loss(
                                 db, locked_device, reason="Device disconnected"
@@ -582,7 +591,12 @@ class ConnectivityService:
                     await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
                     locked_device = await device_locking.lock_device(db, device.id)
                     if locked_device.operational_state != DeviceOperationalState.busy and locked_device.hold is None:
-                        await IntentService(db).mark_dirty_and_reconcile(locked_device.id, reason="Device disconnected")
+                        await IntentService(db).mark_dirty_and_reconcile(
+                            locked_device.id,
+                            reason="Device disconnected",
+                            publisher=self._publisher,
+                            observed_reason=ObservationReason.disconnected,
+                        )
                         await self._lifecycle_policy.note_connectivity_loss(
                             db, locked_device, reason="Device disconnected"
                         )
@@ -594,9 +608,7 @@ class ConnectivityService:
                             "Device %s (%s) transitioned to %s before offline write — skipping",
                             locked_device.name,
                             locked_device.identity_value,
-                            locked_device.hold.value
-                            if locked_device.hold is not None
-                            else locked_device.operational_state.value,
+                            _audit_label(locked_device),
                         )
 
         await db.commit()

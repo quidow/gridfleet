@@ -23,11 +23,19 @@ class ObservationReason(StrEnum):
 
 
 def map_transition_event(
-    frm: DeviceOperationalState,
     to: DeviceOperationalState,
     reason: ObservationReason,
-) -> tuple[DeviceEventType, EventSeverity]:
-    """Map a (from_state, to_state, reason) triple to a (DeviceEventType, severity) pair."""
+) -> tuple[DeviceEventType | None, EventSeverity]:
+    """Map a (to_state, reason) pair to a (DeviceEventType | None, severity) pair.
+
+    The destination state plus the observed reason fully determine the event; the source state is
+    not needed (the reason already disambiguates, e.g. recovered vs session_ended for → available).
+
+    A ``None`` event type means the transition records no DeviceEvent audit row — matching the
+    old EventLogHook, which mapped only the seven transitions below and left verification (and
+    any other) transitions without a row. The severity still drives the operational_state_changed
+    bus event for unmapped transitions.
+    """
     if to is DeviceOperationalState.offline:
         if reason is ObservationReason.disconnected:
             return DeviceEventType.connectivity_lost, "warning"
@@ -47,4 +55,4 @@ def map_transition_event(
     if to is DeviceOperationalState.available and reason is ObservationReason.session_ended:
         return DeviceEventType.session_ended, "info"
 
-    return DeviceEventType.desired_state_changed, "info"  # no dedicated event type for verification_started yet
+    return None, "info"  # e.g. verification_started — no dedicated audit-row event type

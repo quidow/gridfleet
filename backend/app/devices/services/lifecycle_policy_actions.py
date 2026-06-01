@@ -131,6 +131,7 @@ class LifecyclePolicyActionsService:
                 device_id=device.id,
                 intents=_crash_intents(device, source=source, reason=reason),
                 reason=reason,
+                publisher=self._publisher,
             )
             await db.commit()
         else:
@@ -139,6 +140,7 @@ class LifecyclePolicyActionsService:
                     device_id=device.id,
                     intents=_crash_intents(device, source=source, reason=reason),
                     reason=reason,
+                    publisher=self._publisher,
                 )
             else:
                 # No node row — mark device_checks_healthy=False so the reconciler
@@ -146,7 +148,7 @@ class LifecyclePolicyActionsService:
                 device.device_checks_healthy = False
                 device.device_checks_summary = reason
                 await IntentService(db).mark_dirty_and_reconcile(
-                    device.id, reason=f"Node crash recorded ({source}): {reason}"
+                    device.id, reason=f"Node crash recorded ({source}): {reason}", publisher=self._publisher
                 )
             await db.commit()
 
