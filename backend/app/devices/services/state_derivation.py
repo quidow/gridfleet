@@ -14,14 +14,17 @@ from app.devices.models.reservation import DeviceReservation
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
 from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
-from app.devices.services.state import appium_node_stop_in_flight
+from app.devices.services.state import appium_node_stop_in_flight, set_hold, set_operational_state
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,52 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
         ready=ready,
         is_reserved=is_reserved,
     )
+
+
+def _reason_for(facts: DeviceStateFacts, derived_op: DeviceOperationalState) -> ObservationReason:
+    """Map gathered facts to the closest ObservationReason for the derived transition."""
+    if facts.stop_in_flight:
+        return ObservationReason.auto_stopped
+    if not facts.ready:
+        return ObservationReason.disconnected
+    if facts.has_verification_lease:
+        return ObservationReason.verification_started
+    if facts.has_running_session and derived_op is DeviceOperationalState.busy:
+        return ObservationReason.session
+    if derived_op is DeviceOperationalState.available:
+        return ObservationReason.session_ended
+    return ObservationReason.recovered
+
+
+async def apply_derived_state(
+    db: AsyncSession,
+    device: Device,
+    *,
+    now: datetime,
+    publisher: EventPublisher,
+) -> bool:
+    """Derive (operational_state, hold) and write them when they differ from the persisted columns.
+
+    Emits the mapped event for each axis that changes. Returns True if either axis was written.
+    This is the authoritative replacement for ``compare_shadow_state`` (which logs only).
+    """
+    facts = await gather_device_state_facts(db, device, now=now)
+    derived_op = evaluate_operational_state(facts)
+    derived_hold = evaluate_hold(facts)
+
+    changed = False
+
+    if derived_op is not device.operational_state:
+        reason = _reason_for(facts, derived_op)
+        event_type, severity = map_transition_event(device.operational_state, derived_op, reason)
+        await set_operational_state(device, derived_op, reason=event_type.value, severity=severity, publisher=publisher)
+        changed = True
+
+    if derived_hold is not device.hold:
+        await set_hold(device, derived_hold, reason="derived", publisher=publisher)
+        changed = True
+
+    return changed
 
 
 async def compare_shadow_state(db: AsyncSession, device: Device, *, now: datetime) -> bool:
