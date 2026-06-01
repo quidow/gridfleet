@@ -316,7 +316,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             test_data=TestDataService(publisher=_fake_publisher),
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(),
+            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             verification=VerificationService(),
             crud=_fake_crud,
             capability=DeviceCapabilityService(),

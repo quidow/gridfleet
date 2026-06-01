@@ -107,7 +107,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
                 inventory_export=InventoryExportService(),
-                portability_import=PortabilityImportService(),
+                portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
                 verification=VerificationService(),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),

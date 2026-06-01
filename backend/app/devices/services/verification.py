@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.database import async_session
-from app.core.type_defs import SessionFactory
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.verification_job_state import (
     new_job,
@@ -12,6 +13,12 @@ from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.packs.services import platform_resolver as pack_platform_resolver
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.type_defs import SessionFactory
+    from app.devices.models import Device
 
 assert_runnable = pack_platform_resolver.assert_runnable
 
@@ -77,3 +84,34 @@ class VerificationService:
     async def clear_verification_jobs(self, session_factory: SessionFactory = async_session) -> None:
         async with session_factory() as db:
             await job_queue.delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
+
+    async def enqueue_for_device(self, db: AsyncSession, device: Device) -> uuid.UUID:
+        """Enqueue a create-mode verification job for an already-built device row.
+
+        Uses the caller's session with ``commit=False`` so the enqueue joins the
+        caller's transaction (e.g. the per-row portability-import savepoint).
+        """
+        job_id = uuid.uuid4()
+        data = DeviceVerificationCreate(
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            identity_scheme=device.identity_scheme,
+            identity_scope=device.identity_scope,
+            identity_value=device.identity_value,
+            connection_target=device.connection_target,
+            name=device.name,
+            host_id=device.host_id,
+            device_type=device.device_type,
+            connection_type=device.connection_type,
+            tags=device.tags or None,
+        )
+        await job_queue.create_job(
+            db,
+            kind=JOB_KIND_DEVICE_VERIFICATION,
+            payload={"mode": "create", "data": data.model_dump(mode="json")},
+            snapshot=new_job(str(job_id)),
+            max_attempts=1,
+            job_id=job_id,
+            commit=False,
+        )
+        return job_id

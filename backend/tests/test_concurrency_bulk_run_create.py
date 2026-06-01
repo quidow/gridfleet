@@ -112,7 +112,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 test_data=TestDataService(publisher=event_bus),
                 portability_export=PortabilityExportService(),
                 inventory_export=InventoryExportService(),
-                portability_import=PortabilityImportService(),
+                portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
                 verification=VerificationService(),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),

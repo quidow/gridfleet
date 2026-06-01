@@ -418,7 +418,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             test_data=TestDataService(publisher=test_event_bus),
             portability_export=PortabilityExportService(),
             inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(),
+            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             verification=VerificationService(),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),

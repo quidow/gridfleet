@@ -148,7 +148,6 @@ def compose_app(
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
     inventory_export_svc = InventoryExportService()
-    portability_import_svc = PortabilityImportService()
     identity_conflict_svc = DeviceIdentityConflictService()
 
     pack_storage = PackStorageService(root=packs_settings.driver_pack_storage_dir)
@@ -270,6 +269,7 @@ def compose_app(
         lifecycle_policy=lifecycle_policy_svc,
     )
     verification_svc = VerificationService()
+    portability_import_svc = PortabilityImportService(verification_enqueuer=verification_svc)
 
     return AppServices(
         events=event_services,

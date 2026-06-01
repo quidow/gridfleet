@@ -8,7 +8,6 @@ per-row transactions with verification enqueue.
 from __future__ import annotations
 
 import logging
-import uuid
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.schemas.portability import (
     SCHEMA_VERSION,
     ExportBundle,
@@ -32,18 +30,18 @@ from app.devices.schemas.portability import (
     ImportPreviewRow,
     ImportRowStatus,
 )
-from app.devices.services import verification_job_state
 from app.devices.services import write as device_write
 from app.devices.services.portability_hash import compute_bundle_hash
 from app.hosts.models import Host
-from app.jobs import JOB_KIND_DEVICE_VERIFICATION
-from app.jobs import queue as job_queue
 from app.packs.services import platform_resolver as pack_platform_resolver
 
 if TYPE_CHECKING:
+    import uuid
     from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
 
@@ -139,36 +137,11 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
     }
 
 
-async def _enqueue_verification(session: AsyncSession, device: Device) -> None:
-    job_id = uuid.uuid4()
-    snapshot = verification_job_state.new_job(str(job_id))
-    data = DeviceVerificationCreate(
-        pack_id=device.pack_id,
-        platform_id=device.platform_id,
-        identity_scheme=device.identity_scheme,
-        identity_scope=device.identity_scope,
-        identity_value=device.identity_value,
-        connection_target=device.connection_target,
-        name=device.name,
-        host_id=device.host_id,
-        device_type=device.device_type,
-        connection_type=device.connection_type,
-        tags=device.tags or None,
-    )
-    payload: dict[str, Any] = {"mode": "create", "data": data.model_dump(mode="json")}
-    await job_queue.create_job(
-        session,
-        kind=JOB_KIND_DEVICE_VERIFICATION,
-        payload=payload,
-        snapshot=snapshot,
-        max_attempts=1,
-        job_id=job_id,
-        commit=False,
-    )
-
-
 class PortabilityImportService:
     """Container-held device-portability import (validate + commit)."""
+
+    def __init__(self, *, verification_enqueuer: VerificationEnqueuer) -> None:
+        self._verification_enqueuer = verification_enqueuer
 
     async def validate_bundle(self, session: AsyncSession, bundle: ExportBundle) -> ImportPreview:
         """Validate a bundle and return a preview with per-row classifications.
@@ -257,7 +230,7 @@ class PortabilityImportService:
                 payload = _build_create_payload(row.device, mapping.target_host_id)
                 device = device_write.stage_device_record(session, payload)
                 await session.flush()
-                await _enqueue_verification(session, device)
+                await self._verification_enqueuer.enqueue_for_device(session, device)
                 await savepoint.commit()
                 savepoint_released = True
                 await session.commit()
