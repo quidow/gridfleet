@@ -15,7 +15,6 @@ from app.devices.services.health_view import (
     node_summary_label,
 )
 from app.devices.services.intent import IntentService
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +50,7 @@ def _maybe_emit_health_changed(
     nxt = build_public_summary(device)
     if previous.get("healthy") == nxt.get("healthy"):
         return
-    queue_event_for_session(
+    publisher.queue_for_session(
         db,
         "device.health_changed",
         {
@@ -59,7 +58,6 @@ def _maybe_emit_health_changed(
             "healthy": nxt.get("healthy"),
             "summary": nxt.get("summary"),
         },
-        publisher=publisher,
     )
 
 

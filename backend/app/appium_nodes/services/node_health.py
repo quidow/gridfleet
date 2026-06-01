@@ -35,7 +35,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -311,7 +310,7 @@ class NodeHealthService:
                     record_incident=False,
                 )
                 if self._publisher is not None:
-                    queue_event_for_session(
+                    self._publisher.queue_for_session(
                         db,
                         "node.state_changed",
                         {
@@ -322,7 +321,6 @@ class NodeHealthService:
                             "port": node.port,
                         },
                         severity=node_state_severity("error", "running"),
-                        publisher=self._publisher,
                     )
                 await record_event(
                     db,

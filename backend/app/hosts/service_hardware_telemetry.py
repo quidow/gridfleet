@@ -23,7 +23,6 @@ from app.devices.models import (
 )
 from app.devices.schemas.device import HardwareTelemetryState
 from app.devices.services.event import record_event
-from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
@@ -278,12 +277,11 @@ class HardwareTelemetryService:
                 payload,
             )
             if self._publisher is not None:
-                queue_event_for_session(
+                self._publisher.queue_for_session(
                     db,
                     "device.hardware_health_changed",
                     payload,
                     severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
-                    publisher=self._publisher,
                 )
 
         return next_status

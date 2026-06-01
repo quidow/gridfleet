@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from app.events import queue_event_for_session
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
@@ -54,7 +53,7 @@ class RunLifecycleService:
         run.state = RunState.active
         run.started_at = now
         run.last_heartbeat = now
-        queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name}, publisher=self._publisher)
+        self._publisher.queue_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
         await db.commit()
         run = await get_run(db, run_id)
         assert run is not None
@@ -74,7 +73,7 @@ class RunLifecycleService:
         run.state = RunState.active
         run.started_at = now
         run.last_heartbeat = now
-        queue_event_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name}, publisher=self._publisher)
+        self._publisher.queue_for_session(db, "run.active", {"run_id": str(run.id), "name": run.name})
         await db.commit()
         run = await get_run(db, run_id)
         assert run is not None
@@ -110,7 +109,7 @@ class RunLifecycleService:
         duration = None
         if run.started_at:
             duration = int((now - run.started_at).total_seconds())
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "run.completed",
             {
@@ -119,7 +118,6 @@ class RunLifecycleService:
                 "duration": duration,
             },
             severity=_run_completed_severity(run),
-            publisher=self._publisher,
         )
         await db.commit()
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -138,7 +136,7 @@ class RunLifecycleService:
         run.state = RunState.cancelled
         run.completed_at = datetime.now(UTC)
         cleanup_ids = await self._release.release_devices(db, run, commit=False, terminate_grid_sessions=True)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "run.cancelled",
             {
@@ -147,7 +145,6 @@ class RunLifecycleService:
                 "cancelled_by": "user",
             },
             severity="warning",
-            publisher=self._publisher,
         )
         await db.commit()
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -165,7 +162,7 @@ class RunLifecycleService:
         run.error = "Force released by admin"
         run.completed_at = datetime.now(UTC)
         cleanup_ids = await self._release.release_devices(db, run, commit=False, terminate_grid_sessions=True)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "run.cancelled",
             {
@@ -174,7 +171,6 @@ class RunLifecycleService:
                 "cancelled_by": "admin (force release)",
             },
             severity="warning",
-            publisher=self._publisher,
         )
         await db.commit()
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
@@ -208,7 +204,7 @@ class RunLifecycleService:
         cleanup_ids = await self._release.release_devices(db, locked_run, commit=False, terminate_grid_sessions=True)
 
         if expired_from_preparing:
-            queue_event_for_session(
+            self._publisher.queue_for_session(
                 db,
                 "run.never_activated",
                 {
@@ -217,10 +213,9 @@ class RunLifecycleService:
                     "reason": effective_reason,
                 },
                 severity="warning",
-                publisher=self._publisher,
             )
 
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "run.expired",
             {
@@ -229,7 +224,6 @@ class RunLifecycleService:
                 "reason": effective_reason,
             },
             severity="critical",
-            publisher=self._publisher,
         )
         await db.commit()
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)

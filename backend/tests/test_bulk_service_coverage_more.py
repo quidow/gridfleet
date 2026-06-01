@@ -115,7 +115,7 @@ async def test_bulk_collection_operations_cover_errors_and_non_merge(monkeypatch
     second = _device()
     db = _db()
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[first, second]))
-    monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", MagicMock())
 
     result = await _svc().bulk_update_tags(db, [first.id, second.id], {"new": "tag"}, merge=False)
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
@@ -186,7 +186,7 @@ async def test_bulk_maintenance_and_reconnect_branches(monkeypatch: pytest.Monke
     success = _device()
     failure = _device()
     monkeypatch.setattr(bulk_service, "_load_devices", AsyncMock(return_value=[success, failure]))
-    monkeypatch.setattr(bulk_service, "queue_event_for_session", MagicMock())
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", MagicMock())
 
     mock_maintenance = MagicMock()
     mock_maintenance.exit_maintenance = AsyncMock(side_effect=[None, ValueError("not in maintenance")])

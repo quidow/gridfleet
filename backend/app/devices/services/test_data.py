@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.devices.models import Device, DeviceTestDataAuditLog
-from app.events import queue_event_for_session
 
 if TYPE_CHECKING:
     import uuid
@@ -36,11 +35,10 @@ class TestDataService:
                 changed_by=changed_by,
             )
         )
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "test_data.updated",
             {"device_id": str(device.id), "device_name": device.name, "changed_by": changed_by},
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(device)

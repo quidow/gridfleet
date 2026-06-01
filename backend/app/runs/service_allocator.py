@@ -18,7 +18,6 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import is_ready_for_use_async
-from app.events import queue_event_for_session
 from app.packs.services.platform_resolver import assert_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -213,7 +212,7 @@ class RunAllocatorService:
                 ttl_minutes=ttl_minutes,
                 heartbeat_timeout_sec=heartbeat_timeout_sec,
             )
-            queue_event_for_session(
+            self._publisher.queue_for_session(
                 db,
                 "run.created",
                 {
@@ -222,7 +221,6 @@ class RunAllocatorService:
                     "device_count": len(device_infos),
                     "created_by": run.created_by,
                 },
-                publisher=self._publisher,
             )
             await db.commit()
         except _UnmetRequirementError as exc:

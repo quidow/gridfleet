@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.devices.services import readiness as device_readiness
-from app.events import queue_event_for_session
 from app.settings.models import ConfigAuditLog
 
 if TYPE_CHECKING:
@@ -72,7 +71,7 @@ class SettingsConfigService:
             changed_by=changed_by,
         )
         db.add(log_entry)
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "config.updated",
             {
@@ -80,7 +79,6 @@ class SettingsConfigService:
                 "device_name": device.name,
                 "changed_by": changed_by,
             },
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(device)

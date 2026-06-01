@@ -288,7 +288,7 @@ async def test_run_terminal_transition_paths(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.runs.service_lifecycle.queue_event_for_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
 
     mock_release = AsyncMock()
     mock_release.release_devices = AsyncMock(return_value=[])

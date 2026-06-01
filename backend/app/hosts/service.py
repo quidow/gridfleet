@@ -7,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
-from app.events import queue_event_for_session
 from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
@@ -183,7 +182,7 @@ class HostCrudService:
             if existing is None:
                 raise
             return await self._apply_reregister(db, existing, data), False
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "host.registered",
             {
@@ -191,7 +190,6 @@ class HostCrudService:
                 "hostname": host.hostname,
                 "status": host.status.value,
             },
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(host)
@@ -211,7 +209,7 @@ class HostCrudService:
             return None
         old_status = host.status.value
         host.status = HostStatus.online
-        queue_event_for_session(
+        self._publisher.queue_for_session(
             db,
             "host.status_changed",
             {
@@ -221,7 +219,6 @@ class HostCrudService:
                 "new_status": "online",
             },
             severity=_host_status_severity(old_status, "online"),
-            publisher=self._publisher,
         )
         await db.commit()
         await db.refresh(host)

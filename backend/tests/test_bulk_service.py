@@ -189,7 +189,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
     devices = [_device(), _device()]
     db = AsyncMock()
     monkeypatch.setattr("app.devices.services.bulk._load_devices", AsyncMock(return_value=devices))
-    monkeypatch.setattr("app.devices.services.bulk.queue_event_for_session", Mock())
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", Mock())
     # bulk_enter_maintenance calls device_locking.lock_device(db, ...) which does
     # `(await db.execute(stmt)).scalar_one()`. With db = AsyncMock(), the value
     # returned by `await db.execute(...)` is itself an AsyncMock, so `.scalar_one()`
