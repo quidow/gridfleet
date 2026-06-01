@@ -206,7 +206,7 @@ class FeatureService:
         if existing is not None:
             await session.refresh(existing)
 
-        if event_type is not None and self._publisher is not None:
+        if event_type is not None:
             self._publisher.queue_for_session(
                 session,
                 event_type,

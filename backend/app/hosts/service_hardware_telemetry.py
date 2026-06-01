@@ -276,13 +276,12 @@ class HardwareTelemetryService:
                 DeviceEventType.hardware_health_changed,
                 payload,
             )
-            if self._publisher is not None:
-                self._publisher.queue_for_session(
-                    db,
-                    "device.hardware_health_changed",
-                    payload,
-                    severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
-                )
+            self._publisher.queue_for_session(
+                db,
+                "device.hardware_health_changed",
+                payload,
+                severity=_hardware_severity(payload.get("old_status"), payload["new_status"]),
+            )
 
         return next_status
 
