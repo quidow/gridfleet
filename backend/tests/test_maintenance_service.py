@@ -47,6 +47,8 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
+    from tests.helpers import create_reservation
+
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -54,14 +56,42 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
         hold=DeviceHold.reserved,
     )
     await db_session.commit()
+    await create_reservation(db_session, device_id=device.id)
+    await db_session.commit()
 
     locked = await device_locking.lock_device(db_session, device.id)
     with pytest.raises(ValueError) as exc:
         await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, locked)
 
     assert "reserved" in str(exc.value).lower()
-    await db_session.refresh(device)
-    assert device.hold == DeviceHold.reserved
+
+
+async def test_enter_maintenance_rejects_device_with_reservation_row_no_hold(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Reserved guard must use the reservation row, not device.hold.
+
+    Device has hold=NULL but an active DeviceReservation row — this is the
+    future state after hold is removed. The guard must still reject it.
+    """
+    from tests.helpers import create_reservation
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="reservation-row-target",
+        hold=None,  # hold is NULL — future state
+    )
+    await db_session.commit()
+    await create_reservation(db_session, device_id=device.id)
+    await db_session.commit()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    with pytest.raises(ValueError) as exc:
+        await MaintenanceService(settings=FakeSettingsReader({})).enter_maintenance(db_session, locked)
+
+    assert "reserved" in str(exc.value).lower()
 
 
 async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
