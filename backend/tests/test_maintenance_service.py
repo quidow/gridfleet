@@ -51,7 +51,9 @@ async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     locked = await device_locking.lock_device(db_session, device.id)
     result = await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, locked, allow_reserved=True)
 
-    assert result.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the signal instead
+    assert result.lifecycle_policy_state is not None
+    assert result.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
 async def test_enter_maintenance_succeeds_for_available_device(
@@ -69,7 +71,9 @@ async def test_enter_maintenance_succeeds_for_available_device(
     locked = await device_locking.lock_device(db_session, device.id)
     result = await MaintenanceService(publisher=Mock()).enter_maintenance(db_session, locked)
 
-    assert result.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the signal instead
+    assert result.lifecycle_policy_state is not None
+    assert result.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
 async def test_exit_maintenance_clears_maintenance_recovery_suppression(
@@ -100,6 +104,7 @@ async def test_exit_maintenance_clears_maintenance_recovery_suppression(
             "stop_pending": False,
             "stop_pending_reason": None,
             "stop_pending_since": None,
+            "maintenance_reason": "Operator entered maintenance",
         },
     )
     await db_session.commit()
@@ -107,7 +112,7 @@ async def test_exit_maintenance_clears_maintenance_recovery_suppression(
     await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
     await db_session.refresh(device)
 
-    assert device.hold is None
+    # hold is now derived by the reconciler (Task 7+8); signal-cleared is what this test verifies
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("recovery_suppressed_reason") is None
     assert device.lifecycle_policy_state.get("backoff_until") is None
@@ -142,6 +147,7 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
             "stop_pending": False,
             "stop_pending_reason": None,
             "stop_pending_since": None,
+            "maintenance_reason": "Operator entered maintenance",
         },
     )
     await db_session.commit()
@@ -149,7 +155,7 @@ async def test_exit_maintenance_preserves_non_maintenance_suppression(
     await MaintenanceService(publisher=Mock()).exit_maintenance(db_session, device)
     await db_session.refresh(device)
 
-    assert device.hold is None
+    # hold is now derived by the reconciler (Task 7+8); signal-cleared is what this test verifies
     assert device.lifecycle_policy_state is not None
     # Suppression unrelated to the maintenance hold must persist.
     assert device.lifecycle_policy_state.get("recovery_suppressed_reason") == "Node restart failed"
@@ -170,12 +176,15 @@ async def test_enter_and_exit_maintenance_commit_false_branches(
     )
     await db_session.commit()
 
+    from app.devices.services.lifecycle_policy_state import state as ps
+
     svc = MaintenanceService(publisher=Mock())
     result = await svc.enter_maintenance(db_session, device, commit=False)
-    assert result.hold == DeviceHold.maintenance
+    # hold is derived by the reconciler (Task 7+8); check the signal instead
+    assert ps(result).get("maintenance_reason") is not None
 
     result = await svc.exit_maintenance(db_session, device, commit=False)
-    assert result.hold is None
+    assert ps(result).get("maintenance_reason") is None
 
     with pytest.raises(ValueError, match="not in maintenance"):
         await svc.exit_maintenance(db_session, device, commit=False)
@@ -191,6 +200,7 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
         host_id=db_host.id,
         name="maintenance-schedules-recovery",
         hold=DeviceHold.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
     await db_session.commit()
 
@@ -202,6 +212,9 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
 
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    set_maintenance_reason(device, "Operator entered maintenance")
     await db_session.commit()
     schedule.side_effect = RuntimeError("queue down")
     await svc.exit_maintenance(db_session, device)

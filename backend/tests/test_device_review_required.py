@@ -108,6 +108,7 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
         host_id=db_host.id,
         name="review-cleared-on-exit",
         hold=DeviceHold.maintenance,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
     await mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()

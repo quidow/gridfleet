@@ -28,7 +28,13 @@ async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
 
 
 def _assert_startable_outside_maintenance(device: Device) -> None:
-    if device.hold == DeviceHold.maintenance:
+    # Check both the persisted hold column (legacy/Task7+8 derived path) and the
+    # maintenance_reason signal (Task 6+: signal is the source of truth).
+    lps = getattr(device, "lifecycle_policy_state", None)
+    in_maintenance = device.hold == DeviceHold.maintenance or (
+        isinstance(lps, dict) and lps.get("maintenance_reason") is not None
+    )
+    if in_maintenance:
         raise HTTPException(status_code=409, detail="Device is in maintenance mode")
 
 

@@ -252,7 +252,9 @@ async def test_cooldown_device_escalation(
     assert data["threshold"] == 2
 
     await db_session.refresh(device)
-    assert device.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
 async def test_cooldown_device_increments_count(

@@ -30,6 +30,9 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
     device = await create_device(db_session, host_id=db_host.id, name="dw-maint", verified=True)
     with state_write_guard.bypass():
         device.hold = DeviceHold.maintenance
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    set_maintenance_reason(device, "Operator entered maintenance")
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,

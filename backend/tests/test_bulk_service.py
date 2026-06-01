@@ -243,6 +243,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
             name=f"bulk-exit-recovery-{i}",
             hold=DeviceHold.maintenance,
             operational_state=DeviceOperationalState.offline,
+            lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
         )
         for i in range(3)
     ]

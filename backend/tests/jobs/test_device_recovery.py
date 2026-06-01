@@ -170,13 +170,14 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     )
     await db_session.refresh(device)
 
-    # Now simulate enter_maintenance(allow_reserved=True) — put device into
-    # (offline, maintenance) while the reservation entry remains intact.
+    # Now simulate enter_maintenance(allow_reserved=True) — maintenance_reason is the signal;
+    # hold is no longer written directly (Task 6: signal-based maintenance).
     locked = await device_locking.lock_device(db_session, device.id)
     with state_write_guard.bypass():
         locked.operational_state = DeviceOperationalState.offline
-    with state_write_guard.bypass():
-        locked.hold = DeviceHold.maintenance
+    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+
+    set_maintenance_reason(locked, "Operator entered maintenance")
     await db_session.commit()
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.

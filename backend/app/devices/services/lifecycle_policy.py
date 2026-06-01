@@ -172,7 +172,7 @@ class LifecyclePolicyService:
                 suppression_reason="Device setup or verification is incomplete",
                 run=run,
             )
-        if device.hold == DeviceHold.maintenance:
+        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,
@@ -574,7 +574,7 @@ class LifecyclePolicyService:
         # (see Task 9 / R4 — lock device row across lifecycle_policy_state RMW).
         write_state(device, current_state)
 
-        if device.hold == DeviceHold.maintenance:
+        if device.hold == DeviceHold.maintenance or policy_state(device).get("maintenance_reason") is not None:
             await self._actions.record_recovery_suppressed(
                 db,
                 device,

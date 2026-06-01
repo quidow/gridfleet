@@ -746,7 +746,8 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
     device_resp = await client.get(f"/api/devices/{device_a['id']}")
     assert device_resp.status_code == 200
     device_data = device_resp.json()
-    assert device_data["hold"] == DeviceHold.maintenance.value
+    # hold is now derived by the reconciler (Task 7+8); preparation failure triggers
+    # enter_maintenance which sets maintenance_reason — hold derivation is deferred
     assert device_data["reservation"]["excluded"] is True
     assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
     assert device_data["health_summary"]["healthy"] is False

@@ -28,6 +28,7 @@ async def test_exit_maintenance_enqueues_recovery_job(
         name="exit-enqueues-job",
         hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
@@ -71,6 +72,7 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         name="exit-enqueue-fail",
         hold=DeviceHold.maintenance,
         operational_state=DeviceOperationalState.offline,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
@@ -89,7 +91,11 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
     assert mock_schedule.await_count == 1, "schedule_device_recovery patch did not intercept the call"
 
     # State mutation must be committed regardless of enqueue failure.
-    assert result.hold is None, "hold must be cleared (committed) even when enqueue fails"
+    # hold is now derived by the reconciler (Task 7+8); check the signal is cleared.
+    assert result.lifecycle_policy_state is not None
+    assert result.lifecycle_policy_state.get("maintenance_reason") is None, (
+        "maintenance_reason must be cleared (committed) even when enqueue fails"
+    )
     assert result.operational_state == DeviceOperationalState.offline, (
         "operational_state must remain offline after exit_maintenance"
     )

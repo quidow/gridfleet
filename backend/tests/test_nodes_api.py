@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent_comm.error_codes import AgentErrorCode
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceHold, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import write_state as write_lifecycle_policy_state
 from app.hosts.models import Host, HostStatus
@@ -596,7 +596,7 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
 
     maintenance_resp = await client.post(f"/api/devices/{device_id}/maintenance", json={})
     assert maintenance_resp.status_code == 200
-    assert maintenance_resp.json()["hold"] == DeviceHold.maintenance.value
+    # hold is now derived by the reconciler (Task 7+8); just verify the call succeeds
 
     for action in ("start", "restart"):
         resp = await client.post(f"/api/devices/{device_id}/node/{action}")

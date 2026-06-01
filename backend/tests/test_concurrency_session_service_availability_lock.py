@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceHold, DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.state import DeviceStateService
 from app.sessions import service as session_service
@@ -104,7 +104,13 @@ async def test_register_session_does_not_overwrite_concurrent_maintenance(
         ).one()
 
     assert final.operational_state == DeviceOperationalState.busy
-    assert final.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal
+    from app.devices.models import Device as DeviceModel
+    from app.devices.services.lifecycle_policy_state import state as ps
+
+    async with db_session_maker() as verify2:
+        device_row = (await verify2.execute(select(DeviceModel).where(DeviceModel.id == device_id))).scalar_one()
+        assert ps(device_row).get("maintenance_reason") is not None
 
 
 async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
@@ -162,4 +168,10 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
         ).one()
 
     assert final.operational_state == DeviceOperationalState.available
-    assert final.hold == DeviceHold.maintenance
+    # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal
+    from app.devices.models import Device as DeviceModel
+    from app.devices.services.lifecycle_policy_state import state as ps
+
+    async with db_session_maker() as verify2:
+        device_row = (await verify2.execute(select(DeviceModel).where(DeviceModel.id == device_id))).scalar_one()
+        assert ps(device_row).get("maintenance_reason") is not None
