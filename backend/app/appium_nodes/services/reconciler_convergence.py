@@ -118,6 +118,54 @@ def decide_convergence_action(
     return ConvergenceAction(kind="no_op")
 
 
+def orphaned_node_ports(observed: list[ObservedEntry], *, known_targets: set[str]) -> list[int]:
+    """Agent-reported node ports that no desired row can converge.
+
+    The per-row convergence loop matches at most one observed entry per
+    ``connection_target`` (last-wins in ``observed_by_target``), so a second node
+    for the same target is never reached; and a node whose target has no device
+    on the host is never iterated at all. Both linger untracked — the backend then
+    health-checks the device's tracked port while the stray node holds another,
+    flapping the device offline. These ports must be stopped.
+
+    ``known_targets`` MUST be every device target on the host, including devices
+    in recovery backoff (which are excluded from the *active* convergence set) —
+    otherwise a legitimate single node for a backoff device would be reaped.
+    """
+    primary_port_by_target: dict[str, int] = {entry.connection_target: entry.port for entry in observed}
+    orphans: list[int] = []
+    for entry in observed:
+        is_unknown_target = entry.connection_target not in known_targets
+        is_duplicate = primary_port_by_target[entry.connection_target] != entry.port
+        if is_unknown_target or is_duplicate:
+            orphans.append(entry.port)
+    return orphans
+
+
+async def reap_orphan_nodes(
+    observed: list[ObservedEntry],
+    desired_rows: list[DesiredRow],
+    *,
+    stop_agent: Callable[..., Awaitable[None]],
+) -> list[int]:
+    """Stop agent-reported nodes that no desired row can converge.
+
+    See ``orphaned_node_ports`` for what counts as an orphan. A per-port stop
+    failure is logged and swallowed so one stray node cannot abort the host's
+    reconcile cycle. Returns the ports identified as orphans (for observability
+    and tests).
+    """
+    known_targets = {row.connection_target for row in desired_rows}
+    orphans = orphaned_node_ports(observed, known_targets=known_targets)
+    for port in orphans:
+        logger.warning("appium_reconciler_orphan_node_stop", port=port)
+        try:
+            await stop_agent(row=None, port=port)
+        except Exception:  # noqa: BLE001 — one stray node must not abort the host cycle
+            logger.warning("appium_reconciler_orphan_node_stop_failed", exc_info=True, port=port)
+    return orphans
+
+
 async def _execute_action(
     *,
     host_id: uuid.UUID,

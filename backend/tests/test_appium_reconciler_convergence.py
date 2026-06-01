@@ -108,6 +108,71 @@ def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry()
     assert action.clear_desired_port is True
 
 
+def test_orphaned_node_ports_flags_duplicates_and_unknown_targets() -> None:
+    """Stray agent nodes the per-row loop cannot reach must be flagged for stop.
+
+    The loop matches one observed entry per connection_target (last-wins), so a
+    second node for the same target is left untracked; and a node for a target
+    with no device on the host is never iterated at all. Both linger as orphans
+    that the backend health-checks against the wrong port, flapping the device.
+    """
+    from app.appium_nodes.services.reconciler_convergence import orphaned_node_ports
+
+    observed = [
+        ObservedEntry(port=4723, pid=1, connection_target="dev-A"),
+        ObservedEntry(port=4724, pid=2, connection_target="dev-A"),  # duplicate of dev-A
+        ObservedEntry(port=4725, pid=3, connection_target="ghost"),  # no device on this host
+    ]
+    # last-wins primary for dev-A is 4724, so 4723 is the duplicate orphan.
+    assert sorted(orphaned_node_ports(observed, known_targets={"dev-A", "dev-B"})) == [4723, 4725]
+
+
+def test_orphaned_node_ports_empty_when_each_known_target_has_one_node() -> None:
+    """A single node per known target is never an orphan — even a device in
+    backoff (excluded from active convergence) is a *known* target and its node
+    must not be reaped."""
+    from app.appium_nodes.services.reconciler_convergence import orphaned_node_ports
+
+    observed = [
+        ObservedEntry(port=4723, pid=1, connection_target="dev-A"),
+        ObservedEntry(port=4724, pid=2, connection_target="dev-B-in-backoff"),
+    ]
+    assert orphaned_node_ports(observed, known_targets={"dev-A", "dev-B-in-backoff"}) == []
+
+
+async def test_reap_orphan_nodes_stops_each_orphan_port() -> None:
+    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
+
+    observed = [
+        ObservedEntry(port=4723, pid=1, connection_target="dev-A"),
+        ObservedEntry(port=4724, pid=2, connection_target="dev-A"),  # duplicate
+        ObservedEntry(port=4725, pid=3, connection_target="ghost"),  # unknown
+    ]
+    rows = [_row(connection_target="dev-A", desired_state="running")]
+    stop_agent = AsyncMock()
+
+    reaped = await reap_orphan_nodes(observed, rows, stop_agent=stop_agent)
+
+    assert sorted(reaped) == [4723, 4725]
+    stopped_ports = sorted(call.kwargs["port"] for call in stop_agent.await_args_list)
+    assert stopped_ports == [4723, 4725]
+    # Orphans carry no desired row.
+    assert all(call.kwargs["row"] is None for call in stop_agent.await_args_list)
+
+
+async def test_reap_orphan_nodes_swallows_stop_errors() -> None:
+    """A failing stop for one orphan must not abort the host cycle."""
+    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
+
+    observed = [ObservedEntry(port=4999, pid=9, connection_target="ghost")]
+    stop_agent = AsyncMock(side_effect=RuntimeError("agent unreachable"))
+
+    reaped = await reap_orphan_nodes(observed, [], stop_agent=stop_agent)
+
+    assert reaped == [4999]
+    stop_agent.assert_awaited_once()
+
+
 def test_desired_running_active_token_picks_restart() -> None:
     row = _row(
         desired_state="running",

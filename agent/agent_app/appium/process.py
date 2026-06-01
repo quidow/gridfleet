@@ -604,6 +604,19 @@ class AppiumProcessManager:
                 )
                 await self._drop_failed_managed_port(port)
                 return
+            except AlreadyRunningError:
+                # Another node already serves this target on a different port
+                # (e.g. the backend restarted it elsewhere during the crash
+                # window). Resurrecting this port would only re-raise forever and
+                # risk a duplicate node, so abort and release the port; the
+                # backend reconciler reaps whichever node is the true orphan.
+                logger.info(
+                    "Appium auto-restart aborted for port %d: target %s already served by another node",
+                    port,
+                    info.connection_target if info is not None else "unknown",
+                )
+                await self._drop_failed_managed_port(port)
+                return
             except Exception:
                 self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
                 logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
