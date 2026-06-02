@@ -32,10 +32,6 @@ HOP_HEADERS = {
 }
 
 
-def strip_hop_headers(headers: dict[str, str]) -> dict[str, str]:
-    return {key: value for key, value in headers.items() if key.lower() not in HOP_HEADERS}
-
-
 def strip_hop_header_items(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(key, value) for key, value in headers if key.lower() not in HOP_HEADERS]
 

@@ -21,13 +21,6 @@ def _latest_desired(request: Request) -> list[Any]:
     return list(loop.latest_desired_packs or []) if loop else []
 
 
-def _release_for_pack(request: Request, pack_id: str) -> str | None:
-    for pack in _latest_desired(request):
-        if getattr(pack, "id", None) == pack_id:
-            return str(getattr(pack, "release", ""))
-    return None
-
-
 def _optional_adapter_registry(request: Request) -> AdapterRegistry | None:
     return cast("AdapterRegistry | None", getattr(request.app.state, "adapter_registry", None))
 

@@ -7,11 +7,29 @@ import pytest
 from agent_app.installer.identity import OperatorIdentity
 from agent_app.installer.install import HealthCheckResult
 from agent_app.installer.plan import InstallConfig
-from agent_app.installer.status import _run_status_command, collect_status, format_status, parse_config_env
+from agent_app.installer.status import (
+    _parse_config_env_with_error,
+    _run_status_command,
+    collect_status,
+    format_status,
+)
 from agent_app.installer.uv_runtime import UvRuntime
 
 _DEFAULT_OPERATOR = OperatorIdentity(login="testop", uid=9999, home=Path("/home/testop"))
 _DEFAULT_UV = UvRuntime(bin_path=None, source="missing", searched=())
+
+
+def test_parse_config_env_with_error_skips_comments_and_blank_lines(tmp_path: Path) -> None:
+    path = tmp_path / "config.env"
+    path.write_text("\n# comment\nAGENT_MANAGER_URL=https://manager.example.com\nAGENT_AGENT_PORT=5200\nMALFORMED\n")
+
+    values, error = _parse_config_env_with_error(path)
+
+    assert error is None
+    assert values == {
+        "AGENT_MANAGER_URL": "https://manager.example.com",
+        "AGENT_AGENT_PORT": "5200",
+    }
 
 
 def _stub_health(url: str, *, auth: tuple[str, str] | None = None) -> HealthCheckResult:
@@ -23,16 +41,6 @@ def _make_config(tmp_path: Path) -> InstallConfig:
         agent_dir=str(tmp_path / "opt/gridfleet-agent"),
         config_dir=str(tmp_path / "etc/gridfleet-agent"),
     )
-
-
-def test_parse_config_env_skips_comments_and_blank_lines(tmp_path: Path) -> None:
-    path = tmp_path / "config.env"
-    path.write_text("\n# comment\nAGENT_MANAGER_URL=https://manager.example.com\nAGENT_AGENT_PORT=5200\nMALFORMED\n")
-
-    assert parse_config_env(path) == {
-        "AGENT_MANAGER_URL": "https://manager.example.com",
-        "AGENT_AGENT_PORT": "5200",
-    }
 
 
 def test_collect_status_reads_files_service_state_and_health(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
-from agent_app.pack.dependencies import _latest_desired, _release_for_pack
+from agent_app.pack.dependencies import _latest_desired
 from agent_app.registration import RegistrationService
 
 
@@ -36,20 +36,6 @@ async def test_latest_desired_returns_empty_when_no_loop() -> None:
     request = MagicMock()
     request.app.state.pack_state_loop = None
     assert _latest_desired(request) == []
-
-
-async def test_release_for_pack_returns_none_when_no_match() -> None:
-    request = MagicMock()
-    pack_cls = type("Pack", (), {"id": "other", "release": "1.0"})
-    request.app.state.pack_state_loop = type("Loop", (), {"latest_desired_packs": [pack_cls()]})()
-    assert _release_for_pack(request, "target") is None
-
-
-async def test_release_for_pack_returns_release_when_matching() -> None:
-    request = MagicMock()
-    pack_cls = type("Pack", (), {"id": "target", "release": "2.0"})
-    request.app.state.pack_state_loop = type("Loop", (), {"latest_desired_packs": [pack_cls()]})()
-    assert _release_for_pack(request, "target") == "2.0"
 
 
 async def test_lifespan_starts_pack_loop_with_env_host_id() -> None:
