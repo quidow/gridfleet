@@ -10,9 +10,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
+from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.services.data_cleanup import DataCleanupService
-from app.devices.services.diagnostics_export import DiagnosticExportService
+from app.diagnostics.models import DeviceDiagnosticSnapshot
+from app.diagnostics.services.export import DiagnosticExportService
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader, build_review_service

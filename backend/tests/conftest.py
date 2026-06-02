@@ -46,6 +46,8 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
+from app.diagnostics.dependencies import get_diagnostics_services
+from app.diagnostics.services_container import DiagnosticsServices
 from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
@@ -411,7 +413,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service, identity=DeviceIdentityConflictService(), publisher=test_event_bus
         )
         return DeviceServices(
-            diagnostics=build_diagnostics_export(),
             fleet_capacity=FleetCapacityService(grid=_grid_svc),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -499,6 +500,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             service=VerificationService(),
             runner=AsyncMock(),
         )
+
+    def override_get_diagnostics_services() -> DiagnosticsServices:
+        return DiagnosticsServices(export=build_diagnostics_export())
 
     def override_get_portability_services() -> PortabilityServices:
         return PortabilityServices(
@@ -737,6 +741,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     app.dependency_overrides[get_device_services] = override_get_device_services
     app.dependency_overrides[get_verification_services] = override_get_verification_services
+    app.dependency_overrides[get_diagnostics_services] = override_get_diagnostics_services
     app.dependency_overrides[get_portability_services] = override_get_portability_services
     app.dependency_overrides[get_lifecycle_services] = override_get_lifecycle_services
     app.dependency_overrides[get_host_services] = override_get_host_services

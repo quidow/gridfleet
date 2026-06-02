@@ -20,8 +20,9 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models.node import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
-from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceIntent, DeviceReservation
-from app.devices.schemas.diagnostics import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
+from app.devices.models import DeviceEvent, DeviceIntent, DeviceReservation
+from app.diagnostics.models import DeviceDiagnosticSnapshot
+from app.diagnostics.schemas import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
 from app.runs.models import TestRun
 from app.sessions.models import Session, SessionStatus
 

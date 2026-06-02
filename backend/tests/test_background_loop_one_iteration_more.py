@@ -38,7 +38,7 @@ from app.sessions import service_viability as session_viability
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
-from tests.fakes import FakeSettingsReader, build_diagnostics_export, build_review_service
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -186,7 +186,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_crud = DeviceCrudService(settings=_fc_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
-            diagnostics=build_diagnostics_export(),
             fleet_capacity=FleetCapacityService(grid=_fc_grid),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),

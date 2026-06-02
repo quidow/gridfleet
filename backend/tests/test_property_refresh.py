@@ -21,7 +21,7 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_diagnostics_export, build_review_service
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -154,7 +154,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
-            diagnostics=build_diagnostics_export(),
             fleet_capacity=FleetCapacityService(grid=_pr_grid),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,

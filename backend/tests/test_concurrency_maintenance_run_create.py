@@ -42,7 +42,7 @@ from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service, test_circuit_breaker
-from tests.fakes import build_diagnostics_export, build_review_service
+from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -89,7 +89,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
             )
             return DeviceServices(
-                diagnostics=build_diagnostics_export(),
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),

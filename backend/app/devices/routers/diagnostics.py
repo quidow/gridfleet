@@ -13,7 +13,8 @@ from app.core.dependencies import DbDep
 from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import get_device_or_404
-from app.devices.schemas.diagnostics import (
+from app.diagnostics.dependencies import DiagnosticsServicesDep
+from app.diagnostics.schemas import (
     DiagnosticExportResponse,
     DiagnosticSnapshotDetail,
     DiagnosticSnapshotListResponse,
@@ -96,17 +97,18 @@ async def export_device_diagnostics(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     persist: bool = Query(default=True),
     redact: bool = Query(default=False),
 ) -> DiagnosticExportResponse:
     device = await get_device_or_404(device_id, db, device_services.crud)
     await _enforce_rate_limit(db, device_id)
     warnings: list[str] = []
-    payload = await device_services.diagnostics.assemble_bundle(db, device, redact=redact)
+    payload = await diagnostics_services.export.assemble_bundle(db, device, redact=redact)
     snapshot_id: uuid.UUID | None = None
     if persist:
         try:
-            snapshot_id = await device_services.diagnostics.capture_snapshot(
+            snapshot_id = await diagnostics_services.export.capture_snapshot(
                 db, device, trigger="operator", reason=None
             )
         except Exception as exc:  # noqa: BLE001 - operator should still receive the assembled payload.
@@ -128,12 +130,13 @@ async def list_device_diagnostic_snapshots(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     limit: int = Query(default=20, ge=1, le=100),
     before: uuid.UUID | None = Query(default=None),
 ) -> DiagnosticSnapshotListResponse:
     await get_device_or_404(device_id, db, device_services.crud)
     try:
-        rows, next_before = await device_services.diagnostics.list_snapshots(db, device_id, limit=limit, before=before)
+        rows, next_before = await diagnostics_services.export.list_snapshots(db, device_id, limit=limit, before=before)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Unknown before cursor") from exc
     return DiagnosticSnapshotListResponse(
@@ -151,15 +154,16 @@ async def get_device_diagnostic_snapshot(
     snapshot_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     redact: bool = Query(default=False),
 ) -> DiagnosticSnapshotDetail:
     await get_device_or_404(device_id, db, device_services.crud)
-    row = await device_services.diagnostics.get_snapshot(db, device_id, snapshot_id)
+    row = await diagnostics_services.export.get_snapshot(db, device_id, snapshot_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     payload = row.payload
     if redact:
-        payload = await device_services.diagnostics.redact_bundle(db, payload)
+        payload = await diagnostics_services.export.redact_bundle(db, payload)
     return DiagnosticSnapshotDetail(
         id=row.id,
         captured_at=row.captured_at,

@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.devices.services import state_write_guard
-from tests.fakes import build_diagnostics_export, build_review_service
+from tests.fakes import build_review_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -297,7 +297,6 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     )
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            diagnostics=build_diagnostics_export(),
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),

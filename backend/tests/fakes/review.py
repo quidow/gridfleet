@@ -7,8 +7,8 @@ than wiring the diagnostics service by hand.
 
 from __future__ import annotations
 
-from app.devices.services.diagnostics_export import DiagnosticExportService
 from app.devices.services.review import ReviewService
+from app.diagnostics.services.export import DiagnosticExportService
 
 
 def build_review_service() -> ReviewService:
