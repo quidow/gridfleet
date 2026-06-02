@@ -225,7 +225,7 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(
         "bundle_hash": "sha256:" + "0" * 64,
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
-    response = await client.post("/api/devices/import", json=body)
+    response = await client.post("/api/portability/import", json=body)
     assert response.status_code == 409
 
 
@@ -261,7 +261,7 @@ async def test_import_endpoint_commits_valid_row(
         "bundle_hash": compute_bundle_hash(bundle),
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
-    response = await client.post("/api/devices/import", json=body)
+    response = await client.post("/api/portability/import", json=body)
     assert response.status_code == 200
     result = response.json()
     assert len(result["created"]) == 1

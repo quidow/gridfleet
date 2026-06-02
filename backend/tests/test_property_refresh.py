@@ -22,10 +22,6 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
-from app.portability.services.export import PortabilityExportService
-from app.portability.services.import_bundle import PortabilityImportService
-from app.portability.services.inventory import InventoryExportService
-from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -172,9 +168,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             ),
             presenter=DevicePresenterService(settings=_pr_settings),
             test_data=TestDataService(publisher=_pr_publisher),
-            portability_export=PortabilityExportService(),
-            inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             crud=_pr_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

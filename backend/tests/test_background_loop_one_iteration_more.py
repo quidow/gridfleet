@@ -34,15 +34,11 @@ from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop, Hardware
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
-from app.portability.services.export import PortabilityExportService
-from app.portability.services.import_bundle import PortabilityImportService
-from app.portability.services.inventory import InventoryExportService
 from app.sessions import service_sync as session_sync
 from app.sessions import service_viability as session_viability
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
-from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -204,9 +200,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             ),
             presenter=DevicePresenterService(settings=_fc_settings),
             test_data=TestDataService(publisher=_fc_publisher),
-            portability_export=PortabilityExportService(),
-            inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             crud=_fc_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

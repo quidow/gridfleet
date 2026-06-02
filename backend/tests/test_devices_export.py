@@ -152,7 +152,7 @@ async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: A
 
     await seed_host_and_device(db_session, identity="ENDPOINT-1")
 
-    response = await client.get("/api/devices/export")
+    response = await client.get("/api/portability/export")
     assert response.status_code == 200
     body = response.json()
     assert body["schema_version"] == 1

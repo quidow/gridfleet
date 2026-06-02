@@ -30,9 +30,6 @@ from app.events.services_container import EventServices
 from app.grid.service import GridService
 from app.hosts.models import Host
 from app.main import app
-from app.portability.services.export import PortabilityExportService
-from app.portability.services.import_bundle import PortabilityImportService
-from app.portability.services.inventory import InventoryExportService
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
@@ -44,7 +41,6 @@ from app.runs.services_container import RunServices
 from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
-from app.verification.services.service import VerificationService
 from tests.conftest import settings_service, test_circuit_breaker
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -105,9 +101,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 ),
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),
-                portability_export=PortabilityExportService(),
-                inventory_export=InventoryExportService(),
-                portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
                 crud=_crud_svc,
                 capability=DeviceCapabilityService(),
                 connectivity=ConnectivityService(
