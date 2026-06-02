@@ -32,7 +32,7 @@ from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -55,9 +55,9 @@ _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
     circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+    maintenance=MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
     lifecycle_actions=AsyncMock(),
-    reservation=RunReservationService(),
+    reservation=RunReservationService(review=build_review_service()),
     health=AsyncMock(),
     incidents=LifecycleIncidentService(),
 )
@@ -359,7 +359,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     )
     run = await create_reserved_run(db_session, name="reservation-branch-run", devices=[device])
     entry = run.device_reservations[0]
-    svc = RunReservationService()
+    svc = RunReservationService(review=build_review_service())
 
     assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing", publisher=event_bus) is None
     assert await run_service.get_device_reservation(db_session, device.id) == run
@@ -424,9 +424,11 @@ async def test_cooldown_device_guard_paths(
         publisher=event_bus,
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+        maintenance=MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(),
+        reservation=RunReservationService(review=build_review_service()),
         health=AsyncMock(),
         incidents=LifecycleIncidentService(),
     )
@@ -610,9 +612,11 @@ async def test_report_preparation_failure_and_cooldown_escalation_paths(
             {"general.device_cooldown_max_sec": 60, "general.device_cooldown_escalation_threshold": 1}
         ),
         circuit_breaker=_circuit_breaker,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+        maintenance=MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(),
+        reservation=RunReservationService(review=build_review_service()),
         health=AsyncMock(),
         incidents=LifecycleIncidentService(),
     )

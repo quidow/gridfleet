@@ -20,8 +20,9 @@ from sqlalchemy import select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models.node import AppiumNode
 from app.core.leader import state_store as control_plane_state_store
-from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceIntent, DeviceReservation
-from app.devices.schemas.diagnostics import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
+from app.devices.models import DeviceEvent, DeviceIntent, DeviceReservation
+from app.diagnostics.models import DeviceDiagnosticSnapshot
+from app.diagnostics.schemas import DIAGNOSTIC_BUNDLE_SCHEMA_VERSION
 from app.runs.models import TestRun
 from app.sessions.models import Session, SessionStatus
 
@@ -323,55 +324,6 @@ async def _read_outbox(db: AsyncSession, device: Device) -> list[dict[str, Any]]
     return [project(row) for row in pending.scalars().all()] + [project(row) for row in delivered.scalars().all()]
 
 
-async def assemble_bundle(
-    db: AsyncSession,
-    device: Device,
-    *,
-    redact: bool,
-) -> dict[str, Any]:
-    """Assemble a diagnostic bundle for ``device``. Read-only. No commits."""
-    warnings: list[str] = []
-    node = await _read_appium_node(db, device)
-    reservations = await _read_reservations(db, device)
-    intents, intent_warnings = await _read_intents(db, device)
-    warnings.extend(intent_warnings)
-    sessions = await _read_sessions(db, device)
-    events = await _read_events(db, device)
-
-    run_ids: set[uuid.UUID] = set()
-    for intent in intents:
-        if intent.get("run_id"):
-            run_ids.add(uuid.UUID(intent["run_id"]))
-    for reservation in reservations:
-        if reservation.get("run_id"):
-            run_ids.add(uuid.UUID(reservation["run_id"]))
-    for session in (*sessions["running"], *sessions["recent_ended"]):
-        if session.get("run_id"):
-            run_ids.add(uuid.UUID(session["run_id"]))
-
-    related_runs = await _read_related_runs(db, run_ids)
-    outbox = await _read_outbox(db, device)
-
-    bundle: dict[str, Any] = {
-        "schema_version": DIAGNOSTIC_BUNDLE_SCHEMA_VERSION,
-        "captured_at": _utcnow_iso(),
-        "redacted": False,
-        "device": _project_device(device),
-        "appium_node": node,
-        "reservations": reservations,
-        "intents": intents,
-        "sessions": sessions,
-        "events": events,
-        "related_runs": related_runs,
-        "agent_reconfigure_outbox": outbox,
-    }
-    if warnings:
-        bundle["warnings"] = warnings
-    if redact:
-        bundle = await redact_bundle(db, bundle)
-    return bundle
-
-
 async def _get_or_create_redaction_salt(db: AsyncSession) -> str:
     stored = await control_plane_state_store.get_value(db, _REDACTION_NAMESPACE, _REDACTION_SALT_KEY)
     if isinstance(stored, str) and stored:
@@ -477,67 +429,164 @@ def _redact_event_details(
     return obj
 
 
-async def redact_bundle(db: AsyncSession, bundle: dict[str, Any]) -> dict[str, Any]:
-    """Apply the diagnostic bundle redaction rules."""
-    salt = await _get_or_create_redaction_salt(db)
-    sensitive_ids = _collect_sensitive_ids(bundle)
-    redacted = copy.deepcopy(bundle)
+class DiagnosticExportService:
+    """Assemble, redact, persist, and read device diagnostic bundles."""
 
-    device = redacted.get("device")
-    if isinstance(device, dict):
-        _hash_if_str(device, "identity_value", salt)
-        _hash_if_str(device, "connection_target", salt)
-        _hash_if_str(device, "ip_address", salt)
+    async def assemble_bundle(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        redact: bool,
+    ) -> dict[str, Any]:
+        """Assemble a diagnostic bundle for ``device``. Read-only. No commits."""
+        warnings: list[str] = []
+        node = await _read_appium_node(db, device)
+        reservations = await _read_reservations(db, device)
+        intents, intent_warnings = await _read_intents(db, device)
+        warnings.extend(intent_warnings)
+        sessions = await _read_sessions(db, device)
+        events = await _read_events(db, device)
 
-    node = redacted.get("appium_node")
-    if isinstance(node, dict):
-        _hash_if_str(node, "active_connection_target", salt)
+        run_ids: set[uuid.UUID] = set()
+        for intent in intents:
+            if intent.get("run_id"):
+                run_ids.add(uuid.UUID(intent["run_id"]))
+        for reservation in reservations:
+            if reservation.get("run_id"):
+                run_ids.add(uuid.UUID(reservation["run_id"]))
+        for session in (*sessions["running"], *sessions["recent_ended"]):
+            if session.get("run_id"):
+                run_ids.add(uuid.UUID(session["run_id"]))
 
-    for reservation in redacted.get("reservations") or []:
-        if isinstance(reservation, dict):
-            _hash_if_str(reservation, "identity_value", salt)
-            _hash_if_str(reservation, "connection_target", salt)
-            _hash_if_str(reservation, "host_ip", salt)
+        related_runs = await _read_related_runs(db, run_ids)
+        outbox = await _read_outbox(db, device)
 
-    sessions = redacted.get("sessions")
-    if isinstance(sessions, dict):
-        for bucket in ("running", "recent_ended"):
-            for session in sessions.get(bucket) or []:
-                if isinstance(session, dict):
-                    _hash_if_str(session, "session_id", salt)
+        bundle: dict[str, Any] = {
+            "schema_version": DIAGNOSTIC_BUNDLE_SCHEMA_VERSION,
+            "captured_at": _utcnow_iso(),
+            "redacted": False,
+            "device": _project_device(device),
+            "appium_node": node,
+            "reservations": reservations,
+            "intents": intents,
+            "sessions": sessions,
+            "events": events,
+            "related_runs": related_runs,
+            "agent_reconfigure_outbox": outbox,
+        }
+        if warnings:
+            bundle["warnings"] = warnings
+        if redact:
+            bundle = await self.redact_bundle(db, bundle)
+        return bundle
 
-    for run in redacted.get("related_runs") or []:
-        if isinstance(run, dict):
-            _hash_if_str(run, "name", salt)
+    async def redact_bundle(self, db: AsyncSession, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Apply the diagnostic bundle redaction rules."""
+        salt = await _get_or_create_redaction_salt(db)
+        sensitive_ids = _collect_sensitive_ids(bundle)
+        redacted = copy.deepcopy(bundle)
 
-    for event in redacted.get("events") or []:
-        if isinstance(event, dict):
-            details = event.get("details")
-            if isinstance(details, (dict, list)):
-                _redact_event_details(details, salt=salt, sensitive_ids=sensitive_ids)
+        device = redacted.get("device")
+        if isinstance(device, dict):
+            _hash_if_str(device, "identity_value", salt)
+            _hash_if_str(device, "connection_target", salt)
+            _hash_if_str(device, "ip_address", salt)
 
-    redacted["redacted"] = True
-    return redacted
+        node = redacted.get("appium_node")
+        if isinstance(node, dict):
+            _hash_if_str(node, "active_connection_target", salt)
 
+        for reservation in redacted.get("reservations") or []:
+            if isinstance(reservation, dict):
+                _hash_if_str(reservation, "identity_value", salt)
+                _hash_if_str(reservation, "connection_target", salt)
+                _hash_if_str(reservation, "host_ip", salt)
 
-async def capture_snapshot(
-    db: AsyncSession,
-    device: Device,
-    *,
-    trigger: str,
-    reason: str | None,
-) -> uuid.UUID:
-    """Assemble an unredacted bundle and insert a snapshot row.
+        sessions = redacted.get("sessions")
+        if isinstance(sessions, dict):
+            for bucket in ("running", "recent_ended"):
+                for session in sessions.get(bucket) or []:
+                    if isinstance(session, dict):
+                        _hash_if_str(session, "session_id", salt)
 
-    Does not commit; the caller owns the transaction boundary.
-    """
-    payload = await assemble_bundle(db, device, redact=False)
-    row = DeviceDiagnosticSnapshot(
-        device_id=device.id,
-        trigger=trigger,
-        reason=reason,
-        payload=payload,
-    )
-    db.add(row)
-    await db.flush()
-    return row.id
+        for run in redacted.get("related_runs") or []:
+            if isinstance(run, dict):
+                _hash_if_str(run, "name", salt)
+
+        for event in redacted.get("events") or []:
+            if isinstance(event, dict):
+                details = event.get("details")
+                if isinstance(details, (dict, list)):
+                    _redact_event_details(details, salt=salt, sensitive_ids=sensitive_ids)
+
+        redacted["redacted"] = True
+        return redacted
+
+    async def capture_snapshot(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        trigger: str,
+        reason: str | None,
+    ) -> uuid.UUID:
+        """Assemble an unredacted bundle and insert a snapshot row.
+
+        Does not commit; the caller owns the transaction boundary.
+        """
+        payload = await self.assemble_bundle(db, device, redact=False)
+        row = DeviceDiagnosticSnapshot(
+            device_id=device.id,
+            trigger=trigger,
+            reason=reason,
+            payload=payload,
+        )
+        db.add(row)
+        await db.flush()
+        return row.id
+
+    async def list_snapshots(
+        self, db: AsyncSession, device_id: uuid.UUID, *, limit: int, before: uuid.UUID | None
+    ) -> tuple[list[DeviceDiagnosticSnapshot], uuid.UUID | None]:
+        """Return a page of snapshot summaries for ``device_id`` plus the next cursor.
+
+        Raises ``ValueError`` when ``before`` does not resolve to a known snapshot.
+        """
+        stmt = (
+            select(DeviceDiagnosticSnapshot)
+            .where(DeviceDiagnosticSnapshot.device_id == device_id)
+            .order_by(DeviceDiagnosticSnapshot.captured_at.desc(), DeviceDiagnosticSnapshot.id.desc())
+        )
+        if before is not None:
+            cursor_row = (
+                await db.execute(
+                    select(DeviceDiagnosticSnapshot.captured_at).where(
+                        DeviceDiagnosticSnapshot.id == before,
+                        DeviceDiagnosticSnapshot.device_id == device_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if cursor_row is None:
+                raise ValueError("Unknown before cursor")
+            stmt = stmt.where(DeviceDiagnosticSnapshot.captured_at < cursor_row)
+        stmt = stmt.limit(limit + 1)
+        rows = list((await db.execute(stmt)).scalars().all())
+        next_before: uuid.UUID | None = None
+        if len(rows) > limit:
+            rows = rows[:limit]
+            next_before = rows[-1].id
+        return rows, next_before
+
+    async def get_snapshot(
+        self, db: AsyncSession, device_id: uuid.UUID, snapshot_id: uuid.UUID
+    ) -> DeviceDiagnosticSnapshot | None:
+        """Return a single snapshot row for ``device_id``/``snapshot_id`` or ``None``."""
+        return (
+            await db.execute(
+                select(DeviceDiagnosticSnapshot).where(
+                    DeviceDiagnosticSnapshot.id == snapshot_id,
+                    DeviceDiagnosticSnapshot.device_id == device_id,
+                )
+            )
+        ).scalar_one_or_none()

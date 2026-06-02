@@ -30,6 +30,7 @@ from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
+from tests.fakes import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -109,6 +110,7 @@ async def test_device_recovery_job_invokes_attempt_auto_recovery(
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
+                review=build_review_service(),
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),
@@ -189,7 +191,9 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
 
     # exit_maintenance enqueues the recovery job and clears hold/offline/suppression.
     locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(settings=settings_service, publisher=event_bus).exit_maintenance(db_session, locked)
+    await MaintenanceService(
+        review=build_review_service(), settings=settings_service, publisher=event_bus
+    ).exit_maintenance(db_session, locked)
 
     # Run the queued recovery job with start_managed_node + viability probe stubbed
     # to success — mirroring the patching style of test_lifecycle_policy_stale_stop_pending.py.
@@ -245,6 +249,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
+                    review=build_review_service(),
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=AsyncMock(),
@@ -263,10 +268,13 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 lifecycle_policy=LifecyclePolicyService(
+                    review=build_review_service(),
                     publisher=AsyncMock(),
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
-                        publisher=AsyncMock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                        publisher=AsyncMock(),
+                        reservation=RunReservationService(review=build_review_service()),
+                        incidents=LifecycleIncidentService(),
                     ),
                     incidents=LifecycleIncidentService(),
                     viability=lc_viability,
@@ -336,6 +344,7 @@ async def test_device_recovery_job_completed_when_device_missing(
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
+                review=build_review_service(),
                 publisher=AsyncMock(),
                 settings=settings_service,
                 circuit_breaker=AsyncMock(),

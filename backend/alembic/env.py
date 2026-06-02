@@ -22,6 +22,7 @@ from app.devices.models import (  # noqa: F401
     DeviceReservation,
     DeviceTestDataAuditLog,
 )
+from app.diagnostics.models import DeviceDiagnosticSnapshot  # noqa: F401
 from app.events.models import SystemEvent  # noqa: F401
 from app.hosts.models import Host, HostPluginRuntimeStatus, HostResourceSample  # noqa: F401
 from app.jobs.models import Job  # noqa: F401

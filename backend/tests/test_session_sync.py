@@ -18,7 +18,7 @@ from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.protocols import SessionSyncProtocol
 from app.sessions.service_sync import SessionSyncService
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -30,10 +30,13 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     """Return a real LifecyclePolicyService for tests that need actual DB mutations."""
     pub = publisher if publisher is not None else event_bus
     return LifecyclePolicyService(
+        review=build_review_service(),
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=pub, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=pub,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),

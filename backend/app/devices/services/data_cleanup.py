@@ -11,7 +11,8 @@ from sqlalchemy import delete, or_, select
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
-from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceTestDataAuditLog
+from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
+from app.diagnostics.models import DeviceDiagnosticSnapshot
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME

@@ -20,7 +20,7 @@ from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -50,6 +50,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
+                review=build_review_service(),
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
                 circuit_breaker=AsyncMock(),

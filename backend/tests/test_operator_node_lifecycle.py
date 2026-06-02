@@ -15,7 +15,7 @@ from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -122,9 +122,9 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     # transition_deadline, expires_at, AND precondition — overwriting the stale
     # payload. Reconcile inside register_intents_and_reconcile then writes the
     # AppiumNode desired_port from the fresh payload (= node.port = 4725).
-    await OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus).request_restart(
-        db_session, device, caller="operator_restart", reason="operator restart"
-    )
+    await OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    ).request_restart(db_session, device, caller="operator_restart", reason="operator restart")
     await db_session.refresh(node)
 
     assert node.desired_port == 4725, (
@@ -246,7 +246,9 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     # fixture is constructed so the model treats the node as running.
     assert node.observed_running, "test fixture must seed an observed-running node"
 
-    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     await svc.request_restart(db_session, device, caller="operator_restart", reason="first")
     intent_first = (
         await db_session.execute(
@@ -318,7 +320,9 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     )
     await db_session.commit()
 
-    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
 

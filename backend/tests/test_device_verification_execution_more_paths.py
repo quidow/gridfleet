@@ -12,7 +12,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.verification.services import execution as execution
 from app.verification.services.execution import VerificationExecutionService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -45,6 +45,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
 
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=settings,
             circuit_breaker=Mock(),
@@ -64,6 +65,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     _s2 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=_s2,
             circuit_breaker=Mock(),
@@ -79,6 +81,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     fetch.side_effect = AgentCallError("10.0.0.1", "down")
     _s3 = FakeSettingsReader({})
     assert await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=_s3,
         circuit_breaker=Mock(),
@@ -93,6 +96,7 @@ async def test_run_device_health_success_failure_and_agent_error(monkeypatch: py
     _s4 = FakeSettingsReader({})
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=_s4,
             circuit_breaker=Mock(),
@@ -129,6 +133,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         publisher=event_bus,
         crud=mock_crud,
         node_manager=AsyncMock(),
+        review=AsyncMock(),
     )
     assert outcome.error == "cleanup failed"
     assert outcome.device_id is None
@@ -139,7 +144,8 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
     revoke_mock = AsyncMock()
     monkeypatch.setattr(execution, "_revoke_verification_node_intent", revoke_mock)
     mark_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(execution, "mark_review_required", mark_mock)
+    review_mock = MagicMock()
+    review_mock.mark_review_required = mark_mock
     machine_spy = AsyncMock()
     monkeypatch.setattr(execution, "set_operational_state", machine_spy)
     update_context = SimpleNamespace(mode="update", save_device_id=locked.id, transient_device=transient)
@@ -152,6 +158,7 @@ async def test_finalize_failure_create_and_update_paths(monkeypatch: pytest.Monk
         publisher=event_bus,
         crud=mock_crud,
         node_manager=AsyncMock(),
+        review=review_mock,
     )
     assert outcome.device_id == str(locked.id)
     assert locked.name == "original"
@@ -170,6 +177,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     context = SimpleNamespace(save_device_id=None, transient_device=_device(identity_value="missing"))
     _s5 = FakeSettingsReader({})
     svc = VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=_s5,
         circuit_breaker=Mock(),
@@ -198,6 +206,7 @@ async def test_execute_verification_context_missing_id_and_crash_path(monkeypatc
     monkeypatch.setattr(execution, "_finalize_failure", finalize)
     _s6 = FakeSettingsReader({})
     svc2 = VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=_s6,
         circuit_breaker=Mock(),
@@ -300,7 +309,8 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
     monkeypatch.setattr(execution, "set_operational_state", machine_spy)
 
     mark_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(execution, "mark_review_required", mark_mock)
+    review_mock = MagicMock()
+    review_mock.mark_review_required = mark_mock
 
     # Track call order between mark_review_required and db.commit.
     call_order_manager = MagicMock()
@@ -318,6 +328,7 @@ async def test_update_mode_verification_failure_shelves_device(monkeypatch: pyte
         publisher=event_bus,
         crud=AsyncMock(),
         node_manager=AsyncMock(),
+        review=review_mock,
     )
 
     assert outcome.status == "failed"
@@ -346,6 +357,7 @@ async def test_run_device_health_accepts_plain_str_enum_attributes(monkeypatch: 
     device = _device(device_type="real_device", connection_type="usb")
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=settings,
             circuit_breaker=Mock(),

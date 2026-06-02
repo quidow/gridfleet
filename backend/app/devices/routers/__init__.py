@@ -6,7 +6,6 @@ __all__ = [
     "catalog",
     "control",
     "core",
-    "diagnostics",
     "groups",
     "helpers",
     "test_data",

@@ -19,7 +19,7 @@ from app.devices.services import state_write_guard
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
@@ -630,10 +630,13 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
     await db_session.commit()
 
     recovered = await LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),

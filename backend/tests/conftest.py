@@ -46,6 +46,8 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
+from app.diagnostics.dependencies import get_diagnostics_services
+from app.diagnostics.services_container import DiagnosticsServices
 from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
@@ -113,6 +115,7 @@ from app.webhooks.dispatcher import WebhookDispatchService
 from app.webhooks.models import Webhook, WebhookDelivery
 from app.webhooks.service import WebhookCrudService
 from app.webhooks.services_container import WebhookServices
+from tests.fakes import build_diagnostics_export, build_review_service
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 settings_service = SettingsService()
@@ -403,7 +406,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         _grid_svc = GridService(settings=settings_service)
-        _maintenance_svc = MaintenanceService(settings=settings_service, publisher=test_event_bus)
+        _maintenance_svc = MaintenanceService(
+            review=build_review_service(), settings=settings_service, publisher=test_event_bus
+        )
         _crud_svc = DeviceCrudService(
             settings=settings_service, identity=DeviceIdentityConflictService(), publisher=test_event_bus
         )
@@ -419,7 +424,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 maintenance=_maintenance_svc,
                 crud=_crud_svc,
-                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=settings_service, publisher=test_event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
@@ -430,11 +437,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 lifecycle_policy=LifecyclePolicyService(
+                    review=build_review_service(),
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
                         publisher=test_event_bus,
-                        reservation=RunReservationService(),
+                        reservation=RunReservationService(review=build_review_service()),
                         incidents=LifecycleIncidentService(),
                     ),
                     incidents=LifecycleIncidentService(),
@@ -459,11 +467,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _incidents_svc = LifecycleIncidentService()
         _actions_svc = LifecyclePolicyActionsService(
             publisher=test_event_bus,
-            reservation=RunReservationService(),
+            reservation=RunReservationService(review=build_review_service()),
             incidents=_incidents_svc,
         )
-        _operator_node_svc = OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus)
+        _operator_node_svc = OperatorNodeLifecycleService(
+            review=build_review_service(), settings=settings_service, publisher=test_event_bus
+        )
         _policy_svc = LifecyclePolicyService(
+            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=_actions_svc,
@@ -489,6 +500,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             service=VerificationService(),
             runner=AsyncMock(),
         )
+
+    def override_get_diagnostics_services() -> DiagnosticsServices:
+        return DiagnosticsServices(export=build_diagnostics_export())
 
     def override_get_portability_services() -> PortabilityServices:
         return PortabilityServices(
@@ -536,11 +550,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             health=DeviceHealthService(publisher=test_event_bus),
         )
         _lifecycle_policy_svc = LifecyclePolicyService(
+            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(),
+                reservation=RunReservationService(review=build_review_service()),
                 incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
@@ -572,11 +587,12 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
         grid = GridService(settings=settings_service)
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
+            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(),
+                reservation=RunReservationService(review=build_review_service()),
                 incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
@@ -600,13 +616,15 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             publisher=test_event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
-            maintenance=MaintenanceService(settings=settings_service, publisher=test_event_bus),
+            maintenance=MaintenanceService(
+                review=build_review_service(), settings=settings_service, publisher=test_event_bus
+            ),
             lifecycle_actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(),
+                reservation=RunReservationService(review=build_review_service()),
                 incidents=LifecycleIncidentService(),
             ),
-            reservation=RunReservationService(),
+            reservation=RunReservationService(review=build_review_service()),
             health=DeviceHealthService(publisher=test_event_bus),
             incidents=LifecycleIncidentService(),
         )
@@ -616,7 +634,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=run_lifecycle,
             release=run_release,
             failure=run_failure,
-            reservation=RunReservationService(),
+            reservation=RunReservationService(review=build_review_service()),
             query=run_query,
             settings=settings_service,
             session_factory=sf,
@@ -681,7 +699,9 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,
-                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=settings_service, publisher=test_event_bus
+                ),
             ),
             node_health=NodeHealthService(
                 publisher=test_event_bus,
@@ -721,6 +741,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     app.dependency_overrides[get_device_services] = override_get_device_services
     app.dependency_overrides[get_verification_services] = override_get_verification_services
+    app.dependency_overrides[get_diagnostics_services] = override_get_diagnostics_services
     app.dependency_overrides[get_portability_services] = override_get_portability_services
     app.dependency_overrides[get_lifecycle_services] = override_get_lifecycle_services
     app.dependency_overrides[get_host_services] = override_get_host_services

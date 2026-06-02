@@ -11,7 +11,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -88,7 +88,9 @@ async def test_bulk_enter_maintenance_relocks_each_device_before_enter_after_int
             crud=DeviceCrudService(
                 settings=_settings_enter, identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
-            operator=OperatorNodeLifecycleService(settings=_settings_enter, publisher=event_bus),
+            operator=OperatorNodeLifecycleService(
+                review=build_review_service(), settings=_settings_enter, publisher=event_bus
+            ),
         ).bulk_enter_maintenance(session, device_ids)
 
     assert result == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}

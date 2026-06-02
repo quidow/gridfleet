@@ -13,6 +13,7 @@ from app.lifecycle.services import actions as lifecycle_policy_actions
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
+from tests.fakes import build_review_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -60,7 +61,9 @@ async def test_handle_node_crash_locks_appium_node(
             target = await session.get(Device, device_id)
             with patch("app.lifecycle.services.actions.record_event", racing_record_event):
                 svc = LifecyclePolicyActionsService(
-                    publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                    publisher=Mock(),
+                    reservation=RunReservationService(review=build_review_service()),
+                    incidents=LifecycleIncidentService(),
                 )
                 await svc.handle_node_crash(
                     session,

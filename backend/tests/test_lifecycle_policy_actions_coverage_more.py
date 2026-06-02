@@ -7,6 +7,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.service_reservation import RunReservationService
+from tests.fakes import build_review_service
 
 
 def test_lifecycle_policy_action_small_branch_helpers() -> None:
@@ -20,7 +21,9 @@ def test_lifecycle_policy_action_small_branch_helpers() -> None:
 
 async def test_restore_run_if_needed_early_return_branches() -> None:
     svc = LifecyclePolicyActionsService(
-        publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        publisher=Mock(),
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
     )
     run = SimpleNamespace(state=RunState.completed)
     assert await svc.restore_run_if_needed(AsyncMock(), SimpleNamespace(), run, None, reason="r", source="s") == (

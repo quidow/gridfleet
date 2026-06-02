@@ -22,7 +22,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     verification_intent_source,
 )
-from app.devices.services.review import mark_review_required
 from app.devices.services.state import set_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
         DeviceCrudProtocol,
         NodeConvergence,
         RemoteNodeManager,
+        ReviewProtocol,
         SessionViabilityProbe,
     )
     from app.events.protocols import EventPublisher
@@ -74,6 +74,7 @@ class VerificationExecutionService:
         capability: DeviceCapabilityProtocol,
         reconciler: NodeConvergence,
         node_manager: RemoteNodeManager,
+        review: ReviewProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -83,6 +84,7 @@ class VerificationExecutionService:
         self._capability = capability
         self._reconciler = reconciler
         self._node_manager = node_manager
+        self._review = review
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -292,6 +294,7 @@ class VerificationExecutionService:
                     publisher=self._publisher,
                     crud=self._crud,
                     node_manager=self._node_manager,
+                    review=self._review,
                 )
 
             node, probe_error = await self.run_probe(
@@ -311,6 +314,7 @@ class VerificationExecutionService:
                     publisher=self._publisher,
                     crud=self._crud,
                     node_manager=self._node_manager,
+                    review=self._review,
                 )
 
             return await _finalize_success(
@@ -334,6 +338,7 @@ class VerificationExecutionService:
                 publisher=self._publisher,
                 crud=self._crud,
                 node_manager=self._node_manager,
+                review=self._review,
             )
             raise
 
@@ -565,6 +570,7 @@ async def _finalize_failure(
     publisher: EventPublisher,
     crud: DeviceCrudProtocol,
     node_manager: RemoteNodeManager,
+    review: ReviewProtocol,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     if context.mode == "create":
@@ -587,7 +593,7 @@ async def _finalize_failure(
     # ``review_required`` fact and derives ``offline`` (¬ready), rather than re-deriving the
     # rolled-back-healthy device back to ``available``. The revoke carries the publisher so the
     # derived ``offline`` emits.
-    await mark_review_required(
+    await review.mark_review_required(
         db,
         locked,
         reason=f"verification failed: {error}",

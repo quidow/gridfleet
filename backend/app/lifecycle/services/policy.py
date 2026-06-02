@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
+    from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -76,6 +76,7 @@ class LifecyclePolicyService:
         incidents: LifecycleIncidentService,
         viability: SessionViabilityProbe,
         node_manager: RemoteNodeManager,
+        review: ReviewProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -83,6 +84,7 @@ class LifecyclePolicyService:
         self._incidents = incidents
         self._viability = viability
         self._node_manager = node_manager
+        self._review = review
 
     async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool:
         device = await _reload_device(db, device)
@@ -456,9 +458,7 @@ class LifecyclePolicyService:
             review_threshold = int(self._settings.get("general.lifecycle_recovery_review_threshold"))
             attempts = int(fresh_state.get("recovery_backoff_attempts") or 0)
             if attempts >= review_threshold:
-                from app.devices.services.review import mark_review_required  # noqa: PLC0415
-
-                await mark_review_required(
+                await self._review.mark_review_required(
                     db,
                     device,
                     reason=failure_reason,

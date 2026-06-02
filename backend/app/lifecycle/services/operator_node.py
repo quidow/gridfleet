@@ -25,7 +25,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
-from app.devices.services.review import clear_review_required
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
+    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 
@@ -102,9 +102,10 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class OperatorNodeLifecycleService:
-    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher) -> None:
+    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
         self._settings = settings
         self._publisher = publisher
+        self._review = review
 
     async def request_start(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
@@ -154,7 +155,9 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
-            await clear_review_required(db, device, reason="Operator started Appium node", source="start_node")
+            await self._review.clear_review_required(
+                db, device, reason="Operator started Appium node", source="start_node"
+            )
         await db.refresh(node)
         return node
 
@@ -206,6 +209,8 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller == "operator_restart":
-            await clear_review_required(db, device, reason="Operator restarted Appium node", source="restart_node")
+            await self._review.clear_review_required(
+                db, device, reason="Operator restarted Appium node", source="restart_node"
+            )
         await db.refresh(node)
         return node

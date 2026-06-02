@@ -28,6 +28,7 @@ from app.devices.services.reservation_query import device_is_reserved
 
 if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
+    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,12 @@ def _maintenance_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
 
 
 class MaintenanceService:
-    def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher") -> None:
+    def __init__(self, *, settings: "SettingsReader", publisher: "EventPublisher", review: "ReviewProtocol") -> None:
         self._settings = settings
         # Publisher is needed so the reconciler's derived maintenance enter/exit
         # emits device.operational_state_changed (SSE/webhooks).
         self._publisher = publisher
+        self._review = review
 
     async def enter_maintenance(
         self,
@@ -120,9 +122,7 @@ class MaintenanceService:
         # Maintenance exit is a sanctioned "give it another chance" signal —
         # clear the review-shelving flag so the recovery loop picks the device
         # back up.
-        from app.devices.services.review import clear_review_required  # noqa: PLC0415
-
-        await clear_review_required(
+        await self._review.clear_review_required(
             db,
             device,
             reason="Operator exited maintenance",

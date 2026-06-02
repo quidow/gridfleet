@@ -17,13 +17,12 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.review import clear_review_required, mark_review_required
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 async def test_mark_and_clear_review_required(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="review-toggle")
 
-    set_result = await mark_review_required(
+    set_result = await build_review_service().mark_review_required(
         db_session, device, reason="probe failed too many times", source="session_viability"
     )
     await db_session.commit()
@@ -48,7 +47,9 @@ async def test_mark_and_clear_review_required(db_session: AsyncSession, db_host:
     assert device.review_reason == "probe failed too many times"
     assert device.review_set_at is not None
 
-    cleared = await clear_review_required(db_session, device, reason="operator action", source="operator")
+    cleared = await build_review_service().clear_review_required(
+        db_session, device, reason="operator action", source="operator"
+    )
     await db_session.commit()
     await db_session.refresh(device)
     assert cleared is True
@@ -59,10 +60,12 @@ async def test_mark_and_clear_review_required(db_session: AsyncSession, db_host:
 
 async def test_mark_review_required_is_idempotent(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="review-idempotent")
-    await mark_review_required(db_session, device, reason="initial", source="session_viability")
+    await build_review_service().mark_review_required(db_session, device, reason="initial", source="session_viability")
     await db_session.commit()
 
-    second = await mark_review_required(db_session, device, reason="initial", source="session_viability")
+    second = await build_review_service().mark_review_required(
+        db_session, device, reason="initial", source="session_viability"
+    )
     assert second is False
 
 
@@ -74,10 +77,14 @@ async def test_mark_review_required_audits_reason_updates(db_session: AsyncSessi
     from app.devices.models import DeviceEvent, DeviceEventType
 
     device = await create_device(db_session, host_id=db_host.id, name="review-reason-audit")
-    await mark_review_required(db_session, device, reason="first reason", source="session_viability")
+    await build_review_service().mark_review_required(
+        db_session, device, reason="first reason", source="session_viability"
+    )
     await db_session.commit()
 
-    result_changed = await mark_review_required(db_session, device, reason="second reason", source="session_viability")
+    result_changed = await build_review_service().mark_review_required(
+        db_session, device, reason="second reason", source="session_viability"
+    )
     await db_session.commit()
     await db_session.refresh(device)
 
@@ -111,10 +118,12 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
         operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
-    await mark_review_required(db_session, device, reason="stuck", source="session_viability")
+    await build_review_service().mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).exit_maintenance(db_session, device)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    ).exit_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -131,10 +140,12 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
         name="review-survives-enter",
         operational_state=DeviceOperationalState.available,
     )
-    await mark_review_required(db_session, device, reason="stuck", source="session_viability")
+    await build_review_service().mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).enter_maintenance(db_session, device)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    ).enter_maintenance(db_session, device)
     await db_session.refresh(device)
     assert device.review_required is True
 
@@ -158,10 +169,10 @@ async def test_restore_device_to_run_clears_review_required(db_session: AsyncSes
     reservation.excluded_at = datetime.now(UTC) - timedelta(minutes=5)
     reservation.excluded_until = None
     reservation.cooldown_count = 3
-    await mark_review_required(db_session, device, reason="stuck", source="session_viability")
+    await build_review_service().mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
-    await RunReservationService().restore_device_to_run(db_session, device.id)
+    await RunReservationService(review=build_review_service()).restore_device_to_run(db_session, device.id)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
@@ -251,10 +262,13 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     viability = AsyncMock()
     viability.run_session_viability_probe = _failing_probe()
     svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=Mock(),
         settings=settings,
         actions=LifecyclePolicyActionsService(
-            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=viability,
@@ -300,16 +314,21 @@ async def test_review_required_short_circuits_auto_recovery(
     """When the flag is on, ``attempt_auto_recovery`` must not even reach
     the probe — backoff and intent state stay frozen."""
     device = await _make_offline_verified_device(db_session, db_host, "review-shortcircuit")
-    await mark_review_required(db_session, device, reason="shelved earlier", source="session_viability")
+    await build_review_service().mark_review_required(
+        db_session, device, reason="shelved earlier", source="session_viability"
+    )
     await db_session.commit()
 
     viability_mock = Mock()
     viability_mock.run_session_viability_probe = AsyncMock()
     svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader(_settings_stub(5)),
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=viability_mock,

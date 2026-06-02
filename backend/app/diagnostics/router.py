@@ -12,19 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import DbDep
 from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.dependencies import DeviceServicesDep
-from app.devices.models import DeviceDiagnosticSnapshot
 from app.devices.routers.helpers import get_device_or_404
-from app.devices.schemas.diagnostics import (
+from app.diagnostics.dependencies import DiagnosticsServicesDep
+from app.diagnostics.schemas import (
     DiagnosticExportResponse,
     DiagnosticSnapshotDetail,
     DiagnosticSnapshotListResponse,
     DiagnosticSnapshotSummary,
 )
-from app.devices.services import diagnostics_export
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 _RATE_LIMIT_WINDOW = timedelta(seconds=5)
 _RATE_LIMIT_NAMESPACE = "diagnostics_export_throttle"
@@ -91,24 +90,27 @@ async def _enforce_rate_limit(db: AsyncSession, device_id: uuid.UUID) -> None:
 
 
 @router.post(
-    "/{device_id}/diagnostics/export",
+    "/devices/{device_id}/export",
     response_model=DiagnosticExportResponse,
 )
 async def export_device_diagnostics(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     persist: bool = Query(default=True),
     redact: bool = Query(default=False),
 ) -> DiagnosticExportResponse:
     device = await get_device_or_404(device_id, db, device_services.crud)
     await _enforce_rate_limit(db, device_id)
     warnings: list[str] = []
-    payload = await diagnostics_export.assemble_bundle(db, device, redact=redact)
+    payload = await diagnostics_services.export.assemble_bundle(db, device, redact=redact)
     snapshot_id: uuid.UUID | None = None
     if persist:
         try:
-            snapshot_id = await diagnostics_export.capture_snapshot(db, device, trigger="operator", reason=None)
+            snapshot_id = await diagnostics_services.export.capture_snapshot(
+                db, device, trigger="operator", reason=None
+            )
         except Exception as exc:  # noqa: BLE001 - operator should still receive the assembled payload.
             warnings.append(f"snapshot persistence failed: {exc.__class__.__name__}")
             logger.warning(
@@ -121,40 +123,22 @@ async def export_device_diagnostics(
 
 
 @router.get(
-    "/{device_id}/diagnostics/snapshots",
+    "/devices/{device_id}/snapshots",
     response_model=DiagnosticSnapshotListResponse,
 )
 async def list_device_diagnostic_snapshots(
     device_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     limit: int = Query(default=20, ge=1, le=100),
     before: uuid.UUID | None = Query(default=None),
 ) -> DiagnosticSnapshotListResponse:
     await get_device_or_404(device_id, db, device_services.crud)
-    stmt = (
-        select(DeviceDiagnosticSnapshot)
-        .where(DeviceDiagnosticSnapshot.device_id == device_id)
-        .order_by(DeviceDiagnosticSnapshot.captured_at.desc(), DeviceDiagnosticSnapshot.id.desc())
-    )
-    if before is not None:
-        cursor_row = (
-            await db.execute(
-                select(DeviceDiagnosticSnapshot.captured_at).where(
-                    DeviceDiagnosticSnapshot.id == before,
-                    DeviceDiagnosticSnapshot.device_id == device_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if cursor_row is None:
-            raise HTTPException(status_code=400, detail="Unknown before cursor")
-        stmt = stmt.where(DeviceDiagnosticSnapshot.captured_at < cursor_row)
-    stmt = stmt.limit(limit + 1)
-    rows = (await db.execute(stmt)).scalars().all()
-    next_before: uuid.UUID | None = None
-    if len(rows) > limit:
-        rows = rows[:limit]
-        next_before = rows[-1].id
+    try:
+        rows, next_before = await diagnostics_services.export.list_snapshots(db, device_id, limit=limit, before=before)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Unknown before cursor") from exc
     return DiagnosticSnapshotListResponse(
         items=[DiagnosticSnapshotSummary.model_validate(row) for row in rows],
         next_before=next_before,
@@ -162,7 +146,7 @@ async def list_device_diagnostic_snapshots(
 
 
 @router.get(
-    "/{device_id}/diagnostics/snapshots/{snapshot_id}",
+    "/devices/{device_id}/snapshots/{snapshot_id}",
     response_model=DiagnosticSnapshotDetail,
 )
 async def get_device_diagnostic_snapshot(
@@ -170,22 +154,16 @@ async def get_device_diagnostic_snapshot(
     snapshot_id: uuid.UUID,
     db: DbDep,
     device_services: DeviceServicesDep,
+    diagnostics_services: DiagnosticsServicesDep,
     redact: bool = Query(default=False),
 ) -> DiagnosticSnapshotDetail:
     await get_device_or_404(device_id, db, device_services.crud)
-    row = (
-        await db.execute(
-            select(DeviceDiagnosticSnapshot).where(
-                DeviceDiagnosticSnapshot.id == snapshot_id,
-                DeviceDiagnosticSnapshot.device_id == device_id,
-            )
-        )
-    ).scalar_one_or_none()
+    row = await diagnostics_services.export.get_snapshot(db, device_id, snapshot_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     payload = row.payload
     if redact:
-        payload = await diagnostics_export.redact_bundle(db, payload)
+        payload = await diagnostics_services.export.redact_bundle(db, payload)
     return DiagnosticSnapshotDetail(
         id=row.id,
         captured_at=row.captured_at,

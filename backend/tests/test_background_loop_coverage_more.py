@@ -37,7 +37,7 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.runs import service_reaper as run_reaper
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -67,7 +67,9 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_1 = Mock()
     _svc_pub_1 = AsyncMock()
-    _svc_maint_1 = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _svc_maint_1 = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     _svc_crud_1 = DeviceCrudService(
         settings=_svc_settings_1, identity=DeviceIdentityConflictService(), publisher=event_bus
     )
@@ -84,7 +86,9 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_1,
                 crud=_svc_crud_1,
-                operator=OperatorNodeLifecycleService(settings=_svc_settings_1, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=_svc_settings_1, publisher=event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_1),
             test_data=TestDataService(publisher=_svc_pub_1),
@@ -125,7 +129,9 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_grid_2 = Mock()
     _svc_pub_2 = AsyncMock()
-    _svc_maint_2 = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _svc_maint_2 = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     _svc_crud_2 = DeviceCrudService(
         settings=_svc_settings_2, identity=DeviceIdentityConflictService(), publisher=event_bus
     )
@@ -142,7 +148,9 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_2,
                 crud=_svc_crud_2,
-                operator=OperatorNodeLifecycleService(settings=_svc_settings_2, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=_svc_settings_2, publisher=event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_2),
             test_data=TestDataService(publisher=_svc_pub_2),
@@ -252,7 +260,9 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     _svc_settings_3 = FakeSettingsReader({})
     _svc_grid_3 = Mock()
     _svc_pub_3 = AsyncMock()
-    _svc_maint_3 = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _svc_maint_3 = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     _svc_crud_3 = DeviceCrudService(
         settings=_svc_settings_3, identity=DeviceIdentityConflictService(), publisher=event_bus
     )
@@ -269,7 +279,9 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_3,
                 crud=_svc_crud_3,
-                operator=OperatorNodeLifecycleService(settings=_svc_settings_3, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=_svc_settings_3, publisher=event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_3),
             test_data=TestDataService(publisher=_svc_pub_3),
@@ -356,7 +368,9 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     _svc_settings_4 = FakeSettingsReader({})
     _svc_grid_4 = Mock()
     _svc_pub_4 = AsyncMock()
-    _svc_maint_4 = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _svc_maint_4 = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     _svc_crud_4 = DeviceCrudService(
         settings=_svc_settings_4, identity=DeviceIdentityConflictService(), publisher=event_bus
     )
@@ -373,7 +387,9 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_4,
                 crud=_svc_crud_4,
-                operator=OperatorNodeLifecycleService(settings=_svc_settings_4, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=_svc_settings_4, publisher=event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=_svc_settings_4),
             test_data=TestDataService(publisher=_svc_pub_4),
