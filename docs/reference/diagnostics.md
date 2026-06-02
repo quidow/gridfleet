@@ -4,9 +4,9 @@ The diagnostic export captures a coherent JSON snapshot of a device's orchestrat
 
 ## Endpoints
 
-- `POST /api/devices/{device_id}/diagnostics/export?persist=true&redact=false`
-- `GET /api/devices/{device_id}/diagnostics/snapshots?limit=20&before=<id>`
-- `GET /api/devices/{device_id}/diagnostics/snapshots/{snapshot_id}?redact=false`
+- `POST /api/diagnostics/devices/{device_id}/export?persist=true&redact=false`
+- `GET /api/diagnostics/devices/{device_id}/snapshots?limit=20&before=<id>`
+- `GET /api/diagnostics/devices/{device_id}/snapshots/{snapshot_id}?redact=false`
 
 All three live behind the standard `/api/devices/*` auth wall. The POST is rate-limited to one capture per device per 5 seconds; throttled calls return 429 with `Retry-After`.
 
@@ -48,6 +48,6 @@ Captured snapshots are deleted by the existing `data_cleanup` background loop us
 
 ```bash
 curl -u <user>:<pass> \
-  -X POST "https://<host>/api/devices/<device_id>/diagnostics/export?redact=true" \
+  -X POST "https://<host>/api/diagnostics/devices/<device_id>/export?redact=true" \
   -o snapshot.json
 ```
