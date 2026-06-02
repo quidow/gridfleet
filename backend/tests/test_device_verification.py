@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -16,18 +17,22 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.packs.models import DriverPack
+from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService, get_session_viability
 from app.verification.services.execution import VerificationExecutionService, _health_failure_detail
+from app.verification.services.job_state import new_job
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.verification.services.service import VerificationService
@@ -1531,3 +1536,66 @@ async def test_verification_rejects_disabled_pack(client: AsyncClient, db_sessio
     assert resp.status_code == 422
     body = resp.json()
     assert body["error"]["details"]["code"] == "pack_disabled"
+
+
+async def test_existing_device_verification_rejected_when_session_running(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Re-verifying a device with a live session would tear down the node serving it
+    (spec §14.1: verification never coexists with a live session, S08 = DEAD)."""
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="busy-verify-001",
+        name="Busy Verify",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="live-verify-sess", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    resp = await client.post(f"/api/verification/devices/{device.id}/jobs", json={"host_id": default_host_id})
+    assert resp.status_code == 409
+    assert "session" in resp.json()["error"]["message"].lower()
+
+    # The conflict must short-circuit before any verification job is enqueued.
+    enqueued = await db_session.scalar(select(Job).where(Job.kind == JOB_KIND_DEVICE_VERIFICATION))
+    assert enqueued is None
+
+
+async def test_validate_update_request_rejects_running_session(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense-in-depth: even if a session starts in the enqueue→run window, the
+    preparation step fails the job instead of tearing down the live node."""
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="busy-prep-001",
+        name="Busy Prep",
+        operational_state=DeviceOperationalState.busy,
+    )
+    db_session.add(Session(session_id="live-prep-sess", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(
+            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
+        identity=DeviceIdentityConflictService(),
+    )
+    context, error = await prep.validate_update_request(
+        new_job("busy-prep-job"),
+        db_session,
+        device.id,
+        DeviceVerificationUpdate(name="renamed", host_id=device.host_id),
+        http_client_factory=httpx.AsyncClient,
+    )
+    assert context is None
+    assert error is not None and "session" in error.lower()

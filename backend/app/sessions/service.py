@@ -29,6 +29,25 @@ if TYPE_CHECKING:
     from app.sessions.protocols import DeviceSessionLifecycle
 
 
+async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
+    """Return True if the device currently has a live (running, not-ended) session row.
+
+    Shared gating helper: a live session means an Appium node is actively serving a
+    client, so allocation-class actions (e.g. verification, which tears the node
+    down) must be refused — spec §14.1.
+    """
+    result = await db.execute(
+        select(Session.id)
+        .where(
+            Session.device_id == device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+        )
+        .limit(1)
+    )
+    return result.first() is not None
+
+
 def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
     """Derive event severity from session outcome.
 
