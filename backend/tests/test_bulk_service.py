@@ -20,11 +20,11 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device

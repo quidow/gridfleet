@@ -23,8 +23,8 @@ from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader

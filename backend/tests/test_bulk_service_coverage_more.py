@@ -10,8 +10,8 @@ from app.core.errors import AgentCallError
 from app.devices.services import bulk as bulk_service
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService, operator_stop_sources
 from app.devices.services.service import DeviceCrudService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_sources
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 

@@ -20,10 +20,10 @@ from app.devices.models import ConnectionType, Device, DeviceEvent, DeviceEventT
 from app.devices.services import health as device_health
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host, HostStatus
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader, make_fake_grid
 from tests.helpers import test_event_bus as event_bus

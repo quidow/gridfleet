@@ -80,8 +80,8 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             # does not yet exist.  These modules create the row; subsequent port changes go
             # through the reconciler.
             "app.devices.services.bulk",
-            "app.devices.services.lifecycle_policy",
-            "app.devices.services.operator_node_lifecycle",
+            "app.lifecycle.services.policy",
+            "app.lifecycle.services.operator_node",
         }
     ),
     ("appium_nodes", "active_connection_target"): frozenset(

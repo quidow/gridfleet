@@ -10,7 +10,7 @@ from app.devices.routers import (
 from app.devices.routers import (
     test_data as devices_test_data,
 )
-from app.devices.services import lifecycle_policy
+from app.lifecycle.services import policy as lifecycle_policy
 from app.sessions import service_viability as session_viability
 
 router = APIRouter()

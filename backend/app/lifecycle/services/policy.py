@@ -59,9 +59,9 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
-    from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.incidents import LifecycleIncidentService
 
 logger = logging.getLogger(__name__)
 

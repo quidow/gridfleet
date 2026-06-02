@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -45,7 +45,6 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     db_session.add(node)
     await db_session.commit()
 
-    from app.devices.services import lifecycle_policy as lifecycle_policy
     from app.devices.services.intent import IntentService
 
     async def _register_then_mark_running(
@@ -72,8 +71,8 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
             with state_write_guard.bypass():
                 observed_node.active_connection_target = "127.0.0.1:4723"
 
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     viability = AsyncMock()
@@ -225,8 +224,8 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
     )
     await db_session.commit()
 
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     svc = LifecyclePolicyService(
@@ -278,7 +277,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     db_session.add(node)
     await db_session.commit()
 
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.runs.service_reservation import RunReservationService
 
     await LifecyclePolicyActionsService(
@@ -328,7 +327,7 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     db_session.add(node)
     await db_session.commit()
 
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.runs.service_reservation import RunReservationService
 
     await LifecyclePolicyActionsService(

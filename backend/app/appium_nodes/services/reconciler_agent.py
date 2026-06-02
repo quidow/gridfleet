@@ -49,10 +49,10 @@ from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.intent import IntentService
-from app.devices.services.lifecycle_policy_actions import (
+from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
+from app.lifecycle.services.actions import (
     reset_reconciler_start_failure_state,
 )
-from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
 from app.packs.services import capability as pack_capability
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver

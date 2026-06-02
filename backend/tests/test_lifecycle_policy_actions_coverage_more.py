@@ -2,9 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from app.devices.models import Device, DeviceEventType
-from app.devices.services import lifecycle_policy_actions as actions
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+from app.lifecycle.services import actions
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.service_reservation import RunReservationService
 

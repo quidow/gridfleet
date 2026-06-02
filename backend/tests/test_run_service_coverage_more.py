@@ -12,10 +12,10 @@ from app.core.pagination import encode_cursor
 from app.devices.models import DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.grid.service import GridService
 from app.hosts.models import Host
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import DeviceRequirement, ReservedDeviceInfo

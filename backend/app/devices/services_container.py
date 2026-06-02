@@ -20,7 +20,6 @@ if TYPE_CHECKING:
         DeviceHealthProtocol,
         DevicePresenterProtocol,
         FleetCapacityProtocol,
-        LifecycleIncidentProtocol,
         MaintenanceProtocol,
         PropertyRefreshProtocol,
         TestDataProtocol,
@@ -43,7 +42,6 @@ class DeviceServices:
     capability: DeviceCapabilityProtocol
     connectivity: ConnectivityProtocol
     health: DeviceHealthProtocol
-    lifecycle_incidents: LifecycleIncidentProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

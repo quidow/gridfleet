@@ -13,13 +13,13 @@ from app.appium_nodes.services_container import AppiumNodeServices
 from app.core.database import get_db
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.capability import DeviceCapabilityService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
 from app.hosts.models import Host
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.main import app
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService

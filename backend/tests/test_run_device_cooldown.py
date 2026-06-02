@@ -16,7 +16,7 @@ from app.agent_comm.reconfigure_delivery import INLINE_AGENT_CALL_TIMEOUT_SEC
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
@@ -587,9 +587,9 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
 
 async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, default_host_id: str) -> None:
     """attempt_auto_recovery must not restart a node while cooldown is active."""
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.hosts.models import Host
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     host = await db_session.get(Host, default_host_id)

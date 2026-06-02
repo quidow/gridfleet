@@ -56,12 +56,12 @@ from app.core.metrics_recorders import (
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.lifecycle_policy_actions import (
+from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
+from app.hosts.models import Host, HostStatus
+from app.lifecycle.services.actions import (
     record_reconciler_start_failure_state,
     reset_reconciler_start_failure_state,
 )
-from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
-from app.hosts.models import Host, HostStatus
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

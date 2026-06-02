@@ -10,9 +10,9 @@ from app.appium_nodes.services import locking as appium_node_locking
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
 from tests.helpers import create_device
 

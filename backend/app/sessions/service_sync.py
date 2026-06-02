@@ -18,10 +18,10 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import intent as intent_service
 from app.devices.services import (
     intent_types,
-    lifecycle_policy,
 )
 from app.devices.services.state_derivation import GATING_VIOLATION
 from app.grid.slot_parser import list_slot_sessions
+from app.lifecycle.services import policy as lifecycle_policy
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight

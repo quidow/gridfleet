@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
 from app.devices.services.event import build_device_crashed_payload
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -81,7 +81,7 @@ async def test_handle_node_crash_queues_device_crashed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     from app.devices import locking as device_locking
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.runs.service_reservation import RunReservationService
 
     _, device = await seed_host_and_device(db_session, identity="lifecycle-crash-1")
@@ -115,7 +115,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
     is already in offline state."""
     from app.devices import locking as device_locking
     from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.runs.service_reservation import RunReservationService
 
     _, device = await seed_host_and_device(

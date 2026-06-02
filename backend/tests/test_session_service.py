@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.hosts.models import Host
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.protocols import SessionCrudProtocol

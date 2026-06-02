@@ -19,9 +19,9 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumNode
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState
-from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services import policy as lifecycle_policy_module
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -72,8 +72,8 @@ async def test_health_failure_intent_payload_shape(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     device = await create_device(
@@ -243,7 +243,7 @@ async def test_operator_start_intent_payload_shape(
     db_host: Host,
 ) -> None:
     from app.devices.services.bulk import _bulk_start_one
-    from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
+    from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 
     device = await create_device(
         db_session,
@@ -295,8 +295,8 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     device = await create_device(

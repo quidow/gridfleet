@@ -1,6 +1,6 @@
 from app.appium_nodes.protocols import OperatorNodeManager
 from app.devices.protocols import OperatorNodeLifecycleProtocol
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 
 
 def test_operator_node_lifecycle_service_satisfies_protocols() -> None:

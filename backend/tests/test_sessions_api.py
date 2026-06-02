@@ -912,7 +912,7 @@ async def test_post_session_finished_marks_ended_at_and_does_not_touch_status(
     webdriver_token = session.session_id
 
     with patch(
-        "app.devices.services.lifecycle_policy.LifecyclePolicyService.handle_session_finished",
+        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
         resp = await client.post(f"/api/sessions/{webdriver_token}/finished")
@@ -963,7 +963,7 @@ async def test_post_session_finished_is_idempotent_and_does_not_double_fire_life
     webdriver_token = session.session_id
 
     with patch(
-        "app.devices.services.lifecycle_policy.LifecyclePolicyService.handle_session_finished",
+        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
         new=AsyncMock(return_value=None),
     ) as mock_lifecycle:
         resp1 = await client.post(f"/api/sessions/{webdriver_token}/finished")
@@ -1005,7 +1005,7 @@ async def test_post_session_finished_real_testkit_call_shape(
     await db_session.commit()
 
     with patch(
-        "app.devices.services.lifecycle_policy.LifecyclePolicyService.handle_session_finished",
+        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
         new=AsyncMock(return_value=None),
     ):
         # POST to the string token — exactly what the testkit sends.
@@ -1063,7 +1063,7 @@ async def test_post_session_finished_ended_at_is_durable_after_request_closes(
     # Simulate the NO_PENDING path: handle_session_finished returns without
     # calling db.commit(). This is the exact path that exposed the bug.
     with patch(
-        "app.devices.services.lifecycle_policy.LifecyclePolicyService.handle_session_finished",
+        "app.lifecycle.services.policy.LifecyclePolicyService.handle_session_finished",
         new=AsyncMock(return_value=None),
     ):
         resp = await client.post(f"/api/sessions/{webdriver_token}/finished")

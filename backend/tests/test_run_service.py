@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.grid.service import GridService
 from app.hosts.models import Host
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.models import RunState, TestRun
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService

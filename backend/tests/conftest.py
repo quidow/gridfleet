@@ -40,11 +40,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -66,6 +62,13 @@ from app.hosts.service_hardware_telemetry import HardwareTelemetryService
 from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
+from app.lifecycle.dependencies import get_lifecycle_services
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.lifecycle.services.policy import LifecyclePolicyService
+from app.lifecycle.services.recovery_job import RecoveryJobService
+from app.lifecycle.services_container import LifecycleServices
 from app.main import app
 from app.packs.dependencies import get_pack_services
 from app.packs.services.discovery import PackDiscoveryService
@@ -446,7 +449,39 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             session_factory=sf,
             circuit_breaker=test_circuit_breaker,
             health=DeviceHealthService(publisher=test_event_bus),
-            lifecycle_incidents=LifecycleIncidentService(),
+        )
+
+    def override_get_lifecycle_services() -> LifecycleServices:
+        assert db_session.bind is not None
+        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
+        _incidents_svc = LifecycleIncidentService()
+        _actions_svc = LifecyclePolicyActionsService(
+            publisher=test_event_bus,
+            reservation=RunReservationService(),
+            incidents=_incidents_svc,
+        )
+        _operator_node_svc = OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus)
+        _policy_svc = LifecyclePolicyService(
+            publisher=test_event_bus,
+            settings=settings_service,
+            actions=_actions_svc,
+            incidents=_incidents_svc,
+            viability=AsyncMock(),
+            node_manager=AsyncMock(),
+        )
+        return LifecycleServices(
+            policy=_policy_svc,
+            actions=_actions_svc,
+            operator_node=_operator_node_svc,
+            incidents=_incidents_svc,
+            recovery=RecoveryJobService(
+                session_factory=sf,
+                publisher=test_event_bus,
+                settings=settings_service,
+                lifecycle_policy=_policy_svc,
+            ),
         )
 
     def override_get_verification_services() -> VerificationServices:
@@ -687,6 +722,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_device_services] = override_get_device_services
     app.dependency_overrides[get_verification_services] = override_get_verification_services
     app.dependency_overrides[get_portability_services] = override_get_portability_services
+    app.dependency_overrides[get_lifecycle_services] = override_get_lifecycle_services
     app.dependency_overrides[get_host_services] = override_get_host_services
     app.dependency_overrides[get_session_services] = override_get_session_services
     app.dependency_overrides[get_run_services] = override_get_run_services
