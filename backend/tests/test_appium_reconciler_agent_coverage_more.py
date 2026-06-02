@@ -8,7 +8,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.exceptions import (
+    NodeAlreadyRunningError,
+    NodeManagerError,
+    NodePortConflictError,
+    RemoteStartResult,
+)
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.core.errors import AgentCallError
@@ -1212,3 +1217,49 @@ async def test_start_for_node_cleans_up_after_all_port_conflicts(monkeypatch: py
     assert node_agent.appium_node_resource_service.release_capability.await_count == 2
     release_managed.assert_awaited_once()
     _ = (FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),)
+
+
+@pytest.mark.asyncio
+async def test_start_for_node_does_not_storm_ports_on_already_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ALREADY_RUNNING is keyed on the target, not the port: retrying every
+    candidate port is futile. ``_start_for_node`` must make exactly one start
+    attempt and re-raise immediately (no port storm)."""
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        host_id=uuid.uuid4(),
+        pack_id="missing-pack",
+        platform_id="missing",
+        device_type=None,
+    )
+    node = SimpleNamespace(id=uuid.uuid4())
+    cleanup_session = AsyncMock()
+    cleanup_session.commit = AsyncMock()
+
+    class SessionFactory:
+        def __call__(self) -> "SessionFactory":
+            return self
+
+        async def __aenter__(self) -> AsyncMock:
+            return cleanup_session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(node_agent, "_short_session_factory", lambda _db: SessionFactory())
+    monkeypatch.setattr(node_agent, "resolve_pack_platform", AsyncMock(side_effect=LookupError))
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "get_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(node_agent, "agent_url", AsyncMock(return_value="http://agent"))
+    monkeypatch.setattr(node_agent, "candidate_ports", AsyncMock(return_value=[4723, 4724, 4725, 4726]))
+    monkeypatch.setattr(node_agent, "reserve_appium_port", AsyncMock())
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "release_capability", AsyncMock())
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "release_managed", AsyncMock())
+    start_remote = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724"))
+    monkeypatch.setattr(node_agent, "start_remote_node", start_remote)
+
+    with pytest.raises(NodeAlreadyRunningError):
+        await node_agent._start_for_node(
+            AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+        )
+
+    # Exactly one start attempt — not one per candidate port.
+    assert start_remote.await_count == 1

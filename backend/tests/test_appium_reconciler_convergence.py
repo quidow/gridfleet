@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.appium_nodes.services.reconciler_convergence import (
+    ConvergenceAction,
     DesiredRow,
     ObservedEntry,
     _execute_action,
@@ -106,6 +108,35 @@ def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry()
     assert action.kind == "stop"
     assert action.port == 4999
     assert action.clear_desired_port is True
+
+
+@pytest.mark.parametrize("kind", ["start", "restart"])
+@pytest.mark.asyncio
+async def test_execute_action_treats_already_running_as_benign_noop(kind: str) -> None:
+    """When the agent reports the target already running, the start leg of a
+    start/restart action must be a no-op: no ``write_observed`` push, no raise.
+    The next observation tick records the running node via ``db_mark_running``."""
+    row = _row(desired_state="running", desired_port=4723, port=4724, pid=1)
+    action = ConvergenceAction(kind=kind, port=4723, stop_port=4724, start_port=4723)
+
+    start_agent = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724"))
+    stop_agent = AsyncMock()
+    write_observed = AsyncMock()
+
+    # Must not raise.
+    await _execute_action(
+        host_id=uuid.uuid4(),
+        row=row,
+        action=action,
+        start_agent=start_agent,  # type: ignore[arg-type]
+        stop_agent=stop_agent,  # type: ignore[arg-type]
+        write_observed=write_observed,  # type: ignore[arg-type]
+        clear_token=AsyncMock(),  # type: ignore[arg-type]
+        reset_start_failure=AsyncMock(),  # type: ignore[arg-type]
+    )
+
+    start_agent.assert_awaited_once()
+    write_observed.assert_not_awaited()
 
 
 def test_orphaned_node_ports_flags_duplicates_and_unknown_targets() -> None:

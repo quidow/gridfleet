@@ -21,7 +21,12 @@ from app.agent_comm import operations as agent_operations
 from app.agent_comm.error_codes import AgentErrorCode
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.agent_comm.operations import appium_start, appium_stop, parse_agent_error_detail, response_json_dict
-from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError, RemoteStartResult
+from app.appium_nodes.exceptions import (
+    NodeAlreadyRunningError,
+    NodeManagerError,
+    NodePortConflictError,
+    RemoteStartResult,
+)
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import (
     capability_keys as appium_capability_keys,
@@ -463,7 +468,12 @@ async def start_remote_node(
     except httpx.HTTPStatusError as exc:
         code, message_text = parse_agent_error_detail(exc.response)
         message = f"Agent failed to start node: {message_text}"
-        if code in {AgentErrorCode.PORT_OCCUPIED.value, AgentErrorCode.ALREADY_RUNNING.value}:
+        if code == AgentErrorCode.ALREADY_RUNNING.value:
+            # Per-target conflict: a node already runs for this connection target.
+            # Retrying on a different candidate port is futile (the agent's guard
+            # keys on the target, not the port), so raise the distinct subclass.
+            raise NodeAlreadyRunningError(message) from exc
+        if code == AgentErrorCode.PORT_OCCUPIED.value:
             raise NodePortConflictError(message) from exc
         raise NodeManagerError(message) from exc
     except AgentCallError:
@@ -743,6 +753,12 @@ async def _start_for_node(
                     circuit_breaker=circuit_breaker,
                 )
                 break
+            except NodeAlreadyRunningError:
+                # Per-target conflict — every candidate port hits the same
+                # agent-side guard, so stop iterating and re-raise. The outer
+                # ``except`` releases the reserved port via ``release_managed``;
+                # the caller treats this as already-converged.
+                raise
             except NodePortConflictError as exc:
                 last_conflict = exc
                 short_session = _short_session_factory(db)
