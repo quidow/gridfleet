@@ -37,9 +37,6 @@ from app.devices.routers import (
     helpers as device_route_helpers,
 )
 from app.devices.routers import (
-    lifecycle_incidents as lifecycle,
-)
-from app.devices.routers import (
     test_data as devices_test_data,
 )
 from app.devices.schemas.device import (
@@ -53,6 +50,7 @@ from app.devices.services.intent import IntentService
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
+from app.lifecycle import router as lifecycle
 from app.packs.routers import (
     agent_state as agent_driver_packs,
 )
