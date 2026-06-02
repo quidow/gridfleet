@@ -119,7 +119,7 @@ Live event surface:
 JSON blob on `Device` (`device.py`). Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
 
 - Low-level writer: `app.services.lifecycle_policy_state.write_state`.
-- Sanctioned service writers: `app.services.lifecycle_policy` and `app.services.lifecycle_policy_actions`. The run-preparation failure path calls `lifecycle_policy_actions.record_ci_preparation_failed`, so `run_service` does not import the low-level JSON writer directly.
+- Sanctioned service writers: `app.lifecycle.services.policy` and `app.lifecycle.services.actions`. The run-preparation failure path calls `actions.record_ci_preparation_failed`, so `run_service` does not import the low-level JSON writer directly.
 - Read by: every loop that decides whether to attempt recovery (`node_health`, `device_connectivity`, `session_viability`).
 - Surface: lifecycle summary chip, derived through `DeviceLifecyclePolicySummaryState`.
 
