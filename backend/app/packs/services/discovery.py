@@ -58,11 +58,6 @@ class PackDiscoveryResult:
     candidates: list[PackDiscoveredCandidate]
 
 
-class AgentClient(Protocol):
-    async def get_pack_devices(self, host: str, port: int) -> dict[str, Any]:
-        raise NotImplementedError
-
-
 IdentityKey = tuple[str, str, str]
 
 

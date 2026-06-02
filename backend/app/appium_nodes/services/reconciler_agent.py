@@ -106,15 +106,12 @@ __all__ = [
     "ReconcilerAgentService",
     "RemoteStartResult",
     "agent_url",
-    "allocate_port",
     "build_agent_start_payload",
     "candidate_ports",
     "mark_node_started",
     "mark_node_stopped",
     "require_management_host",
-    "restart_node_via_agent",
     "start_remote_node",
-    "stop_node_via_agent",
     "stop_remote_node",
 ]
 
@@ -125,10 +122,6 @@ async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Devic
         return await device_locking.lock_device(db, device_id)
     except NoResultFound:
         raise NodeManagerError(f"Device {device_id} no longer exists") from None
-
-
-async def allocate_port(db: AsyncSession, *, host_id: uuid.UUID, settings: SettingsReader) -> int:
-    return (await candidate_ports(db, host_id=host_id, settings=settings))[0]
 
 
 def upsert_node(
@@ -544,125 +537,6 @@ async def stop_remote_node(
         resp.raise_for_status()
         return True
     except (AgentCallError, httpx.HTTPError):
-        return False
-
-
-async def stop_node_via_agent(
-    device: Device,
-    node: AppiumNode,
-    *,
-    http_client_factory: AgentClientFactory,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> bool:
-    try:
-        host = require_management_host(device, action="stop Appium nodes")
-    except NodeManagerError:
-        return False
-    try:
-        resp = await appium_stop(
-            f"http://{host.ip}:{host.agent_port}",
-            host=host.ip,
-            agent_port=host.agent_port,
-            port=node.port,
-            http_client_factory=http_client_factory,
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
-        resp.raise_for_status()
-        return True
-    except (AgentCallError, httpx.HTTPError):
-        return False
-
-
-async def restart_node_via_agent(
-    db: AsyncSession,
-    device: Device,
-    node: AppiumNode,
-    *,
-    http_client_factory: AgentClientFactory,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-) -> bool:
-    try:
-        host = require_management_host(device, action="restart Appium nodes")
-    except NodeManagerError:
-        return False
-
-    device = await device_locking.lock_device(db, device.id)
-    locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    if locked_node is None:
-        return False
-    node = locked_node
-
-    agent_base = f"http://{host.ip}:{host.agent_port}"
-    allocated_caps = await appium_node_resource_service.get_capabilities(db, node_id=node.id) or None
-
-    try:
-        stopped = await stop_remote_node(
-            port=node.port,
-            agent_base=agent_base,
-            host=host.ip,
-            agent_port=host.agent_port,
-            http_client_factory=http_client_factory,
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
-        if not stopped:
-            # Agent did not acknowledge the stop. Starting on a different
-            # candidate port now would race the orphan Appium/Grid relay that
-            # may still be alive on the old port. Refuse to proceed and let the
-            # caller retry once the agent is reachable again.
-            return False
-
-        last_conflict: NodePortConflictError | None = None
-        started_handle: RemoteStartResult | None = None
-        # The DB row still says the old node is running, so candidate_ports()
-        # intentionally excludes node.port here. That is desirable after an
-        # unmanaged-listener conflict: restart on the next free managed port.
-        for candidate_port in await candidate_ports(
-            db, host_id=device.host_id, preferred_port=node.port, settings=settings
-        ):
-            try:
-                started_handle = await start_remote_node(
-                    db,
-                    device,
-                    port=candidate_port,
-                    allocated_caps=allocated_caps,
-                    agent_base=agent_base,
-                    http_client_factory=http_client_factory,
-                    settings=settings,
-                    circuit_breaker=circuit_breaker,
-                )
-                break
-            except NodePortConflictError as exc:
-                last_conflict = exc
-                continue
-
-        if started_handle is None:
-            if last_conflict is not None:
-                raise last_conflict
-            raise NodeManagerError(f"No candidate Appium port could restart device {device.id}")
-
-        node.port = started_handle.port
-        node.pid = started_handle.pid
-        node.active_connection_target = started_handle.active_connection_target or appium_connection_target(device)
-        node.health_running = None
-        node.health_state = None
-        await db.flush()
-        return True
-    except (AgentCallError, httpx.HTTPError):
-        return False
-    except NodeManagerError:
-        await stop_remote_node(
-            port=node.port,
-            agent_base=agent_base,
-            host=host.ip,
-            agent_port=host.agent_port,
-            http_client_factory=http_client_factory,
-            settings=settings,
-            circuit_breaker=circuit_breaker,
-        )
         return False
 
 
