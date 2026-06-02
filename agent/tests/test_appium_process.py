@@ -898,8 +898,13 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
 ) -> None:
     import socket as _socket
 
+    # A genuine non-Appium *listener* on 0.0.0.0 — the realistic squatter. Unlike
+    # a TIME_WAIT socket, an active LISTEN is not overridden by SO_REUSEADDR, so
+    # both the probe and the real Appium subprocess fail to bind it.
     held = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    held.bind(("127.0.0.1", 0))
+    held.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    held.bind(("0.0.0.0", 0))
+    held.listen(1)
     held_port = held.getsockname()[1]
 
     monkeypatch.setattr("agent_app.appium.process.agent_settings.runtime.appium_port_range_start", 1)
@@ -928,6 +933,30 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
         create_proc.assert_not_awaited()
     finally:
         held.close()
+
+
+def test_is_appium_port_bindable_true_for_port_in_time_wait() -> None:
+    # A node restart that rebinds the port it was just on collides with the
+    # previous Appium's connection sockets lingering in TCP TIME_WAIT. Appium's
+    # runtime (Node/libuv) sets SO_REUSEADDR on its listener, so a fresh Appium
+    # rebinds such a port immediately. The probe must mirror that — otherwise it
+    # false-positives ``PortOccupiedError`` and the agent gives up on the
+    # same-port restart (N12: verify/recover restarts wedge ``verifying→offline``).
+    import socket as _socket
+
+    srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", 0))
+    port = srv.getsockname()[1]
+    srv.listen(1)
+    client = _socket.create_connection(("127.0.0.1", port))
+    conn, _ = srv.accept()
+    conn.close()  # server-side active close -> TIME_WAIT on `port`
+    client.close()
+    srv.close()
+
+    manager = AppiumProcessManager()
+    assert _REAL_IS_APPIUM_PORT_BINDABLE(manager, port) is True
 
 
 async def test_start_rejects_port_outside_configured_range_before_localhost_probe(
