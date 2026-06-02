@@ -1,7 +1,7 @@
 from typing import Any
 
-from app.devices.schemas.portability import ExportBundle
-from app.devices.services.portability_hash import canonical_bundle_json, compute_bundle_hash
+from app.portability.schemas import ExportBundle
+from app.portability.services.hash import canonical_bundle_json, compute_bundle_hash
 
 
 def _bundle_dict() -> dict[str, Any]:

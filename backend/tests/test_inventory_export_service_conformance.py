@@ -1,5 +1,5 @@
-from app.devices.protocols import InventoryExportProtocol
-from app.devices.services.inventory_export import InventoryExportService
+from app.portability.protocols import InventoryExportProtocol
+from app.portability.services.inventory import InventoryExportService
 
 
 def test_inventory_export_service_satisfies_protocol() -> None:

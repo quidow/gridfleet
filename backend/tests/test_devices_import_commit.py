@@ -9,17 +9,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import Device
-from app.devices.schemas.portability import (
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
+from app.jobs.models import Job
+from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
     ImportCommitRequest,
     ImportMapping,
     OriginalHost,
 )
-from app.devices.services.portability_hash import compute_bundle_hash
-from app.devices.services.portability_import import BundleHashMismatchError, PortabilityImportService
-from app.jobs import JOB_KIND_DEVICE_VERIFICATION
-from app.jobs.models import Job
+from app.portability.services.hash import compute_bundle_hash
+from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 
@@ -225,7 +225,7 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(
         "bundle_hash": "sha256:" + "0" * 64,
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
-    response = await client.post("/api/devices/import", json=body)
+    response = await client.post("/api/portability/import", json=body)
     assert response.status_code == 409
 
 
@@ -261,7 +261,7 @@ async def test_import_endpoint_commits_valid_row(
         "bundle_hash": compute_bundle_hash(bundle),
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
-    response = await client.post("/api/devices/import", json=body)
+    response = await client.post("/api/portability/import", json=body)
     assert response.status_code == 200
     result = response.json()
     assert len(result["created"]) == 1

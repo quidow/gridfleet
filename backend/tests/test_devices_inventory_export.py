@@ -4,12 +4,12 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.schemas.inventory import (
+from app.portability.schemas import (
     DEFAULT_INVENTORY_COLUMNS,
     InventoryColumn,
     parse_columns_param,
 )
-from app.devices.services.inventory_export import InventoryExportService
+from app.portability.services.inventory import InventoryExportService
 from tests.helpers import seed_host_and_device
 
 
@@ -148,7 +148,7 @@ async def test_iter_inventory_json_serializes_uuid_id(db_session: AsyncSession) 
 @pytest.mark.db
 async def test_inventory_endpoint_default_json(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_host_and_device(db_session, identity="EP-1")
-    response = await client.get("/api/devices/inventory")
+    response = await client.get("/api/portability/inventory")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
     payload = response.json()
@@ -160,7 +160,7 @@ async def test_inventory_endpoint_default_json(client: AsyncClient, db_session: 
 async def test_inventory_endpoint_csv_with_columns(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_host_and_device(db_session, identity="EP-2")
     response = await client.get(
-        "/api/devices/inventory",
+        "/api/portability/inventory",
         params={"format": "csv", "columns": "name,host.hostname"},
     )
     assert response.status_code == 200
@@ -173,7 +173,7 @@ async def test_inventory_endpoint_csv_with_columns(client: AsyncClient, db_sessi
 @pytest.mark.db
 async def test_inventory_endpoint_rejects_unknown_column(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_host_and_device(db_session, identity="EP-3")
-    response = await client.get("/api/devices/inventory", params={"columns": "name,nope"})
+    response = await client.get("/api/portability/inventory", params={"columns": "name,nope"})
     assert response.status_code == 400
 
 
@@ -181,7 +181,7 @@ async def test_inventory_endpoint_rejects_unknown_column(client: AsyncClient, db
 @pytest.mark.db
 async def test_inventory_endpoint_filter_pack_id(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_host_and_device(db_session, identity="EP-4")
-    response = await client.get("/api/devices/inventory", params={"pack_id": "no-such-pack"})
+    response = await client.get("/api/portability/inventory", params={"pack_id": "no-such-pack"})
     assert response.status_code == 200
     assert response.json() == []
 

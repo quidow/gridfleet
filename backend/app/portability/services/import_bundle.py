@@ -16,7 +16,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.schemas.portability import (
+from app.devices.services import write as device_write
+from app.hosts.models import Host
+from app.packs.services import platform_resolver as pack_platform_resolver
+from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
     ExportedDevice,
@@ -30,10 +33,7 @@ from app.devices.schemas.portability import (
     ImportPreviewRow,
     ImportRowStatus,
 )
-from app.devices.services import write as device_write
-from app.devices.services.portability_hash import compute_bundle_hash
-from app.hosts.models import Host
-from app.packs.services import platform_resolver as pack_platform_resolver
+from app.portability.services.hash import compute_bundle_hash
 
 if TYPE_CHECKING:
     import uuid
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.protocols import VerificationEnqueuer
+    from app.portability.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
 

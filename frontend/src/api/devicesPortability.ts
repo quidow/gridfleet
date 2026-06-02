@@ -9,7 +9,7 @@ export type ImportCommitRequest = components["schemas"]["ImportCommitRequest"];
 export type ImportCommitResult = components["schemas"]["ImportCommitResult"];
 
 export async function fetchExportBundle(client: AxiosInstance = api): Promise<ExportBundle> {
-  const response = await client.get<ExportBundle>("/devices/export", { responseType: "json" });
+  const response = await client.get<ExportBundle>("/portability/export", { responseType: "json" });
   return response.data;
 }
 
@@ -24,7 +24,7 @@ export async function validateImportBundle(
   client: AxiosInstance,
   bundle: ExportBundle,
 ): Promise<ImportPreview> {
-  const response = await client.post<ImportPreview>("/devices/import/validate", bundle);
+  const response = await client.post<ImportPreview>("/portability/import/validate", bundle);
   return response.data;
 }
 
@@ -32,7 +32,7 @@ export async function commitImport(
   client: AxiosInstance,
   request: ImportCommitRequest,
 ): Promise<ImportCommitResult> {
-  const response = await client.post<ImportCommitResult>("/devices/import", request);
+  const response = await client.post<ImportCommitResult>("/portability/import", request);
   return response.data;
 }
 

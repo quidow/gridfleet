@@ -5,8 +5,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.schemas.portability import ExportBundle, ExportedDevice, OriginalHost
-from app.devices.services.portability_import import PortabilityImportService
+from app.portability.schemas import ExportBundle, ExportedDevice, OriginalHost
+from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 
@@ -133,7 +133,7 @@ async def test_validate_endpoint_returns_preview(
             }
         ],
     }
-    response = await client.post("/api/devices/import/validate", json=body)
+    response = await client.post("/api/portability/import/validate", json=body)
     assert response.status_code == 200
     preview = response.json()
     assert preview["bundle_hash"].startswith("sha256:")
@@ -150,7 +150,7 @@ async def test_validate_endpoint_rejects_unknown_fields(client: AsyncClient) -> 
         "devices": [],
         "unexpected": True,
     }
-    response = await client.post("/api/devices/import/validate", json=body)
+    response = await client.post("/api/portability/import/validate", json=body)
     assert response.status_code == 422
 
 
@@ -162,7 +162,7 @@ async def test_validate_endpoint_rejects_unsupported_schema_version(client: Asyn
         "exported_at": "2026-05-23T00:00:00+00:00",
         "devices": [],
     }
-    response = await client.post("/api/devices/import/validate", json=body)
+    response = await client.post("/api/portability/import/validate", json=body)
     assert response.status_code == 422
 
 

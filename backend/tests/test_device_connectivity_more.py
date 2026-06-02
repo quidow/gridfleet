@@ -24,19 +24,15 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.portability_export import PortabilityExportService
-from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
-from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -314,9 +310,6 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             ),
             presenter=DevicePresenterService(settings=_fake_settings),
             test_data=TestDataService(publisher=_fake_publisher),
-            portability_export=PortabilityExportService(),
-            inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             crud=_fake_crud,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(

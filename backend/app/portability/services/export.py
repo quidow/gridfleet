@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
-from app.devices.schemas.portability import (
+from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
     ExportedDevice,

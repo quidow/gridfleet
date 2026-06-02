@@ -26,7 +26,7 @@ const BUNDLE_BODY = {
 test.describe('Device import wizard', () => {
   test.beforeEach(async ({ page }) => {
     await mockAppShellApis(page);
-    await page.route('**/api/devices/import/validate', async (route) => {
+    await page.route('**/api/portability/import/validate', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -47,7 +47,7 @@ test.describe('Device import wizard', () => {
         }),
       });
     });
-    await page.route('**/api/devices/import', async (route) => {
+    await page.route('**/api/portability/import', async (route) => {
       if (route.request().method() !== 'POST') {
         await route.continue();
         return;

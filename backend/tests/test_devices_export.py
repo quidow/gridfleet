@@ -3,7 +3,7 @@ from httpx import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.schemas.portability import (
+from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
     ImportPreview,
@@ -90,7 +90,7 @@ def test_import_row_status_enum_values() -> None:
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession) -> None:
-    from app.devices.services.portability_export import PortabilityExportService
+    from app.portability.services.export import PortabilityExportService
     from tests.helpers import seed_host_and_device
 
     host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
@@ -124,7 +124,7 @@ async def test_build_export_bundle_includes_all_devices(db_session: AsyncSession
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSession) -> None:
-    from app.devices.services.portability_export import PortabilityExportService
+    from app.portability.services.export import PortabilityExportService
     from tests.helpers import seed_host_and_device
 
     await seed_host_and_device(db_session, identity="EXPORT-2")
@@ -152,7 +152,7 @@ async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: A
 
     await seed_host_and_device(db_session, identity="ENDPOINT-1")
 
-    response = await client.get("/api/devices/export")
+    response = await client.get("/api/portability/export")
     assert response.status_code == 200
     body = response.json()
     assert body["schema_version"] == 1
