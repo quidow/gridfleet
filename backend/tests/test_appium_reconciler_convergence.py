@@ -91,6 +91,81 @@ def test_desired_running_no_token_observed_matching_picks_confirm_running() -> N
     assert action.kind == "confirm_running"
 
 
+def test_desired_running_observed_relay_stopped_picks_restart() -> None:
+    # N11: a half-up node (Appium process up, Grid relay supervisor stopped) must NOT
+    # read as confirm_running — that masks the dead relay until node_health's slow path.
+    # The agent expects "the next start" to re-register; emit a restart so the fast loop
+    # delivers it.
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="stopped")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "restart"
+    assert action.stop_port == 4723
+    assert action.start_port == 4723
+
+
+def test_desired_running_observed_relay_error_picks_restart() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="error")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "restart"
+
+
+def test_desired_running_observed_relay_up_picks_confirm_running() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="up")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
+def test_desired_running_observed_relay_registering_does_not_restart() -> None:
+    # "registering" = relay process up, re-asserting NODE_ADDED (agent self-heal in
+    # progress). Restarting would interrupt it and churn; leave recovery to the agent
+    # (with node_health as the backstop).
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="registering")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
+def test_desired_running_observed_relay_status_none_picks_confirm_running() -> None:
+    # No relay status reported (e.g. non-grid-managed node) -> preserve prior behavior.
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status=None)
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
 def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> None:
     row = _row(desired_state="running", desired_port=4723, port=4723)
     obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)

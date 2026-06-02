@@ -701,7 +701,12 @@ class ReconcilerService:
                         return
                     running = parse_running_nodes(appium_processes)
                     observed = [
-                        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+                        ObservedEntry(
+                            port=entry.port,
+                            pid=entry.pid,
+                            connection_target=entry.connection_target,
+                            grid_node_status=entry.grid_node_status,
+                        )
                         for entry in running
                     ]
                     await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
@@ -1047,7 +1052,12 @@ class ReconcilerService:
         if not isinstance(appium_processes, dict):
             return None
         observed = [
-            ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+            ObservedEntry(
+                port=entry.port,
+                pid=entry.pid,
+                connection_target=entry.connection_target,
+                grid_node_status=entry.grid_node_status,
+            )
             for entry in parse_running_nodes(appium_processes)
         ]
         await self.converge_host_rows(
