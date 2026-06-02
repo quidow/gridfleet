@@ -40,14 +40,11 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.portability_export import PortabilityExportService
-from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -82,6 +79,11 @@ from app.packs.services_container import PackServices
 from app.plugins.dependencies import get_plugin_services
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
+from app.portability.dependencies import get_portability_services
+from app.portability.services.export import PortabilityExportService
+from app.portability.services.import_bundle import PortabilityImportService
+from app.portability.services.inventory import InventoryExportService
+from app.portability.services_container import PortabilityServices
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
@@ -418,9 +420,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             presenter=DevicePresenterService(settings=settings_service),
             test_data=TestDataService(publisher=test_event_bus),
-            portability_export=PortabilityExportService(),
-            inventory_export=InventoryExportService(),
-            portability_import=PortabilityImportService(verification_enqueuer=VerificationService()),
             crud=_crud_svc,
             capability=DeviceCapabilityService(),
             connectivity=ConnectivityService(
@@ -454,6 +453,13 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return VerificationServices(
             service=VerificationService(),
             runner=AsyncMock(),
+        )
+
+    def override_get_portability_services() -> PortabilityServices:
+        return PortabilityServices(
+            export=PortabilityExportService(),
+            import_=PortabilityImportService(verification_enqueuer=VerificationService()),
+            inventory=InventoryExportService(),
         )
 
     def override_get_host_services() -> HostServices:
@@ -680,6 +686,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     app.dependency_overrides[get_agent_comm_services] = override_get_agent_comm_services
     app.dependency_overrides[get_device_services] = override_get_device_services
     app.dependency_overrides[get_verification_services] = override_get_verification_services
+    app.dependency_overrides[get_portability_services] = override_get_portability_services
     app.dependency_overrides[get_host_services] = override_get_host_services
     app.dependency_overrides[get_session_services] = override_get_session_services
     app.dependency_overrides[get_run_services] = override_get_run_services

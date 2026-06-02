@@ -9,17 +9,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import Device
-from app.devices.schemas.portability import (
+from app.jobs import JOB_KIND_DEVICE_VERIFICATION
+from app.jobs.models import Job
+from app.portability.schemas import (
     ExportBundle,
     ExportedDevice,
     ImportCommitRequest,
     ImportMapping,
     OriginalHost,
 )
-from app.devices.services.portability_hash import compute_bundle_hash
-from app.devices.services.portability_import import BundleHashMismatchError, PortabilityImportService
-from app.jobs import JOB_KIND_DEVICE_VERIFICATION
-from app.jobs.models import Job
+from app.portability.services.hash import compute_bundle_hash
+from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 

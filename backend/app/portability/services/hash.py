@@ -2,7 +2,7 @@ import hashlib
 import json
 from datetime import UTC
 
-from app.devices.schemas.portability import ExportBundle
+from app.portability.schemas import ExportBundle
 
 
 def canonical_bundle_json(bundle: ExportBundle) -> bytes:

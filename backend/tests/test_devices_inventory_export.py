@@ -4,12 +4,12 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.schemas.inventory import (
+from app.portability.schemas import (
     DEFAULT_INVENTORY_COLUMNS,
     InventoryColumn,
     parse_columns_param,
 )
-from app.devices.services.inventory_export import InventoryExportService
+from app.portability.services.inventory import InventoryExportService
 from tests.helpers import seed_host_and_device
 
 

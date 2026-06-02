@@ -36,14 +36,11 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.lifecycle_policy import LifecyclePolicyService
 from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.portability_export import PortabilityExportService
-from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.recovery_job import RecoveryJobService
@@ -72,6 +69,10 @@ from app.packs.services.storage import PackStorageService
 from app.packs.services_container import PackServices
 from app.plugins.service import PluginService
 from app.plugins.services_container import PluginServices
+from app.portability.services.export import PortabilityExportService
+from app.portability.services.import_bundle import PortabilityImportService
+from app.portability.services.inventory import InventoryExportService
+from app.portability.services_container import PortabilityServices
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
@@ -102,6 +103,7 @@ class AppServices:
     agent_comm: AgentCommServices
     devices: DeviceServices
     verification: VerificationServices
+    portability: PortabilityServices
     hosts: HostServices
     packs: PackServices
     plugins: PluginServices
@@ -276,6 +278,11 @@ def compose_app(
         service=verification_svc,
         runner=verification_runner_svc,
     )
+    portability_services = PortabilityServices(
+        export=portability_export_svc,
+        import_=portability_import_svc,
+        inventory=inventory_export_svc,
+    )
 
     return AppServices(
         events=event_services,
@@ -290,9 +297,6 @@ def compose_app(
             bulk=bulk_svc,
             presenter=presenter_svc,
             test_data=test_data_svc,
-            portability_export=portability_export_svc,
-            inventory_export=inventory_export_svc,
-            portability_import=portability_import_svc,
             crud=crud_svc,
             capability=device_capability_svc,
             connectivity=connectivity_svc,
@@ -305,6 +309,7 @@ def compose_app(
             circuit_breaker=circuit_breaker,
         ),
         verification=verification_services,
+        portability=portability_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
             hardware_telemetry=HardwareTelemetryService(

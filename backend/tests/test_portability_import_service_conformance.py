@@ -1,5 +1,5 @@
-from app.devices.protocols import PortabilityImportProtocol
-from app.devices.services.portability_import import PortabilityImportService
+from app.portability.protocols import PortabilityImportProtocol
+from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
 
 

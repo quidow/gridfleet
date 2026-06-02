@@ -18,12 +18,9 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.inventory_export import InventoryExportService
 from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.portability_export import PortabilityExportService
-from app.devices.services.portability_import import PortabilityImportService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -33,6 +30,9 @@ from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
 from app.main import app
+from app.portability.services.export import PortabilityExportService
+from app.portability.services.import_bundle import PortabilityImportService
+from app.portability.services.inventory import InventoryExportService
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService

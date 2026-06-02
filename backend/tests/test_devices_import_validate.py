@@ -5,8 +5,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.devices.schemas.portability import ExportBundle, ExportedDevice, OriginalHost
-from app.devices.services.portability_import import PortabilityImportService
+from app.portability.schemas import ExportBundle, ExportedDevice, OriginalHost
+from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
 from tests.helpers import seed_existing_device, seed_host_named
 

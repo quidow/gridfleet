@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.schemas.filters import DeviceQueryFilters
-    from app.devices.schemas.inventory import InventoryColumn
     from app.devices.services.service import DeviceListStatement
+    from app.portability.schemas import InventoryColumn
 
 _CHUNK = 200
 
