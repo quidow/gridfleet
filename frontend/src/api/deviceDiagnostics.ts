@@ -9,7 +9,7 @@ export async function exportDeviceDiagnostics(
   deviceId: string,
   options: { redact?: boolean; persist?: boolean } = {},
 ): Promise<DiagnosticExportResponse> {
-  const { data } = await api.post(`/devices/${deviceId}/diagnostics/export`, null, {
+  const { data } = await api.post(`/diagnostics/devices/${deviceId}/export`, null, {
     params: {
       redact: options.redact ?? false,
       persist: options.persist ?? true,
@@ -22,7 +22,7 @@ export async function listDeviceDiagnosticSnapshots(
   deviceId: string,
   options: { limit?: number; before?: string | null } = {},
 ): Promise<DiagnosticSnapshotListResponse> {
-  const { data } = await api.get(`/devices/${deviceId}/diagnostics/snapshots`, {
+  const { data } = await api.get(`/diagnostics/devices/${deviceId}/snapshots`, {
     params: {
       limit: options.limit ?? 20,
       before: options.before ?? undefined,
@@ -36,7 +36,7 @@ export async function fetchDeviceDiagnosticSnapshot(
   snapshotId: string,
   options: { redact?: boolean } = {},
 ): Promise<DiagnosticSnapshotDetail> {
-  const { data } = await api.get(`/devices/${deviceId}/diagnostics/snapshots/${snapshotId}`, {
+  const { data } = await api.get(`/diagnostics/devices/${deviceId}/snapshots/${snapshotId}`, {
     params: { redact: options.redact ?? false },
   });
   return data;
