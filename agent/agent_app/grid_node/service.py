@@ -17,12 +17,34 @@ from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from agent_app.grid_node.config import GridNodeConfig
 
 _GRID_NODE_VERSION = "4.43.0"
 logger = logging.getLogger(__name__)
+
+
+async def _probe_hub_registration(hub_status_url: str, node_id: str) -> bool | None:
+    """Ask the hub whether it currently has ``node_id`` registered.
+
+    Returns True/False from a successful ``GET {hub}/status``; ``None`` when the
+    hub is unreachable or the response is unparseable — callers must treat ``None``
+    as "unknown" (do not churn re-registrations, do not flip a confirmed node to
+    unregistered on a transient blip). Disabled (``None``) when no URL is set.
+    """
+    if not hub_status_url:
+        return None
+    url = hub_status_url.rstrip("/") + "/status"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+        if resp.status_code != 200:
+            return None
+        nodes = (resp.json().get("value") or {}).get("nodes") or []
+    except (httpx.HTTPError, ValueError):
+        return None
+    return any(isinstance(node, dict) and node.get("id") == node_id for node in nodes)
 
 
 def _build_os_info() -> dict[str, str]:
@@ -160,7 +182,12 @@ class UvicornGridNodeHttpServer:
 
 class GridNodeService:
     def __init__(
-        self, *, config: GridNodeConfig, bus: EventPublisher, http_server: GridNodeHttpServer | None = None
+        self,
+        *,
+        config: GridNodeConfig,
+        bus: EventPublisher,
+        http_server: GridNodeHttpServer | None = None,
+        registration_probe: Callable[[], Awaitable[bool | None]] | None = None,
     ) -> None:
         self.config = config
         self.state = NodeState(slots=config.slots, now=time.monotonic)
@@ -171,10 +198,23 @@ class GridNodeService:
         self._started = False
         self._requested_stop = False
         self._heartbeat_task: asyncio.Task[None] | None = None
+        # Whether the hub last confirmed it has this node. Starts True so an
+        # unreachable/disabled probe (which returns None) degrades to the prior
+        # "process up == up" behavior rather than pinning a healthy node at
+        # "registering" forever. It flips to False only on a *definitive* probe
+        # result that the hub does not list this node — which also triggers the
+        # NODE_ADDED self-heal.
+        self._registered_with_hub = True
+        self._registration_probe = registration_probe or (
+            lambda: _probe_hub_registration(self.config.hub_status_url, self.config.node_id)
+        )
 
     @property
     def node_id(self) -> str:
         return self.config.node_id
+
+    def is_registered_with_hub(self) -> bool:
+        return self._registered_with_hub
 
     def has_active_session(self) -> bool:
         return any(slot.state == "BUSY" for slot in self.state.snapshot().slots)
@@ -252,6 +292,26 @@ class GridNodeService:
             await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
             return
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+        await self._reconcile_hub_registration()
+
+    async def _reconcile_hub_registration(self) -> None:
+        """Self-heal a lost registration (N11).
+
+        The initial NODE_ADDED is fire-and-forget and can be dropped — by the ZMQ
+        slow-joiner, or by racing the prior incarnation's NODE_REMOVED for the reused
+        ``uuid5(target:port)`` nodeId on a same-port restart. When that happens the
+        hub never adds the node and the device wedges until node_health force-restarts
+        it onto a different port. Here we ask the hub whether it actually knows us and
+        re-assert NODE_ADDED if not, so the relay recovers within one heartbeat.
+        """
+        registered = await self._registration_probe()
+        if registered is None:
+            return  # hub unreachable / check disabled — keep the last known state, do not churn
+        self._registered_with_hub = registered
+        if not registered:
+            logger.warning("grid_node_reregistering_lost_node", extra={"node_id": self.config.node_id})
+            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
+            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
     async def drain_to_block_new_sessions(self) -> None:
         """Mark the relay as DRAINING without removing or re-adding it.

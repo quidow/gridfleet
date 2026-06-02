@@ -19,12 +19,23 @@ class FakeClock:
 
 
 class RecordingService:
-    def __init__(self, *, fail_start: bool = False, request_stop: bool = False, fail_heartbeat: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_start: bool = False,
+        request_stop: bool = False,
+        fail_heartbeat: bool = False,
+        registered: bool = True,
+    ) -> None:
         self.fail_start = fail_start
         self.request_stop = request_stop
         self.fail_heartbeat = fail_heartbeat
+        self.registered = registered
         self.stop_called = False
         self.heartbeat_calls = 0
+
+    def is_registered_with_hub(self) -> bool:
+        return self.registered
 
     async def start(self) -> None:
         if self.fail_start:
@@ -136,6 +147,21 @@ async def test_supervisor_runs_periodic_heartbeat_with_config_interval() -> None
 def test_supervisor_snapshot_includes_status() -> None:
     handle = start_grid_node_supervisor(factory=RecordingService, clock=FakeClock())
     assert handle.snapshot()["status"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_snapshot_running_but_unregistered_reports_registering() -> None:
+    # Un-mask N11: a running relay whose NODE_ADDED never reached the hub must NOT
+    # report "up" (that masked the wedge). It reports "registering" until the hub
+    # actually has the node.
+    service = RecordingService(registered=False)
+    handle = start_grid_node_supervisor(factory=lambda: service, clock=FakeClock())
+    await handle.start()
+    await handle.wait_until_running()
+    assert handle.snapshot()["status"] == "registering"
+    service.registered = True
+    assert handle.snapshot()["status"] == "up"
+    await handle.stop()
 
 
 @pytest.mark.asyncio

@@ -941,6 +941,7 @@ class AppiumProcessManager:
             slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
             hub_publish_url=agent_settings.grid_node.grid_publish_url,
             hub_subscribe_url=agent_settings.grid_node.grid_subscribe_url,
+            hub_status_url=agent_settings.grid_node.grid_hub_url,
             heartbeat_sec=agent_settings.grid_node.grid_node_heartbeat_sec,
             session_timeout_sec=agent_settings.grid_node.grid_node_session_timeout_sec,
             proxy_timeout_sec=agent_settings.grid_node.grid_node_proxy_timeout_sec,

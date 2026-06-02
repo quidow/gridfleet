@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Never
+from typing import TYPE_CHECKING, Never
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.node_state import NodeState
@@ -287,6 +290,79 @@ def _config() -> GridNodeConfig:
         session_timeout_sec=300.0,
         proxy_timeout_sec=30.0,
     )
+
+
+def _probe(result: bool | None) -> Callable[[], Awaitable[bool | None]]:
+    async def probe() -> bool | None:
+        return result
+
+    return probe
+
+
+# --- Hub-registration self-heal (N11: lost NODE_ADDED on same-port restart) ---
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_reregisters_when_hub_is_missing_node() -> None:
+    # The initial NODE_ADDED can be lost (ZMQ slow-joiner, or it races the prior
+    # incarnation's NODE_REMOVED for the reused nodeId). A heartbeat that finds the
+    # hub does not know this node must re-assert NODE_ADDED so the relay self-heals
+    # instead of staying unregistered until node_health force-restarts it.
+    bus = RecordingBus()
+    service = GridNodeService(
+        config=_config(), bus=bus, http_server=RecordingHttpServer(), registration_probe=_probe(False)
+    )
+    await service.start()  # emits the initial node-added (+ node-heartbeat)
+    added_after_start = [e["type"] for e in bus.events].count("node-added")
+    await service.run_heartbeat_once()
+    added_after_heartbeat = [e["type"] for e in bus.events].count("node-added")
+    assert added_after_start == 1
+    assert added_after_heartbeat == 2  # re-asserted because the hub did not list this node
+    assert service.is_registered_with_hub() is False
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_does_not_reregister_when_already_registered() -> None:
+    bus = RecordingBus()
+    service = GridNodeService(
+        config=_config(), bus=bus, http_server=RecordingHttpServer(), registration_probe=_probe(True)
+    )
+    await service.start()
+    await service.run_heartbeat_once()
+    assert [e["type"] for e in bus.events].count("node-added") == 1
+    assert service.is_registered_with_hub() is True
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_does_not_reregister_when_probe_unknown() -> None:
+    # A probe error (hub briefly unreachable) is `None`, not False: must NOT churn
+    # re-registrations, and must NOT flip a previously-confirmed node to unregistered.
+    bus = RecordingBus()
+    service = GridNodeService(
+        config=_config(), bus=bus, http_server=RecordingHttpServer(), registration_probe=_probe(None)
+    )
+    await service.start()
+    await service.run_heartbeat_once()
+    assert [e["type"] for e in bus.events].count("node-added") == 1
+    # Graceful degradation: an unreachable hub (probe never resolves to a value)
+    # must not pin a healthy node at "unregistered".
+    assert service.is_registered_with_hub() is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_probe_keeps_prior_registered_state() -> None:
+    bus = RecordingBus()
+    results: list[bool | None] = [True, None]
+
+    async def probe() -> bool | None:
+        return results.pop(0)
+
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer(), registration_probe=probe)
+    await service.start()
+    await service.run_heartbeat_once()  # True -> registered
+    assert service.is_registered_with_hub() is True
+    await service.run_heartbeat_once()  # None -> keep prior True (transient hub blip)
+    assert service.is_registered_with_hub() is True
 
 
 # --- GridNodeService properties / snapshot ---

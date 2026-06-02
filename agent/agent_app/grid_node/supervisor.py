@@ -124,12 +124,24 @@ class GridNodeSupervisorHandle:
         if self.errored:
             status = "error"
         elif self._running.is_set():
-            status = "up"
+            # Un-mask N11: "up" must mean the hub actually has this node, not merely
+            # that the local relay process is alive — that masked the registration
+            # wedge from every observer. Until the hub confirms, report "registering".
+            status = "up" if self._service_registered() else "registering"
         elif self._stopped.is_set():
             status = "stopped"
         else:
             status = "starting"
         return {"errored": self.errored, "running": self._running.is_set(), "status": status}
+
+    def _service_registered(self) -> bool:
+        service = self._service
+        if service is None:
+            return False
+        checker = getattr(service, "is_registered_with_hub", None)
+        # A service predating the registration probe expresses no opinion; preserve
+        # the old "process up == up" behavior for it.
+        return checker() if callable(checker) else True
 
     def is_running(self) -> bool:
         return self._running.is_set()
