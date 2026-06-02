@@ -323,6 +323,59 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     assert outbox.accepting_new_sessions is False
 
 
+async def test_hard_stop_on_idle_device_stages_agent_drain(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A hard stop of an idle device must stage a drain reconfigure (N7).
+
+    ``operational_state`` derives to ``offline`` synchronously from
+    ``desired_state=stopped`` (``stop_in_flight``), but the relay keeps running
+    and registered to the hub until the appium reconciler tears it down. Without
+    a drain pushed to the agent, the hub keeps routing and a direct/free session
+    lands on the now-offline device → ``busy`` (the ``session_on_non_available``
+    gating violation). The hard-stop path must stage the same drain the graceful
+    path does, even though ``desired_state=stopped`` and ``stop_pending=False``.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="hard-stop")
+    node = await _seed_node(db_session, device.id, generation=2)
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+    with state_write_guard.bypass():
+        node.desired_port = 4723
+    with state_write_guard.bypass():
+        node.port = 4723
+    with state_write_guard.bypass():
+        node.pid = 1234
+    with state_write_guard.bypass():
+        node.active_connection_target = device.connection_target
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        reason="operator stop",
+        intents=[
+            IntentRegistration(
+                source="operator:node",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "hard", "priority": 90},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is False
+    assert node.accepting_new_sessions is False
+    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert outbox.port == 4723
+    assert outbox.accepting_new_sessions is False
+
+
 async def test_graceful_stop_holds_node_running_while_session_active(
     db_session: AsyncSession,
     db_host: Host,
