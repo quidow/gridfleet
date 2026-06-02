@@ -14,7 +14,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -94,9 +94,9 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
         async with db_session_maker() as session:
             locked = await device_locking.lock_device(session, device_id)
-            await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).enter_maintenance(
-                session, locked
-            )
+            await MaintenanceService(
+                review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            ).enter_maintenance(session, locked)
         allow_restart.set()
 
     await asyncio.gather(reconnect(), enter_maintenance_before_restart())

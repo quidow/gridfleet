@@ -32,6 +32,7 @@ from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.verification.services.service import VerificationService
 from tests.conftest import settings_service
+from tests.fakes import build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
@@ -146,6 +147,7 @@ async def _wait_for_job(
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
+                    review=build_review_service(),
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
@@ -159,7 +161,9 @@ async def _wait_for_job(
                     if node_manager is not None
                     else ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
+                        operator=OperatorNodeLifecycleService(
+                            review=build_review_service(), settings=settings_service, publisher=event_bus
+                        ),
                     ),
                 ),
                 viability=_viability,
@@ -1463,6 +1467,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     identity=DeviceIdentityConflictService(),
                 ),
                 execution=VerificationExecutionService(
+                    review=build_review_service(),
                     publisher=AsyncMock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
@@ -1474,7 +1479,9 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     reconciler=AsyncMock(),
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
+                        operator=OperatorNodeLifecycleService(
+                            review=build_review_service(), settings=settings_service, publisher=event_bus
+                        ),
                     ),
                 ),
                 viability=_viability2,

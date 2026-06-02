@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import DbDep
 from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.dependencies import DeviceServicesDep
-from app.devices.models import DeviceDiagnosticSnapshot
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.diagnostics import (
     DiagnosticExportResponse,
@@ -20,7 +19,6 @@ from app.devices.schemas.diagnostics import (
     DiagnosticSnapshotListResponse,
     DiagnosticSnapshotSummary,
 )
-from app.devices.services import diagnostics_export
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +102,13 @@ async def export_device_diagnostics(
     device = await get_device_or_404(device_id, db, device_services.crud)
     await _enforce_rate_limit(db, device_id)
     warnings: list[str] = []
-    payload = await diagnostics_export.assemble_bundle(db, device, redact=redact)
+    payload = await device_services.diagnostics.assemble_bundle(db, device, redact=redact)
     snapshot_id: uuid.UUID | None = None
     if persist:
         try:
-            snapshot_id = await diagnostics_export.capture_snapshot(db, device, trigger="operator", reason=None)
+            snapshot_id = await device_services.diagnostics.capture_snapshot(
+                db, device, trigger="operator", reason=None
+            )
         except Exception as exc:  # noqa: BLE001 - operator should still receive the assembled payload.
             warnings.append(f"snapshot persistence failed: {exc.__class__.__name__}")
             logger.warning(
@@ -132,29 +132,10 @@ async def list_device_diagnostic_snapshots(
     before: uuid.UUID | None = Query(default=None),
 ) -> DiagnosticSnapshotListResponse:
     await get_device_or_404(device_id, db, device_services.crud)
-    stmt = (
-        select(DeviceDiagnosticSnapshot)
-        .where(DeviceDiagnosticSnapshot.device_id == device_id)
-        .order_by(DeviceDiagnosticSnapshot.captured_at.desc(), DeviceDiagnosticSnapshot.id.desc())
-    )
-    if before is not None:
-        cursor_row = (
-            await db.execute(
-                select(DeviceDiagnosticSnapshot.captured_at).where(
-                    DeviceDiagnosticSnapshot.id == before,
-                    DeviceDiagnosticSnapshot.device_id == device_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if cursor_row is None:
-            raise HTTPException(status_code=400, detail="Unknown before cursor")
-        stmt = stmt.where(DeviceDiagnosticSnapshot.captured_at < cursor_row)
-    stmt = stmt.limit(limit + 1)
-    rows = (await db.execute(stmt)).scalars().all()
-    next_before: uuid.UUID | None = None
-    if len(rows) > limit:
-        rows = rows[:limit]
-        next_before = rows[-1].id
+    try:
+        rows, next_before = await device_services.diagnostics.list_snapshots(db, device_id, limit=limit, before=before)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Unknown before cursor") from exc
     return DiagnosticSnapshotListResponse(
         items=[DiagnosticSnapshotSummary.model_validate(row) for row in rows],
         next_before=next_before,
@@ -173,19 +154,12 @@ async def get_device_diagnostic_snapshot(
     redact: bool = Query(default=False),
 ) -> DiagnosticSnapshotDetail:
     await get_device_or_404(device_id, db, device_services.crud)
-    row = (
-        await db.execute(
-            select(DeviceDiagnosticSnapshot).where(
-                DeviceDiagnosticSnapshot.id == snapshot_id,
-                DeviceDiagnosticSnapshot.device_id == device_id,
-            )
-        )
-    ).scalar_one_or_none()
+    row = await device_services.diagnostics.get_snapshot(db, device_id, snapshot_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     payload = row.payload
     if redact:
-        payload = await diagnostics_export.redact_bundle(db, payload)
+        payload = await device_services.diagnostics.redact_bundle(db, payload)
     return DiagnosticSnapshotDetail(
         id=row.id,
         captured_at=row.captured_at,

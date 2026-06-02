@@ -32,6 +32,7 @@ from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.data_cleanup import DataCleanupService
+from app.devices.services.diagnostics_export import DiagnosticExportService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
@@ -39,6 +40,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
+from app.devices.services.review import ReviewService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
@@ -172,7 +174,9 @@ def compose_app(
     )
 
     device_capability_svc = DeviceCapabilityService()
-    reservation_svc = RunReservationService()
+    diagnostics_export_svc = DiagnosticExportService()
+    review_svc = ReviewService(diagnostics=diagnostics_export_svc)
+    reservation_svc = RunReservationService(review=review_svc)
     incidents_svc = LifecycleIncidentService()
     lifecycle_actions_svc = LifecyclePolicyActionsService(
         publisher=bus, reservation=reservation_svc, incidents=incidents_svc
@@ -185,7 +189,7 @@ def compose_app(
         capability=device_capability_svc,
         health=device_health_svc,
     )
-    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc, publisher=bus)
+    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc, publisher=bus, review=review_svc)
     reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc, operator=operator_node_lifecycle_svc)
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus,
@@ -194,12 +198,13 @@ def compose_app(
         incidents=incidents_svc,
         viability=viability_svc,
         node_manager=reconciler_agent_svc,
+        review=review_svc,
     )
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
-    maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus)
+    maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
     crud_svc = DeviceCrudService(settings=settings_svc, identity=identity_conflict_svc, publisher=bus)
     connectivity_svc = ConnectivityService(
         publisher=bus,
@@ -258,6 +263,7 @@ def compose_app(
         capability=device_capability_svc,
         reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
+        review=review_svc,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -310,6 +316,7 @@ def compose_app(
             capability=device_capability_svc,
             connectivity=connectivity_svc,
             health=device_health_svc,
+            diagnostics=diagnostics_export_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,

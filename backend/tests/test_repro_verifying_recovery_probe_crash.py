@@ -34,7 +34,7 @@ from app.devices.models.intent import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, verification_intent_source
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 from tests.test_session_viability import run_session_viability_probe
 
@@ -157,10 +157,13 @@ async def test_attempt_auto_recovery_probes_verifying_device(
         return {"status": "passed"}
 
     svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),

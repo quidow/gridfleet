@@ -19,7 +19,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -107,10 +107,13 @@ async def test_stale_stop_pending_cleared_so_recovery_can_proceed(
         new=AsyncMock(side_effect=partial(_mark_device_available, db_session)),
     ):
         recovered = await LifecyclePolicyService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(
-                publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                publisher=event_bus,
+                reservation=RunReservationService(review=build_review_service()),
+                incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
             viability=viability,
@@ -185,10 +188,13 @@ async def test_stop_pending_not_cleared_when_live_session_exists(
     await db_session.commit()
 
     recovered = await LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),

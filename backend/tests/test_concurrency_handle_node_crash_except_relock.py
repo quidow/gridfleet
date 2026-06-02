@@ -14,6 +14,7 @@ from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
+from tests.fakes import build_review_service
 from tests.helpers import create_device
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -76,7 +77,9 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         target = await session.get(Device, device_id)
         assert target is not None
         await LifecyclePolicyActionsService(
-            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ).handle_node_crash(
             session,
             target,

@@ -23,7 +23,7 @@ from app.devices.services import state_write_guard
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -92,10 +92,13 @@ async def test_health_failure_intent_payload_shape(
     await db_session.commit()
 
     _svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),
@@ -185,9 +188,11 @@ async def test_cooldown_intent_payload_shape(
         publisher=event_bus,
         settings=_test_settings,
         circuit_breaker=_test_cb,
-        maintenance=MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+        maintenance=MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(),
+        reservation=RunReservationService(review=build_review_service()),
         health=AsyncMock(),
         incidents=AsyncMock(),
     )
@@ -262,7 +267,9 @@ async def test_operator_start_intent_payload_shape(
         db_session,
         device,
         caller="operator",
-        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
     )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
@@ -324,10 +331,13 @@ async def test_auto_recovery_intent_payload_omits_desired_port(
     viability.run_session_viability_probe = probe_mock
     with patch.object(lifecycle_policy_module, "RECOVERY_NODE_START_WAIT_TIMEOUT_SEC", 0):
         recovered = await LifecyclePolicyService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(
-                publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                publisher=event_bus,
+                reservation=RunReservationService(review=build_review_service()),
+                incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
             viability=viability,

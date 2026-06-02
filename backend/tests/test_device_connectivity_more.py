@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.devices.services import state_write_guard
+from tests.fakes import build_diagnostics_export, build_review_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -288,12 +289,15 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     _fake_grid = Mock()
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
-    _fake_maintenance = MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus)
+    _fake_maintenance = MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
     _fake_crud = DeviceCrudService(
         settings=_fake_settings, identity=DeviceIdentityConflictService(), publisher=event_bus
     )
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
+            diagnostics=build_diagnostics_export(),
             fleet_capacity=FleetCapacityService(grid=_fake_grid),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -305,7 +309,9 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
                 circuit_breaker=Mock(),
                 maintenance=_fake_maintenance,
                 crud=_fake_crud,
-                operator=OperatorNodeLifecycleService(settings=_fake_settings, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=_fake_settings, publisher=event_bus
+                ),
             ),
             presenter=DevicePresenterService(settings=_fake_settings),
             test_data=TestDataService(publisher=_fake_publisher),

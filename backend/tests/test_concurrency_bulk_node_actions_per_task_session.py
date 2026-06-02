@@ -16,7 +16,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -118,7 +118,9 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             crud=DeviceCrudService(
                 settings=_settings_runner, identity=DeviceIdentityConflictService(), publisher=event_bus
             ),
-            operator=OperatorNodeLifecycleService(settings=_settings_runner, publisher=event_bus),
+            operator=OperatorNodeLifecycleService(
+                review=build_review_service(), settings=_settings_runner, publisher=event_bus
+            ),
         ).bulk_start_nodes(db_session, [device_a_id, device_b_id])
 
     runner_task = asyncio.create_task(runner())

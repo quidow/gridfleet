@@ -13,7 +13,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceIntent, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -78,10 +78,13 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
     viability = AsyncMock()
     viability.run_session_viability_probe = AsyncMock(return_value={"status": "passed"})
     svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=Mock(),
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=viability,
@@ -229,10 +232,13 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
     from app.runs.service_reservation import RunReservationService
 
     svc = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),
@@ -281,7 +287,9 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
     from app.runs.service_reservation import RunReservationService
 
     await LifecyclePolicyActionsService(
-        publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        publisher=event_bus,
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,
         device,
@@ -331,7 +339,9 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
     from app.runs.service_reservation import RunReservationService
 
     await LifecyclePolicyActionsService(
-        publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+        publisher=event_bus,
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,
         device,

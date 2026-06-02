@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         DeviceGroupsProtocol,
         DeviceHealthProtocol,
         DevicePresenterProtocol,
+        DiagnosticExportProtocol,
         FleetCapacityProtocol,
         MaintenanceProtocol,
         PropertyRefreshProtocol,
@@ -42,6 +43,7 @@ class DeviceServices:
     capability: DeviceCapabilityProtocol
     connectivity: ConnectivityProtocol
     health: DeviceHealthProtocol
+    diagnostics: DiagnosticExportProtocol
     publisher: EventPublisher
     settings: SettingsReader
     grid: GridServiceProtocol

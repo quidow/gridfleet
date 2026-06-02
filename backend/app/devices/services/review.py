@@ -18,101 +18,108 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.devices.models import DeviceEventType
-from app.devices.services import diagnostics_export
 from app.devices.services.event import record_event
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
+    from app.devices.protocols import DiagnosticCapture
 
 logger = logging.getLogger(__name__)
 
 
-async def mark_review_required(
-    db: AsyncSession,
-    device: Device,
-    *,
-    reason: str,
-    source: str,
-) -> bool:
-    """Flag ``device`` as needing operator review. Idempotent — returns False
-    if the flag was already on (regardless of whether the reason changed).
+class ReviewService:
+    """Set/clear the ``Device.review_required`` shelving flag."""
 
-    A reason update on an already-flagged device emits its own
-    ``lifecycle_recovery_suppressed`` audit event so the operator-visible
-    history is not silently rewritten.
-    """
-    if not hasattr(device, "review_required"):
-        return False
-    if device.review_required:
-        if device.review_reason != reason:
-            previous_reason = device.review_reason
-            device.review_reason = reason
-            await record_event(
-                db,
-                device.id,
-                DeviceEventType.lifecycle_recovery_suppressed,
-                {
-                    "review_required": True,
-                    "review_reason": reason,
-                    "previous_reason": previous_reason,
-                    "source": source,
-                    "reason_updated": True,
-                },
-            )
-        return False
-    device.review_required = True
-    device.review_reason = reason
-    device.review_set_at = datetime.now(UTC)
-    await record_event(
-        db,
-        device.id,
-        DeviceEventType.lifecycle_recovery_suppressed,
-        {
-            "review_required": True,
-            "review_reason": reason,
-            "source": source,
-            "review_set_at": device.review_set_at.isoformat(),
-        },
-    )
-    try:
-        await db.flush()
-        await db.refresh(device)
-        await diagnostics_export.capture_snapshot(db, device, trigger="review_required", reason=reason)
-    except Exception:  # noqa: BLE001 - snapshot capture must not block the review flag flip.
-        logger.warning(
-            "Failed to capture diagnostic snapshot for device %s; flag flip proceeds",
+    def __init__(self, *, diagnostics: DiagnosticCapture) -> None:
+        self._diagnostics = diagnostics
+
+    async def mark_review_required(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        source: str,
+    ) -> bool:
+        """Flag ``device`` as needing operator review. Idempotent — returns False
+        if the flag was already on (regardless of whether the reason changed).
+
+        A reason update on an already-flagged device emits its own
+        ``lifecycle_recovery_suppressed`` audit event so the operator-visible
+        history is not silently rewritten.
+        """
+        if not hasattr(device, "review_required"):
+            return False
+        if device.review_required:
+            if device.review_reason != reason:
+                previous_reason = device.review_reason
+                device.review_reason = reason
+                await record_event(
+                    db,
+                    device.id,
+                    DeviceEventType.lifecycle_recovery_suppressed,
+                    {
+                        "review_required": True,
+                        "review_reason": reason,
+                        "previous_reason": previous_reason,
+                        "source": source,
+                        "reason_updated": True,
+                    },
+                )
+            return False
+        device.review_required = True
+        device.review_reason = reason
+        device.review_set_at = datetime.now(UTC)
+        await record_event(
+            db,
             device.id,
-            exc_info=True,
+            DeviceEventType.lifecycle_recovery_suppressed,
+            {
+                "review_required": True,
+                "review_reason": reason,
+                "source": source,
+                "review_set_at": device.review_set_at.isoformat(),
+            },
         )
-    return True
+        try:
+            await db.flush()
+            await db.refresh(device)
+            await self._diagnostics.capture_snapshot(db, device, trigger="review_required", reason=reason)
+        except Exception:  # noqa: BLE001 - snapshot capture must not block the review flag flip.
+            logger.warning(
+                "Failed to capture diagnostic snapshot for device %s; flag flip proceeds",
+                device.id,
+                exc_info=True,
+            )
+        return True
 
-
-async def clear_review_required(
-    db: AsyncSession,
-    device: Device,
-    *,
-    reason: str,
-    source: str,
-) -> bool:
-    """Clear the review flag and record the audit event. Idempotent — returns
-    False when the flag was already off."""
-    if not getattr(device, "review_required", False):
-        return False
-    previous_reason = device.review_reason
-    device.review_required = False
-    device.review_reason = None
-    device.review_set_at = None
-    await record_event(
-        db,
-        device.id,
-        DeviceEventType.lifecycle_recovered,
-        {
-            "review_required": False,
-            "previous_reason": previous_reason,
-            "source": source,
-            "cleared_reason": reason,
-        },
-    )
-    return True
+    async def clear_review_required(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        reason: str,
+        source: str,
+    ) -> bool:
+        """Clear the review flag and record the audit event. Idempotent — returns
+        False when the flag was already off."""
+        if not getattr(device, "review_required", False):
+            return False
+        previous_reason = device.review_reason
+        device.review_required = False
+        device.review_reason = None
+        device.review_set_at = None
+        await record_event(
+            db,
+            device.id,
+            DeviceEventType.lifecycle_recovered,
+            {
+                "review_required": False,
+                "previous_reason": previous_reason,
+                "source": source,
+                "cleared_reason": reason,
+            },
+        )
+        return True

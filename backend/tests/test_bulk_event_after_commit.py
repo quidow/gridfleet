@@ -13,7 +13,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
@@ -26,9 +26,10 @@ def _svc(*, maintenance: object | None = None) -> BulkOperationsService:
         publisher=event_bus,
         settings=_settings,
         circuit_breaker=MagicMock(),
-        maintenance=maintenance or MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus),
+        maintenance=maintenance
+        or MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
         crud=DeviceCrudService(settings=_settings, identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(settings=_settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=_settings, publisher=event_bus),
     )
 
 

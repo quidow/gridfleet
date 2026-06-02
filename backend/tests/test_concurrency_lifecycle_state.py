@@ -60,7 +60,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -111,10 +111,13 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
             svc = LifecyclePolicyService(
+                review=build_review_service(),
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(
-                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                    publisher=event_bus,
+                    reservation=RunReservationService(review=build_review_service()),
+                    incidents=LifecycleIncidentService(),
                 ),
                 incidents=LifecycleIncidentService(),
                 viability=Mock(),
@@ -235,10 +238,13 @@ async def test_concurrent_health_failure_stale_overwrite(
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
             svc = LifecyclePolicyService(
+                review=build_review_service(),
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(
-                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                    publisher=event_bus,
+                    reservation=RunReservationService(review=build_review_service()),
+                    incidents=LifecycleIncidentService(),
                 ),
                 incidents=LifecycleIncidentService(),
                 viability=Mock(),
@@ -262,10 +268,13 @@ async def test_concurrent_health_failure_stale_overwrite(
             device_obj = (await session.execute(stmt)).scalar_one()
             # Writer B runs without any patching; commits normally.
             svc = LifecyclePolicyService(
+                review=build_review_service(),
                 publisher=event_bus,
                 settings=FakeSettingsReader({}),
                 actions=LifecyclePolicyActionsService(
-                    publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+                    publisher=event_bus,
+                    reservation=RunReservationService(review=build_review_service()),
+                    incidents=LifecycleIncidentService(),
                 ),
                 incidents=LifecycleIncidentService(),
                 viability=Mock(),

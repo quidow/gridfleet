@@ -12,12 +12,13 @@ from sqlalchemy import select
 
 from app.devices.models import DeviceDiagnosticSnapshot, DeviceEvent, DeviceEventType
 from app.devices.services.data_cleanup import DataCleanupService
-from app.devices.services.diagnostics_export import assemble_bundle, capture_snapshot
-from app.devices.services.review import mark_review_required
+from app.devices.services.diagnostics_export import DiagnosticExportService
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
+
+_export = DiagnosticExportService()
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -83,7 +84,7 @@ async def test_assemble_bundle_minimal_device_emits_empty_arrays(
         name="minimal-device",
         identity_value="minimal",
     )
-    bundle = await assemble_bundle(db_session, device, redact=False)
+    bundle = await _export.assemble_bundle(db_session, device, redact=False)
     assert bundle["schema_version"] == 1
     assert bundle["redacted"] is False
     assert bundle["device"]["id"] == str(device.id)
@@ -131,7 +132,7 @@ async def test_assemble_bundle_full_state_respects_caps_and_ordering(
             )
         )
     await db_session.commit()
-    bundle = await assemble_bundle(db_session, device, redact=False)
+    bundle = await _export.assemble_bundle(db_session, device, redact=False)
     assert len(bundle["sessions"]["recent_ended"]) == 20
     assert len(bundle["events"]) == 50
     ended_times = [session["ended_at"] for session in bundle["sessions"]["recent_ended"]]
@@ -168,8 +169,8 @@ async def test_assemble_bundle_redaction_hashes_named_fields(
     )
     await db_session.commit()
 
-    unredacted = await assemble_bundle(db_session, device, redact=False)
-    redacted = await assemble_bundle(db_session, device, redact=True)
+    unredacted = await _export.assemble_bundle(db_session, device, redact=False)
+    redacted = await _export.assemble_bundle(db_session, device, redact=True)
 
     assert redacted["redacted"] is True
     assert redacted["device"]["identity_value"] != "emulator-5554"
@@ -181,7 +182,7 @@ async def test_assemble_bundle_redaction_hashes_named_fields(
     assert event["details"]["nested"]["connection_target"] != "emulator-5554"
     assert event["details"]["device_id"] != str(device.id)
     assert event["details"]["harmless"] == "keep-me"
-    redacted2 = await assemble_bundle(db_session, device, redact=True)
+    redacted2 = await _export.assemble_bundle(db_session, device, redact=True)
     assert redacted["device"]["identity_value"] == redacted2["device"]["identity_value"]
     assert unredacted["device"]["identity_value"] == "emulator-5554"
 
@@ -198,7 +199,7 @@ async def test_capture_snapshot_persists_row_with_trigger_and_reason(
         name="capture-device",
         identity_value="capture",
     )
-    snapshot_id = await capture_snapshot(db_session, device, trigger="operator", reason="manual click")
+    snapshot_id = await _export.capture_snapshot(db_session, device, trigger="operator", reason="manual click")
     await db_session.commit()
     assert isinstance(snapshot_id, uuid.UUID)
     result = await db_session.execute(
@@ -223,7 +224,9 @@ async def test_mark_review_required_records_snapshot(
         name="auto-snapshot-device",
         identity_value="auto",
     )
-    changed = await mark_review_required(db_session, device, reason="health_failure:threshold", source="recovery_loop")
+    changed = await build_review_service().mark_review_required(
+        db_session, device, reason="health_failure:threshold", source="recovery_loop"
+    )
     await db_session.commit()
     assert changed is True
     result = await db_session.execute(
@@ -249,11 +252,12 @@ async def test_mark_review_required_still_flips_flag_when_snapshot_fails(
         name="snapshot-fails-device",
         identity_value="fails",
     )
-    with patch(
-        "app.devices.services.review.diagnostics_export.capture_snapshot",
+    with patch.object(
+        DiagnosticExportService,
+        "capture_snapshot",
         side_effect=RuntimeError("forced failure"),
     ):
-        changed = await mark_review_required(db_session, device, reason="forced", source="test")
+        changed = await build_review_service().mark_review_required(db_session, device, reason="forced", source="test")
         await db_session.commit()
     assert changed is True
     assert device.review_required is True
@@ -430,7 +434,7 @@ async def test_snapshot_detail_redacts_on_read(
         name="redact-detail-device",
         identity_value="emulator-5556",
     )
-    snapshot_id = await capture_snapshot(db_session, device, trigger="operator", reason=None)
+    snapshot_id = await _export.capture_snapshot(db_session, device, trigger="operator", reason=None)
     await db_session.commit()
     plain = await client.get(f"/api/devices/{device.id}/diagnostics/snapshots/{snapshot_id}")
     redacted = await client.get(

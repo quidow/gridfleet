@@ -20,7 +20,7 @@ from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationContext, VerificationPreparationService
 from app.verification.services.service import VerificationService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -76,6 +76,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
     monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
     job = _job()
     svc = VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -97,6 +98,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
         AsyncMock(side_effect=AgentCallError("10.0.0.1", "down")),
     )
     detail = await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -116,6 +118,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
     )
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
@@ -137,6 +140,7 @@ async def test_run_device_health_covers_skip_agent_success_and_failure(
     )
     assert (
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
@@ -184,6 +188,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         AsyncMock(side_effect=NodeManagerError("stop failed")),
     )
     detail = await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -201,6 +206,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     nm_start_err = AsyncMock()
     nm_start_err.start_node = AsyncMock(side_effect=NodeManagerError("no node"))
     started, error = await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -226,6 +232,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     nm_timeout.start_node = AsyncMock(return_value=fake_node)
     nm_timeout.wait_for_node_running = AsyncMock(return_value=None)
     started, error = await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -263,6 +270,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     )
     probe_session = AsyncMock(return_value=(False, "probe failed"))
     started, error = await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -335,6 +343,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     converge_mock = AsyncMock(return_value=None)
 
     await VerificationExecutionService(
+        review=build_review_service(),
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -404,6 +413,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
 
     assert probe_inflight.is_probe_inflight(device_key) is False
     await VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -465,6 +475,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
 
     with pytest.raises(RuntimeError, match="probe blew up"):
         await VerificationExecutionService(
+            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
@@ -611,6 +622,7 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
     assert failed.error == "Device was not found"
 
     svc = VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),
@@ -687,6 +699,7 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
     monkeypatch.setattr("app.verification.services.execution._finalize_failure", AsyncMock())
 
     svc2 = VerificationExecutionService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         circuit_breaker=Mock(),

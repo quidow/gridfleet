@@ -33,6 +33,7 @@ from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service, test_circuit_breaker
+from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -96,9 +97,11 @@ async def test_start_node_locks_device_before_reservation_check(
             publisher=event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
-            maintenance=MaintenanceService(settings=settings_service, publisher=event_bus),
+            maintenance=MaintenanceService(
+                review=build_review_service(), settings=settings_service, publisher=event_bus
+            ),
             lifecycle_actions=AsyncMock(),
-            reservation=RunReservationService(),
+            reservation=RunReservationService(review=build_review_service()),
             health=AsyncMock(),
             incidents=LifecycleIncidentService(),
         )
@@ -108,7 +111,7 @@ async def test_start_node_locks_device_before_reservation_check(
             lifecycle=run_lifecycle,
             release=run_release,
             failure=run_failure,
-            reservation=RunReservationService(),
+            reservation=RunReservationService(review=build_review_service()),
             query=run_query,
             settings=settings_service,
             session_factory=db_session_maker,
@@ -119,7 +122,9 @@ async def test_start_node_locks_device_before_reservation_check(
             reconciler=AsyncMock(),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,
-                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
+                operator=OperatorNodeLifecycleService(
+                    review=build_review_service(), settings=settings_service, publisher=event_bus
+                ),
             ),
             node_health=AsyncMock(),
             heartbeat=AsyncMock(),

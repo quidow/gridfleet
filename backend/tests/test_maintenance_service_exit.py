@@ -13,7 +13,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.hosts.models import Host
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -33,7 +33,9 @@ async def test_exit_maintenance_enqueues_recovery_job(
     )
 
     locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).exit_maintenance(db_session, locked)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    ).exit_maintenance(db_session, locked)
 
     rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 1
@@ -83,9 +85,9 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
         # Must NOT raise even though schedule_device_recovery raises.
-        result = await MaintenanceService(settings=FakeSettingsReader({}), publisher=event_bus).exit_maintenance(
-            db_session, locked
-        )
+        result = await MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ).exit_maintenance(db_session, locked)
 
     # Sanity: the patched mock actually intercepted the call. If this fires,
     # the warning-call assertion below would also fail but for a different

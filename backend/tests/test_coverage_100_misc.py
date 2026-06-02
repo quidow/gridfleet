@@ -110,7 +110,7 @@ from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from app.webhooks.schemas import WebhookUpdate
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 event_bus_mod = import_module("app.events.event_bus")
@@ -366,6 +366,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         identity=DeviceIdentityConflictService(),
     )
     exec_svc = VerificationExecutionService(
+        review=build_review_service(),
         publisher=publisher,
         settings=settings,
         circuit_breaker=cb,
@@ -572,7 +573,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     reservation_db.execute = AsyncMock(
         return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
     )
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     assert await svc.exclude_device_from_run(reservation_db, uuid.uuid4(), reason="r", publisher=event_bus) is None
     assert await svc.restore_device_to_run(reservation_db, uuid.uuid4()) is None
 
@@ -879,6 +880,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 identity=DeviceIdentityConflictService(),
             ),
             execution=VerificationExecutionService(
+                review=build_review_service(),
                 publisher=AsyncMock(),
                 settings=FakeSettingsReader({}),
                 circuit_breaker=Mock(),

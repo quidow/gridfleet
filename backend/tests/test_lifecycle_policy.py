@@ -35,7 +35,7 @@ from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicySe
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -54,10 +54,13 @@ def _make_svc(
     via = viability if viability is not None else AsyncMock()
     nm = node_manager if node_manager is not None else AsyncMock()
     return LifecyclePolicyService(
+        review=build_review_service(),
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(
-            publisher=pub, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=pub,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),  # type: ignore[arg-type]
         incidents=LifecycleIncidentService(),
         viability=via,  # type: ignore[arg-type]

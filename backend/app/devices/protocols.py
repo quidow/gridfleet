@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.devices.models import (
         ConnectionType,
         Device,
+        DeviceDiagnosticSnapshot,
         DeviceGroup,
         DeviceOperationalState,
         DeviceReservation,
@@ -36,6 +37,34 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
+
+
+@runtime_checkable
+class DiagnosticCapture(Protocol):
+    async def capture_snapshot(
+        self, db: AsyncSession, device: Device, *, trigger: str, reason: str | None
+    ) -> uuid.UUID | None: ...
+
+
+@runtime_checkable
+class ReviewProtocol(Protocol):
+    async def mark_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
+    async def clear_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
+
+
+@runtime_checkable
+class DiagnosticExportProtocol(Protocol):
+    async def assemble_bundle(self, db: AsyncSession, device: Device, *, redact: bool) -> dict[str, Any]: ...
+    async def redact_bundle(self, db: AsyncSession, bundle: dict[str, Any]) -> dict[str, Any]: ...
+    async def capture_snapshot(
+        self, db: AsyncSession, device: Device, *, trigger: str, reason: str | None
+    ) -> uuid.UUID | None: ...
+    async def list_snapshots(
+        self, db: AsyncSession, device_id: uuid.UUID, *, limit: int, before: uuid.UUID | None
+    ) -> tuple[list[DeviceDiagnosticSnapshot], uuid.UUID | None]: ...
+    async def get_snapshot(
+        self, db: AsyncSession, device_id: uuid.UUID, snapshot_id: uuid.UUID
+    ) -> DeviceDiagnosticSnapshot | None: ...
 
 
 @runtime_checkable

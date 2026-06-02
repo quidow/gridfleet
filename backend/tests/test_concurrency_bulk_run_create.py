@@ -42,6 +42,7 @@ from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service, test_circuit_breaker
+from tests.fakes import build_diagnostics_export, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -86,11 +87,14 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _grid_svc = GridService(settings=settings_service)
-            _maintenance_svc = MaintenanceService(settings=settings_service, publisher=event_bus)
+            _maintenance_svc = MaintenanceService(
+                review=build_review_service(), settings=settings_service, publisher=event_bus
+            )
             _crud_svc = DeviceCrudService(
                 settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
             )
             return DeviceServices(
+                diagnostics=build_diagnostics_export(),
                 fleet_capacity=FleetCapacityService(grid=_grid_svc),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
@@ -102,7 +106,9 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
                     crud=_crud_svc,
-                    operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
+                    operator=OperatorNodeLifecycleService(
+                        review=build_review_service(), settings=settings_service, publisher=event_bus
+                    ),
                 ),
                 presenter=DevicePresenterService(settings=settings_service),
                 test_data=TestDataService(publisher=event_bus),
@@ -169,9 +175,11 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 publisher=event_bus,
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
-                maintenance=MaintenanceService(settings=settings_service, publisher=event_bus),
+                maintenance=MaintenanceService(
+                    review=build_review_service(), settings=settings_service, publisher=event_bus
+                ),
                 lifecycle_actions=AsyncMock(),
-                reservation=RunReservationService(),
+                reservation=RunReservationService(review=build_review_service()),
                 health=AsyncMock(),
                 incidents=LifecycleIncidentService(),
             )
@@ -181,7 +189,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 lifecycle=run_lifecycle,
                 release=run_release,
                 failure=run_failure,
-                reservation=RunReservationService(),
+                reservation=RunReservationService(review=build_review_service()),
                 query=run_query,
                 settings=settings_service,
                 session_factory=db_session_maker,

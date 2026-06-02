@@ -10,7 +10,6 @@ from sqlalchemy.orm import selectinload
 from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation
 from app.devices.services.intent import IntentService
-from app.devices.services.review import clear_review_required
 from app.runs.models import TestRun
 
 if TYPE_CHECKING:
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 
@@ -158,6 +158,9 @@ async def get_device_reservation(db: AsyncSession, device_id: uuid.UUID) -> Test
 
 
 class RunReservationService:
+    def __init__(self, *, review: ReviewProtocol) -> None:
+        self._review = review
+
     async def exclude_device_from_run(
         self,
         db: AsyncSession,
@@ -231,7 +234,7 @@ class RunReservationService:
             # callers always pass a real AsyncSession.
             device = None
         if device is not None:
-            await clear_review_required(
+            await self._review.clear_review_required(
                 db,
                 device,
                 reason="Reservation restored to run",

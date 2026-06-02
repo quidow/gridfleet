@@ -14,9 +14,12 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
+from tests.fakes import build_review_service
 
 _actions = LifecyclePolicyActionsService(
-    publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
+    publisher=Mock(),
+    reservation=RunReservationService(review=build_review_service()),
+    incidents=LifecycleIncidentService(),
 )
 
 

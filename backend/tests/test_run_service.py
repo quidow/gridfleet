@@ -17,7 +17,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
@@ -83,10 +83,13 @@ async def test_force_release_clears_stop_pending(
     await db_session.commit()
 
     real_deferred_stop = LifecyclePolicyService(
+        review=build_review_service(),
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(
-            publisher=event_bus, reservation=RunReservationService(), incidents=LifecycleIncidentService()
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
         viability=Mock(),

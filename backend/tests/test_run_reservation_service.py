@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from app.runs import service_reservation as run_reservation_service
+from tests.fakes import build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -61,7 +62,7 @@ async def test_exclude_device_from_run_updates_entry_without_commit(monkeypatch)
         AsyncMock(return_value=entry),
     )
 
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     result = await svc.exclude_device_from_run(
         FakeSession(), device_id, reason="bad", commit=False, publisher=event_bus
     )
@@ -83,7 +84,7 @@ async def test_exclude_device_from_run_noops_when_already_excluded_for_same_reas
         AsyncMock(return_value=(run, entry)),
     )
 
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     result = await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad", publisher=event_bus)
 
     assert result is run
@@ -112,7 +113,7 @@ async def test_restore_device_to_run_updates_excluded_entry(monkeypatch) -> None
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     result = await svc.restore_device_to_run(db, uuid.uuid4())
 
     assert result is refreshed
@@ -130,7 +131,7 @@ async def test_restore_device_to_run_noops_for_temporary_or_active_entries(monke
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, temporary)),
     )
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     assert await svc.restore_device_to_run(FakeSession(), uuid.uuid4()) is run
 
     active = SimpleNamespace(excluded=False, excluded_until=None)
@@ -182,7 +183,7 @@ async def test_exclude_and_restore_commit_refresh_paths(monkeypatch) -> None:  #
     )
     monkeypatch.setattr(run_reservation_service, "get_run", AsyncMock(return_value=refreshed))
 
-    svc = run_reservation_service.RunReservationService()
+    svc = run_reservation_service.RunReservationService(review=build_review_service())
     assert await svc.exclude_device_from_run(db, uuid.uuid4(), reason="bad", publisher=event_bus) is refreshed
     assert db.committed is True
 
