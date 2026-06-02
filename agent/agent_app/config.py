@@ -61,7 +61,13 @@ class ApiAuthSettings(BaseSettings):
 class GridNodeSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
-    grid_hub_url: str = "http://selenium-hub:4444"
+    # Host-run agent: default to the loopback hub like the sibling event-bus URLs
+    # below (and like cli.py / installer plan.py, both of which default to
+    # localhost:4444). Docker/networked deployments override via AGENT_GRID_HUB_URL.
+    # NOTE: this is the first setting actually used for an HTTP call to the hub
+    # (the relay registers over ZMQ); a docker-internal default here is unreachable
+    # from the host the agent runs on.
+    grid_hub_url: str = "http://localhost:4444"
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
     grid_node_heartbeat_sec: float = 5.0
