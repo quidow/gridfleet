@@ -345,7 +345,7 @@ async def test_export_endpoint_returns_payload_and_persists(
         identity_value="endpoint",
     )
     response = await client.post(
-        f"/api/devices/{device.id}/diagnostics/export",
+        f"/api/diagnostics/devices/{device.id}/export",
         params={"persist": "true", "redact": "false"},
     )
     assert response.status_code == 200, response.text
@@ -372,9 +372,9 @@ async def test_export_endpoint_rate_limits_within_window(
         name="ratelimit-device",
         identity_value="rate",
     )
-    first = await client.post(f"/api/devices/{device.id}/diagnostics/export")
+    first = await client.post(f"/api/diagnostics/devices/{device.id}/export")
     assert first.status_code == 200
-    second = await client.post(f"/api/devices/{device.id}/diagnostics/export")
+    second = await client.post(f"/api/diagnostics/devices/{device.id}/export")
     assert second.status_code == 429
     assert "Retry-After" in second.headers
     assert int(second.headers["Retry-After"]) >= 1
@@ -405,13 +405,13 @@ async def test_snapshots_list_paginates_descending(
             )
         )
     await db_session.commit()
-    resp = await client.get(f"/api/devices/{device.id}/diagnostics/snapshots", params={"limit": 2})
+    resp = await client.get(f"/api/diagnostics/devices/{device.id}/snapshots", params={"limit": 2})
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["items"]) == 2
     assert body["next_before"] is not None
     resp2 = await client.get(
-        f"/api/devices/{device.id}/diagnostics/snapshots",
+        f"/api/diagnostics/devices/{device.id}/snapshots",
         params={"limit": 2, "before": body["next_before"]},
     )
     assert resp2.status_code == 200
@@ -437,9 +437,9 @@ async def test_snapshot_detail_redacts_on_read(
     )
     snapshot_id = await _export.capture_snapshot(db_session, device, trigger="operator", reason=None)
     await db_session.commit()
-    plain = await client.get(f"/api/devices/{device.id}/diagnostics/snapshots/{snapshot_id}")
+    plain = await client.get(f"/api/diagnostics/devices/{device.id}/snapshots/{snapshot_id}")
     redacted = await client.get(
-        f"/api/devices/{device.id}/diagnostics/snapshots/{snapshot_id}",
+        f"/api/diagnostics/devices/{device.id}/snapshots/{snapshot_id}",
         params={"redact": "true"},
     )
     assert plain.status_code == 200

@@ -33,7 +33,7 @@ class DiagnosticSnapshotDetail(BaseModel):
 
 
 class DiagnosticExportResponse(BaseModel):
-    """Response from POST /devices/{id}/diagnostics/export."""
+    """Response from POST /api/diagnostics/devices/{id}/export."""
 
     payload: dict[str, Any]
     snapshot_id: uuid.UUID | None = None

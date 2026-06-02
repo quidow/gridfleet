@@ -23,7 +23,7 @@ from app.diagnostics.schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 _RATE_LIMIT_WINDOW = timedelta(seconds=5)
 _RATE_LIMIT_NAMESPACE = "diagnostics_export_throttle"
@@ -90,7 +90,7 @@ async def _enforce_rate_limit(db: AsyncSession, device_id: uuid.UUID) -> None:
 
 
 @router.post(
-    "/{device_id}/diagnostics/export",
+    "/devices/{device_id}/export",
     response_model=DiagnosticExportResponse,
 )
 async def export_device_diagnostics(
@@ -123,7 +123,7 @@ async def export_device_diagnostics(
 
 
 @router.get(
-    "/{device_id}/diagnostics/snapshots",
+    "/devices/{device_id}/snapshots",
     response_model=DiagnosticSnapshotListResponse,
 )
 async def list_device_diagnostic_snapshots(
@@ -146,7 +146,7 @@ async def list_device_diagnostic_snapshots(
 
 
 @router.get(
-    "/{device_id}/diagnostics/snapshots/{snapshot_id}",
+    "/devices/{device_id}/snapshots/{snapshot_id}",
     response_model=DiagnosticSnapshotDetail,
 )
 async def get_device_diagnostic_snapshot(
