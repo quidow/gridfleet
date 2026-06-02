@@ -100,11 +100,12 @@ async def test_recovery_probe_treats_unexpected_exception_as_failed(monkeypatch:
     """An unexpected probe error must not propagate out of ``_run_recovery_probe``.
 
     The gate ``ValueError`` is gone (verifying is admitted), but other errors — a
-    transient "already in progress" race, a concurrent state change, an unexpected
-    bug — could still escape and crash the whole ``device_recovery`` job, leaving the
-    device stranded in ``verifying`` until the lease's ``expires_at`` fires. Fold the
-    error into a failed result so the retry loop re-probes and the caller's failure
-    terminal applies backoff instead.
+    concurrent state change, an unexpected bug — could still escape and crash the whole
+    ``device_recovery`` job, leaving the device stranded in ``verifying`` until the
+    lease's ``expires_at`` fires. Fold the error into a failed result so the retry loop
+    re-probes and the caller's failure terminal applies backoff instead. (The
+    ``already in progress`` collision is the one exception: it is handled separately as a
+    *skip*, not a failure — see ``SessionViabilityProbeInProgressError``.)
     """
     from app.lifecycle.services import policy as lifecycle_policy
 
