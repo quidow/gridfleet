@@ -127,8 +127,20 @@ async def _reconcile_all_devices_once(
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
 ) -> None:
-    rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
-    for device_id in rows:
+    intent_device_ids = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
+    # The reconciler is authoritative for operational_state, but a device with no
+    # intents would otherwise be invisible to this scan — so a state pushed without
+    # its backing intent (e.g. a bare `verifying`/`offline` push stranded by a crash
+    # before the lease was registered; spec §14.5: every state must be backed by a
+    # durable fact) could stick forever. Also re-derive any device not in the steady
+    # `available` state so orphaned non-available states always self-heal. Steady
+    # `available` devices with no intents stay skipped (the original optimization).
+    orphan_device_ids = (
+        (await db.execute(select(Device.id).where(Device.operational_state != DeviceOperationalState.available)))
+        .scalars()
+        .all()
+    )
+    for device_id in dict.fromkeys([*intent_device_ids, *orphan_device_ids]):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)

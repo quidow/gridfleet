@@ -11,7 +11,7 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
 from app.core.leader.advisory import LeadershipLost
-from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceReservation
+from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
@@ -535,6 +535,42 @@ async def test_full_scan_reconciles_each_intent_device(
 
     assert set(reconciled) == {first.id, second.id}
     assert deliver.await_count == 2
+
+
+async def test_full_scan_recovers_non_available_device_without_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device stranded in a non-``available`` state with NO backing intent — the
+    state a worker crash can leave between the bare ``verifying`` push and lease
+    registration (spec §14.5: every state must be backed by a durable fact). The
+    authoritative full scan must re-derive it even though it has no DeviceIntent
+    rows, while a steady-state ``available`` device with no intents stays skipped.
+    """
+    orphan = await create_device(db_session, host_id=db_host.id, name="orphan-verifying")
+    idle = await create_device(db_session, host_id=db_host.id, name="idle-available")
+    with state_write_guard.bypass():
+        orphan.operational_state = DeviceOperationalState.verifying
+        idle.operational_state = DeviceOperationalState.available
+    await db_session.commit()
+    # Neither device has any intents — the pre-fix scan would skip both.
+    assert not (await db_session.execute(select(DeviceIntent))).first()
+
+    reconciled: list[object] = []
+
+    async def fake_reconcile(_db: AsyncSession, device_id: object, *, publisher: object = None) -> None:
+        reconciled.append(device_id)
+
+    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())
+
+    await _reconcile_all_devices_once(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+
+    assert orphan.id in reconciled  # re-derived despite having no intents
+    assert idle.id not in reconciled  # steady-state available is still skipped
 
 
 async def test_reconciler_cycle_checks_leadership_before_writes(
