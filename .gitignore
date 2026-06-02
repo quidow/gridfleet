@@ -55,3 +55,6 @@ docs/superpowers/
 .claude/
 .repowise/
 .mcp.json
+
+# Local-only device-state live test harness (not committed)
+scripts/state-testing/
