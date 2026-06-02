@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceIntentDirty
 from app.devices.services.intent_reconciler import reconcile_device
 
@@ -149,6 +150,11 @@ class IntentService:
         and emits the bus event but records no audit row (it must not guess the cause).
         """
         await self._db.flush()
+        # Lock the Device row before touching DeviceIntent/DeviceIntentDirty so this
+        # inline path acquires locks in the same order as the background dirty-scan
+        # reconciler (Device -> dirty). The reverse order deadlocks under concurrent
+        # reconcile of the same device (see test_concurrency_intent_reconcile_dirty_deadlock).
+        await device_locking.lock_device(self._db, device_id)
         await self.mark_dirty(device_id, reason=reason)
         await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
 
@@ -160,6 +166,8 @@ class IntentService:
         reason: str,
         publisher: EventPublisher,
     ) -> None:
+        # Lock Device before the intent/dirty upserts — see mark_dirty_and_reconcile.
+        await device_locking.lock_device(self._db, device_id)
         await self.register_intents(device_id=device_id, intents=intents, reason=reason)
         await reconcile_device(self._db, device_id, publisher=publisher)
 
@@ -171,5 +179,7 @@ class IntentService:
         reason: str,
         publisher: EventPublisher,
     ) -> None:
+        # Lock Device before the intent/dirty deletes — see mark_dirty_and_reconcile.
+        await device_locking.lock_device(self._db, device_id)
         await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
         await reconcile_device(self._db, device_id, publisher=publisher)
