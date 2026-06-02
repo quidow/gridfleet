@@ -14,14 +14,14 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services import lifecycle_policy as lifecycle_policy_module
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.review import clear_review_required, mark_review_required
+from app.lifecycle.services import policy as lifecycle_policy_module
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run

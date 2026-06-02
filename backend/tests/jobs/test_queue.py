@@ -11,12 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
 from app.jobs.protocols import DurableJobProtocol
 from app.jobs.queue import DurableJobService
+from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.verification.services.execution import VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService

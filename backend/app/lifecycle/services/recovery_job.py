@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.policy import LifecyclePolicyService
 
 logger = get_logger(__name__)
 

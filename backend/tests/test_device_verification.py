@@ -19,12 +19,12 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
-from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.packs.models import DriverPack
 from app.sessions.service_viability import SessionViabilityService, get_session_viability
 from app.verification.services.execution import VerificationExecutionService, _health_failure_detail

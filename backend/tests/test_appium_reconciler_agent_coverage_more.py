@@ -16,8 +16,8 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.hosts.models import Host, OSType
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.packs.services.start_shim import PackStartPayloadError
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record

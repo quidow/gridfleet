@@ -6,12 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
-from app.devices.services import lifecycle_incidents as incidents
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.presenter import DevicePresenterService
 from app.hosts.models import Host
 from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
+from app.lifecycle.services import incidents
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.packs.services import discovery as discovery
 from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader

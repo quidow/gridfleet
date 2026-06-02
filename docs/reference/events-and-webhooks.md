@@ -93,7 +93,7 @@ The manager publishes one shared event object shape:
 
 Per-device crash signal. Fires whenever a `DeviceEvent` row of type `node_crash` is persisted. Distinct from `node.crash` (per-Appium-process): `device.crashed` is the device-granularity counterpart and aligns semantically with `device.operational_state_changed` and `device.health_changed`.
 
-**Sources:** `lifecycle_policy_actions.handle_node_crash`, `heartbeat._ingest_appium_restart_events`, and `node_health._process_node_health`.
+**Sources:** `lifecycle.services.actions.handle_node_crash`, `heartbeat._ingest_appium_restart_events`, and `node_health._process_node_health`.
 
 | Field | Type | Notes |
 | --- | --- | --- |

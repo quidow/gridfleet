@@ -14,7 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -152,8 +152,8 @@ def test_operator_restart_intent_sets_expires_at_and_preserves_precondition(
     """operator_restart_intent must set expires_at = now + window_sec, embed the
     same deadline in the payload, and preserve the PR #301 node_running precondition.
     """
-    from app.devices.services import operator_node_lifecycle as mod
-    from app.devices.services.operator_node_lifecycle import operator_restart_intent
+    from app.lifecycle.services import operator_node as mod
+    from app.lifecycle.services.operator_node import operator_restart_intent
 
     fixed_now = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(mod, "datetime", _FrozenDatetime(fixed_now))

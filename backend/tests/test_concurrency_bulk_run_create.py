@@ -18,9 +18,7 @@ from app.devices.services.data_cleanup import DataCleanupService
 from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
@@ -29,6 +27,8 @@ from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
 from app.grid.service import GridService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.main import app
 from app.runs.dependencies import get_run_services
 from app.runs.service_allocator import RunAllocatorService
@@ -121,7 +121,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 session_factory=sf,
                 circuit_breaker=test_circuit_breaker,
                 health=AsyncMock(),
-                lifecycle_incidents=LifecycleIncidentService(),
             )
 
         app.dependency_overrides[get_db] = override_get_db

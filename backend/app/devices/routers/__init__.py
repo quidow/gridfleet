@@ -9,7 +9,6 @@ __all__ = [
     "diagnostics",
     "groups",
     "helpers",
-    "lifecycle_incidents",
     "test_data",
 ]
 

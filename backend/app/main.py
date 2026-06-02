@@ -56,6 +56,7 @@ from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_hardware_telemetry import HardwareTelemetryLoop
 from app.hosts.service_resource_telemetry import HostResourceTelemetryLoop
+from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
 from app.packs.services.drain import PackDrainLoop
 from app.plugins import router as plugins
@@ -315,9 +316,7 @@ app.include_router(device_routers.groups.router, dependencies=[Depends(auth_depe
 app.include_router(runs_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(plugins.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(analytics.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
-app.include_router(
-    device_routers.lifecycle_incidents.router, dependencies=[Depends(auth_dependencies.require_any_auth)]
-)
+app.include_router(lifecycle_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(settings.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.export.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(pack_routers.catalog.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

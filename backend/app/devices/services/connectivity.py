@@ -34,8 +34,7 @@ if TYPE_CHECKING:
 
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
-    from app.devices.protocols import DeviceHealthProtocol
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
+    from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
 
@@ -296,7 +295,7 @@ class ConnectivityService:
         publisher: EventPublisher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
-        lifecycle_policy: LifecyclePolicyService,
+        lifecycle_policy: HealthFailureHandler,
         health: DeviceHealthProtocol,
     ) -> None:
         self._publisher = publisher

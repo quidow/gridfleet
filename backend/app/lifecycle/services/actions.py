@@ -38,8 +38,8 @@ if TYPE_CHECKING:
 
     from app.devices.models import Device, DeviceReservation
     from app.devices.protocols import RunReservationWriter
-    from app.devices.services.lifecycle_incidents import LifecycleIncidentService
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.incidents import LifecycleIncidentService
     from app.runs.models import TestRun
 
 

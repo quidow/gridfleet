@@ -11,9 +11,9 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services import state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
 from app.devices.services.maintenance import MaintenanceService
 from app.grid.service import GridService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
 from app.runs.service_allocator import RunAllocatorService

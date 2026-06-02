@@ -2,8 +2,8 @@
 ``lifecycle_policy_state.write_state``.
 
 Bug history: lifecycle JSON ownership was fragmented when call sites outside
-``lifecycle_policy`` / ``lifecycle_policy_actions`` performed their own
-``write_state(...)`` calls. Engineers reading older docs assumed
+``app.lifecycle.services.policy`` / ``app.lifecycle.services.actions`` performed
+their own ``write_state(...)`` calls. Engineers reading older docs assumed
 ``record_control_action`` was the only writer and patched a new direct write
 elsewhere, defeating ownership boundaries. This guard makes the rule
 mechanical so additions outside the allowlist fail in CI.
@@ -16,12 +16,9 @@ from pathlib import Path
 
 BACKEND_APP = Path(__file__).resolve().parents[1] / "app"
 ALLOWLIST = {
-    BACKEND_APP / "devices" / "services" / "lifecycle_policy.py",
-    BACKEND_APP / "devices" / "services" / "lifecycle_policy_actions.py",
+    BACKEND_APP / "lifecycle" / "services" / "policy.py",
+    BACKEND_APP / "lifecycle" / "services" / "actions.py",
     BACKEND_APP / "devices" / "services" / "lifecycle_policy_state.py",
-    BACKEND_APP / "services" / "lifecycle_policy.py",
-    BACKEND_APP / "services" / "lifecycle_policy_actions.py",
-    BACKEND_APP / "services" / "lifecycle_policy_state.py",
 }
 # `_IMPORT_RE` matches single-line `from ... import ... write_state ...`
 # forms only; multi-line parenthesized imports are caught transitively via
@@ -58,9 +55,9 @@ def test_only_lifecycle_modules_use_write_state() -> None:
     formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
     assert not findings, (
         "`lifecycle_policy_state.write_state` may only be imported or called from "
-        "`app.devices.services.lifecycle_policy`, `app.devices.services.lifecycle_policy_actions`, or "
+        "`app.lifecycle.services.policy`, `app.lifecycle.services.actions`, or "
         "`app.devices.services.lifecycle_policy_state`. Move the new write behind a public "
-        "helper in `lifecycle_policy` / `lifecycle_policy_actions` and call that "
-        "instead:\n"
+        "helper in `app.lifecycle.services.policy` / `app.lifecycle.services.actions` and call "
+        "that instead:\n"
         f"{formatted}"
     )

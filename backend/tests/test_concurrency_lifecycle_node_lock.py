@@ -7,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import lifecycle_policy_actions, state_write_guard
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+from app.devices.services import state_write_guard
 from app.hosts.models import Host
+from app.lifecycle.services import actions as lifecycle_policy_actions
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
 from tests.helpers import create_device
 
@@ -57,7 +58,7 @@ async def test_handle_node_crash_locks_appium_node(
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
-            with patch("app.devices.services.lifecycle_policy_actions.record_event", racing_record_event):
+            with patch("app.lifecycle.services.actions.record_event", racing_record_event):
                 svc = LifecyclePolicyActionsService(
                     publisher=Mock(), reservation=RunReservationService(), incidents=LifecycleIncidentService()
                 )

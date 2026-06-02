@@ -36,14 +36,9 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
-from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
 from app.devices.services.maintenance import MaintenanceService
-from app.devices.services.operator_node_lifecycle import OperatorNodeLifecycleService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
-from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
@@ -58,6 +53,12 @@ from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.jobs.queue import DurableJobService, DurableJobWorkerLoop
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.lifecycle.services.policy import LifecyclePolicyService
+from app.lifecycle.services.recovery_job import RecoveryJobService
+from app.lifecycle.services_container import LifecycleServices
 from app.packs import packs_settings
 from app.packs.services.discovery import PackDiscoveryService
 from app.packs.services.feature_dispatch import FeatureService
@@ -104,6 +105,7 @@ class AppServices:
     devices: DeviceServices
     verification: VerificationServices
     portability: PortabilityServices
+    lifecycle: LifecycleServices
     hosts: HostServices
     packs: PackServices
     plugins: PluginServices
@@ -283,6 +285,13 @@ def compose_app(
         import_=portability_import_svc,
         inventory=inventory_export_svc,
     )
+    lifecycle_services = LifecycleServices(
+        policy=lifecycle_policy_svc,
+        actions=lifecycle_actions_svc,
+        operator_node=operator_node_lifecycle_svc,
+        incidents=incidents_svc,
+        recovery=recovery_runner_svc,
+    )
 
     return AppServices(
         events=event_services,
@@ -301,7 +310,6 @@ def compose_app(
             capability=device_capability_svc,
             connectivity=connectivity_svc,
             health=device_health_svc,
-            lifecycle_incidents=incidents_svc,
             publisher=bus,
             settings=settings_svc,
             grid=grid_svc,
@@ -310,6 +318,7 @@ def compose_app(
         ),
         verification=verification_services,
         portability=portability_services,
+        lifecycle=lifecycle_services,
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
             hardware_telemetry=HardwareTelemetryService(

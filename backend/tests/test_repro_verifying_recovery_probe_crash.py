@@ -33,7 +33,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.models.intent import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_AUTO_RECOVERY, verification_intent_source
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 from tests.test_session_viability import run_session_viability_probe
@@ -144,8 +144,8 @@ async def test_attempt_auto_recovery_probes_verifying_device(
     """C: a ``verifying`` device with a running node still reaches the full probe —
     the "node already healthy" early-return must not strand it (§14.4a: full
     validation, not a light ping)."""
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     device = await _seed_verifying_device(db_session, db_host.id, identity="repro-verifying-c")

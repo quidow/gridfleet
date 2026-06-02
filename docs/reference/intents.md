@@ -154,10 +154,10 @@ primary mechanism.
 | Source | Trigger to revoke | Revoke owner(s) | Status |
 |--------|-------------------|-----------------|--------|
 | `active_session:{sid}` | Session ends (terminal status / finalize / Grid drop) | `update_session_status` (commit `ea9c8cbc`), `service_sync._sync_sessions`, `mark_session_finished` (commit C1) | Covered. |
-| `connectivity:{device_id}` | Connectivity restored | `attempt_auto_recovery` start-node branch, `attempt_auto_recovery` early-return (commit `23561c4a`), `_crash_intents` connectivity path in `lifecycle_policy_actions` | Covered. |
+| `connectivity:{device_id}` | Connectivity restored | `attempt_auto_recovery` start-node branch, `attempt_auto_recovery` early-return (commit `23561c4a`), `_crash_intents` connectivity path in `lifecycle.services.actions` | Covered. |
 | `health_failure:node:{device_id}` | Recovery succeeds (node restarted) | `attempt_auto_recovery` via `revoke_intents_and_reconcile` | Covered. |
 | `health_failure:recovery:{device_id}` | Recovery succeeds | `attempt_auto_recovery` via `revoke_intents_and_reconcile` | Covered. |
-| `health_failure:reservation:{device_id}` | Device restored to run or reservation released | `restore_run_if_needed` in `lifecycle_policy_actions`, `_release_device_from_run` in `service_lifecycle_release` | Covered. |
+| `health_failure:reservation:{device_id}` | Device restored to run or reservation released | `restore_run_if_needed` in `lifecycle.services.actions`, `_release_device_from_run` in `service_lifecycle_release` | Covered. |
 | `auto_recovery:node:{device_id}` (node_health path) | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |
 | `auto_recovery:recovery:{device_id}` (node_health path) | Node observed running | Same `node_running` precondition shared with sibling intent | Covered via precondition. |
 | `auto_recovery:node:{device_id}` (lifecycle_policy path) | Node observed running | `node_running` precondition (`expected: False`) — reconciler sweep retires intent automatically | Covered via precondition. |

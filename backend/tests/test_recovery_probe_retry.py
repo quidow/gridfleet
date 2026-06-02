@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.devices.services.lifecycle_incidents import LifecycleIncidentService
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 
 def _make_svc(viability: object) -> object:
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
 
     return LifecyclePolicyService(
@@ -35,7 +35,7 @@ def _make_svc(viability: object) -> object:
 
 @pytest.mark.asyncio
 async def test_recovery_probe_stops_on_first_success() -> None:
-    from app.devices.services import lifecycle_policy
+    from app.lifecycle.services import policy as lifecycle_policy
 
     probe_mock = AsyncMock(return_value={"status": "passed"})
     viability = Mock()
@@ -51,7 +51,7 @@ async def test_recovery_probe_stops_on_first_success() -> None:
 
 @pytest.mark.asyncio
 async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.devices.services import lifecycle_policy
+    from app.lifecycle.services import policy as lifecycle_policy
 
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
@@ -70,7 +70,7 @@ async def test_recovery_probe_retries_until_attempts_exhausted(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_recovery_probe_retries_then_passes(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.devices.services import lifecycle_policy
+    from app.lifecycle.services import policy as lifecycle_policy
 
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
@@ -103,7 +103,7 @@ async def test_recovery_probe_treats_unexpected_exception_as_failed(monkeypatch:
     error into a failed result so the retry loop re-probes and the caller's failure
     terminal applies backoff instead.
     """
-    from app.devices.services import lifecycle_policy
+    from app.lifecycle.services import policy as lifecycle_policy
 
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
     monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
@@ -127,7 +127,7 @@ async def test_recovery_probe_uses_viability_service() -> None:
     """The recovery probe must call self._viability.run_session_viability_probe
     without forwarding publisher (which is stored on the service itself).
     The viability service is responsible for using its own publisher."""
-    from app.devices.services import lifecycle_policy
+    from app.lifecycle.services import policy as lifecycle_policy
 
     probe_mock = AsyncMock(return_value={"status": "passed"})
     viability = Mock()
@@ -152,9 +152,9 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
     stored on the service and passed implicitly via the viability service."""
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
     from app.devices.services import state_write_guard
-    from app.devices.services.lifecycle_policy import LifecyclePolicyService
-    from app.devices.services.lifecycle_policy_actions import LifecyclePolicyActionsService
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
     from app.runs.service_reservation import RunReservationService
     from tests.helpers import create_device
 

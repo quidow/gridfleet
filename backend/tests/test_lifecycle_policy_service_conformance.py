@@ -1,4 +1,4 @@
-from app.devices.services.lifecycle_policy import LifecyclePolicyService
+from app.lifecycle.services.policy import LifecyclePolicyService
 
 
 def test_lifecycle_policy_service_has_methods() -> None:

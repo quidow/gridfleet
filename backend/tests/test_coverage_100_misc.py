@@ -51,9 +51,6 @@ from app.devices.services import (
     platform_label as platform_label_service,
 )
 from app.devices.services import (
-    recovery_job as device_recovery_job,
-)
-from app.devices.services import (
     state as device_state,
 )
 from app.devices.services import state_write_guard
@@ -64,11 +61,12 @@ from app.devices.services import (
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService as _DevicePresenterService
-from app.devices.services.recovery_job import RecoveryJobService
 from app.devices.services.service import DeviceCrudService
 from app.events import catalog as event_catalog
 from app.hosts import service_versioning as host_versioning
 from app.jobs.queue import DurableJobService
+from app.lifecycle.services import recovery_job as device_recovery_job
+from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.packs.manifest import AppiumInstallable
 from app.packs.models import PackState
 from app.packs.schemas import RuntimePolicy

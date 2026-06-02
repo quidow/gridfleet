@@ -37,9 +37,6 @@ from app.devices.routers import (
     helpers as device_route_helpers,
 )
 from app.devices.routers import (
-    lifecycle_incidents as lifecycle,
-)
-from app.devices.routers import (
     test_data as devices_test_data,
 )
 from app.devices.schemas.device import (
@@ -53,6 +50,7 @@ from app.devices.services.intent import IntentService
 from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
+from app.lifecycle import router as lifecycle
 from app.packs.routers import (
     agent_state as agent_driver_packs,
 )
@@ -259,11 +257,9 @@ async def test_analytics_router_non_csv_and_capacity_defaults() -> None:
 async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
     db = object()
     list_incidents = AsyncMock(return_value=([], "next", "prev"))
-    device_services = SimpleNamespace(
-        lifecycle_incidents=SimpleNamespace(list_lifecycle_incidents_paginated=list_incidents)
-    )
+    lifecycle_services = SimpleNamespace(incidents=SimpleNamespace(list_lifecycle_incidents_paginated=list_incidents))
     response = await lifecycle.get_lifecycle_incidents(
-        limit=5, device_id=None, cursor=None, direction="newer", db=db, device_services=device_services
+        limit=5, device_id=None, cursor=None, direction="newer", db=db, lifecycle_services=lifecycle_services
     )
 
     assert response["items"] == []

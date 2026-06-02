@@ -4,8 +4,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from app.devices.services import recovery_job as device_recovery_job
 from app.jobs.statuses import JOB_STATUS_FAILED
+from app.lifecycle.services import recovery_job as device_recovery_job
 from tests.fakes import FakeSettingsReader
 
 
@@ -49,7 +49,10 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
     row = _job_row()
     session = RecoverySession(row)
 
-    with patch("app.devices.services.recovery_job.device_locking.lock_device", new=AsyncMock(side_effect=RuntimeError)):
+    with patch(
+        "app.lifecycle.services.recovery_job.device_locking.lock_device",
+        new=AsyncMock(side_effect=RuntimeError),
+    ):
         await device_recovery_job.RecoveryJobService(
             session_factory=RecoverySessionFactory(session),  # type: ignore[arg-type]
             publisher=Mock(),
@@ -78,7 +81,7 @@ async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:
     mock_lifecycle_policy = AsyncMock()
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(side_effect=RuntimeError("boom"))
 
-    with patch("app.devices.services.recovery_job.device_locking.lock_device", new=AsyncMock(return_value=object())):
+    with patch("app.lifecycle.services.recovery_job.device_locking.lock_device", new=AsyncMock(return_value=object())):
         await device_recovery_job.RecoveryJobService(
             session_factory=RecoverySessionFactory(first_session, failure_session),  # type: ignore[arg-type]
             publisher=Mock(),
