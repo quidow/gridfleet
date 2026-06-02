@@ -46,6 +46,41 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     assert any(r.event_type is DeviceEventType.maintenance_entered for r in rows)
 
 
+async def test_enter_maintenance_bus_event_reason_is_maintenance_entered(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """F4: the device.operational_state_changed bus event for a maintenance entry must carry a
+    ``maintenance_entered`` reason — not the stop-intent's ``auto_stopped`` (or a not-ready
+    ``disconnected``). The live SSE/webhook signal must agree with the durable
+    ``maintenance_entered`` audit row, otherwise real-time consumers see a node-stop where an
+    operator entered maintenance."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-bus-reason",
+        operational_state=DeviceOperationalState.available,
+    )
+    await db_session.commit()
+
+    publisher = AsyncMock(spec=EventPublisher)
+    locked = await device_locking.lock_device(db_session, device.id)
+    await MaintenanceService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=publisher
+    ).enter_maintenance(db_session, locked)
+    await settle_after_commit_tasks()
+
+    op_calls = [
+        call
+        for call in publisher.queue_for_session.call_args_list
+        if call.args[1] == "device.operational_state_changed"
+    ]
+    assert op_calls, "expected a device.operational_state_changed bus event for maintenance entry"
+    payload = op_calls[-1].args[2]
+    assert payload["new_operational_state"] == DeviceOperationalState.maintenance.value
+    assert payload.get("reason") == "maintenance_entered", payload
+
+
 async def test_enter_maintenance_rejects_reserved_device_by_default(
     db_session: AsyncSession,
     db_host: Host,

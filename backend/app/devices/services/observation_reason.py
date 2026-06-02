@@ -14,6 +14,7 @@ class ObservationReason(StrEnum):
     auto_stopped = "auto_stopped"
     node_crashed = "node_crashed"
     recovered = "recovered"
+    maintenance_entered = "maintenance_entered"
     verification_started = "verification_started"
     # verification_passed is intentionally absent: no DeviceEventType for verifying→available yet;
     # add when the event type is defined.
