@@ -310,7 +310,6 @@ class AppiumProcessManager:
         self._appium_restart_attempts: dict[int, collections.deque[float]] = {}
         self._appium_restart_backoff_steps: dict[int, int] = {}
         self._stop_pending_ports: set[int] = set()
-        self._stop_pending_tasks: dict[int, asyncio.Task[None]] = {}
         self._recent_restart_events: collections.deque[AppiumRestartEvent] = collections.deque(
             maxlen=MAX_RESTART_EVENTS
         )
@@ -564,9 +563,8 @@ class AppiumProcessManager:
             if port in self._stop_pending_ports:
                 # Operator queued a stop_pending lifecycle during the
                 # backoff window; honor it instead of resurrecting the
-                # process. The pending stop is already tracked via
-                # `_stop_pending_tasks` (or will be re-armed on the next
-                # explicit start).
+                # process. The actual stop is owned by the backend's appium
+                # reconciler via AppiumNode.desired_state.
                 return
             if port not in self._launch_specs:
                 return
@@ -1077,23 +1075,6 @@ class AppiumProcessManager:
             self._stop_pending_ports.add(port)
             return
         self._stop_pending_ports.discard(port)
-        self._cancel_task(self._stop_pending_tasks, port)
-
-    def _ensure_stop_when_grid_idle_task(self, port: int) -> None:
-        existing = self._stop_pending_tasks.get(port)
-        if existing is not None and not existing.done():
-            return
-        task = asyncio.create_task(self._stop_when_grid_idle(port))
-        self._register_port_task(self._stop_pending_tasks, port, task)
-
-    async def _stop_when_grid_idle(self, port: int) -> None:
-        while port in self._stop_pending_ports:
-            handle = self._grid_supervisors.get(port)
-            service = handle.service if handle is not None else None
-            if service is None or not service.has_active_session():
-                await self.stop(port)
-                return
-            await asyncio.sleep(1)
 
     async def _cleanup_started_appium_after_grid_node_failure(
         self, port: int, appium_proc: asyncio.subprocess.Process
@@ -1108,7 +1089,6 @@ class AppiumProcessManager:
         self._appium_restart_attempts.pop(port, None)
         self._appium_restart_backoff_steps.pop(port, None)
         self._stop_pending_ports.discard(port)
-        self._cancel_task(self._stop_pending_tasks, port)
         if appium_proc.returncode is None:
             appium_proc.send_signal(signal.SIGTERM)
             try:
@@ -1157,10 +1137,6 @@ class AppiumProcessManager:
             self._intentional_stop_ports.add(port)
             self._cancel_task(self._appium_restart_tasks, port)
             self._cancel_task(self._appium_watch_tasks, port)
-            current = asyncio.current_task()
-            stop_pending_task = self._stop_pending_tasks.get(port)
-            if stop_pending_task is not None and stop_pending_task is not current:
-                self._cancel_task(self._stop_pending_tasks, port)
 
             # Stop Grid Node first. A grid-node failure must not leak the
             # Appium process; suppress and log so we always reach the Appium
@@ -1192,11 +1168,6 @@ class AppiumProcessManager:
             for t in self._log_tasks.pop(port, []):
                 t.cancel()
             self._intentional_stop_ports.discard(port)
-
-    def require_managed_running_port(self, port: int) -> None:
-        proc = self._appium_procs.get(port)
-        if proc is None or proc.returncode is not None:
-            raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
     async def status(self, port: int) -> dict[str, Any]:
         proc = self._appium_procs.get(port)
@@ -1249,7 +1220,7 @@ class AppiumProcessManager:
         for port in ports:
             with contextlib.suppress(Exception):
                 await self.stop(port)
-        for task_map in (self._appium_restart_tasks, self._appium_watch_tasks, self._stop_pending_tasks):
+        for task_map in (self._appium_restart_tasks, self._appium_watch_tasks):
             for task in task_map.values():
                 task.cancel()
             task_map.clear()
