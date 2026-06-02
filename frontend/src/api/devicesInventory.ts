@@ -22,7 +22,7 @@ export async function downloadInventory(query: InventoryQuery): Promise<void> {
       params.set(key, value);
     }
   }
-  const response = await api.get(`/devices/inventory?${params.toString()}`, {
+  const response = await api.get(`/portability/inventory?${params.toString()}`, {
     responseType: "blob",
   });
   const blob = response.data as Blob;

@@ -8,7 +8,7 @@ test.describe('Device inventory export modal', () => {
 
   test('modal downloads csv with format query param', async ({ page }) => {
     let capturedUrl = '';
-    await page.route('**/api/devices/inventory**', async (route) => {
+    await page.route('**/api/portability/inventory**', async (route) => {
       capturedUrl = route.request().url();
       await route.fulfill({
         status: 200,
