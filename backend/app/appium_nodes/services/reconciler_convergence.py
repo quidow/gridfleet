@@ -201,6 +201,21 @@ async def reap_orphan_nodes(
     return orphans
 
 
+def match_observed_entry(row: DesiredRow, observed_by_target: dict[str, ObservedEntry]) -> ObservedEntry | None:
+    """Return the agent-reported node for ``row``, if any.
+
+    A running node may report either the device's registered connection_target
+    (real devices) or a live target resolved at start time (virtual emulators
+    report their ADB serial, not the AVD name). Prefer the row's recorded live
+    target, then fall back to the registered one.
+    """
+    if row.active_connection_target is not None:
+        entry = observed_by_target.get(row.active_connection_target)
+        if entry is not None:
+            return entry
+    return observed_by_target.get(row.connection_target)
+
+
 def rows_needing_stale_clear(
     rows: list[DesiredRow], observed: list[ObservedEntry], *, now: datetime
 ) -> list[DesiredRow]:
@@ -216,7 +231,7 @@ def rows_needing_stale_clear(
     return [
         row
         for row in rows
-        if decide_convergence_action(row, observed=observed_by_target.get(row.connection_target), now=now).kind
+        if decide_convergence_action(row, observed=match_observed_entry(row, observed_by_target), now=now).kind
         == "db_clear_stale_running"
     ]
 

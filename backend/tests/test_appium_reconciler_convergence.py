@@ -15,6 +15,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     ObservedEntry,
     _execute_action,
     decide_convergence_action,
+    match_observed_entry,
 )
 
 
@@ -34,7 +35,7 @@ async def converge_host_rows(
     """Test-local re-implementation of the deleted free function, using the same logic."""
     observed_by_target = {entry.connection_target: entry for entry in agent_running}
     for row in sorted(rows, key=lambda r: str(r.device_id)):
-        obs = observed_by_target.get(row.connection_target)
+        obs = match_observed_entry(row, observed_by_target)
         action = decide_convergence_action(row, observed=obs, now=now)
         try:
             await _execute_action(
@@ -323,6 +324,40 @@ def test_rows_needing_stale_clear_skips_when_node_observed_running() -> None:
     now = datetime.now(UTC)
     row = _row(connection_target="dev-A", desired_state="stopped", pid=999, active_connection_target="dev-A")
     observed = [ObservedEntry(port=4723, pid=999, connection_target="dev-A")]
+    assert rows_needing_stale_clear([row], observed, now=now) == []
+
+
+def test_match_observed_entry_prefers_active_target_then_registered() -> None:
+    """A row's node may be reported under its live target (virtual emulators
+    report their ADB serial, not the registered AVD name) — match by the row's
+    ``active_connection_target`` first, then the registered target."""
+    by_serial = ObservedEntry(port=4724, pid=1, connection_target="emulator-5554")
+    by_registered = ObservedEntry(port=4725, pid=2, connection_target="Television_1080p")
+
+    emulator = _row(connection_target="Television_1080p", active_connection_target="emulator-5554")
+    assert match_observed_entry(emulator, {"emulator-5554": by_serial}) is by_serial
+    # Stale active target: fall back to the registered target.
+    assert match_observed_entry(emulator, {"Television_1080p": by_registered}) is by_registered
+    assert match_observed_entry(emulator, {}) is None
+
+    real = _row(connection_target="192.168.1.254:5555", active_connection_target=None)
+    entry = ObservedEntry(port=4723, pid=3, connection_target="192.168.1.254:5555")
+    assert match_observed_entry(real, {"192.168.1.254:5555": entry}) is entry
+
+
+def test_rows_needing_stale_clear_matches_node_by_active_connection_target() -> None:
+    """A live emulator node reported under its ADB serial is not a stale pid —
+    clearing it would desync the DB row from a node that is actually running."""
+    from app.appium_nodes.services.reconciler_convergence import rows_needing_stale_clear
+
+    now = datetime.now(UTC)
+    row = _row(
+        connection_target="Television_1080p",
+        desired_state="stopped",
+        pid=999,
+        active_connection_target="emulator-5554",
+    )
+    observed = [ObservedEntry(port=4724, pid=999, connection_target="emulator-5554")]
     assert rows_needing_stale_clear([row], observed, now=now) == []
 
 
