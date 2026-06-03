@@ -52,7 +52,10 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.readiness import is_ready_for_use_async
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
-from app.sessions.service_viability import SessionViabilityProbeInProgressError
+from app.sessions.service_viability import (
+    SessionViabilityProbeInProgressError,
+    SessionViabilityProbeNotPermittedError,
+)
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
@@ -581,6 +584,20 @@ class LifecyclePolicyService:
                         # retry here (the lock will not free within the short retry window).
                         logger.info(
                             "Recovery viability probe for device %s skipped — another viability probe is in progress",
+                            device.id,
+                        )
+                        return {"status": "skipped"}
+                    except SessionViabilityProbeNotPermittedError:
+                        # The device left a probeable state (e.g. it was allocated and went
+                        # ``busy``, or an operator parked it in ``maintenance``) between the
+                        # recovery decision and the probe. That is a gating rejection, not a
+                        # health signal — counting it as a failed attempt would feed
+                        # backoff/review and could shelve a healthy device. Skip and let the
+                        # lifecycle loop retry on its next cycle (mirrors the in-progress
+                        # collision above); do NOT retry here (the state will not flip back
+                        # within the short retry window).
+                        logger.info(
+                            "Recovery viability probe for device %s skipped — device state no longer permits a probe",
                             device.id,
                         )
                         return {"status": "skipped"}

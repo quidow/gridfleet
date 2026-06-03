@@ -127,6 +127,34 @@ async def test_recovery_probe_treats_unexpected_exception_as_failed(monkeypatch:
 
 
 @pytest.mark.asyncio
+async def test_recovery_probe_treats_not_permitted_as_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gate rejection (``SessionViabilityProbeNotPermittedError``) must be a *skip*, not a
+    failure. A device that goes ``offline`` while reserved to an active run keeps its
+    reservation row; the recovery probe now admits it, but if the device has meanwhile left
+    a probeable state the gate rejects it. Folding that into a failed attempt would feed
+    backoff/review and shelve a healthy device — exactly the dead-lock this fixes. Mirrors
+    the ``already in progress`` collision: skip and let the lifecycle loop retry later."""
+    from app.lifecycle.services import policy as lifecycle_policy
+    from app.sessions.service_viability import SessionViabilityProbeNotPermittedError
+
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(lifecycle_policy, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
+
+    probe_mock = AsyncMock(side_effect=SessionViabilityProbeNotPermittedError("device not probeable"))
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    svc = _make_svc(viability)
+
+    with patch.object(lifecycle_policy, "_reload_device", AsyncMock(side_effect=lambda db, dev: dev)):
+        result = await svc._run_recovery_probe(SimpleNamespace(), SimpleNamespace(id="dev-1"))
+
+    assert result == {"status": "skipped"}
+    # No retry — a gate rejection will not clear within the short retry window (like the
+    # in-progress collision), so the loop exits immediately and the policy loop retries later.
+    assert probe_mock.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_recovery_probe_uses_viability_service() -> None:
     """The recovery probe must call self._viability.run_session_viability_probe
     without forwarding publisher (which is stored on the service itself).
