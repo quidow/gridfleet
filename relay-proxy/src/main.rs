@@ -35,7 +35,9 @@ fn parse_upstream(value: &str) -> Result<(String, u16), String> {
     if host.is_empty() {
         return Err(format!("missing host in upstream {value}"));
     }
-    let port: u16 = port.parse().map_err(|_| format!("invalid port in upstream {value}"))?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| format!("invalid port in upstream {value}"))?;
     Ok((host.to_string(), port))
 }
 
@@ -49,6 +51,12 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(2)
     });
+    // rustls 0.23 requires an installed process-default crypto provider;
+    // pingora's rustls feature does not install one.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls crypto provider");
+
     let mut server = pingora::server::Server::new(None).unwrap();
     server.bootstrap();
     let relay = proxy::RelayProxy::new(
@@ -68,8 +76,14 @@ mod tests {
 
     #[test]
     fn parses_http_host_port() {
-        assert_eq!(parse_upstream("http://127.0.0.1:4723"), Ok(("127.0.0.1".to_string(), 4723)));
-        assert_eq!(parse_upstream("http://127.0.0.1:4723/"), Ok(("127.0.0.1".to_string(), 4723)));
+        assert_eq!(
+            parse_upstream("http://127.0.0.1:4723"),
+            Ok(("127.0.0.1".to_string(), 4723))
+        );
+        assert_eq!(
+            parse_upstream("http://127.0.0.1:4723/"),
+            Ok(("127.0.0.1".to_string(), 4723))
+        );
     }
 
     #[test]

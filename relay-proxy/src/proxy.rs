@@ -38,7 +38,9 @@ impl RelayProxy {
         let mut header = ResponseHeader::build(status, None)?;
         header.insert_header("Content-Type", "application/json")?;
         header.insert_header("Content-Length", body.len().to_string())?;
-        session.write_response_header(Box::new(header), false).await?;
+        session
+            .write_response_header(Box::new(header), false)
+            .await?;
         session
             .write_response_body(Some(body.into_bytes().into()), true)
             .await?;
@@ -51,8 +53,14 @@ impl RelayProxy {
     /// a remote host cannot legitimately present the listener's ip as its
     /// TCP source address).
     fn admin_allowed(session: &Session) -> bool {
-        let client_ip = session.client_addr().and_then(|a| a.as_inet()).map(|i| i.ip());
-        let server_ip = session.server_addr().and_then(|a| a.as_inet()).map(|i| i.ip());
+        let client_ip = session
+            .client_addr()
+            .and_then(|a| a.as_inet())
+            .map(|i| i.ip());
+        let server_ip = session
+            .server_addr()
+            .and_then(|a| a.as_inet())
+            .map(|i| i.ip());
         match (client_ip, server_ip) {
             (Some(c), _) if c.is_loopback() => true,
             (Some(c), Some(s)) => c == s,
@@ -75,7 +83,9 @@ impl ProxyHttp for RelayProxy {
             RouteClass::Admin => {
                 if !Self::admin_allowed(session) {
                     let header = ResponseHeader::build(403, None)?;
-                    session.write_response_header(Box::new(header), true).await?;
+                    session
+                        .write_response_header(Box::new(header), true)
+                        .await?;
                     return Ok(true);
                 }
                 let body = if path.ends_with("/healthz") {
@@ -101,8 +111,16 @@ impl ProxyHttp for RelayProxy {
         }
     }
 
-    async fn upstream_peer(&self, _session: &mut Session, ctx: &mut RequestCtx) -> Result<Box<HttpPeer>> {
-        let (host, port) = if ctx.fast_lane { &self.appium } else { &self.control };
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        ctx: &mut RequestCtx,
+    ) -> Result<Box<HttpPeer>> {
+        let (host, port) = if ctx.fast_lane {
+            &self.appium
+        } else {
+            &self.control
+        };
         let mut peer = Box::new(HttpPeer::new((host.as_str(), *port), false, String::new()));
         peer.options.connection_timeout = Some(self.proxy_timeout);
         peer.options.read_timeout = Some(self.proxy_timeout);

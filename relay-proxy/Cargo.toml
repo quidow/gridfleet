@@ -9,6 +9,7 @@ license = "Apache-2.0"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 pingora = { version = "0.8", default-features = false, features = ["proxy", "rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde_json = "1"
 
 [dev-dependencies]

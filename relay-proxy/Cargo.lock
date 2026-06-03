@@ -886,6 +886,7 @@ dependencies = [
  "async-trait",
  "clap",
  "pingora",
+ "rustls",
  "serde_json",
  "ureq",
 ]

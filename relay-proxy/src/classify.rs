@@ -47,7 +47,10 @@ mod tests {
 
     #[test]
     fn command_below_session_id_is_fast_lane() {
-        assert_eq!(classify("/session/abc/element"), RouteClass::FastLane { session_id: "abc" });
+        assert_eq!(
+            classify("/session/abc/element"),
+            RouteClass::FastLane { session_id: "abc" }
+        );
         assert_eq!(
             classify("/session/abc/element/0/click"),
             RouteClass::FastLane { session_id: "abc" }
