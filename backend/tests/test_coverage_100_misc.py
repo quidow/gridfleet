@@ -603,9 +603,9 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
 
     class DummyClient:
         async def get_pack_devices(
-            self, _host: str, _port: int, *, settings: object, circuit_breaker: object
+            self, _host: str, _port: int, *, settings: object, circuit_breaker: object, pool: object = None
         ) -> dict[str, object]:
-            del settings, circuit_breaker
+            del settings, circuit_breaker, pool
             return {"devices": []}
 
     discovery_db = AsyncMock()

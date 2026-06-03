@@ -689,8 +689,10 @@ async def test_connectivity_maintenance_disconnect_skipped_silently(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
-        del settings, circuit_breaker
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -726,8 +728,10 @@ async def test_connectivity_marks_busy_device_offline(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
-        del settings, circuit_breaker
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -765,8 +769,10 @@ async def test_connectivity_reserved_device_takes_warning_path_not_idle(
     await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
-        del settings, circuit_breaker
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -836,8 +842,10 @@ async def test_connectivity_does_not_record_event_for_maintenance_blip(
     )
     await db_session.commit()
 
-    async def fake_get_agent_devices(_host: Host, *, settings: object, circuit_breaker: object) -> set[str]:
-        del settings, circuit_breaker
+    async def fake_get_agent_devices(
+        _host: Host, *, settings: object, circuit_breaker: object, pool: object = None
+    ) -> set[str]:
+        del settings, circuit_breaker, pool
         return set()
 
     monkeypatch.setattr(device_connectivity, "_get_agent_devices", fake_get_agent_devices)
@@ -907,8 +915,8 @@ def _stub_get_health_sequence(monkeypatch: pytest.MonkeyPatch, payloads: list[ob
 
 
 def _stub_agent_devices(monkeypatch: pytest.MonkeyPatch, aliases: set[str]) -> None:
-    async def _f(host: object, *, settings: object, circuit_breaker: object) -> set[str]:
-        del settings, circuit_breaker
+    async def _f(host: object, *, settings: object, circuit_breaker: object, pool: object = None) -> set[str]:
+        del settings, circuit_breaker, pool
         return aliases
 
     monkeypatch.setattr("app.devices.services.connectivity._get_agent_devices", _f)

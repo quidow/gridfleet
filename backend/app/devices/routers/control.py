@@ -151,6 +151,7 @@ async def device_health(
                 http_client_factory=httpx.AsyncClient,
                 settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
+                pool=agent_comm.http_pool,
             )
             node_running = node_payload is not None and node_payload.get("running", False) is True
             if not node_running and node_state == "running":
@@ -180,6 +181,7 @@ async def device_health(
             http_client_factory=httpx.AsyncClient,
             settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
+            pool=agent_comm.http_pool,
         )
     except AgentCallError as e:
         result["device_checks"] = {"healthy": False, "detail": f"Agent unreachable: {e}"}
@@ -258,6 +260,7 @@ async def reconnect_device(
         http_client_factory=httpx.AsyncClient,
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
+        pool=agent_comm.http_pool,
     )
 
     success = data.get("success", False)
@@ -347,6 +350,7 @@ async def device_lifecycle_action(
         http_client_factory=httpx.AsyncClient,
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
+        pool=agent_comm.http_pool,
     )
     if action == "state" and isinstance(result.get("state"), str):
         await device_services.health.update_emulator_state(db, device, result["state"])
@@ -379,6 +383,7 @@ async def device_logs(
             http_client_factory=httpx.AsyncClient,
             settings=settings_services.service,
             circuit_breaker=agent_comm.circuit_breaker,
+            pool=agent_comm.http_pool,
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Cannot fetch logs from agent: {e}") from e

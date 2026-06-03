@@ -86,7 +86,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
                     publisher=event_bus,
                 ),
                 settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
                 appium_services=SimpleNamespace(reconciler_agent=SimpleNamespace(restart_node=fake_restart_node)),
             )
 

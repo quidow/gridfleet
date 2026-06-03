@@ -173,6 +173,7 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         serializer=presenter_svc,
         identity_guard=identity_conflict_svc,
+        pool=http_pool,
     )
 
     device_capability_svc = DeviceCapabilityService()
@@ -215,6 +216,7 @@ def compose_app(
         circuit_breaker=circuit_breaker,
         lifecycle_policy=lifecycle_policy_svc,
         health=device_health_svc,
+        pool=http_pool,
     )
     groups_svc = DeviceGroupsService(publisher=bus, settings=settings_svc, crud=crud_svc)
     bulk_svc = BulkOperationsService(
@@ -224,6 +226,7 @@ def compose_app(
         maintenance=maintenance_svc,
         crud=crud_svc,
         operator=operator_node_lifecycle_svc,
+        pool=http_pool,
     )
 
     run_release = RunReleaseService(
@@ -255,7 +258,11 @@ def compose_app(
     )
 
     verification_preparation_svc = VerificationPreparationService(
-        settings=settings_svc, circuit_breaker=circuit_breaker, crud=crud_svc, identity=identity_conflict_svc
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        crud=crud_svc,
+        identity=identity_conflict_svc,
+        pool=http_pool,
     )
     verification_execution_svc = VerificationExecutionService(
         publisher=bus,
@@ -267,6 +274,7 @@ def compose_app(
         reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
         review=review_svc,
+        pool=http_pool,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
@@ -334,7 +342,9 @@ def compose_app(
             hardware_telemetry=HardwareTelemetryService(
                 publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker
             ),
-            resource_telemetry=HostResourceTelemetryService(settings=settings_svc, circuit_breaker=circuit_breaker),
+            resource_telemetry=HostResourceTelemetryService(
+                settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
+            ),
             diagnostics=HostDiagnosticsService(circuit_breaker=circuit_breaker),
             agent_logs=AgentLogsService(),
             host_events=HostEventsService(),

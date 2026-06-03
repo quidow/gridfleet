@@ -1480,7 +1480,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     resolved = SimpleNamespace(lifecycle_actions=lifecycle_actions)
     device = _control_device(id=device_id)
     settings_services = _mock_settings_svc(FakeSettingsReader({}))
-    _reconnect_ac = SimpleNamespace(circuit_breaker=Mock())
+    _reconnect_ac = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     _mock_ds_reconnect = SimpleNamespace(crud=AsyncMock(), publisher=event_bus)
 
     _noop_appium_svc = SimpleNamespace(reconciler_agent=AsyncMock())
@@ -1580,7 +1580,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     assert reconnect["message"] == "Reconnected"
 
     _ctrl_ss = _mock_settings_svc(FakeSettingsReader({}))
-    _lifecycle_ac = SimpleNamespace(circuit_breaker=Mock())
+    _lifecycle_ac = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     with (
         patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
@@ -1659,13 +1659,13 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             db=object(),
             device_services=_mock_ds_reconnect,
             settings_services=_ctrl_ss,
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             session_services=_mock_session_services,
         )
     assert health["node"]["state"] == "error"
     assert health["healthy"] is False
 
-    _logs_ac = SimpleNamespace(circuit_breaker=Mock())
+    _logs_ac = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     with (
         patch(
             "app.devices.routers.control.get_device_or_404",
@@ -1758,7 +1758,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
             db=db,
             device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=mock_reconciler_agent_ctrl),
         )  # type: ignore[arg-type]
 
@@ -2914,7 +2914,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             db=object(),
             device_services=SimpleNamespace(crud=AsyncMock()),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             session_services=_session_svc_failed,
         )
     assert health["node"]["state"] == "error"
@@ -2952,7 +2952,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
                 db=reconnect_db,
                 device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
                 settings_services=_health_ss,
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
             )  # type: ignore[arg-type]
     assert exc.value.status_code == 400
@@ -2970,7 +2970,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
                 "reboot",
                 db=object(),
                 settings_services=_health_ss,
-                agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
                 device_services=AsyncMock(),
             )
     assert exc.value.status_code == 400
