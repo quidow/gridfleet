@@ -32,6 +32,7 @@ from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.event_bus import EventBus
 from agent_app.grid_node.protocol import build_slots
 from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.sidecar import RelaySidecar, admin_host, build_sidecar_command, resolve_relay_binary
 from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
 from agent_app.grid_url import get_local_ip
 from agent_app.observability import sanitize_log_value
@@ -316,6 +317,7 @@ class AppiumProcessManager:
         self._restart_sequence = 0
         self._intentional_stop_ports: set[int] = set()
         self._next_node_port = agent_settings.grid_node.grid_node_port_start
+        self._next_control_port = agent_settings.grid_node.relay_control_port_start
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
         self._start_lock = asyncio.Lock()
@@ -361,6 +363,20 @@ class AppiumProcessManager:
                 try:
                     probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     probe.bind((probe_host, port))
+                except OSError:
+                    continue
+            return port
+
+    def _allocate_control_port(self) -> int:
+        # Loopback-only listener for the Python relay's control plane in
+        # fast-lane mode; same skip-bound-ports probe as the node port.
+        while True:
+            port = self._next_control_port
+            self._next_control_port += 1
+            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+                try:
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    probe.bind(("127.0.0.1", port))
                 except OSError:
                     continue
             return port
@@ -929,6 +945,10 @@ class AppiumProcessManager:
         caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
 
         node_port = self._allocate_node_port()
+        # Fast lane: raises RelayBinaryNotFoundError when AGENT_RELAY_FAST_LANE=on
+        # with no binary — the node start fails loudly, per the setting contract.
+        relay_binary = resolve_relay_binary(agent_settings.grid_node)
+        control_port = self._allocate_control_port() if relay_binary is not None else None
         # Selenium hub deserializes nodeId via UUID.fromString — derive a stable UUID
         # from the device target so identity survives agent restarts.
         node_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gridfleet-node:{spec.connection_target}:{spec.port}"))
@@ -944,6 +964,8 @@ class AppiumProcessManager:
             session_timeout_sec=agent_settings.grid_node.grid_node_session_timeout_sec,
             proxy_timeout_sec=agent_settings.grid_node.grid_node_proxy_timeout_sec,
             bind_host=agent_settings.grid_node.grid_node_bind_host,
+            control_port=control_port,
+            relay_binary=relay_binary,
         )
 
         def factory() -> GridNodeService:
@@ -956,7 +978,20 @@ class AppiumProcessManager:
                 subscribe_url=config.hub_publish_url,
                 heartbeat_sec=config.heartbeat_sec,
             )
-            return GridNodeService(config=config, bus=bus)
+            sidecar: RelaySidecar | None = None
+            if config.relay_binary is not None and config.control_port is not None:
+                sidecar = RelaySidecar(
+                    command=build_sidecar_command(
+                        binary=config.relay_binary,
+                        bind_host=config.bind_host,
+                        listen_port=node_port,
+                        appium_upstream=config.appium_upstream,
+                        control_port=config.control_port,
+                        proxy_timeout_sec=config.proxy_timeout_sec,
+                    ),
+                    admin_base_url=f"http://{admin_host(config.bind_host)}:{node_port}",
+                )
+            return GridNodeService(config=config, bus=bus, sidecar=sidecar)
 
         handle = start_grid_node_supervisor(factory=factory, config=config)
         try:
