@@ -2,6 +2,17 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.21.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.1...gridfleet-agent-v0.21.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* **agent:** default grid_hub_url to localhost for the host-run agent ([b87d3eb](https://github.com/quidow/gridfleet/commit/b87d3eb7d6ac2bcaeaac1c05bd23a5022451cff5))
+* **agent:** match platformName case-insensitively in relay slot matching (F3) ([b6ffa52](https://github.com/quidow/gridfleet/commit/b6ffa52e2e0bd8982075b3be145a0e2ef8801661))
+* **agent:** probe Appium port with SO_REUSEADDR to match libuv bind ([8557597](https://github.com/quidow/gridfleet/commit/855759788545cbbe27a3bbde4bda5d4be11e2507))
+* **agent:** self-heal dropped grid relay hub registrations ([ce99987](https://github.com/quidow/gridfleet/commit/ce99987477f7391ce00c2c173ebf034ba891b497))
+* **backend:** device operational-state lifecycle hardening (+ agent relay/grid fixes) ([25dd008](https://github.com/quidow/gridfleet/commit/25dd008c91d7a72a85850a6cd0b84f808ddef4f6))
+
 ## [0.21.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.0...gridfleet-agent-v0.21.1) (2026-06-01)
 
 
