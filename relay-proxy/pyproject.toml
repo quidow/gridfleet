@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "gridfleet-agent-relay"
+description = "GridFleet grid-relay fast-lane sidecar binary for gridfleet-agent"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "GridFleet contributors" }]
+requires-python = ">=3.12"
+keywords = ["appium", "gridfleet", "selenium", "testing"]
+dynamic = ["version"]
+
+[tool.maturin]
+bindings = "bin"
