@@ -161,6 +161,9 @@ def orphaned_node_ports(observed: list[ObservedEntry], *, known_targets: set[str
     ``known_targets`` MUST be every device target on the host, including devices
     in recovery backoff (which are excluded from the *active* convergence set) —
     otherwise a legitimate single node for a backoff device would be reaped.
+    It must also include each row's ``active_connection_target``: a running node
+    may report a live target resolved at start time (virtual emulators report
+    their ADB serial, not the AVD name) instead of the registered target.
     """
     primary_port_by_target: dict[str, int] = {entry.connection_target: entry.port for entry in observed}
     orphans: list[int] = []
@@ -185,7 +188,9 @@ async def reap_orphan_nodes(
     reconcile cycle. Returns the ports identified as orphans (for observability
     and tests).
     """
-    known_targets = {row.connection_target for row in desired_rows}
+    known_targets = {row.connection_target for row in desired_rows} | {
+        row.active_connection_target for row in desired_rows if row.active_connection_target
+    }
     orphans = orphaned_node_ports(observed, known_targets=known_targets)
     for port in orphans:
         logger.warning("appium_reconciler_orphan_node_stop", port=port)
@@ -194,6 +199,21 @@ async def reap_orphan_nodes(
         except Exception:  # noqa: BLE001 — one stray node must not abort the host cycle
             logger.warning("appium_reconciler_orphan_node_stop_failed", exc_info=True, port=port)
     return orphans
+
+
+def match_observed_entry(row: DesiredRow, observed_by_target: dict[str, ObservedEntry]) -> ObservedEntry | None:
+    """Return the agent-reported node for ``row``, if any.
+
+    A running node may report either the device's registered connection_target
+    (real devices) or a live target resolved at start time (virtual emulators
+    report their ADB serial, not the AVD name). Prefer the row's recorded live
+    target, then fall back to the registered one.
+    """
+    if row.active_connection_target is not None:
+        entry = observed_by_target.get(row.active_connection_target)
+        if entry is not None:
+            return entry
+    return observed_by_target.get(row.connection_target)
 
 
 def rows_needing_stale_clear(
@@ -211,7 +231,7 @@ def rows_needing_stale_clear(
     return [
         row
         for row in rows
-        if decide_convergence_action(row, observed=observed_by_target.get(row.connection_target), now=now).kind
+        if decide_convergence_action(row, observed=match_observed_entry(row, observed_by_target), now=now).kind
         == "db_clear_stale_running"
     ]
 

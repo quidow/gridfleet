@@ -40,6 +40,7 @@ from app.appium_nodes.services.reconciler_convergence import (
     ObservedEntry,
     _execute_action,
     decide_convergence_action,
+    match_observed_entry,
     reap_orphan_nodes,
     rows_needing_stale_clear,
 )
@@ -785,7 +786,7 @@ class ReconcilerService:
         )
         observed_by_target = {entry.connection_target: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
-            obs = observed_by_target.get(row.connection_target)
+            obs = match_observed_entry(row, observed_by_target)
             action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
             try:
                 await _execute_action(
