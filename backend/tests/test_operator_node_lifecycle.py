@@ -281,6 +281,65 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     assert intent_second.expires_at > first_deadline, "expires_at must move forward on each restart"
 
 
+def test_operator_stop_intents_and_sources_include_recovery_deny() -> None:
+    """Operator stop must register a RECOVERY-axis deny (so ``recovery_allowed``
+    flips False and auto-recovery suppresses instead of spinning a doomed start —
+    N13), and ``operator_stop_sources`` must list that source so an operator start
+    revokes it.
+    """
+    from app.devices.services.intent_types import PRIORITY_OPERATOR_STOP, RECOVERY
+    from app.lifecycle.services.operator_node import operator_stop_intents, operator_stop_sources
+
+    device_id = uuid.uuid4()
+    recovery_intents = [intent for intent in operator_stop_intents(device_id) if intent.axis == RECOVERY]
+    assert len(recovery_intents) == 1, "operator stop must register exactly one RECOVERY-axis intent"
+    deny = recovery_intents[0]
+    assert deny.payload["allowed"] is False
+    assert deny.payload["priority"] == PRIORITY_OPERATOR_STOP
+    assert deny.source in operator_stop_sources(device_id), (
+        "the RECOVERY deny source must be revocable by the operator-start path"
+    )
+
+
+async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Operator ``node/stop`` is sticky and must deny auto-recovery: the device's
+    ``recovery_allowed`` flips False so ``attempt_auto_recovery`` records a
+    suppression instead of registering a prio-20 start it can never make win
+    (N13). An explicit operator start lifts the deny.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="op-stop-denies-recovery", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=27765,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+    assert device.recovery_allowed is True, "baseline: a running device allows recovery"
+
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
+    await svc.request_stop(db_session, device, caller="operator_route", reason="operator stop")
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert device.recovery_allowed is False, "operator stop must deny auto-recovery (sticky stop)"
+
+    await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert device.recovery_allowed is True, "operator start must re-allow recovery"
+
+
 async def test_operator_start_revokes_blocking_health_failure_stop(
     db_session: AsyncSession,
     db_host: Host,

@@ -22,6 +22,7 @@ from app.devices.services.intent_types import (
     NODE_PROCESS,
     PRIORITY_AUTO_RECOVERY,
     PRIORITY_OPERATOR_STOP,
+    RECOVERY,
     IntentRegistration,
     NodeRunningPrecondition,
 )
@@ -41,7 +42,11 @@ def operator_start_source(device_id: uuid.UUID) -> str:
 
 
 def operator_stop_sources(device_id: uuid.UUID) -> list[str]:
-    return [f"operator:stop:node:{device_id}", f"operator:stop:grid:{device_id}"]
+    return [
+        f"operator:stop:node:{device_id}",
+        f"operator:stop:grid:{device_id}",
+        f"operator:stop:recovery:{device_id}",
+    ]
 
 
 def operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:
@@ -97,6 +102,15 @@ def operator_stop_intents(device_id: uuid.UUID) -> list[IntentRegistration]:
             source=f"operator:stop:grid:{device_id}",
             axis=GRID_ROUTING,
             payload={"accepting_new_sessions": False, "priority": PRIORITY_OPERATOR_STOP},
+        ),
+        # An operator stop is sticky: deny auto-recovery so the device_connectivity
+        # loop suppresses recovery (recovery_allowed=False) instead of spinning a
+        # doomed prio-20 start it can never make win against this stop (N13). The
+        # operator-start path revokes this via operator_stop_sources.
+        IntentRegistration(
+            source=f"operator:stop:recovery:{device_id}",
+            axis=RECOVERY,
+            payload={"allowed": False, "priority": PRIORITY_OPERATOR_STOP, "reason": "Operator stopped the node"},
         ),
     ]
 
