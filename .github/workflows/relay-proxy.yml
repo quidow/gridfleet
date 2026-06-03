@@ -1,0 +1,75 @@
+name: Relay Proxy
+
+on:
+  push:
+    branches: [main]
+    paths: ["relay-proxy/**", ".github/workflows/relay-proxy.yml"]
+  pull_request:
+    paths: ["relay-proxy/**", ".github/workflows/relay-proxy.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native runners on every supported OS/arch except mac x86_64
+        # (Intel mac runners retire Aug 2027 — that target is cross-compiled
+        # in the wheels job instead).
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: relay-proxy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+  wheels:
+    name: Wheel (${{ matrix.platform.runner }} ${{ matrix.platform.target }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-latest, target: x86_64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64 }
+          - { runner: macos-latest, target: aarch64 }
+          - { runner: macos-latest, target: x86_64 }
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: relay-proxy
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+          manylinux: auto
+          # manylinux containers lack cmake (needed by pingora's libz-ng-sys)
+          before-script-linux: pip install cmake
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-wheel-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: relay-proxy/dist
