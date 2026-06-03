@@ -60,7 +60,11 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"}
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -70,7 +74,14 @@ def do_run_migrations(connection: Connection) -> None:
     target_search_path = config.attributes.get("target_search_path")
     if target_search_path is not None:
         connection.execute(text(f'SET search_path TO "{target_search_path}"'))
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # Commit each migration in its own transaction so a value added by one
+    # revision (e.g. a new enum member) is visible to a later revision that
+    # uses it; Postgres rejects using such a value within its adding transaction.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        transaction_per_migration=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
