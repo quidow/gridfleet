@@ -321,6 +321,12 @@ def build_app(
     return Starlette(
         routes=[
             Route("/status", status, methods=["GET"]),
+            # Selenium's hub checks node liveness via the node-API status
+            # endpoint on (at least) every proxied command. Without this
+            # route the request fell through the catch-all and was proxied
+            # to Appium, which 404'd it — one phantom Appium round-trip per
+            # WebDriver command.
+            Route("/se/grid/node/status", status, methods=["GET"]),
             Route("/session", create_session, methods=["POST"]),
             Route("/session/{session_id}", delete_session, methods=["DELETE"]),
             Route("/se/grid/node/session", hub_create_session, methods=["POST"]),
