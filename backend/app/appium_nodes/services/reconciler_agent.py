@@ -9,6 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
 
@@ -394,6 +395,7 @@ async def start_remote_node(
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> RemoteStartResult:
     await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
     host = require_management_host(device, action="start Appium nodes")
@@ -462,6 +464,7 @@ async def start_remote_node(
             http_client_factory=http_client_factory,
             timeout=_agent_start_timeout(device, settings=settings),
             settings=settings,
+            pool=pool,
             circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
@@ -532,6 +535,7 @@ async def stop_remote_node(
     http_client_factory: AgentClientFactory,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> bool:
     """Ask the agent to stop the Appium node on ``port``.
 
@@ -549,6 +553,7 @@ async def stop_remote_node(
             port=port,
             http_client_factory=http_client_factory,
             settings=settings,
+            pool=pool,
             circuit_breaker=circuit_breaker,
         )
         resp.raise_for_status()
@@ -684,6 +689,7 @@ async def _start_for_node(
     preferred_port: int | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> RemoteStartResult:
     if device.host_id is None:
         raise NodeManagerError(f"Device {device.id} has no host assigned — cannot start Appium nodes")
@@ -750,6 +756,7 @@ async def _start_for_node(
                     agent_base=agent_base,
                     http_client_factory=httpx.AsyncClient,
                     settings=settings,
+                    pool=pool,
                     circuit_breaker=circuit_breaker,
                 )
                 break

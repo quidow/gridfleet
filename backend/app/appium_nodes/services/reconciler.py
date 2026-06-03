@@ -849,6 +849,7 @@ class ReconcilerService:
                         node=node,
                         preferred_port=port,
                         settings=self._settings,
+                        pool=self._pool,
                         circuit_breaker=self._circuit_breaker,
                     )
                     if handle.port <= 0:
@@ -902,6 +903,7 @@ class ReconcilerService:
                     agent_port=agent_port,
                     http_client_factory=httpx.AsyncClient,
                     settings=self._settings,
+                    pool=self._pool,
                     circuit_breaker=self._circuit_breaker,
                 )
             except Exception:
