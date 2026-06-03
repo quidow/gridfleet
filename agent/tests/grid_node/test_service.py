@@ -13,6 +13,7 @@ from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
 from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.sidecar import RelayActivity, SidecarExitedError
 
 
 class RecordingBus:
@@ -278,6 +279,133 @@ async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
     assert "node-added" in [event["type"] for event in bus.events]
 
 
+def _config_with_timeout(*, session_timeout_sec: float) -> GridNodeConfig:
+    from dataclasses import replace
+
+    return replace(_config(), session_timeout_sec=session_timeout_sec)
+
+
+def _commit_session(state: NodeState, session_id: str) -> None:
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(
+        reservation.id,
+        session_id=session_id,
+        started_at=time.monotonic(),
+        capabilities={},
+        session_start_iso="2026-01-01T00:00:00Z",
+    )
+
+
+class FakeSidecar:
+    def __init__(self, *, token: str = "tok-1") -> None:
+        self.start_token: str | None = None
+        self._token = token
+        self.running = False
+        self.calls: list[str] = []
+        self.activity: RelayActivity | None = RelayActivity(start_token=token, idle_sec_by_session={})
+
+    def is_running(self) -> bool:
+        return self.running
+
+    async def start(self) -> None:
+        self.calls.append("start")
+        self.running = True
+        self.start_token = self._token
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
+        self.running = False
+
+    async def fetch_activity(self) -> RelayActivity | None:
+        self.calls.append("fetch_activity")
+        return self.activity
+
+
+async def test_start_order_uvicorn_then_sidecar_then_node_added() -> None:
+    bus = RecordingBus()
+    http_server = RecordingHttpServer()
+    sidecar = FakeSidecar()
+    service = GridNodeService(config=_config(), bus=bus, http_server=http_server, sidecar=sidecar)
+    await service.start()
+    assert http_server.calls == ["start"]
+    assert sidecar.calls[0] == "start"
+    assert bus.calls[-2:] == ["publish:node-added", "publish:node-heartbeat"]
+    await service.stop()
+    assert sidecar.calls[-1] == "stop"
+
+
+async def test_snapshot_reports_relay_mode() -> None:
+    fallback = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
+    assert fallback.snapshot()["relay_mode"] == "fallback"
+    fast = GridNodeService(
+        config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer(), sidecar=FakeSidecar()
+    )
+    assert fast.snapshot()["relay_mode"] == "fast_lane"
+
+
+async def test_heartbeat_raises_when_sidecar_exited() -> None:
+    sidecar = FakeSidecar()
+    service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer(), sidecar=sidecar)
+    await service.start()
+    sidecar.running = False  # simulate crash after start
+    with pytest.raises(SidecarExitedError):
+        await service.run_heartbeat_once()
+
+
+async def test_heartbeat_applies_sidecar_idle_to_expiry() -> None:
+    # Session idle (per sidecar) beyond the 1s timeout -> expired + released.
+    config = _config_with_timeout(session_timeout_sec=1.0)
+    sidecar = FakeSidecar()
+    bus = RecordingBus()
+    service = GridNodeService(config=config, bus=bus, http_server=RecordingHttpServer(), sidecar=sidecar)
+    await service.start()
+    _commit_session(service.state, "sess-1")
+    sidecar.activity = RelayActivity(start_token="tok-1", idle_sec_by_session={"sess-1": 5.0})
+    await service.run_heartbeat_once()
+    assert all(slot.session_id != "sess-1" for slot in service.state.snapshot().slots)
+    assert "publish:session-closed" in bus.calls
+
+
+async def test_heartbeat_fresh_activity_keeps_session_alive() -> None:
+    config = _config_with_timeout(session_timeout_sec=1.0)
+    sidecar = FakeSidecar()
+    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer(), sidecar=sidecar)
+    await service.start()
+    _commit_session(service.state, "sess-1")
+    # Make local last-activity stale; the sidecar's fresh idle must win.
+    service.state.mark_active("sess-1", now=time.monotonic() - 30.0)
+    sidecar.activity = RelayActivity(start_token="tok-1", idle_sec_by_session={"sess-1": 0.1})
+    await service.run_heartbeat_once()
+    assert any(slot.session_id == "sess-1" for slot in service.state.snapshot().slots)
+
+
+async def test_heartbeat_skips_idle_expiry_when_activity_unreachable() -> None:
+    config = _config_with_timeout(session_timeout_sec=1.0)
+    sidecar = FakeSidecar()
+    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer(), sidecar=sidecar)
+    await service.start()
+    _commit_session(service.state, "sess-1")
+    service.state.mark_active("sess-1", now=time.monotonic() - 30.0)  # would expire
+    sidecar.activity = None  # unreachable this tick
+    await service.run_heartbeat_once()
+    # Never expire on missing data.
+    assert any(slot.session_id == "sess-1" for slot in service.state.snapshot().slots)
+
+
+async def test_heartbeat_token_change_touches_busy_sessions() -> None:
+    config = _config_with_timeout(session_timeout_sec=1.0)
+    sidecar = FakeSidecar()
+    service = GridNodeService(config=config, bus=RecordingBus(), http_server=RecordingHttpServer(), sidecar=sidecar)
+    await service.start()
+    _commit_session(service.state, "sess-1")
+    service.state.mark_active("sess-1", now=time.monotonic() - 30.0)  # stale
+    # Sidecar restarted: new token, empty session map.
+    sidecar.activity = RelayActivity(start_token="tok-NEW", idle_sec_by_session={})
+    await service.run_heartbeat_once()
+    # Re-touched instead of falsely expired.
+    assert any(slot.session_id == "sess-1" for slot in service.state.snapshot().slots)
+
+
 def test_grid_node_config_fast_lane_fields_default_to_fallback() -> None:
     config = _config()
     assert config.control_port is None
@@ -431,7 +559,7 @@ async def test_service_has_active_session_false() -> None:
 @pytest.mark.asyncio
 async def test_service_snapshot_defaults() -> None:
     service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
-    assert service.snapshot() == {"requested_stop": False, "started": False}
+    assert service.snapshot() == {"requested_stop": False, "started": False, "relay_mode": "fallback"}
 
 
 @pytest.mark.asyncio

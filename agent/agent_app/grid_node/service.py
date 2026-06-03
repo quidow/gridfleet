@@ -15,6 +15,7 @@ import uvicorn
 from agent_app.grid_node.http_server import build_app
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
+from agent_app.grid_node.sidecar import RelayActivity, SidecarExitedError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -88,6 +89,22 @@ class GridNodeHttpServer(Protocol):
         raise NotImplementedError
 
     async def stop(self) -> None:
+        raise NotImplementedError
+
+
+class RelaySidecarProtocol(Protocol):
+    start_token: str | None
+
+    def is_running(self) -> bool:
+        raise NotImplementedError
+
+    async def start(self) -> None:
+        raise NotImplementedError
+
+    async def stop(self) -> None:
+        raise NotImplementedError
+
+    async def fetch_activity(self) -> RelayActivity | None:
         raise NotImplementedError
 
 
@@ -194,10 +211,13 @@ class GridNodeService:
         bus: EventPublisher,
         http_server: GridNodeHttpServer | None = None,
         registration_probe: Callable[[], Awaitable[bool | None]] | None = None,
+        sidecar: RelaySidecarProtocol | None = None,
     ) -> None:
         self.config = config
         self.state = NodeState(slots=config.slots, now=time.monotonic)
         self._bus = bus
+        self._sidecar = sidecar
+        self._sidecar_start_token: str | None = None
         self._http_server = http_server or UvicornGridNodeHttpServer(
             config=config, state=self.state, bus=bus, node_status_payload=self._node_payload
         )
@@ -231,6 +251,9 @@ class GridNodeService:
         await self._bus.start()
         try:
             await self._http_server.start()
+            if self._sidecar is not None:
+                await self._sidecar.start()
+                self._sidecar_start_token = self._sidecar.start_token
             # Selenium uses ZMQ XSUB/XPUB. The PUB socket must complete its TCP
             # handshake and have its subscriptions propagated to the hub before the
             # first event will be delivered, otherwise the initial NODE_ADDED is
@@ -243,6 +266,9 @@ class GridNodeService:
             # without waiting for the first heartbeat tick.
             await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
         except Exception:
+            if self._sidecar is not None:
+                with contextlib.suppress(Exception):
+                    await self._sidecar.stop()
             with contextlib.suppress(Exception):
                 await self._http_server.stop()
             await self._bus.stop()
@@ -259,10 +285,15 @@ class GridNodeService:
             await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
         finally:
             try:
-                await self._http_server.stop()
+                if self._sidecar is not None:
+                    with contextlib.suppress(Exception):
+                        await self._sidecar.stop()
             finally:
-                await self._bus.stop()
-                self._started = False
+                try:
+                    await self._http_server.stop()
+                finally:
+                    await self._bus.stop()
+                    self._started = False
 
     async def run_heartbeat_once(self) -> None:
         # Reap stuck reservations first: a reservation that never reached
@@ -270,20 +301,24 @@ class GridNodeService:
         # pin the slot forever — `state.reserve()` blocks new requests as soon
         # as any slot is non-FREE.
         self.state.expire_reservations(now=time.monotonic())
-        for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
-            self.state.release(session_id)
-            now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            # Selenium SessionClosedEvent expects a full SessionClosedData payload.
-            session_closed_payload: dict[str, object] = {
-                "sessionId": session_id,
-                "reason": "TIMEOUT",
-                "nodeId": self.config.node_id,
-                "nodeUri": self.config.node_uri,
-                "capabilities": {},
-                "startTime": now_iso,
-                "endTime": now_iso,
-            }
-            await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, session_closed_payload))
+        skip_idle_expiry = False
+        if self._sidecar is not None:
+            skip_idle_expiry = not await self._sync_sidecar_activity()
+        if not skip_idle_expiry:
+            for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
+                self.state.release(session_id)
+                now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                # Selenium SessionClosedEvent expects a full SessionClosedData payload.
+                session_closed_payload: dict[str, object] = {
+                    "sessionId": session_id,
+                    "reason": "TIMEOUT",
+                    "nodeId": self.config.node_id,
+                    "nodeUri": self.config.node_uri,
+                    "capabilities": {},
+                    "startTime": now_iso,
+                    "endTime": now_iso,
+                }
+                await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, session_closed_payload))
         snapshot = self.state.snapshot()
         if snapshot.drain:
             # Selenium's drain semantics let in-flight sessions finish before the
@@ -318,6 +353,36 @@ class GridNodeService:
             logger.warning("grid_node_reregistering_lost_node", extra={"node_id": self.config.node_id})
             await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
             await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+
+    async def _sync_sidecar_activity(self) -> bool:
+        """Pull per-session idle data from the sidecar into NodeState.
+
+        Returns False when activity data is unavailable this tick — the
+        caller must skip idle expiry (never expire sessions on missing
+        data). Raises SidecarExitedError when the process died, so the
+        supervisor's existing heartbeat-failure path restarts the whole
+        node service (sidecar included) under its backoff budget.
+        """
+        assert self._sidecar is not None
+        if not self._sidecar.is_running():
+            raise SidecarExitedError(f"relay sidecar for node {self.config.node_id} exited; restarting node service")
+        activity = await self._sidecar.fetch_activity()
+        if activity is None:
+            logger.warning("relay_sidecar_activity_unreachable", extra={"node_id": self.config.node_id})
+            return False
+        now = time.monotonic()
+        if activity.start_token != self._sidecar_start_token:
+            # The sidecar restarted: its activity history died with the old
+            # process. Touch every busy session once so none is falsely
+            # expired against an empty map.
+            self._sidecar_start_token = activity.start_token
+            for slot in self.state.snapshot().slots:
+                if slot.session_id is not None:
+                    self.state.mark_active(slot.session_id, now=now)
+            return True
+        for session_id, idle_sec in activity.idle_sec_by_session.items():
+            self.state.mark_active(session_id, now=now - idle_sec)
+        return True
 
     async def drain_to_block_new_sessions(self) -> None:
         """Mark the relay as DRAINING without removing or re-adding it.
@@ -373,7 +438,11 @@ class GridNodeService:
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
     def snapshot(self) -> dict[str, object]:
-        return {"requested_stop": self._requested_stop, "started": self._started}
+        snap: dict[str, object] = {"requested_stop": self._requested_stop, "started": self._started}
+        snap["relay_mode"] = "fast_lane" if self._sidecar is not None else "fallback"
+        if self._sidecar is not None:
+            snap["sidecar_running"] = self._sidecar.is_running()
+        return snap
 
     async def call_stop_from_heartbeat_for_test(self) -> None:
         self._heartbeat_task = asyncio.current_task()
