@@ -62,6 +62,32 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 - **Selenium Grid Registration**: Once Appium is healthy, the Agent starts an in-process Python Grid Node service. The service registers with the central Selenium Hub over the Grid event bus and reverse-proxies WebDriver traffic to local Appium.
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 
+### Relay fast lane (sidecar data plane)
+
+In fast-lane mode the agent spawns one `gridfleet-relay-proxy` sidecar (a
+small Rust proxy from the `gridfleet-agent-relay` package) per device node.
+The sidecar owns the node's hub-advertised port:
+
+- `/session/{id}/...` WebDriver commands and WebSocket upgrades stream
+  directly to the local Appium server. The sidecar records per-session
+  last-activity, which the agent polls each supervisor heartbeat
+  (`GET /__gridfleet/activity`, loopback-only) to drive idle expiry.
+- Everything else — `/status`, session create/delete, `/se/grid/node/*` —
+  is forwarded to the Python relay on a loopback control port, where all
+  existing semantics live unchanged: NodeState slot accounting,
+  reservation matching, hub event publishing, and drain.
+
+Without the sidecar (`AGENT_RELAY_FAST_LANE=off`, or no binary installed
+under `auto`), the Python relay serves the advertised port directly, as
+before.
+
+**Throughput envelope.** In fallback mode every WebDriver command transits
+the agent's single asyncio event loop at roughly 3.5 ms of CPU per
+command — about 250–300 commands/second per host total, regardless of
+device count; element-polling suites approach this fast. In fast-lane mode
+the relay adds microseconds per command and the per-host ceiling is set by
+the Appium servers themselves, not the relay.
+
 ## 3. Frontend Operator Dashboard
 
 The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operators.

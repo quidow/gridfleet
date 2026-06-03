@@ -77,6 +77,9 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
 | `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First Python Grid Node HTTP port assigned on the host |
 | `AGENT_GRID_NODE_BIND_HOST` | `0.0.0.0` | agent process | Local interface the Python Grid Node HTTP server binds. Independent of `AGENT_ADVERTISE_IP` (which is what the hub registers). The default wildcard works for every supported topology including docker-compose with `host.docker.internal` advertised. Set to a specific IP to restrict the listening interface. |
+| `AGENT_RELAY_FAST_LANE` | `auto` | agent process | Controls the grid-relay fast-lane sidecar. `auto` spawns the `gridfleet-relay-proxy` binary per node when the `gridfleet-agent-relay` package is installed and falls back to in-process proxying otherwise; `on` fails node start when the binary is missing; `off` forces in-process proxying. |
+| `AGENT_RELAY_CONTROL_PORT_START` | `7900` | agent process | First port of the loopback-only range the Python relay's control listener binds in fast-lane mode. One port per device node, allocated upward. |
+| `AGENT_RELAY_BINARY` | unset | agent process | Explicit filesystem path to the `gridfleet-relay-proxy` binary, overriding PATH discovery. Empty (default) = discover on PATH. |
 | `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration and Python Grid Node startup. Accepts **any DNS name or IP** the backend and Selenium Hub can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from containers (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
 
 ## Agent Installer Helper Variables
