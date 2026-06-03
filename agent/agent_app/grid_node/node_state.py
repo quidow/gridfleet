@@ -274,6 +274,14 @@ class NodeState:
                 actual = stereotype[key]
                 if not isinstance(actual, dict) or not cls._caps_match(actual, value):
                     return False
+            elif key == "platformName" and isinstance(value, str) and isinstance(stereotype[key], str):
+                # The Selenium hub's DefaultSlotMatcher routes platformName
+                # case-insensitively; match its behavior so a hub-forwarded
+                # lowercase "android" does not get rejected here and queue
+                # forever (F3). Other caps stay exact (identity caps must not
+                # collapse across case).
+                if stereotype[key].casefold() != value.casefold():
+                    return False
             elif stereotype[key] != value:
                 return False
         return True
