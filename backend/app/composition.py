@@ -236,7 +236,7 @@ def compose_app(
         deferred_stop=lifecycle_policy_svc,
     )
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
-    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc)
+    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
     run_failure = RunFailureService(
         publisher=bus,
         settings=settings_svc,

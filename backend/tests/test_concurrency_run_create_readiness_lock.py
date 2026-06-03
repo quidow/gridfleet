@@ -8,6 +8,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.runs.schemas import RunCreate
 from app.runs.service_allocator import RunAllocatorService, _readiness_for_match
+from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -16,6 +17,7 @@ _settings = FakeSettingsReader({})
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
+    circuit_breaker=test_circuit_breaker,
 )
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]

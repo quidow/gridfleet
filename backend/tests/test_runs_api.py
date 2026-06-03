@@ -25,6 +25,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.sessions.models import Session, SessionStatus
+from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -35,7 +36,16 @@ _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
+    circuit_breaker=test_circuit_breaker,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stub_inline_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reservation now delivers the grid-routing reconfigure to the agent inline.
+    Default it to a success stub so create_run does not make real agent HTTP
+    calls; tests that assert delivery behavior override this per-test."""
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", AsyncMock())
 
 
 @pytest_asyncio.fixture(autouse=True)

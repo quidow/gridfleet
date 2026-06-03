@@ -13,6 +13,7 @@ from app.runs.schemas import DeviceRequirement, RunCreate
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
+from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import seed_host_and_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -34,6 +35,7 @@ _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, gr
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
+    circuit_breaker=test_circuit_breaker,
 )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
@@ -100,6 +101,60 @@ async def test_outbox_row_sends_when_generation_matches(
         accepting_new_sessions=False,
         stop_pending=True,
         grid_run_id=None,
+        settings=SETTINGS,
+        circuit_breaker=CIRCUIT_BREAKER,
+    )
+
+
+async def test_outbox_row_sends_when_generation_behind_but_config_still_current(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending row must still be delivered when ``node.generation`` advanced
+    past its ``reconciled_generation`` due to an unrelated field change (recovery
+    flags, desired_port) that did not alter the agent-visible desired config.
+    Generation lagging only means "stale" when the row's payload no longer
+    matches the node's desired config; otherwise skipping it silently strands
+    the reconfigure and the node never learns its run id."""
+    run_id = uuid.uuid4()
+    device = await create_device(db_session, host_id=db_host.id, name="behind-but-current")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            desired_grid_run_id=run_id,
+            accepting_new_sessions=True,
+            stop_pending=False,
+            generation=3,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=run_id,
+        reconciled_generation=2,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+
+    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivered_at is not None
+    reconfigure.assert_awaited_once_with(
+        db_host.ip,
+        db_host.agent_port,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=run_id,
         settings=SETTINGS,
         circuit_breaker=CIRCUIT_BREAKER,
     )

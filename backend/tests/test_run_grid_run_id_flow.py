@@ -9,7 +9,9 @@ import pytest
 from sqlalchemy import select
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumNode
+from app.core.errors import AgentUnreachableError
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
 from app.grid.service import GridService
@@ -22,7 +24,7 @@ from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
@@ -39,6 +41,7 @@ _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, gr
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
+    circuit_breaker=_circuit_breaker,
 )
 _failure_svc = RunFailureService(
     publisher=event_bus,
@@ -55,6 +58,14 @@ if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@pytest.fixture(autouse=True)
+def _stub_inline_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reservation now delivers the grid-routing reconfigure to the agent inline.
+    Default it to a success stub so create_run does not make real agent HTTP
+    calls; tests that assert delivery behavior override this per-test."""
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", AsyncMock())
 
 
 def test_ready_state_removed_from_enum() -> None:
@@ -183,3 +194,64 @@ async def test_exclude_device_clears_only_that_device(
     desired_by_device = {row.device_id: row.desired_grid_run_id for row in rows}
     assert desired_by_device[device_id] is None
     assert desired_by_device[other_device_id] == run_id
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_create_run_delivers_routing_reconfigure_to_agent(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device_id = await _seed_schedulable_node(
+        db_session,
+        host_id=default_host_id,
+        identity_value="grid-run-id-deliver-1",
+        port=4730,
+    )
+    reconfigure = AsyncMock()
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
+
+    run_id = await _create_run(db_session)
+
+    reconfigure.assert_awaited()
+    assert reconfigure.await_args.kwargs["grid_run_id"] == run_id
+    row = (
+        await db_session.execute(select(AgentReconfigureOutbox).where(AgentReconfigureOutbox.device_id == device_id))
+    ).scalar_one()
+    assert row.delivered_at is not None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_create_run_surfaces_deferred_routing_when_agent_unreachable(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    event_bus_capture: list[tuple[str, dict[str, object]]],
+) -> None:
+    device_id = await _seed_schedulable_node(
+        db_session,
+        host_id=default_host_id,
+        identity_value="grid-run-id-defer-1",
+        port=4731,
+    )
+    monkeypatch.setattr(
+        "app.agent_comm.operations.agent_appium_reconfigure",
+        AsyncMock(side_effect=AgentUnreachableError("10.0.0.250", "unreachable")),
+    )
+    event_bus_capture.clear()
+
+    run_id = await _create_run(db_session)
+    await settle_after_commit_tasks()
+
+    assert run_id is not None
+    deferred = [data for name, data in event_bus_capture if name == "run.routing_delivery_deferred"]
+    assert len(deferred) == 1
+    assert deferred[0]["run_id"] == str(run_id)
+
+    row = (
+        await db_session.execute(select(AgentReconfigureOutbox).where(AgentReconfigureOutbox.device_id == device_id))
+    ).scalar_one()
+    assert row.delivered_at is None
+    assert row.delivery_attempts == 1

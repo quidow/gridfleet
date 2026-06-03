@@ -92,6 +92,7 @@ async def test_start_node_locks_device_before_reservation_check(
         run_allocator = RunAllocatorService(
             publisher=event_bus,
             settings=settings_service,
+            circuit_breaker=test_circuit_breaker,
         )
         run_failure = RunFailureService(
             publisher=event_bus,

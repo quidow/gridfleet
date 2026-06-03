@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import selectinload
 
+from app.agent_comm.reconfigure_delivery import (
+    INLINE_AGENT_CALL_TIMEOUT_SEC,
+    InlineReconfigureDeliveryFailedError,
+    deliver_agent_reconfigures,
+)
 from app.appium_nodes.models import AppiumNode
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
@@ -30,6 +35,7 @@ from app.runs.service_reservation import get_run
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
 
@@ -199,9 +205,12 @@ async def _register_run_grid_intent(
 
 
 class RunAllocatorService:
-    def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
+    def __init__(
+        self, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    ) -> None:
         self._publisher = publisher
         self._settings = settings
+        self._circuit_breaker = circuit_breaker
 
     async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
         """Create a test run reservation. Returns (run, reserved_device_infos)."""
@@ -241,9 +250,47 @@ class RunAllocatorService:
             await db.rollback()
             raise
 
+        deferred = await self._deliver_routing_reconfigures(db, device_infos)
+
         refreshed_run = await get_run(db, run.id)
         assert refreshed_run is not None
+        if deferred:
+            self._publisher.queue_for_session(
+                db,
+                "run.routing_delivery_deferred",
+                {
+                    "run_id": str(refreshed_run.id),
+                    "name": refreshed_run.name,
+                    "device_count": len(deferred),
+                },
+                severity="warning",
+            )
+            await db.commit()
         return refreshed_run, device_infos
+
+    async def _deliver_routing_reconfigures(
+        self, db: AsyncSession, device_infos: list[ReservedDeviceInfo]
+    ) -> list[str]:
+        """Deliver the staged grid-routing reconfigure to each reserved device's
+        agent inline, so the node stereotype carries the run id by the time the
+        reservation is returned. Best-effort: a failed delivery leaves its outbox
+        row for the reconciler loop to retry and is reported back to the caller so
+        it can be surfaced. Returns the device ids whose delivery was deferred.
+        """
+        deferred: list[str] = []
+        for info in device_infos:
+            try:
+                await deliver_agent_reconfigures(
+                    db,
+                    uuid.UUID(info.device_id),
+                    agent_call_timeout=INLINE_AGENT_CALL_TIMEOUT_SEC,
+                    raise_on_failure=True,
+                    settings=self._settings,
+                    circuit_breaker=self._circuit_breaker,
+                )
+            except InlineReconfigureDeliveryFailedError:
+                deferred.append(info.device_id)
+        return deferred
 
     def _resolve_run_options(self, data: RunCreate) -> tuple[int, int]:
         ttl_minutes = data.ttl_minutes
