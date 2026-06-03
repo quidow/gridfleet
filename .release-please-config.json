@@ -44,6 +44,11 @@
           "jsonpath": "$.package[?(@.name.value=='gridfleet-testkit')].version"
         }
       ]
+    },
+    "relay-proxy": {
+      "release-type": "rust",
+      "package-name": "gridfleet-agent-relay",
+      "include-component-in-tag": true
     }
   }
 }
