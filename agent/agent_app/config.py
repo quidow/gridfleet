@@ -82,6 +82,17 @@ class GridNodeSettings(BaseSettings):
     grid_node_proxy_timeout_sec: float = 60.0
     grid_node_bind_host: str = "0.0.0.0"
     grid_node_port_start: int = 5555
+    # Relay fast lane: spawn the gridfleet-relay-proxy sidecar per node so
+    # WebDriver commands bypass this process. "auto" enables it when the
+    # binary is installed (the gridfleet-agent-relay package), "on" fails
+    # node start without it, "off" forces in-process proxying.
+    relay_fast_lane: Literal["auto", "on", "off"] = "auto"
+    # Loopback port range for the Python relay's control listener (the
+    # node's advertised port goes to the sidecar in fast-lane mode).
+    relay_control_port_start: int = 7900
+    # Explicit path override for the sidecar binary; empty = discover
+    # `gridfleet-relay-proxy` on PATH.
+    relay_binary: str = ""
 
     @model_validator(mode="after")
     def validate_intervals_finite_positive(self) -> "GridNodeSettings":

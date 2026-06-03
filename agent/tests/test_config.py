@@ -1,6 +1,7 @@
 import pytest
+from pydantic import ValidationError
 
-from agent_app.config import AgentSettings
+from agent_app.config import AgentSettings, GridNodeSettings
 
 
 def test_agent_settings_rejects_api_auth_username_without_password(
@@ -101,3 +102,26 @@ def test_settings_repr_does_not_leak_password(monkeypatch: pytest.MonkeyPatch) -
 
     assert "super-secret-pw" not in blob
     assert "another-secret" not in blob
+
+
+def test_grid_node_relay_defaults() -> None:
+    settings = GridNodeSettings()
+    assert settings.relay_fast_lane == "auto"
+    assert settings.relay_control_port_start == 7900
+    assert settings.relay_binary == ""
+
+
+def test_grid_node_relay_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_RELAY_FAST_LANE", "on")
+    monkeypatch.setenv("AGENT_RELAY_CONTROL_PORT_START", "8100")
+    monkeypatch.setenv("AGENT_RELAY_BINARY", "/opt/bin/gridfleet-relay-proxy")
+    settings = GridNodeSettings()
+    assert settings.relay_fast_lane == "on"
+    assert settings.relay_control_port_start == 8100
+    assert settings.relay_binary == "/opt/bin/gridfleet-relay-proxy"
+
+
+def test_grid_node_relay_fast_lane_rejects_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_RELAY_FAST_LANE", "yes")
+    with pytest.raises(ValidationError):
+        GridNodeSettings()
