@@ -37,6 +37,7 @@ __all__ = [
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityLoop",
     "SessionViabilityProbeInProgressError",
+    "SessionViabilityProbeNotPermittedError",
     "SessionViabilityService",
     "build_probe_capabilities",
     "grid_probe_response_to_result",
@@ -51,6 +52,19 @@ class SessionViabilityProbeInProgressError(ValueError):
     (another probe — e.g. an active verification — holds the device's probe lock) apart
     from a probe *failure*. A collision says nothing about device health, so recovery
     skips it instead of counting a failed attempt that would feed backoff/shelving.
+    """
+
+
+class SessionViabilityProbeNotPermittedError(ValueError):
+    """Raised when the device's current state does not permit a probe.
+
+    Subclasses ``ValueError`` so manual HTTP callers keep surfacing 409 (control.py).
+    The distinct type lets the lifecycle recovery loop treat a *gating* rejection
+    (the device is no longer ``offline``/``verifying`` — e.g. ``busy``/``maintenance``,
+    or its state changed concurrently between the pre-lock gate and the row lock) as a
+    *skip* rather than a failed attempt. Like a probe collision, a gate rejection says
+    nothing about device health, so counting it would feed backoff/shelving. Mirrors
+    ``SessionViabilityProbeInProgressError``.
     """
 
 
@@ -223,15 +237,19 @@ class SessionViabilityService:
             raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
         await db.commit()
         device_reserved = await device_is_reserved(db, device.id)
+        # A recovery probe deliberately ignores reservation: a device that goes ``offline``
+        # mid-run keeps its reservation row, and the recovery probe is the only path that can
+        # re-validate it. The device is ``offline``/``verifying`` here, so it serves no client
+        # session — probing cannot steal an in-use Grid slot. Scheduled/manual probes still
+        # require no active reservation.
         can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (
             checked_by == SessionViabilityCheckedBy.recovery
             and device.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
-            and not device_reserved
         )
         if not can_probe:
             await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
             await db.commit()
-            raise ValueError("Session viability checks only run for available devices")
+            raise SessionViabilityProbeNotPermittedError("Session viability checks only run for available devices")
         if not await is_ready_for_use_async(db, device):
             await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
             await db.commit()
@@ -274,10 +292,11 @@ class SessionViabilityService:
             ) or (
                 checked_by == SessionViabilityCheckedBy.recovery
                 and locked.operational_state in _RECOVERY_PROBE_ADMISSIBLE_STATES
-                and not locked_reserved
             )
             if not locked_can_probe:
-                raise ValueError("Session viability checks only run for available devices (state changed concurrently)")
+                raise SessionViabilityProbeNotPermittedError(
+                    "Session viability checks only run for available devices (state changed concurrently)"
+                )
             previous_state = locked.operational_state
             await db.commit()
 
