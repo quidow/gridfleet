@@ -21,12 +21,17 @@ from app.devices.schemas.device import DeviceVerificationUpdate
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.jobs.queue import DurableJobService
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.lifecycle.services.operator_node import (
+    OperatorNodeLifecycleService,
+    operator_stop_active,
+    operator_stop_intents,
+)
 from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.packs.models import DriverPack
 from app.sessions.models import Session, SessionStatus
@@ -1562,6 +1567,87 @@ async def test_existing_device_verification_rejected_when_session_running(
     # The conflict must short-circuit before any verification job is enqueued.
     enqueued = await db_session.scalar(select(Job).where(Job.kind == JOB_KIND_DEVICE_VERIFICATION))
     assert enqueued is None
+
+
+async def test_existing_device_verification_rejected_when_operator_stopped(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A re-verify must not silently revive a device the operator deliberately stopped:
+    the verification node-start path runs through ``request_start``, which revokes
+    ``operator_stop_sources`` — defeating the sticky stop and re-enabling auto-recovery
+    (N13b). Refuse with 409, leaving the operator:stop intact (mirror of N13a/S17)."""
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="opstop-verify-001",
+        name="OpStop Verify",
+        operational_state=DeviceOperationalState.offline,
+    )
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=operator_stop_intents(device.id),
+        reason="operator stop",
+        publisher=event_bus,
+    )
+    await db_session.commit()
+    assert await operator_stop_active(db_session, device.id) is True
+
+    resp = await client.post(f"/api/verification/devices/{device.id}/jobs", json={"host_id": default_host_id})
+    assert resp.status_code == 409
+    assert "operator" in resp.json()["error"]["message"].lower()
+
+    # The conflict short-circuits before any verification job is enqueued ...
+    enqueued = await db_session.scalar(select(Job).where(Job.kind == JOB_KIND_DEVICE_VERIFICATION))
+    assert enqueued is None
+    # ... and the sticky operator:stop must NOT have been revoked.
+    assert await operator_stop_active(db_session, device.id) is True
+
+
+async def test_validate_update_request_rejects_operator_stopped(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense-in-depth: even if the operator stops the node in the enqueue→run window,
+    the preparation step fails the job instead of running a verify that would revoke the
+    sticky stop (N13b)."""
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="opstop-prep-001",
+        name="OpStop Prep",
+        operational_state=DeviceOperationalState.offline,
+    )
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=operator_stop_intents(device.id),
+        reason="operator stop",
+        publisher=event_bus,
+    )
+    await db_session.commit()
+
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(
+            settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
+        identity=DeviceIdentityConflictService(),
+    )
+    context, error = await prep.validate_update_request(
+        new_job("opstop-prep-job"),
+        db_session,
+        device.id,
+        DeviceVerificationUpdate(name="renamed", host_id=device.host_id),
+        http_client_factory=httpx.AsyncClient,
+    )
+    assert context is None
+    assert error is not None and "operator" in error.lower()
+    # The backstop must not have revoked the sticky stop.
+    assert await operator_stop_active(db_session, device.id) is True
 
 
 async def test_validate_update_request_rejects_running_session(

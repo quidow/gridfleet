@@ -20,6 +20,7 @@ from app.devices.services.identity_conflicts import (
     DeviceIdentityConflictError,
 )
 from app.hosts.models import Host
+from app.lifecycle.services.operator_node import operator_stop_active
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions.service import device_has_running_session
 from app.verification.services.job_state import set_stage
@@ -156,6 +157,13 @@ class VerificationPreparationService:
         # after the request was accepted) by failing the job instead.
         if await device_has_running_session(db, existing.id):
             return await _validation_failed(job, "Device has a live session; verification cannot run during a session")
+
+        # Spec/N13b: the verification node-start path revokes the sticky operator:stop. The
+        # router rejects this with a 409; this guard closes the enqueue→run TOCTOU window (an
+        # operator stop registered after the request was accepted) so a verify never silently
+        # revives an operator-stopped device.
+        if await operator_stop_active(db, existing.id):
+            return await _validation_failed(job, "Device is operator-stopped; start the node before verifying")
 
         try:
             payload = await device_write.prepare_device_update_payload_async(

@@ -14,7 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
@@ -338,6 +338,41 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
     await db_session.commit()
     await db_session.refresh(device)
     assert device.recovery_allowed is True, "operator start must re-allow recovery"
+
+
+async def test_operator_stop_active_tracks_sticky_stop(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """``operator_stop_active`` is the gate a re-verify checks to avoid silently
+    reviving an operator-stopped device (N13b): True only while the sticky stop holds,
+    and lifted by an operator start."""
+    device = await create_device(db_session, host_id=db_host.id, name="op-stop-active", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4726,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4726,
+            pid=27800,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+    assert await operator_stop_active(db_session, device.id) is False, "baseline: no operator stop"
+
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
+    await svc.request_stop(db_session, device, caller="operator_route", reason="operator stop")
+    await db_session.commit()
+    assert await operator_stop_active(db_session, device.id) is True, "operator stop is active"
+
+    await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
+    await db_session.commit()
+    assert await operator_stop_active(db_session, device.id) is False, "operator start lifts the stop"
 
 
 async def test_operator_start_revokes_blocking_health_failure_stop(

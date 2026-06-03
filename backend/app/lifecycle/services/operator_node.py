@@ -13,9 +13,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from sqlalchemy import or_, select
+
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
+from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
     GRID_ROUTING,
@@ -47,6 +50,28 @@ def operator_stop_sources(device_id: uuid.UUID) -> list[str]:
         f"operator:stop:grid:{device_id}",
         f"operator:stop:recovery:{device_id}",
     ]
+
+
+async def operator_stop_active(db: AsyncSession, device_id: uuid.UUID) -> bool:
+    """True while a sticky operator:stop is in force for the device.
+
+    Keys on the canonical node-process stop source (operator stop registers it with
+    no TTL). Callers that would otherwise revoke ``operator_stop_sources`` for a
+    non-operator-start reason — e.g. a re-verify, whose node-start path runs through
+    ``request_start`` and clears the stop — use this to refuse instead, so an
+    operator-stopped device is never silently revived (N13b).
+    """
+    now = datetime.now(UTC)
+    found = await db.scalar(
+        select(DeviceIntent.id)
+        .where(
+            DeviceIntent.device_id == device_id,
+            DeviceIntent.source == f"operator:stop:node:{device_id}",
+            or_(DeviceIntent.expires_at.is_(None), DeviceIntent.expires_at > now),
+        )
+        .limit(1)
+    )
+    return found is not None
 
 
 def operator_start_precondition(device_id: uuid.UUID) -> NodeRunningPrecondition:

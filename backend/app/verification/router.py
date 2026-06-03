@@ -18,6 +18,7 @@ from app.devices.schemas.device import (
 )
 from app.events import Event
 from app.events.dependencies import EventServicesDep
+from app.lifecycle.services.operator_node import operator_stop_active
 from app.sessions.service import device_has_running_session
 from app.verification.dependencies import VerificationServicesDep
 from app.verification.schemas import DeviceVerificationJobRead
@@ -66,6 +67,15 @@ async def create_existing_device_verification_job(
         raise HTTPException(
             status_code=409,
             detail="Cannot verify a device with a live session; end the session first",
+        )
+    # A re-verify runs through the node-start path (request_start), which revokes the
+    # sticky operator:stop — silently reviving a device the operator deliberately stopped
+    # and re-enabling auto-recovery (N13b). Operator stop is lifted only by an operator
+    # start, so refuse the verify here; the preparation step backstops the enqueue→run race.
+    if await operator_stop_active(db, device_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot verify an operator-stopped device; start the node first",
         )
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     return await verification_services.service.start_existing_device_verification_job(
