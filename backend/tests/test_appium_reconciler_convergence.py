@@ -246,6 +246,30 @@ def test_orphaned_node_ports_empty_when_each_known_target_has_one_node() -> None
     assert orphaned_node_ports(observed, known_targets={"dev-A", "dev-B-in-backoff"}) == []
 
 
+async def test_reap_orphan_nodes_keeps_node_reported_under_active_connection_target() -> None:
+    """A virtual device's node reports its live ADB serial (the row's
+    ``active_connection_target``), not the registered AVD target — it must count
+    as a known target. Reaping it puts the reconciler in a permanent 30s
+    stop/start loop for the device."""
+    from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
+
+    observed = [ObservedEntry(port=4724, pid=1, connection_target="emulator-5554")]
+    rows = [
+        _row(
+            connection_target="Television_1080p",
+            active_connection_target="emulator-5554",
+            desired_state="running",
+            desired_port=4724,
+        )
+    ]
+    stop_agent = AsyncMock()
+
+    reaped = await reap_orphan_nodes(observed, rows, stop_agent=stop_agent)
+
+    assert reaped == []
+    stop_agent.assert_not_awaited()
+
+
 async def test_reap_orphan_nodes_stops_each_orphan_port() -> None:
     from app.appium_nodes.services.reconciler_convergence import reap_orphan_nodes
 
