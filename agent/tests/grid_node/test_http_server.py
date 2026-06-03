@@ -636,3 +636,15 @@ def test_session_info_from_response_caps_not_dict_returns_none() -> None:
 def test_session_info_from_response_top_level_caps_not_dict() -> None:
     response = Response(content=b'{"sessionId":"sid","capabilities":"bad"}')
     assert _session_info_from_response(response) == ("sid", None)
+
+
+def test_node_api_status_is_served_locally_not_proxied(test_app: Starlette, proxy: RecordingProxy) -> None:
+    # Selenium's hub checks node liveness via GET /se/grid/node/status on (at
+    # least) every proxied WebDriver command. Before this route existed the
+    # request fell through the catch-all and was forwarded to Appium, which
+    # 404'd it — one phantom upstream round-trip per command.
+    client = TestClient(test_app)
+    response = client.get("/se/grid/node/status")
+    assert response.status_code == 200
+    assert response.json()["value"]["ready"] is True
+    assert proxy.requests == []
