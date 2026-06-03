@@ -28,3 +28,8 @@ class GridNodeConfig:
     # registration self-heal to ask the hub whether it actually knows this node.
     # Empty disables the check (unit tests / non-hub contexts).
     hub_status_url: str = ""
+    # Fast-lane mode (both set together by the process manager): the Rust
+    # sidecar owns the advertised node port and the Python relay binds
+    # 127.0.0.1:control_port instead. None = fallback (today's behavior).
+    control_port: int | None = None
+    relay_binary: str | None = None

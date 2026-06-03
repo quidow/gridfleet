@@ -278,6 +278,46 @@ async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
     assert "node-added" in [event["type"] for event in bus.events]
 
 
+def test_grid_node_config_fast_lane_fields_default_to_fallback() -> None:
+    config = _config()
+    assert config.control_port is None
+    assert config.relay_binary is None
+
+
+@pytest.mark.asyncio
+async def test_uvicorn_server_binds_control_port_in_fast_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    from agent_app.grid_node import service as service_module
+
+    captured: dict[str, object] = {}
+
+    class FakeUvicornConfig:
+        def __init__(self, app: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    class FakeUvicornServer:
+        def __init__(self, config: object) -> None:
+            self.started = True
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            while not self.should_exit:
+                await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(service_module.uvicorn, "Config", FakeUvicornConfig)
+    monkeypatch.setattr(service_module.uvicorn, "Server", FakeUvicornServer)
+
+    config = replace(_config(), control_port=7901, relay_binary="/bin/relay")
+    server = service_module.UvicornGridNodeHttpServer(
+        config=config, state=NodeState(slots=config.slots, now=time.monotonic), bus=RecordingBus()
+    )
+    await server.start()
+    await server.stop()
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 7901
+
+
 def _config() -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",

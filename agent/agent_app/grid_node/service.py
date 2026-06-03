@@ -132,10 +132,16 @@ class UvicornGridNodeHttpServer:
         # cannot bind it on the agent host and would `sys.exit(1)`,
         # propagating an exception that previously took down the whole
         # agent process on every node-start.
+        if self._config.control_port is not None:
+            # Fast lane: the sidecar owns the advertised port; the Python
+            # relay serves the control plane on loopback only.
+            bind_host, bind_port = "127.0.0.1", self._config.control_port
+        else:
+            bind_host, bind_port = self._config.bind_host, parsed.port
         server_config = uvicorn.Config(
             app,
-            host=self._config.bind_host,
-            port=parsed.port,
+            host=bind_host,
+            port=bind_port,
             log_level="warning",
             access_log=False,
             lifespan="off",
