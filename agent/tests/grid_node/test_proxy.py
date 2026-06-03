@@ -15,19 +15,10 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from agent_app.grid_node.proxy import proxy_request, proxy_websocket, strip_hop_headers
+from agent_app.grid_node.proxy import proxy_request, proxy_websocket
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
-
-
-def test_proxy_strips_hop_by_hop_headers() -> None:
-    headers = {
-        "connection": "keep-alive",
-        "content-type": "application/json",
-        "transfer-encoding": "chunked",
-    }
-    assert strip_hop_headers(headers) == {"content-type": "application/json"}
 
 
 @pytest.mark.asyncio

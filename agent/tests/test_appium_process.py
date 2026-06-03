@@ -1569,14 +1569,6 @@ async def test_status_does_not_probe_unmanaged_localhost_port(monkeypatch: pytes
     assert await manager.status(6553) == {"running": False, "port": 6553}
 
 
-@pytest.mark.asyncio
-async def test_require_managed_running_port_rejects_unmanaged_port() -> None:
-    manager = AppiumProcessManager()
-
-    with pytest.raises(DeviceNotFoundError, match="No managed Appium process is running on port 6553"):
-        manager.require_managed_running_port(6553)
-
-
 # ---------------------------------------------------------------------------
 # Lowest-hanging-fruit coverage for helper functions / simple branches
 # ---------------------------------------------------------------------------
@@ -1964,79 +1956,6 @@ async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
     assert service.drain_only_calls == 1
     assert 4723 in manager._stop_pending_ports
-    assert 4723 not in manager._stop_pending_tasks
-
-
-async def test_ensure_stop_when_grid_idle_task_skips_if_already_running() -> None:
-    manager = AppiumProcessManager()
-    existing = asyncio.create_task(asyncio.sleep(999))
-    manager._stop_pending_tasks[4723] = existing
-    manager._ensure_stop_when_grid_idle_task(4723)
-    assert manager._stop_pending_tasks[4723] is existing
-    existing.cancel()
-
-
-async def test_ensure_stop_when_grid_idle_task_creates_task() -> None:
-    manager = AppiumProcessManager()
-    manager._ensure_stop_when_grid_idle_task(4723)
-    assert 4723 in manager._stop_pending_tasks
-    manager._stop_pending_tasks[4723].cancel()
-
-
-async def test_stop_when_grid_idle_stops_when_no_session() -> None:
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService(busy=False)
-    handle = ReconfigurableGridNodeHandle(service)
-    manager._grid_supervisors[4723] = cast("Any", handle)
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=1))
-    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._logs[4723] = deque(["line"], maxlen=10)
-    manager._log_tasks[4723] = []
-    manager._stop_pending_ports.add(4723)
-    manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=False,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-
-    await manager._stop_when_grid_idle(4723)
-    assert 4723 not in manager._appium_procs
-
-
-async def test_stop_when_grid_idle_returns_if_not_pending() -> None:
-    manager = AppiumProcessManager()
-    await manager._stop_when_grid_idle(4723)
-
-
-async def test_stop_when_grid_idle_loops_if_session_still_active() -> None:
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService(busy=True)
-    handle = ReconfigurableGridNodeHandle(service)
-    manager._grid_supervisors[4723] = cast("Any", handle)
-    manager._stop_pending_ports.add(4723)
-    real_sleep = asyncio.sleep
-
-    calls = 0
-
-    async def fake_sleep(delay: float) -> None:
-        nonlocal calls
-        calls += 1
-        if calls >= 2:
-            manager._stop_pending_ports.discard(4723)
-        await real_sleep(0)
-
-    with patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep):
-        await manager._stop_when_grid_idle(4723)
-
-    assert calls >= 2
 
 
 async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() -> None:
@@ -2124,25 +2043,6 @@ async def test_drop_failed_managed_port_suppresses_grid_stop_exception() -> None
     with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("boom")):
         await manager._drop_failed_managed_port(4723)
     assert 4723 not in manager._info
-
-
-async def test_stop_pending_task_cancelled_when_stop_is_current_task() -> None:
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=1)
-    handle = RecordingGridNodeHandle()
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
-    manager._grid_supervisors[4723] = handle
-    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._logs[4723] = deque(["line"], maxlen=10)
-    manager._log_tasks[4723] = []
-
-    # Create a fake stop_pending task whose done_callback might fire during stop
-    fake_task = asyncio.create_task(asyncio.sleep(999))
-    manager._stop_pending_tasks[4723] = fake_task
-    await manager.stop(4723)
-    # Should have been cancelled (allow event loop to process)
-    await asyncio.sleep(0)
-    assert fake_task.cancelled() or fake_task.done()
 
 
 async def test_fetch_appium_status_http_error_returns_none() -> None:

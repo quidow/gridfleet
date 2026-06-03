@@ -75,19 +75,6 @@ def resolve_bin_path(*, executable: Path | None = None) -> str:
     return str(raw.resolve())
 
 
-def validate_dedicated_venv(
-    config: InstallConfig, *, executable: Path | None = None, command_name: str = "install"
-) -> None:
-    expected = Path(config.resolved_bin_path)
-    actual = (executable or Path(sys.argv[0])).resolve()
-    if actual != expected.resolve():
-        raise RuntimeError(
-            f"gridfleet-agent {command_name} must run from {expected}. "
-            f"Create {Path(config.agent_dir)}/venv first, install gridfleet-agent there, "
-            f"then run {expected} {command_name}."
-        )
-
-
 def path_shim_location(operator: OperatorIdentity) -> Path:
     return operator.home / ".local" / "bin" / "gridfleet-agent"
 

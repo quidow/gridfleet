@@ -51,11 +51,6 @@ def _parse_config_env_with_error(path: Path) -> tuple[dict[str, str], str | None
     return values, None
 
 
-def parse_config_env(path: Path) -> dict[str, str]:
-    values, _error = _parse_config_env_with_error(path)
-    return values
-
-
 def _run_status_command(command: list[str]) -> str:
     try:
         result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=10)
