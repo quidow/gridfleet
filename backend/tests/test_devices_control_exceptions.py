@@ -137,7 +137,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
                 publisher=event_bus,
             ),
             settings_services=_settings_services(),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=mock_ra),
         )
 
@@ -182,7 +182,7 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=ra_restart_err),
         )  # type: ignore[arg-type]
 
@@ -216,7 +216,7 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=ra_start_err),
         )  # type: ignore[arg-type]
 
@@ -256,7 +256,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
         )  # type: ignore[arg-type]
 
@@ -290,6 +290,6 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
-            agent_comm=SimpleNamespace(circuit_breaker=Mock()),
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
             appium_services=SimpleNamespace(reconciler_agent=ra_boom),
         )  # type: ignore[arg-type]

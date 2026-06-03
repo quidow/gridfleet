@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Awaitable, Callable
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
@@ -150,6 +151,7 @@ class BulkOperationsService:
         maintenance: MaintenanceProtocol,
         crud: DeviceCrudProtocol,
         operator: OperatorNodeLifecycleProtocol,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -157,6 +159,7 @@ class BulkOperationsService:
         self._maintenance = maintenance
         self._crud = crud
         self._operator = operator
+        self._pool = pool
 
     async def bulk_start_nodes(
         self, db: AsyncSession, device_ids: list[uuid.UUID], *, caller: str = "bulk"
@@ -366,6 +369,7 @@ class BulkOperationsService:
                         http_client_factory=httpx.AsyncClient,
                         settings=self._settings,
                         circuit_breaker=self._circuit_breaker,
+                        pool=self._pool,
                     )
                     if not data.get("success"):
                         errors[str(device.id)] = "Reconnect failed"

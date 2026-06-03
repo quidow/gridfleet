@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Row
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.hosts.services_container import HostServices
@@ -68,9 +69,16 @@ def _sample_from_row(row: Row[tuple[object, object, object, object, object, obje
 
 
 class HostResourceTelemetryService:
-    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        pool: AgentHttpPool | None = None,
+    ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._pool = pool
 
     async def apply_host_resource_sample(
         self,
@@ -105,6 +113,7 @@ class HostResourceTelemetryService:
                     http_client_factory=httpx.AsyncClient,
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
                 )
                 if payload is None:
                     continue

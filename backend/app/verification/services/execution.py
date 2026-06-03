@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import ProbeSessionFn
@@ -75,6 +76,7 @@ class VerificationExecutionService:
         reconciler: NodeConvergence,
         node_manager: RemoteNodeManager,
         review: ReviewProtocol,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -85,6 +87,7 @@ class VerificationExecutionService:
         self._reconciler = reconciler
         self._node_manager = node_manager
         self._review = review
+        self._pool = pool
 
     async def run_device_health(
         self, job: dict[str, Any], device: Device, *, http_client_factory: AgentClientFactory
@@ -119,6 +122,7 @@ class VerificationExecutionService:
                 timeout=_device_health_timeout(device, settings=self._settings),
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
             )
         except AgentCallError as exc:
             detail = f"Agent health check failed: {exc}"

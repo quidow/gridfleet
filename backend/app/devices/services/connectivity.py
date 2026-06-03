@@ -32,6 +32,7 @@ from app.runs.models import RunState
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
@@ -93,7 +94,11 @@ def _device_expected_aliases(device: Device) -> set[str]:
 
 
 async def _get_agent_devices(
-    host: Host, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    host: Host,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> set[str] | None:
     """Fetch connected device targets from the host agent. Returns None if unreachable."""
     try:
@@ -103,6 +108,7 @@ async def _get_agent_devices(
             http_client_factory=httpx.AsyncClient,
             settings=settings,
             circuit_breaker=circuit_breaker,
+            pool=pool,
         )
         candidates = pack_result.get("candidates", [])
         if not isinstance(candidates, list):
@@ -133,6 +139,7 @@ async def _get_device_health(
     ip_ping_count: int | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> dict[str, Any] | None:
     host = device.host
     if host is None or device.connection_target is None:
@@ -153,6 +160,7 @@ async def _get_device_health(
             http_client_factory=httpx.AsyncClient,
             settings=settings,
             circuit_breaker=circuit_breaker,
+            pool=pool,
         )
     except AgentCallError:
         return None
@@ -176,7 +184,12 @@ async def _uses_endpoint_health(db: AsyncSession, device: Device) -> bool:
 
 
 async def _get_lifecycle_state(
-    db: AsyncSession, device: Device, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    device: Device,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> str | None:
     """Poll the agent for the pack-owned lifecycle state."""
     try:
@@ -205,6 +218,7 @@ async def _get_lifecycle_state(
             http_client_factory=httpx.AsyncClient,
             settings=settings,
             circuit_breaker=circuit_breaker,
+            pool=pool,
         )
     except AgentCallError:
         return None
@@ -297,12 +311,14 @@ class ConnectivityService:
         circuit_breaker: CircuitBreakerProtocol,
         lifecycle_policy: HealthFailureHandler,
         health: DeviceHealthProtocol,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._lifecycle_policy = lifecycle_policy
         self._health = health
+        self._pool = pool
 
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
@@ -320,7 +336,7 @@ class ConnectivityService:
             devices = device_result.scalars().all()
 
             connected_targets = await _get_agent_devices(
-                host, settings=self._settings, circuit_breaker=self._circuit_breaker
+                host, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
             )
             if connected_targets is None:
                 continue  # Agent unreachable — skip (heartbeat handles host status)
@@ -329,7 +345,7 @@ class ConnectivityService:
 
             for device in devices:
                 lifecycle_state = await _get_lifecycle_state(
-                    db, device, settings=self._settings, circuit_breaker=self._circuit_breaker
+                    db, device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
                 )
                 await assert_current_leader(db, settings=self._settings)
                 if lifecycle_state is not None:
@@ -343,6 +359,7 @@ class ConnectivityService:
                         ip_ping_count=ip_ping_count,
                         settings=self._settings,
                         circuit_breaker=self._circuit_breaker,
+                        pool=self._pool,
                     )
                     await assert_current_leader(db, settings=self._settings)
                     if health_result is not None:
@@ -454,6 +471,7 @@ class ConnectivityService:
                             ip_ping_count=ip_ping_count,
                             settings=self._settings,
                             circuit_breaker=self._circuit_breaker,
+                            pool=self._pool,
                         )
                         await assert_current_leader(db, settings=self._settings)
                         if health_result is not None:

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceCrudProtocol
@@ -58,11 +59,13 @@ class VerificationPreparationService:
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
         identity: DeviceIdentityConflictService,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
         self._identity = identity
+        self._pool = pool
 
     async def validate_create_request(
         self,
@@ -297,6 +300,7 @@ class VerificationPreparationService:
                     http_client_factory=http_client_factory,
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
                 )
             except AgentCallError:
                 normalized = None
@@ -359,6 +363,7 @@ class VerificationPreparationService:
                     http_client_factory=http_client_factory,
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
                 )
             except AgentCallError as exc:
                 error_msg = str(exc)
