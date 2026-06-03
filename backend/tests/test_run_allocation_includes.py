@@ -18,6 +18,7 @@ from app.runs.models import TestRun
 from app.runs.schemas import ReservedDeviceInfo, RunCreate, UnavailableInclude
 from app.runs.service_allocator import RunAllocatorService, _build_device_info
 from app.runs.service_query import RunQueryService
+from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
@@ -27,6 +28,7 @@ _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
+    circuit_breaker=test_circuit_breaker,
 )
 
 

@@ -164,6 +164,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
             run_allocator = RunAllocatorService(
                 publisher=event_bus,
                 settings=settings_service,
+                circuit_breaker=test_circuit_breaker,
             )
             run_failure = RunFailureService(
                 publisher=event_bus,

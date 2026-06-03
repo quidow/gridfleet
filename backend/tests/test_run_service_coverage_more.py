@@ -770,6 +770,7 @@ async def test_run_service_small_async_branch_helpers(monkeypatch: pytest.Monkey
             settings=FakeSettingsReader(
                 {"reservations.max_ttl_minutes": 10, "reservations.default_heartbeat_timeout_sec": 30}
             ),
+            circuit_breaker=_circuit_breaker,
         )
         from app.runs.schemas import RunCreate as _RunCreate
 

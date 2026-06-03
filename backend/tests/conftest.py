@@ -611,6 +611,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         run_allocator = RunAllocatorService(
             publisher=test_event_bus,
             settings=settings_service,
+            circuit_breaker=test_circuit_breaker,
         )
         run_failure = RunFailureService(
             publisher=test_event_bus,

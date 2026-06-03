@@ -264,6 +264,17 @@ PUBLIC_EVENT_CATALOG: tuple[PublicEventDefinition, ...] = (
         typical_data_fields=("run_id", "name", "reason"),
     ),
     PublicEventDefinition(
+        name="run.routing_delivery_deferred",
+        category="sessions_and_runs",
+        description=(
+            "Grid-routing reconfigure could not be delivered to the agent during reservation; "
+            "the reconciler will retry."
+        ),
+        default_severity="warning",
+        allowed_severities=frozenset({"warning"}),
+        typical_data_fields=("run_id", "name", "device_count"),
+    ),
+    PublicEventDefinition(
         name="run.never_activated",
         category="sessions_and_runs",
         description="Run expired while still in `preparing` because the client never signaled active.",
