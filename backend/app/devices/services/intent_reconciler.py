@@ -127,8 +127,20 @@ async def _reconcile_all_devices_once(
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
 ) -> None:
-    rows = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
-    for device_id in rows:
+    intent_device_ids = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
+    # The reconciler is authoritative for operational_state, but a device with no
+    # intents would otherwise be invisible to this scan — so a state pushed without
+    # its backing intent (e.g. a bare `verifying`/`offline` push stranded by a crash
+    # before the lease was registered; spec §14.5: every state must be backed by a
+    # durable fact) could stick forever. Also re-derive any device not in the steady
+    # `available` state so orphaned non-available states always self-heal. Steady
+    # `available` devices with no intents stay skipped (the original optimization).
+    orphan_device_ids = (
+        (await db.execute(select(Device.id).where(Device.operational_state != DeviceOperationalState.available)))
+        .scalars()
+        .all()
+    )
+    for device_id in dict.fromkeys([*intent_device_ids, *orphan_device_ids]):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
         await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
@@ -451,10 +463,19 @@ async def reconcile_device(
     )
     if changed:
         node.generation += 1
+    # Stage a reconfigure for caps/run-id updates on a running relay, and for
+    # any transition that must stop the hub routing to it: ``stop_pending``
+    # (graceful) or ``not accepting_new_sessions`` (a hard stop flips this
+    # without setting ``stop_pending``). Without the ``accepting_new_sessions``
+    # arm, a hard/idle ``desired_state=stopped`` derives ``offline`` synchronously
+    # (``stop_in_flight``) but pushes no drain — the relay stays UP at the hub and
+    # a direct/free session lands on the now-offline device (N7,
+    # ``session_on_non_available``). Mirrors the start-path defense-in-depth in
+    # ``reconciler_agent.mark_node_running``.
     should_stage_reconfigure = (
         metadata_changed
         and node.port is not None
-        and (node.desired_state == AppiumDesiredState.running or node.stop_pending)
+        and (node.desired_state == AppiumDesiredState.running or node.stop_pending or not node.accepting_new_sessions)
     )
     if should_stage_reconfigure:
         await _stage_agent_reconfigure(db, node)

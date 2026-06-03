@@ -941,6 +941,7 @@ class AppiumProcessManager:
             slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
             hub_publish_url=agent_settings.grid_node.grid_publish_url,
             hub_subscribe_url=agent_settings.grid_node.grid_subscribe_url,
+            hub_status_url=agent_settings.grid_node.grid_hub_url,
             heartbeat_sec=agent_settings.grid_node.grid_node_heartbeat_sec,
             session_timeout_sec=agent_settings.grid_node.grid_node_session_timeout_sec,
             proxy_timeout_sec=agent_settings.grid_node.grid_node_proxy_timeout_sec,
@@ -1279,14 +1280,20 @@ class AppiumProcessManager:
         return await self._fetch_appium_status(port) is not None
 
     def _is_appium_port_bindable(self, port: int) -> bool:
-        # Mirror Appium's own bind (0.0.0.0, no SO_REUSEADDR) so the probe
-        # returns the same EADDRINUSE outcome the subprocess would hit. The
-        # probe never calls listen()/accept() — the socket is closed by the
-        # context manager immediately after bind, so no traffic from any
-        # interface can reach it. (CodeQL py/bind-socket-all-network-interfaces
-        # flags the literal 0.0.0.0; the alert is dismissed as a false
-        # positive — see PR #283.)
+        # Mirror Appium's own bind (0.0.0.0, SO_REUSEADDR) so the probe returns
+        # the same EADDRINUSE outcome the subprocess would hit. Appium's runtime
+        # (Node/libuv) sets SO_REUSEADDR on its listener; omitting it here makes
+        # the probe stricter than reality — a restart that rebinds a just-vacated
+        # port false-positives on the previous process's TIME_WAIT connection
+        # sockets and the agent gives up on the same-port restart (N12). A live
+        # listener still fails bind (SO_REUSEADDR does not override an active
+        # LISTEN), so genuine port squatters are still detected. The probe never
+        # calls listen()/accept() — the socket is closed by the context manager
+        # immediately after bind, so no traffic from any interface can reach it.
+        # (CodeQL py/bind-socket-all-network-interfaces flags the literal
+        # 0.0.0.0; the alert is dismissed as a false positive — see PR #283.)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(("0.0.0.0", port))
             except OSError:

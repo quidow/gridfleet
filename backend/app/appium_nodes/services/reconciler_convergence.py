@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.core.metrics_recorders import APPIUM_RECONCILER_CONVERGENCE_ACTIONS, APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED
 from app.core.observability import get_logger
 
@@ -14,6 +15,18 @@ logger = get_logger(__name__)
 if TYPE_CHECKING:
     import uuid
     from datetime import datetime
+
+
+def _log_already_running(*, host_id: uuid.UUID, row: DesiredRow, action: str) -> None:
+    """The agent already runs a node for this target — the start/restart leg is
+    a no-op. The next observation tick records the node via ``db_mark_running``."""
+    logger.debug(
+        "appium_reconciler_node_already_running",
+        host_id=str(host_id),
+        device_id=str(row.device_id),
+        connection_target=row.connection_target,
+        action=action,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +50,10 @@ class ObservedEntry:
     port: int
     pid: int | None
     connection_target: str
+    # Agent-reported Grid relay status for this node (``up`` / ``registering`` /
+    # ``starting`` / ``stopped`` / ``error`` / None). A node can be half-up — Appium
+    # process alive but relay supervisor down — which must NOT read as ``confirm_running``.
+    grid_node_status: str | None = None
 
 
 ActionKind = Literal[
@@ -95,6 +112,19 @@ def decide_convergence_action(
         if observed is None:
             return ConvergenceAction(kind="start", port=row.desired_port)
         if row.desired_port is None or observed.port == row.desired_port:
+            # Half-up node (N11): Appium process present but the Grid relay supervisor
+            # is definitively down (``stopped``/``error`` — not the transient ``starting``/
+            # ``registering``/``up``). ``confirm_running`` would mask the dead relay until
+            # node_health's slow relay-registration path forces a restart ~90s later. The
+            # agent stops the relay on a maintenance drain expecting "the next start" to
+            # re-register it; deliver that start now via a restart (stop the half-up Appium,
+            # start fresh). Takes precedence over db_mark_running — a restart re-observes.
+            if observed.grid_node_status in {"stopped", "error"}:
+                return ConvergenceAction(
+                    kind="restart",
+                    stop_port=observed.port,
+                    start_port=_positive_or_none(row.desired_port) or _positive_or_none(observed.port),
+                )
             if (
                 row.port != observed.port
                 or row.pid != observed.pid
@@ -227,7 +257,11 @@ async def _execute_action(
         )
         return
     if action.kind == "start":
-        result = await start_agent(row=row, port=action.port)
+        try:
+            result = await start_agent(row=row, port=action.port)
+        except NodeAlreadyRunningError:
+            _log_already_running(host_id=host_id, row=row, action=action.kind)
+            return
         result_port = _int_or_none(result.get("port"))
         await write_observed(
             row=row,
@@ -254,7 +288,11 @@ async def _execute_action(
     if action.kind == "restart":
         if action.stop_port is not None:
             await stop_agent(row=row, port=action.stop_port)
-        result = await start_agent(row=row, port=action.start_port)
+        try:
+            result = await start_agent(row=row, port=action.start_port)
+        except NodeAlreadyRunningError:
+            _log_already_running(host_id=host_id, row=row, action=action.kind)
+            return
         result_port = _int_or_none(result.get("port"))
         await write_observed(
             row=row,

@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.appium_nodes.exceptions import NodeAlreadyRunningError
 from app.appium_nodes.services.reconciler_convergence import (
+    ConvergenceAction,
     DesiredRow,
     ObservedEntry,
     _execute_action,
@@ -89,6 +91,81 @@ def test_desired_running_no_token_observed_matching_picks_confirm_running() -> N
     assert action.kind == "confirm_running"
 
 
+def test_desired_running_observed_relay_stopped_picks_restart() -> None:
+    # N11: a half-up node (Appium process up, Grid relay supervisor stopped) must NOT
+    # read as confirm_running — that masks the dead relay until node_health's slow path.
+    # The agent expects "the next start" to re-register; emit a restart so the fast loop
+    # delivers it.
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="stopped")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "restart"
+    assert action.stop_port == 4723
+    assert action.start_port == 4723
+
+
+def test_desired_running_observed_relay_error_picks_restart() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="error")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "restart"
+
+
+def test_desired_running_observed_relay_up_picks_confirm_running() -> None:
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="up")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
+def test_desired_running_observed_relay_registering_does_not_restart() -> None:
+    # "registering" = relay process up, re-asserting NODE_ADDED (agent self-heal in
+    # progress). Restarting would interrupt it and churn; leave recovery to the agent
+    # (with node_health as the backstop).
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status="registering")
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
+def test_desired_running_observed_relay_status_none_picks_confirm_running() -> None:
+    # No relay status reported (e.g. non-grid-managed node) -> preserve prior behavior.
+    row = _row(
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=12345,
+        active_connection_target="emulator-5554",
+    )
+    obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target, grid_node_status=None)
+    action = decide_convergence_action(row, observed=obs, now=datetime.now(UTC))
+    assert action.kind == "confirm_running"
+
+
 def test_desired_running_observed_but_db_lacks_pid_repairs_observed_state() -> None:
     row = _row(desired_state="running", desired_port=4723, port=4723)
     obs = ObservedEntry(port=4723, pid=12345, connection_target=row.connection_target)
@@ -106,6 +183,35 @@ def test_desired_running_no_token_observed_port_mismatch_picks_stop_then_retry()
     assert action.kind == "stop"
     assert action.port == 4999
     assert action.clear_desired_port is True
+
+
+@pytest.mark.parametrize("kind", ["start", "restart"])
+@pytest.mark.asyncio
+async def test_execute_action_treats_already_running_as_benign_noop(kind: str) -> None:
+    """When the agent reports the target already running, the start leg of a
+    start/restart action must be a no-op: no ``write_observed`` push, no raise.
+    The next observation tick records the running node via ``db_mark_running``."""
+    row = _row(desired_state="running", desired_port=4723, port=4724, pid=1)
+    action = ConvergenceAction(kind=kind, port=4723, stop_port=4724, start_port=4723)
+
+    start_agent = AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724"))
+    stop_agent = AsyncMock()
+    write_observed = AsyncMock()
+
+    # Must not raise.
+    await _execute_action(
+        host_id=uuid.uuid4(),
+        row=row,
+        action=action,
+        start_agent=start_agent,  # type: ignore[arg-type]
+        stop_agent=stop_agent,  # type: ignore[arg-type]
+        write_observed=write_observed,  # type: ignore[arg-type]
+        clear_token=AsyncMock(),  # type: ignore[arg-type]
+        reset_start_failure=AsyncMock(),  # type: ignore[arg-type]
+    )
+
+    start_agent.assert_awaited_once()
+    write_observed.assert_not_awaited()
 
 
 def test_orphaned_node_ports_flags_duplicates_and_unknown_targets() -> None:

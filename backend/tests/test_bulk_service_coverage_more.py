@@ -250,6 +250,7 @@ def test_bulk_small_helpers_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert operator_stop_sources(device_id) == [
         f"operator:stop:node:{device_id}",
         f"operator:stop:grid:{device_id}",
+        f"operator:stop:recovery:{device_id}",
     ]
 
     err = AgentCallError("10.0.0.1", "agent down")

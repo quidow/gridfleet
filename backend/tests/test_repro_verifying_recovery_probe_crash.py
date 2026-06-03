@@ -175,3 +175,88 @@ async def test_attempt_auto_recovery_probes_verifying_device(
         )
 
     assert probe_called, "attempt_auto_recovery early-returned instead of probing a verifying device"
+
+
+async def test_run_recovery_probe_skips_on_in_progress_collision(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F6: when another viability probe (e.g. an active verification job) holds the device's
+    probe lock, ``_run_recovery_probe`` must report ``skipped`` — NOT ``failed`` — and must not
+    retry. A concurrency collision is not a device-health signal; counting it as a failed attempt
+    feeds recovery backoff/review and can shelve a healthy device."""
+    from app.lifecycle.services import policy as policy_mod
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+    from app.sessions.service_viability import SessionViabilityProbeInProgressError
+
+    # Keep the test fast even if a regression reintroduces retrying on collision.
+    monkeypatch.setattr(policy_mod, "RECOVERY_PROBE_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(policy_mod, "RECOVERY_PROBE_JITTER_MAX_SEC", 0)
+
+    device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-skip")
+
+    probe = AsyncMock(
+        side_effect=SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
+    )
+    viability = Mock()
+    viability.run_session_viability_probe = probe
+
+    svc = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=viability,
+        node_manager=AsyncMock(),
+    )
+
+    result = await svc._run_recovery_probe(db_session, device)
+
+    assert result.get("status") == "skipped", result
+    assert probe.await_count == 1, "a probe-in-flight collision must not be retried as a failure"
+
+
+async def test_attempt_auto_recovery_suppresses_on_probe_collision(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """F6: a recovery whose probe was *skipped* (another probe in flight) is recorded as a
+    suppression — no auto-stop, no backoff, no ``review_required``. The lifecycle loop retries
+    on its next cycle once the lock frees."""
+    from app.lifecycle.services.policy import LifecyclePolicyService
+
+    device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-suppress")
+
+    actions = AsyncMock()
+    # The pre-probe gate consults this; a blanket AsyncMock returns a truthy mock and would
+    # short-circuit into the "client session running" suppression before the probe runs.
+    actions.has_running_client_session = AsyncMock(return_value=False)
+    review = AsyncMock()
+    svc = LifecyclePolicyService(
+        review=review,
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=actions,
+        incidents=LifecycleIncidentService(),
+        viability=Mock(),
+        node_manager=AsyncMock(),
+    )
+
+    probe_mock = AsyncMock(return_value={"status": "skipped"})
+    with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=probe_mock):
+        await svc.attempt_auto_recovery(
+            db_session, device, source="exit_maintenance", reason="Operator exited maintenance"
+        )
+
+    probe_mock.assert_awaited_once()  # gates passed; we actually reached the probe + skip branch
+    actions.record_recovery_suppressed.assert_awaited_once()
+    actions.complete_auto_stop.assert_not_awaited()
+    review.mark_review_required.assert_not_awaited()

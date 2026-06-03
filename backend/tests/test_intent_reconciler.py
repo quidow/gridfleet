@@ -11,7 +11,7 @@ from app.agent_comm.models import AgentReconfigureOutbox
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.errors import AgentUnreachableError
 from app.core.leader.advisory import LeadershipLost
-from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceReservation
+from app.devices.models import DeviceIntent, DeviceIntentDirty, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
@@ -323,6 +323,59 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     assert outbox.accepting_new_sessions is False
 
 
+async def test_hard_stop_on_idle_device_stages_agent_drain(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A hard stop of an idle device must stage a drain reconfigure (N7).
+
+    ``operational_state`` derives to ``offline`` synchronously from
+    ``desired_state=stopped`` (``stop_in_flight``), but the relay keeps running
+    and registered to the hub until the appium reconciler tears it down. Without
+    a drain pushed to the agent, the hub keeps routing and a direct/free session
+    lands on the now-offline device → ``busy`` (the ``session_on_non_available``
+    gating violation). The hard-stop path must stage the same drain the graceful
+    path does, even though ``desired_state=stopped`` and ``stop_pending=False``.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="hard-stop")
+    node = await _seed_node(db_session, device.id, generation=2)
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+    with state_write_guard.bypass():
+        node.desired_port = 4723
+    with state_write_guard.bypass():
+        node.port = 4723
+    with state_write_guard.bypass():
+        node.pid = 1234
+    with state_write_guard.bypass():
+        node.active_connection_target = device.connection_target
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        reason="operator stop",
+        intents=[
+            IntentRegistration(
+                source="operator:node",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "hard", "priority": 90},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.stop_pending is False
+    assert node.accepting_new_sessions is False
+    outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert outbox.port == 4723
+    assert outbox.accepting_new_sessions is False
+
+
 async def test_graceful_stop_holds_node_running_while_session_active(
     db_session: AsyncSession,
     db_host: Host,
@@ -535,6 +588,42 @@ async def test_full_scan_reconciles_each_intent_device(
 
     assert set(reconciled) == {first.id, second.id}
     assert deliver.await_count == 2
+
+
+async def test_full_scan_recovers_non_available_device_without_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device stranded in a non-``available`` state with NO backing intent — the
+    state a worker crash can leave between the bare ``verifying`` push and lease
+    registration (spec §14.5: every state must be backed by a durable fact). The
+    authoritative full scan must re-derive it even though it has no DeviceIntent
+    rows, while a steady-state ``available`` device with no intents stays skipped.
+    """
+    orphan = await create_device(db_session, host_id=db_host.id, name="orphan-verifying")
+    idle = await create_device(db_session, host_id=db_host.id, name="idle-available")
+    with state_write_guard.bypass():
+        orphan.operational_state = DeviceOperationalState.verifying
+        idle.operational_state = DeviceOperationalState.available
+    await db_session.commit()
+    # Neither device has any intents — the pre-fix scan would skip both.
+    assert not (await db_session.execute(select(DeviceIntent))).first()
+
+    reconciled: list[object] = []
+
+    async def fake_reconcile(_db: AsyncSession, device_id: object, *, publisher: object = None) -> None:
+        reconciled.append(device_id)
+
+    monkeypatch.setattr("app.devices.services.intent_reconciler.reconcile_device", fake_reconcile)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())
+
+    await _reconcile_all_devices_once(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+
+    assert orphan.id in reconciled  # re-derived despite having no intents
+    assert idle.id not in reconciled  # steady-state available is still skipped
 
 
 async def test_reconciler_cycle_checks_leadership_before_writes(

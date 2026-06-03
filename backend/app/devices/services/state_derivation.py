@@ -124,6 +124,13 @@ def _reason_for(
         return ObservationReason.session
     if facts.has_verification_lease:
         return ObservationReason.verification_started
+    if facts.in_maintenance:
+        # Mirror evaluate_operational_state's priority: maintenance outranks
+        # stop_in_flight / not-ready. Entering maintenance registers a node-stop
+        # intent (stop_in_flight=True) and may leave the device not-ready, so
+        # without this branch the bus event would report ``auto_stopped`` /
+        # ``disconnected`` — contradicting the ``maintenance_entered`` audit row.
+        return ObservationReason.maintenance_entered
     if facts.stop_in_flight:
         return ObservationReason.auto_stopped
     if not facts.ready:

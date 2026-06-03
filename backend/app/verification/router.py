@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.dependencies import DbDep
-from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_422
+from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
@@ -18,11 +18,13 @@ from app.devices.schemas.device import (
 )
 from app.events import Event
 from app.events.dependencies import EventServicesDep
+from app.lifecycle.services.operator_node import operator_stop_active
+from app.sessions.service import device_has_running_session
 from app.verification.dependencies import VerificationServicesDep
 from app.verification.schemas import DeviceVerificationJobRead
 from app.verification.services.job_state import public_snapshot
 
-DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_422}
+DEVICE_VERIFICATION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
 
 router = APIRouter(prefix="/api/verification", tags=["verification"], responses=DEVICE_VERIFICATION_ERROR_RESPONSES)
 
@@ -61,6 +63,20 @@ async def create_existing_device_verification_job(
     device = await device_services.crud.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=404, detail="Device not found")
+    if await device_has_running_session(db, device_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot verify a device with a live session; end the session first",
+        )
+    # A re-verify runs through the node-start path (request_start), which revokes the
+    # sticky operator:stop — silently reviving a device the operator deliberately stopped
+    # and re-enabling auto-recovery (N13b). Operator stop is lifted only by an operator
+    # start, so refuse the verify here; the preparation step backstops the enqueue→run race.
+    if await operator_stop_active(db, device_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot verify an operator-stopped device; start the node first",
+        )
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
     return await verification_services.service.start_existing_device_verification_job(
         device_id,

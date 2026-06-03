@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import agent_base_url, agent_health, appium_stop
 from app.agent_comm.snapshot import parse_running_nodes
+from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.appium_nodes.services.desired_state_writer import write_desired_state
@@ -700,7 +701,12 @@ class ReconcilerService:
                         return
                     running = parse_running_nodes(appium_processes)
                     observed = [
-                        ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+                        ObservedEntry(
+                            port=entry.port,
+                            pid=entry.pid,
+                            connection_target=entry.connection_target,
+                            grid_node_status=entry.grid_node_status,
+                        )
                         for entry in running
                     ]
                     await _touch_last_observed(rows, settings=self._settings, session_factory=self._session_factory)
@@ -792,6 +798,21 @@ class ReconcilerService:
                     clear_token=clear_token,
                     reset_start_failure=reset_start_failure,
                 )
+            except (NodeAlreadyRunningError, NodeStopNotAcknowledgedError):
+                # Expected, self-healing transients during the relay
+                # re-register / sidecar-respawn window: a node already runs for
+                # the target, or the agent hasn't acknowledged a stop yet. The
+                # next reconciler tick converges; the APPIUM_RECONCILER_*
+                # metrics are the durable signal, so log at debug, not warning.
+                logger.debug(
+                    "appium_reconciler_convergence_action_transient",
+                    exc_info=True,
+                    host_id=str(host_id),
+                    device_id=str(row.device_id),
+                    action=action.kind,
+                )
+                if raise_errors:
+                    raise
             except Exception:  # convergence loop; log and continue, re-raise if requested
                 logger.warning(
                     "appium_reconciler_convergence_action_failed",
@@ -834,6 +855,11 @@ class ReconcilerService:
                         raise RuntimeError(
                             f"Agent returned invalid Appium port {handle.port} for device {row.device_id}"
                         )
+                except NodeAlreadyRunningError:
+                    # The agent already runs a node for this target — not a start
+                    # failure. Don't trip recovery backoff; let the convergence
+                    # action treat it as already-converged.
+                    raise
                 except Exception as exc:
                     reason = _classify_start_failure(exc)
                     APPIUM_RECONCILER_START_FAILURES.labels(reason=reason).inc()
@@ -884,7 +910,9 @@ class ReconcilerService:
             if not stopped:
                 APPIUM_RECONCILER_STOP_FAILURES.labels(reason="not_acknowledged").inc()
                 device_ref = row.device_id if row is not None else "<orphan>"
-                raise RuntimeError(f"Agent did not acknowledge Appium stop for device {device_ref} on port {port}")
+                raise NodeStopNotAcknowledgedError(
+                    f"Agent did not acknowledge Appium stop for device {device_ref} on port {port}"
+                )
 
         return _stop
 
@@ -1024,7 +1052,12 @@ class ReconcilerService:
         if not isinstance(appium_processes, dict):
             return None
         observed = [
-            ObservedEntry(port=entry.port, pid=entry.pid, connection_target=entry.connection_target)
+            ObservedEntry(
+                port=entry.port,
+                pid=entry.pid,
+                connection_target=entry.connection_target,
+                grid_node_status=entry.grid_node_status,
+            )
             for entry in parse_running_nodes(appium_processes)
         ]
         await self.converge_host_rows(

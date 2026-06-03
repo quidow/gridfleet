@@ -8,10 +8,11 @@ import pytest
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
-from app.appium_nodes.services.reconciler_convergence import DesiredRow
+from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry
 from app.devices.models import DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus
@@ -194,7 +195,7 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
     assert await stop_agent(row=row, port=0) is None
 
     monkeypatch.setattr("app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(return_value=False))
-    with pytest.raises(RuntimeError, match="did not acknowledge"):
+    with pytest.raises(NodeStopNotAcknowledgedError, match="did not acknowledge"):
         await stop_agent(row=row, port=4723)
 
     monkeypatch.setattr(
@@ -202,6 +203,68 @@ async def test_stop_agent_factory_and_start_failure_classification(monkeypatch: 
     )
     with pytest.raises(httpx.ConnectError):
         await stop_agent(row=row, port=4723)
+
+
+async def test_start_agent_does_not_record_failure_on_already_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A per-target ALREADY_RUNNING from the agent is not a start failure: the
+    ``_start`` closure must re-raise it without tripping recovery backoff."""
+
+    class Session:
+        async def __aenter__(self) -> "Session":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    @asynccontextmanager
+    async def scope() -> Session:
+        yield Session()
+
+    row = _desired_row()
+    device = type("Device", (), {"appium_node": object()})()
+    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        appium_reconciler,
+        "_start_for_node",
+        AsyncMock(side_effect=NodeAlreadyRunningError("already running for target on port 4724")),
+    )
+    record = AsyncMock()
+    monkeypatch.setattr(appium_reconciler, "_record_start_failure", record)
+
+    svc = ReconcilerService(
+        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
+    )
+    start = svc._make_start_agent(require_leader=False, session_scope=scope)
+    with pytest.raises(NodeAlreadyRunningError):
+        await start(row=row, port=4723)
+
+    record.assert_not_awaited()
+
+
+async def test_converge_host_rows_downgrades_transient_stop_not_acknowledged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stop the agent won't acknowledge is a self-healing transient: the host
+    convergence loop swallows it (raise_errors=False) and re-raises only when
+    the caller asks (raise_errors=True, the converge_device_now path)."""
+    # desired=stopped + an observed node → decide_convergence_action picks ``stop``.
+    row = _desired_row(desired_state="stopped", connection_target="serial-stop", port=4723, pid=1)
+    observed = [ObservedEntry(port=4723, pid=1, connection_target="serial-stop")]
+    monkeypatch.setattr("app.appium_nodes.services.reconciler.stop_remote_node", AsyncMock(return_value=False))
+
+    svc = ReconcilerService(
+        publisher=Mock(), settings=FakeSettingsReader({}), pool=Mock(), circuit_breaker=Mock(), session_factory=Mock()
+    )
+    host_id = uuid.uuid4()
+
+    # raise_errors=False → swallowed (no raise).
+    await svc.converge_host_rows(
+        None, [row], observed, host_id=host_id, host_ip="10.0.0.1", agent_port=5100, raise_errors=False
+    )
+
+    # raise_errors=True (converge_device_now path) → propagates the transient.
+    with pytest.raises(NodeStopNotAcknowledgedError):
+        await svc.converge_host_rows(
+            None, [row], observed, host_id=host_id, host_ip="10.0.0.1", agent_port=5100, raise_errors=True
+        )
 
     assert appium_reconciler._classify_start_failure(TimeoutError()) == "timeout"
     request = httpx.Request("POST", "http://agent/appium")

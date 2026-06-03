@@ -131,6 +131,50 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
+async def test_probe_lock_collision_raises_typed_in_progress_error(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """F6: a genuine in-flight probe lock makes a second probe raise the *typed*
+    ``SessionViabilityProbeInProgressError``.
+
+    It subclasses ``ValueError`` so manual callers still surface HTTP 409, but the distinct
+    type lets the recovery loop tell a *collision* (another probe holds the lock) from a real
+    probe *failure* — a collision says nothing about device health and must not count as a
+    failed recovery attempt (which would bump backoff/review and could shelve a healthy device).
+    """
+    from app.sessions.service_viability import SessionViabilityProbeInProgressError
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="probe-collision",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    # A *fresh* in-flight lock (not stale, so it is not reclaimed).
+    await control_plane_state_store.set_value(
+        db_session,
+        session_viability.SESSION_VIABILITY_RUNNING_NAMESPACE,
+        str(device.id),
+        {"started_at": datetime.now(UTC).isoformat(), "checked_by": "verification"},
+    )
+    await db_session.commit()
+
+    svc = SessionViabilityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        session_factory=AsyncMock(),
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+
+    assert issubclass(SessionViabilityProbeInProgressError, ValueError)
+    with pytest.raises(SessionViabilityProbeInProgressError):
+        await svc.run_session_viability_probe(db_session, device, checked_by="recovery")
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_session_viability_restore_handles_external_reservation(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.appium_nodes.exceptions import NodeManagerError
+from app.appium_nodes.exceptions import NodeManagerError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError, AgentUnreachableError
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -365,6 +365,55 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
     call_args = converge_mock.await_args
     assert call_args is not None
     assert call_args.args[0] == existing.id
+
+
+async def test_run_probe_swallows_transient_converge_kick_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A self-healing transient from the immediate convergence kick (e.g. the
+    agent hasn't acknowledged a stop yet) must not fail the probe — the
+    reconciler tick is the durable fallback. The kick is best-effort."""
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    existing = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-converge-transient",
+        connection_target="verify-converge-transient",
+        name="Verify Converge Transient",
+        operational_state=DeviceOperationalState.available,
+    )
+    with state_write_guard.bypass():
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+    nm = AsyncMock()
+    nm.start_node = AsyncMock(return_value=fake_node)
+    nm.wait_for_node_running = AsyncMock(return_value=None)
+    converge_mock = AsyncMock(side_effect=NodeStopNotAcknowledgedError("agent did not acknowledge stop"))
+
+    # Must not raise despite the transient kick failure.
+    _node, error = await VerificationExecutionService(
+        review=build_review_service(),
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        crud=DeviceCrudService(
+            settings=FakeSettingsReader({}), identity=DeviceIdentityConflictService(), publisher=event_bus
+        ),
+        viability=Mock(),
+        capability=DeviceCapabilityService(),
+        reconciler=SimpleNamespace(converge_device_now=converge_mock),
+        node_manager=nm,
+    ).run_probe(
+        _job(),
+        db_session,
+        existing,
+        probe_session_fn=AsyncMock(),
+    )
+
+    converge_mock.assert_awaited_once()
+    # wait_for_node_running returned None → node_start times out gracefully.
+    assert error is not None
 
 
 async def test_run_probe_marks_device_inflight_during_probe_session(

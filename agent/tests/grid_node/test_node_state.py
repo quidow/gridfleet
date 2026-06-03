@@ -34,6 +34,16 @@ def test_reserve_raises_no_matching_slot_on_caps_mismatch() -> None:
         state.reserve({"platformName": "iOS"})
 
 
+def test_reserve_matches_platform_name_case_insensitively() -> None:
+    # The Selenium hub's DefaultSlotMatcher normalizes platformName case before
+    # routing, so it forwards a lowercase "android" request to a slot stereotyped
+    # "Android". The relay's case-sensitive match used to reject it, leaving the
+    # session queued at the hub until timeout (F3). Mirror the hub.
+    state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
+    reservation = state.reserve({"platformName": "android"})
+    assert reservation.slot_id == "s1"
+
+
 def test_reserve_raises_no_free_slot_when_matching_slot_is_reserved() -> None:
     state = NodeState(slots=[_slot("s1", platformName="Android")], now=lambda: 10.0)
     state.reserve({"platformName": "Android"})

@@ -10,7 +10,7 @@ import pytest
 import pytest_asyncio
 
 from app.agent_comm.error_codes import AgentErrorCode
-from app.appium_nodes.exceptions import NodePortConflictError
+from app.appium_nodes.exceptions import NodeAlreadyRunningError, NodePortConflictError
 from app.appium_nodes.services.reconciler_agent import start_remote_node
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from tests.fakes import FakeSettingsReader
@@ -81,6 +81,46 @@ async def test_port_conflict_detected_via_code(
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", fake_appium_start)
 
     with pytest.raises(NodePortConflictError):
+        await start_remote_node(
+            db,
+            device,
+            port=4723,
+            allocated_caps={},
+            agent_base="http://host:5100",
+            http_client_factory=httpx.AsyncClient,
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_already_running_mapped_to_already_running_error(
+    monkeypatch: pytest.MonkeyPatch,
+    db_with_pending_device: tuple[AsyncSession, Device],
+) -> None:
+    """ALREADY_RUNNING is a per-target conflict, not a per-port one: it must map
+    to ``NodeAlreadyRunningError`` so the candidate-port retry loop can skip it."""
+    db, device = db_with_pending_device
+
+    class _FakeStartResponse:
+        status_code = 409
+
+        def json(self) -> dict[str, Any]:
+            return {"detail": {"code": AgentErrorCode.ALREADY_RUNNING.value, "message": "already running on 4724"}}
+
+        def raise_for_status(self) -> None:
+            raise httpx.HTTPStatusError(
+                "409",
+                request=httpx.Request("POST", "http://x"),
+                response=httpx.Response(409, json=self.json()),
+            )
+
+    async def fake_appium_start(*_args: object, **_kwargs: object) -> _FakeStartResponse:
+        return _FakeStartResponse()
+
+    monkeypatch.setattr("app.appium_nodes.services.reconciler_agent.appium_start", fake_appium_start)
+
+    with pytest.raises(NodeAlreadyRunningError):
         await start_remote_node(
             db,
             device,

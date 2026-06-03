@@ -52,6 +52,7 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.readiness import is_ready_for_use_async
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TERMINAL_STATES
+from app.sessions.service_viability import SessionViabilityProbeInProgressError
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
@@ -391,6 +392,21 @@ class LifecyclePolicyService:
 
         result = await self._run_recovery_probe(db, device)
 
+        if result.get("status") == "skipped":
+            # The probe could not run because another viability probe holds the device's
+            # lock (see _run_recovery_probe). Record a suppression — not a failure — so no
+            # auto-stop, backoff, or review_required fires on a healthy device. The lifecycle
+            # loop retries on its next cycle once the lock frees.
+            return await self._actions.record_recovery_suppressed(
+                db,
+                device,
+                current_state,
+                source="session_viability",
+                reason=result.get("error") or reason,
+                suppression_reason="Another viability probe is in progress",
+                run=run,
+            )
+
         if result.get("status") != "passed":
             failure_reason = result.get("error") or "Recovery viability probe failed"
             backoff_until_iso = _set_backoff(current_state, settings=self._settings)
@@ -556,6 +572,18 @@ class LifecyclePolicyService:
                             reloaded,
                             checked_by=SessionViabilityCheckedBy.recovery,
                         )
+                    except SessionViabilityProbeInProgressError:
+                        # Another viability probe (typically an active verification job) already
+                        # holds this device's probe lock. That is a concurrency collision, not a
+                        # device-health signal — counting it as a failed attempt would feed
+                        # recovery backoff/review and could shelve a healthy device. Skip and let
+                        # the lifecycle loop retry on its next cycle once the lock frees; do NOT
+                        # retry here (the lock will not free within the short retry window).
+                        logger.info(
+                            "Recovery viability probe for device %s skipped — another viability probe is in progress",
+                            device.id,
+                        )
+                        return {"status": "skipped"}
                     except Exception as exc:  # noqa: BLE001 — a probe error must not crash the recovery job
                         # Fold an unexpected probe error (transient "already in
                         # progress" race, concurrent state change, etc.) into a failed

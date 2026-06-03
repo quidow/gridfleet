@@ -36,10 +36,23 @@ __all__ = [
     "SESSION_VIABILITY_RUNNING_NAMESPACE",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityLoop",
+    "SessionViabilityProbeInProgressError",
     "SessionViabilityService",
     "build_probe_capabilities",
     "grid_probe_response_to_result",
 ]
+
+
+class SessionViabilityProbeInProgressError(ValueError):
+    """Raised when a viability probe cannot start because one is already in flight.
+
+    Subclasses ``ValueError`` so manual HTTP callers keep surfacing 409 (control.py),
+    while the distinct type lets the lifecycle recovery loop tell a lock *collision*
+    (another probe — e.g. an active verification — holds the device's probe lock) apart
+    from a probe *failure*. A collision says nothing about device health, so recovery
+    skips it instead of counting a failed attempt that would feed backoff/shelving.
+    """
+
 
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
@@ -207,7 +220,7 @@ class SessionViabilityService:
                     {"started_at": _now_iso(), "checked_by": checked_by},
                 )
         if not acquired:
-            raise ValueError("Session viability check already in progress for this device")
+            raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
         await db.commit()
         device_reserved = await device_is_reserved(db, device.id)
         can_probe = (device.operational_state == DeviceOperationalState.available and not device_reserved) or (

@@ -24,3 +24,7 @@ class GridNodeConfig:
     # point at a hostname that does not resolve locally — e.g.
     # `host.docker.internal` from inside a docker-compose hub container.
     bind_host: str = "0.0.0.0"
+    # Hub HTTP base URL (e.g. ``http://selenium-hub:4444``) used by the relay's
+    # registration self-heal to ask the hub whether it actually knows this node.
+    # Empty disables the check (unit tests / non-hub contexts).
+    hub_status_url: str = ""
