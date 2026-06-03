@@ -236,7 +236,9 @@ def compose_app(
         deferred_stop=lifecycle_policy_svc,
     )
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
-    run_allocator = RunAllocatorService(publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker)
+    run_allocator = RunAllocatorService(
+        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
+    )
     run_failure = RunFailureService(
         publisher=bus,
         settings=settings_svc,
@@ -246,6 +248,7 @@ def compose_app(
         reservation=reservation_svc,
         health=device_health_svc,
         incidents=incidents_svc,
+        pool=http_pool,
     )
     run_query = RunQueryService(capability=device_capability_svc)
 
@@ -332,6 +335,7 @@ def compose_app(
             grid=grid_svc,
             session_factory=session_factory,
             circuit_breaker=circuit_breaker,
+            pool=http_pool,
         ),
         diagnostics=diagnostics_services,
         verification=verification_services,
@@ -340,7 +344,7 @@ def compose_app(
         hosts=HostServices(
             crud=HostCrudService(publisher=bus, settings=settings_svc),
             hardware_telemetry=HardwareTelemetryService(
-                publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker
+                publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
             ),
             resource_telemetry=HostResourceTelemetryService(
                 settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
@@ -393,7 +397,7 @@ def compose_app(
             session_factory=session_factory,
         ),
         plugins=PluginServices(
-            plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker),
+            plugin=PluginService(settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool),
             session_factory=session_factory,
         ),
         appium_nodes=AppiumNodeServices(

@@ -35,6 +35,7 @@ from app.runs.service_reservation import get_run
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -206,11 +207,17 @@ async def _register_run_grid_intent(
 
 class RunAllocatorService:
     def __init__(
-        self, *, publisher: EventPublisher, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+        self,
+        *,
+        publisher: EventPublisher,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._pool = pool
 
     async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
         """Create a test run reservation. Returns (run, reserved_device_infos)."""
@@ -287,6 +294,7 @@ class RunAllocatorService:
                     raise_on_failure=True,
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
                 )
             except InlineReconfigureDeliveryFailedError:
                 deferred.append(info.device_id)

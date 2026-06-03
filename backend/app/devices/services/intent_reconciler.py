@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.core.protocols import SettingsReader
@@ -73,6 +74,7 @@ class DeviceIntentReconcilerLoop:
                         settings=self._services.settings,
                         circuit_breaker=self._services.circuit_breaker,
                         publisher=self._services.publisher,
+                        pool=self._services.pool,
                     )
             except LeadershipLost as exc:
                 logger.error(
@@ -94,17 +96,22 @@ async def run_device_intent_reconciler_once(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     await assert_current_leader(db, settings=settings)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
-    await deliver_pending_agent_reconfigures(db, settings=settings, circuit_breaker=circuit_breaker)
-    await _reconcile_expired_intents(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
+    await deliver_pending_agent_reconfigures(db, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+    await _reconcile_expired_intents(
+        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+    )
     try:
         await _sweep_orphaned_intents(db)
     except Exception:
         await db.rollback()
         logger.exception("stale_intent_sweep_failed")
-    await _reconcile_terminal_run_intents(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
+    await _reconcile_terminal_run_intents(
+        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+    )
     from app.devices.services.intent_preconditions import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
@@ -113,11 +120,15 @@ async def run_device_intent_reconciler_once(
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, affected_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, affected_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
     if cycle % full_scan_every == 0:
-        await _reconcile_all_devices_once(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
+        await _reconcile_all_devices_once(
+            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
     else:
-        await _reconcile_dirty_devices(db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher)
+        await _reconcile_dirty_devices(
+            db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def _reconcile_all_devices_once(
@@ -126,6 +137,7 @@ async def _reconcile_all_devices_once(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     intent_device_ids = (await db.execute(select(DeviceIntent.device_id).distinct())).scalars().all()
     # The reconciler is authoritative for operational_state, but a device with no
@@ -143,7 +155,7 @@ async def _reconcile_all_devices_once(
     for device_id in dict.fromkeys([*intent_device_ids, *orphan_device_ids]):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def _reconcile_dirty_devices(
@@ -153,6 +165,7 @@ async def _reconcile_dirty_devices(
     limit: int = 100,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     queue_size = await db.scalar(select(func.count()).select_from(DeviceIntentDirty))
     metrics_recorders.INTENT_RECONCILER_DIRTY_QUEUE_SIZE.set(int(queue_size or 0))
@@ -167,7 +180,7 @@ async def _reconcile_dirty_devices(
         if current is not None and current.generation == generation:
             await db.delete(current)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def _reconcile_expired_intents(
@@ -176,6 +189,7 @@ async def _reconcile_expired_intents(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     now = datetime.now(UTC)
     device_ids = (
@@ -195,7 +209,7 @@ async def _reconcile_expired_intents(
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def _sweep_orphaned_intents(db: AsyncSession) -> None:
@@ -275,6 +289,7 @@ async def _reconcile_terminal_run_intents(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     """Defense-in-depth sweep for intents tied to runs that are already terminal.
 
@@ -305,7 +320,7 @@ async def _reconcile_terminal_run_intents(
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def reconcile_device(

@@ -74,7 +74,7 @@ async def test_trigger_doctor_proxies_to_agent_and_persists(client: AsyncClient,
 
     assert resp.status_code == 200
     mock_doctor.assert_awaited_once_with(
-        host.ip, host.agent_port, "appium-uiautomator2", settings=ANY, circuit_breaker=ANY
+        host.ip, host.agent_port, "appium-uiautomator2", settings=ANY, circuit_breaker=ANY, pool=ANY
     )
 
     body = resp.json()

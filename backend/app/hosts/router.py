@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.dependencies import AgentCommServicesDep
+from app.agent_comm.http_pool import AgentHttpPool
 from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core.database import async_session
 from app.core.dependencies import DbDep
@@ -134,14 +135,19 @@ async def _auto_discover(
 
 
 async def _auto_prepare_host_diagnostics(
-    host_id: uuid.UUID, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol, crud: HostCrudProtocol
+    host_id: uuid.UUID,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    crud: HostCrudProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     try:
         async with async_session() as db:
             host = await crud.get_host(db, host_id)
             if host is None:
                 return
-            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker)
+            svc = PluginService(settings=settings, circuit_breaker=circuit_breaker, pool=pool)
             plugins = await svc.list_plugins(db)
             await svc.auto_sync_host_plugins(host, plugins)
     except Exception:
@@ -180,6 +186,7 @@ async def register_host(
                 settings=settings_services.service,
                 circuit_breaker=agent_comm.circuit_breaker,
                 crud=host_services.crud,
+                pool=agent_comm.http_pool,
             )
 
     return _serialize_host(host, settings_services)
@@ -211,6 +218,7 @@ async def approve_host(
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         crud=host_services.crud,
+        pool=agent_comm.http_pool,
     )
     return _serialize_host(host, settings_services)
 
@@ -359,6 +367,7 @@ async def trigger_driver_doctor(
         pack_id,
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
+        pool=agent_comm.http_pool,
     )
 
     await pack_services.status.persist_doctor_results(db, host_id, pack_id, checks)
@@ -429,6 +438,7 @@ async def get_host_tool_status(
         host.agent_port,
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
+        pool=agent_comm.http_pool,
     )
 
 

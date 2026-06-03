@@ -1110,7 +1110,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host_settings_svc.get = Mock(return_value=True)
     mock_ss = _mock_settings_svc(host_settings_svc)
 
-    _host_agent_comm = SimpleNamespace(circuit_breaker=Mock())
+    _host_agent_comm = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
 
     fake_pack_services = SimpleNamespace(discovery=AsyncMock())
     fake_hs_reg_err = SimpleNamespace(
@@ -1219,7 +1219,7 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
     )
 
     mock_ss = _mock_settings_svc()
-    _tools_agent_comm = SimpleNamespace(circuit_breaker=Mock())
+    _tools_agent_comm = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     _disc_pack_svc = SimpleNamespace(discovery=AsyncMock())
     fake_hs_none = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=None)))
     for call in (
