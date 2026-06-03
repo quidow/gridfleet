@@ -46,6 +46,28 @@ class InlineReconfigureDeliveryFailedError(Exception):
     """
 
 
+def _row_matches_node_desired(row: AgentReconfigureOutbox, node: AppiumNode) -> bool:
+    """True when the outbox row still reflects the node's current desired
+    agent-visible config.
+
+    ``node.generation`` advances on *any* reconcile field change (recovery
+    flags, ``desired_port``, ``desired_state``), but the reconfigure payload only
+    carries ``port`` / ``accepting_new_sessions`` / ``stop_pending`` /
+    ``grid_run_id``. A pending row whose generation lags ``node.generation`` is
+    therefore genuinely superseded only when one of these payload fields no
+    longer matches — otherwise the lag is from an unrelated field change and the
+    row must still be delivered. Treating every generation lag as stale silently
+    drops the row (e.g. a run-id reconfigure staged just before a recovery-flag
+    flip), so the node never learns its run id.
+    """
+    return (row.port, row.accepting_new_sessions, row.stop_pending, row.grid_run_id) == (
+        node.port,
+        node.accepting_new_sessions,
+        node.stop_pending,
+        node.desired_grid_run_id,
+    )
+
+
 async def deliver_agent_reconfigures(
     db: AsyncSession,
     device_id: object,
@@ -91,7 +113,7 @@ async def deliver_agent_reconfigures(
 
     for row in rows:
         node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == row.device_id))).scalar_one_or_none()
-        if node is None or row.reconciled_generation < node.generation:
+        if node is None or (row.reconciled_generation < node.generation and not _row_matches_node_desired(row, node)):
             metrics_recorders.AGENT_RECONFIGURE_OUTBOX_STALE_SKIPPED.inc()
             row.delivered_at = datetime.now(UTC)
             await db.commit()
