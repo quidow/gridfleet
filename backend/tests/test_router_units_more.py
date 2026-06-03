@@ -1924,7 +1924,7 @@ async def test_nodes_router_validation_branches() -> None:
             await nodes_router._assert_device_verified(object(), device, action="start")
     assert exc.value.status_code == 409
 
-    running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
+    running_node = SimpleNamespace(desired_state=AppiumDesiredState.running, observed_running=True)
     device.appium_node = running_node
     with (
         patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
@@ -1940,7 +1940,7 @@ async def test_nodes_router_validation_branches() -> None:
                 db=object(),
                 appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
             )
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 409
 
     device.appium_node = None
     device.host_id = None

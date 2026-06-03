@@ -161,17 +161,69 @@ async def test_start_node_already_running(
     default_host_id: str,
     remote_manager_client: AsyncMock,
 ) -> None:
+    # A genuinely observed-running node (pid + active_connection_target set) is
+    # rejected with 409 — start must not restart a live node out from under a
+    # session. (A node that is desired-running but DOWN is recovered instead; see
+    # test_start_node_recovers_down_but_desired_running_node.)
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=12345,
+                active_connection_target="emulator-5554",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert resp.status_code == 409
+    assert "already running" in resp.json()["error"]["message"]
+    assert remote_manager_client.post.await_count == 0
+
+
+async def test_start_node_recovers_down_but_desired_running_node(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    # A node that is desired-running but down (pid=None, e.g. after a crash) used
+    # to make /node/start a dead lever: it 400'd "already desired-running" and the
+    # operator had to know to use /node/restart instead (F2). Start now recovers it
+    # via the restart path (re-spawn + immediate convergence kick).
+    device = await _create_device(db_session, default_host_id, operational_state="offline")
+    device_id = device["id"]
+    host = await db_session.get(Host, uuid.UUID(default_host_id))
+    assert host is not None
+    host.status = HostStatus.online
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=uuid.UUID(device_id),
+                port=4723,
+                grid_url="http://hub:4444",
+                pid=None,
+                active_connection_target=None,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        )
+    await db_session.commit()
     remote_manager_client.post.return_value = _mock_agent_response(
         {"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}
     )
 
-    await client.post(f"/api/devices/{device_id}/node/start")
     resp = await client.post(f"/api/devices/{device_id}/node/start")
-    assert resp.status_code == 400
-    assert "desired-running" in resp.json()["error"]["message"]
-    assert remote_manager_client.post.await_count == 0
+    # Was a dead-lever 400 "already desired-running"; now routes through the restart
+    # recovery path and returns the node still desired-running (re-spawn converges).
+    assert resp.status_code == 200
+    assert resp.json()["desired_state"] == AppiumDesiredState.running.value
 
 
 async def test_start_node_device_not_found(client: AsyncClient) -> None:

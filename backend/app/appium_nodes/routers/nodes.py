@@ -52,7 +52,12 @@ async def start_node(device_id: uuid.UUID, db: DbDep, appium_services: AppiumNod
     _assert_startable_outside_maintenance(device)
     await _assert_device_verified(db, device, action="start a node")
     if device.appium_node is not None and device.appium_node.desired_state == AppiumDesiredState.running:
-        raise HTTPException(status_code=400, detail=f"Node already desired-running for device {device.id}")
+        if device.appium_node.observed_running:
+            raise HTTPException(status_code=409, detail=f"Node already running for device {device.id}")
+        # Node is desired-running but down (e.g. after a crash). Plain start would
+        # be a dead lever — request_start no-ops on an unchanged intent — so recover
+        # via the restart path, which re-spawns and kicks an immediate convergence.
+        return await restart_node(device_id, db, appium_services)
     if not await is_ready_for_use_async(db, device):
         raise HTTPException(
             status_code=400,
