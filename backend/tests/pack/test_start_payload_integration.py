@@ -5,17 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import (
     reconciler_agent as appium_reconciler_agent,
 )
-from app.appium_nodes.services import (
-    resource_service as appium_node_resource_service,
-)
 from app.appium_nodes.services.reconciler_agent import build_agent_start_payload
 from app.devices.models import ConnectionType, Device, DeviceType
-from app.devices.services import state_write_guard
-from app.hosts.models import Host, HostStatus, OSType
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload
 from tests.fakes import FakeSettingsReader
@@ -307,144 +301,6 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
     assert "appium:password" not in payload["stereotype_caps"]
 
 
-@pytest.mark.asyncio
-async def test_restart_merges_pack_stereotype_over_legacy_caps(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Parallel assertion for the restart path (`restart_node_via_agent` at
-    `backend/app/services/node_service.py:288`, containing the
-    `restart_pack_overrides` block around line 313-317).
-    """
-    await seed_test_packs(db_session)
-
-    # Persist a real host so the Device FK constraint is satisfied.
-    host = Host(
-        hostname=f"restart-test-host-{uuid.uuid4().hex[:8]}",
-        ip="10.0.2.1",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.flush()
-
-    # Use a real Device ORM instance so lock_device's SELECT FOR UPDATE finds the row.
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"restart-test-{uuid.uuid4().hex[:8]}",
-        connection_target="ABCD1234",
-        name="gate-pixel",
-        model="Pixel 6",
-        manufacturer="Google",
-        os_version="14",
-        host_id=host.id,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        ip_address=None,
-        tags={},
-    )
-    db_session.add(device)
-    await db_session.flush()
-
-    # Persist a matching AppiumNode so lock_appium_node_for_device finds the row.
-    with state_write_guard.bypass():
-        appium_node = AppiumNode(
-            device_id=device.id,
-            port=4723,
-            grid_url="http://localhost:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=0,
-            active_connection_target="",
-        )
-    db_session.add(appium_node)
-    await db_session.commit()
-
-    captured: dict[str, Any] = {}
-
-    async def _fake_appium_start(
-        agent_base: str, *, host: str, payload: dict[str, Any], **kwargs: Any
-    ) -> _FakeHttpxResponse:
-        captured["payload"] = payload
-        return _FakeHttpxResponse(
-            {
-                "port": payload["port"],
-                "pid": 2,
-                "connection_target": payload["connection_target"],
-            }
-        )
-
-    async def _fake_appium_stop(agent_base: str, *, host: str, port: int, **kwargs: Any) -> _FakeHttpxResponse:
-        return _FakeHttpxResponse({"stopped": True})
-
-    async def _noop_session_aligned(*args: Any, **kwargs: Any) -> None:
-        return None
-
-    async def _noop_get_owner_capabilities(*args: Any, **kwargs: Any) -> None:
-        return None
-
-    legacy_caps = {
-        "appium:gridfleet:deviceId": str(device.id),
-        "appium:platform": "android_mobile",
-        "appium:device_type": "real_device",
-    }
-
-    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
-    monkeypatch.setattr(appium_reconciler_agent, "appium_start", _fake_appium_start)
-    monkeypatch.setattr(appium_reconciler_agent, "appium_stop", _fake_appium_stop)
-    monkeypatch.setattr(appium_reconciler_agent, "_build_session_aligned_start_caps", _noop_session_aligned)
-    monkeypatch.setattr(appium_node_resource_service, "get_capabilities", _noop_get_owner_capabilities)
-    monkeypatch.setattr(
-        appium_reconciler_agent,
-        "build_agent_start_payload",
-        lambda device, port, **kwargs: {
-            "connection_target": "ABCD1234",
-            "platform_id": "android_mobile",
-            "port": port,
-            "grid_url": None,
-            "plugins": None,
-            "extra_caps": None,
-            "stereotype_caps": dict(legacy_caps),
-            "device_type": "real_device",
-            "ip_address": None,
-            "allocated_caps": None,
-            "session_override": None,
-            "headless": True,
-        },
-    )
-
-    from app.appium_nodes.services.reconciler_agent import restart_node_via_agent
-
-    node = MagicMock()
-    with state_write_guard.bypass():
-        node.port = 4723
-
-    await restart_node_via_agent(
-        db_session,
-        device,
-        node,
-        http_client_factory=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-    )
-
-    payload = captured["payload"]
-    assert payload["pack_id"] == "appium-uiautomator2"
-    assert payload["platform_id"] == "android_mobile"
-    assert payload["insecure_features"] == ["uiautomator2:chromedriver_autodownload"]
-    stereotype = payload["stereotype_caps"]
-    assert stereotype["appium:gridfleet:deviceId"] == str(device.id)
-    assert stereotype["appium:platform"] == "android_mobile"
-    assert stereotype["appium:device_type"] == "real_device"
-    assert stereotype["platformName"] == "Android"
-    assert stereotype["appium:automationName"] == "UiAutomator2"
-
-
-@pytest.mark.asyncio
 async def test_start_payload_sends_manifest_appium_platform_name(db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     device = Device(

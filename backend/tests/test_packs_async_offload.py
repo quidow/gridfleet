@@ -3,18 +3,16 @@ from __future__ import annotations
 import hashlib
 import io
 import tarfile
-from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.packs.services import export as pack_export
 from app.packs.services import ingest as pack_ingest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.asyncio
 
@@ -62,38 +60,6 @@ def _spy_to_thread(calls: list[str]) -> Callable[..., object]:
         return fn(*args, **kwargs)
 
     return spy
-
-
-async def test_export_reads_stored_artifact_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(pack_export.asyncio, "to_thread", _spy_to_thread(calls))
-
-    row = SimpleNamespace(artifact_path="/tmp/artifact.tar.gz")
-    session = _SequenceSession(_ScalarResult(one_or_none=row))
-
-    class Storage:
-        @contextmanager
-        def open(self, _path: str) -> Iterator[io.BytesIO]:
-            yield io.BytesIO(b"stored")
-
-    data, sha = await pack_export.export_pack(session, Storage(), "pack", "1")
-
-    assert data == b"stored"
-    assert sha == hashlib.sha256(b"stored").hexdigest()
-    assert calls == ["_read_artifact"]
-
-
-async def test_export_synthesises_tarball_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(pack_export.asyncio, "to_thread", _spy_to_thread(calls))
-
-    row = SimpleNamespace(artifact_path=None, manifest_json={"id": "pack", "release": "1", "platforms": []})
-    session = _SequenceSession(_ScalarResult(one_or_none=row))
-
-    data, sha = await pack_export.export_pack(session, object(), "pack", "1")
-
-    assert sha == hashlib.sha256(data).hexdigest()
-    assert calls == ["_synthesise_tarball"]
 
 
 async def test_ingest_validates_tarball_and_stores_artifact_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:

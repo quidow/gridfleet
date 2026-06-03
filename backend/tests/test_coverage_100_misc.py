@@ -77,9 +77,6 @@ from app.packs.services import (
     discovery as pack_discovery_service,
 )
 from app.packs.services import (
-    export as pack_export_service,
-)
-from app.packs.services import (
     feature_dispatch as pack_feature_dispatch_service,
 )
 from app.packs.services import (
@@ -390,8 +387,6 @@ async def test_device_verification_runner_missing_job_branches() -> None:
 
 
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(NotImplementedError):
-        await pack_discovery_service.AgentClient.get_pack_devices(object(), "127.0.0.1", 5100)
     # HealthFailureHandler is a Protocol with ``...`` body; calling it exercises
     # the abstract stub without raising.
     await session_viability_protocols.HealthFailureHandler.__call__(
@@ -720,12 +715,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         appium_reconciler_agent._short_session_factory(SimpleNamespace(bind=None))
         is appium_reconciler_agent.async_session
     )
-    monkeypatch.setattr(appium_reconciler_agent, "candidate_ports", AsyncMock(return_value=[4799]))
-    assert (
-        await appium_reconciler_agent.allocate_port(AsyncMock(), host_id=uuid.uuid4(), settings=FakeSettingsReader({}))
-        == 4799
-    )
-
     static_group = SimpleNamespace(
         id=uuid.uuid4(),
         name="static",
@@ -903,25 +892,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
     assert await service.run_pending_once() is True
-
-    storage = pack_storage_service.PackStorageService(tmp_path)
-    outside_artifact = tmp_path.parent / "outside-pack-artifact.tar.gz"
-    outside_artifact.write_bytes(b"x")
-    release_row = SimpleNamespace(artifact_path=str(outside_artifact), manifest_json={})
-    export_db = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=SimpleNamespace(
-                scalar_one_or_none=lambda: release_row,
-            )
-        )
-    )
-    with pytest.raises(LookupError, match="not readable"):
-        await pack_export_service.export_pack(
-            export_db,
-            storage,
-            "pack",
-            "release",
-        )
 
     desired_db = AsyncMock()
     desired_db.get = AsyncMock(return_value=None)

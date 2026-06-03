@@ -68,17 +68,6 @@ async def delete_value(db: AsyncSession, namespace: str, key: str) -> None:
     )
 
 
-async def delete_namespace(db: AsyncSession, namespace: str) -> None:
-    await db.execute(delete(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace == namespace))
-
-
-async def delete_namespaces(db: AsyncSession, namespaces: Iterable[str]) -> None:
-    namespaces = list(namespaces)
-    if not namespaces:
-        return
-    await db.execute(delete(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace.in_(namespaces)))
-
-
 async def try_claim_value(db: AsyncSession, namespace: str, key: str, value: ControlPlaneValue) -> bool:
     stmt = insert(ControlPlaneStateEntry).values(namespace=namespace, key=key, value=value)
     returning_stmt = stmt.on_conflict_do_nothing(constraint="uq_control_plane_state_entries_namespace_key").returning(

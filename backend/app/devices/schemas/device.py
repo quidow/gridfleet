@@ -38,28 +38,6 @@ EffectiveNodeState = Literal[
 ]
 
 
-class DeviceCreate(BaseModel):
-    name: str
-    pack_id: str
-    platform_id: str
-    identity_scheme: str | None = None
-    identity_scope: str | None = None
-    identity_value: str | None = None
-    connection_target: str | None = None
-    os_version: str
-    os_version_display: str | None = None
-    host_id: uuid.UUID
-    device_type: DeviceType
-    connection_type: ConnectionType
-    tags: DeviceTags | None = None
-    manufacturer: str | None = None
-    model: str | None = None
-    model_number: str | None = None
-    software_versions: dict[str, Any] | None = None
-    ip_address: str | None = None
-    device_config: dict[str, Any] | None = None
-
-
 class DeviceLifecyclePolicySummaryState(enum.StrEnum):
     idle = "idle"
     deferred_stop = "deferred_stop"

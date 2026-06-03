@@ -6,8 +6,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
 
+from sqlalchemy import delete
+
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
+from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.events.event_bus import EventBus, register_events_gauge_refresher
@@ -449,7 +452,7 @@ SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 
 
 async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespace(db, CONNECTIVITY_NAMESPACE)
+    await db.execute(delete(ControlPlaneStateEntry).where(ControlPlaneStateEntry.namespace == CONNECTIVITY_NAMESPACE))
     await db.commit()
 
 
@@ -463,9 +466,12 @@ async def track_previously_offline_device(db: AsyncSession, identity_value: str)
 
 
 async def reset_session_viability_control_plane_state(db: AsyncSession) -> None:
-    await control_plane_state_store.delete_namespaces(
-        db,
-        [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE],
+    await db.execute(
+        delete(ControlPlaneStateEntry).where(
+            ControlPlaneStateEntry.namespace.in_(
+                [SESSION_VIABILITY_STATE_NAMESPACE, SESSION_VIABILITY_RUNNING_NAMESPACE]
+            )
+        )
     )
     await db.commit()
 
