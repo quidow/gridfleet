@@ -1,5 +1,6 @@
 mod activity;
 mod classify;
+mod proxy;
 
 use clap::Parser;
 
@@ -48,8 +49,17 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(2)
     });
-    // Server bootstrap lands in Task 6.
-    let _ = (args.listen, appium, control, args.proxy_timeout);
+    let mut server = pingora::server::Server::new(None).unwrap();
+    server.bootstrap();
+    let relay = proxy::RelayProxy::new(
+        appium,
+        control,
+        std::time::Duration::from_secs_f64(args.proxy_timeout),
+    );
+    let mut svc = pingora::proxy::http_proxy_service(&server.configuration, relay);
+    svc.add_tcp(&args.listen);
+    server.add_service(svc);
+    server.run_forever();
 }
 
 #[cfg(test)]
