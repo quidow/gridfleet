@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
@@ -105,10 +106,12 @@ class RunFailureService:
         reservation: RunReservationProtocol,
         health: DeviceHealthCheckWriter,
         incidents: LifecycleIncidentRecorder,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._pool = pool
         self._maintenance = maintenance
         self._lifecycle_actions = lifecycle_actions
         self._reservation = reservation
@@ -277,6 +280,7 @@ class RunFailureService:
                 raise_on_failure=True,
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
             )
             return excluded_until, cooldown_count_after, False, threshold
 

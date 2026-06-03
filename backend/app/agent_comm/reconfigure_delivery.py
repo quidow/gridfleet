@@ -16,6 +16,7 @@ from app.devices.models import Device
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
 
@@ -77,6 +78,7 @@ async def deliver_agent_reconfigures(
     raise_on_failure: bool = False,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     await _mark_duplicate_generation_rows_delivered(db, device_id)
     metrics_recorders.AGENT_RECONFIGURE_OUTBOX_PENDING.set(
@@ -136,6 +138,7 @@ async def deliver_agent_reconfigures(
                     stop_pending=row.stop_pending,
                     grid_run_id=row.grid_run_id,
                     settings=settings,
+                    pool=pool,
                     circuit_breaker=circuit_breaker,
                 )
             else:
@@ -148,6 +151,7 @@ async def deliver_agent_reconfigures(
                     grid_run_id=row.grid_run_id,
                     timeout=agent_call_timeout,
                     settings=settings,
+                    pool=pool,
                     circuit_breaker=circuit_breaker,
                 )
         except (AgentUnreachableError, AgentResponseError) as exc:
@@ -163,7 +167,12 @@ async def deliver_agent_reconfigures(
 
 
 async def deliver_pending_agent_reconfigures(
-    db: AsyncSession, *, limit: int = 100, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol
+    db: AsyncSession,
+    *,
+    limit: int = 100,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
 ) -> None:
     device_ids = (
         (
@@ -183,7 +192,7 @@ async def deliver_pending_agent_reconfigures(
         .all()
     )
     for device_id in device_ids:
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker)
+        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
 
 
 async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id: object) -> None:

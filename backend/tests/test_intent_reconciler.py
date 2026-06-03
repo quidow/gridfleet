@@ -207,10 +207,55 @@ async def test_expired_running_metadata_change_is_delivered(
         stop_pending=False,
         grid_run_id=None,
         settings=settings,
+        pool=None,
         circuit_breaker=ANY,
     )
     outbox = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert outbox.delivered_at is not None
+
+
+async def test_reconciler_once_forwards_agent_auth_pool(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reconciler loop must thread its agent BasicAuth pool through to the
+    delivery call; without it reconfigures are unauthenticated and rejected when
+    the auth gate is enabled."""
+    pool = Mock()
+    device = await create_device(db_session, host_id=db_host.id, name="reconciler-pool")
+    node = await _seed_node(db_session, device.id, generation=4)
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+        node.desired_port = 4723
+        node.port = 4723
+        node.pid = 1234
+        node.active_connection_target = device.connection_target
+    db_session.add(
+        AgentReconfigureOutbox(
+            device_id=device.id,
+            port=4723,
+            accepting_new_sessions=True,
+            stop_pending=False,
+            reconciled_generation=4,
+        )
+    )
+    await db_session.commit()
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr("app.agent_comm.operations.agent_appium_reconfigure", reconfigure)
+    monkeypatch.setattr("app.devices.services.intent_reconciler.assert_current_leader", AsyncMock())
+
+    await run_device_intent_reconciler_once(
+        db_session,
+        cycle=1,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        publisher=event_bus,
+        pool=pool,
+    )
+
+    assert reconfigure.await_count >= 1
+    assert all(call.kwargs.get("pool") is pool for call in reconfigure.await_args_list)
 
 
 async def test_pending_reconfigure_from_expired_last_intent_is_retried(

@@ -27,6 +27,44 @@ if TYPE_CHECKING:
 
 SETTINGS = FakeSettingsReader()
 CIRCUIT_BREAKER = Mock()
+POOL = Mock()
+
+
+async def test_delivery_forwards_agent_auth_pool(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reconfigure delivery must forward the agent BasicAuth pool to the agent
+    call. Without it the request is unauthenticated and the agent rejects it
+    when the auth gate is enabled, so the node is never reconfigured."""
+    device = await create_device(db_session, host_id=db_host.id, name="auth-pool")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            grid_url="http://grid:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            generation=4,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4723,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    reconfigure = AsyncMock(return_value={"port": 4723})
+    monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
+
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, pool=POOL
+    )
+
+    assert reconfigure.await_args.kwargs["pool"] is POOL
 
 
 async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
@@ -102,6 +140,7 @@ async def test_outbox_row_sends_when_generation_matches(
         stop_pending=True,
         grid_run_id=None,
         settings=SETTINGS,
+        pool=None,
         circuit_breaker=CIRCUIT_BREAKER,
     )
 
@@ -156,6 +195,7 @@ async def test_outbox_row_sends_when_generation_behind_but_config_still_current(
         stop_pending=False,
         grid_run_id=run_id,
         settings=SETTINGS,
+        pool=None,
         circuit_breaker=CIRCUIT_BREAKER,
     )
 
@@ -341,6 +381,7 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
         stop_pending=False,
         grid_run_id=None,
         settings=SETTINGS,
+        pool=None,
         circuit_breaker=CIRCUIT_BREAKER,
     )
 

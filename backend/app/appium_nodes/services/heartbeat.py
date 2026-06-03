@@ -655,7 +655,7 @@ class HeartbeatService:
                 host = await db.get(Host, host_id)
                 if host is None:
                     return
-                svc = PluginService(settings=self._settings, circuit_breaker=self._circuit_breaker)
+                svc = PluginService(settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool)
                 plugins = await svc.list_plugins(db)
                 await svc.auto_sync_host_plugins(host, plugins)
         except Exception:

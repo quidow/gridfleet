@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.protocols import (
@@ -47,3 +48,6 @@ class DeviceServices:
     grid: GridServiceProtocol
     session_factory: async_sessionmaker[AsyncSession]
     circuit_breaker: CircuitBreakerProtocol
+    # Carries the agent BasicAuth credentials for backend→agent calls (reconfigure
+    # delivery). None means unauthenticated, which only works when the auth gate is off.
+    pool: AgentHttpPool | None = None

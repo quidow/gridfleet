@@ -28,6 +28,7 @@ from app.hosts.models import Host, HostStatus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
@@ -241,10 +242,12 @@ class HardwareTelemetryService:
         publisher: EventPublisher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
+        pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._pool = pool
 
     async def apply_telemetry_sample(
         self,
@@ -303,6 +306,7 @@ class HardwareTelemetryService:
                 http_client_factory=httpx.AsyncClient,
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
             )
         except AgentCallError:
             return None

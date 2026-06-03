@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.plugins.schemas import PluginCreate, PluginUpdate
@@ -38,9 +39,16 @@ def _plugin_payload(plugin: AppiumPlugin) -> dict[str, Any]:
 
 
 class PluginService:
-    def __init__(self, *, settings: SettingsReader, circuit_breaker: CircuitBreakerProtocol) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SettingsReader,
+        circuit_breaker: CircuitBreakerProtocol,
+        pool: AgentHttpPool | None = None,
+    ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._pool = pool
 
     async def list_plugins(self, db: AsyncSession) -> list[AppiumPlugin]:
         stmt = select(AppiumPlugin).order_by(AppiumPlugin.name)
@@ -84,6 +92,7 @@ class PluginService:
             http_client_factory=httpx.AsyncClient,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
+            pool=self._pool,
         )
 
     async def get_host_plugin_statuses(self, host: Host, plugins: list[AppiumPlugin]) -> list[dict[str, Any]]:
@@ -120,6 +129,7 @@ class PluginService:
             http_client_factory=httpx.AsyncClient,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
+            pool=self._pool,
         )
 
     async def sync_all_host_plugins(self, db: AsyncSession) -> dict[str, Any]:
