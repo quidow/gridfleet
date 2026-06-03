@@ -68,6 +68,13 @@ async def proxy_request(
         await upstream_response.aclose()
     response = Response(response_body, status_code=upstream_response.status_code)
     for key, value in response_headers:
+        # Starlette's Response() already set Content-Length for the buffered
+        # body; appending the upstream copy would emit the header twice. The
+        # Java hub's client tolerated the duplicate for years, but the relay
+        # fast-lane sidecar's strict h1 parser (pingora) rejects such a
+        # response outright and converts it to a 502 on the control leg.
+        if key.lower() == "content-length":
+            continue
         response.headers.append(key, value)
     return response
 

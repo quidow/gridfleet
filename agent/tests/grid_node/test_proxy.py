@@ -208,3 +208,26 @@ def _request(method: str, path: str, *, body: bytes = b"") -> Request:
         },
         receive,
     )
+
+
+@pytest.mark.asyncio
+async def test_proxy_request_emits_single_content_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Starlette's Response() sets Content-Length for the buffered body; the
+    # upstream copy must not be appended on top. The duplicate was harmless
+    # behind the Java hub's client but is rejected as malformed by the relay
+    # fast-lane sidecar's strict h1 parser, surfacing as a 502 on every
+    # proxied control-leg response (e.g. session DELETE cleanup).
+    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
+        return httpx.Response(200, headers=[("content-type", "application/json")], content=b'{"value": null}')
+
+    async with httpx.AsyncClient() as client:
+        monkeypatch.setattr(client, "send", send)
+        response = await proxy_request(
+            _request("DELETE", "/session/abc"),
+            upstream="http://appium",
+            timeout=1.0,
+            client=client,
+        )
+
+    content_length_headers = [value for key, value in response.raw_headers if key.lower() == b"content-length"]
+    assert content_length_headers == [b"15"]
