@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.22.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.0...gridfleet-agent-v0.22.1) (2026-06-04)
+
+
+### Performance Improvements
+
+* **agent:** declare sniffio so httpcore stops failing imports per call ([9f873dc](https://github.com/quidow/gridfleet/commit/9f873dc9f37e5388867738ad0370acaecf0ecb07))
+
 ## [0.22.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.2...gridfleet-agent-v0.22.0) (2026-06-04)
 
 
