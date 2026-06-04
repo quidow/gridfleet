@@ -403,3 +403,139 @@ async def test_pack_device_properties_successful_fallback() -> None:
     assert result["detected_properties"]["model"] == "Pixel"
     assert result["runnable"] is True
     assert result["field_errors"] == []
+
+
+class _MovedDeviceAdapter:
+    """Direct query answers with the WRONG device (a stranger took the old IP);
+    discovery finds the expected serial at its new address."""
+
+    pack_id = "appium-uiautomator2"
+    pack_release = "1.0"
+    discovery_scope = "pack"
+
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:
+        return NormalizedDevice(
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="stranger-serial",
+            connection_target="10.0.0.5",
+            ip_address="10.0.0.5",
+            device_type="real_device",
+            connection_type="usb",
+            os_version="15",
+            field_errors=[],
+        )
+
+    async def discover(self, ctx: object) -> list[DiscoveryCandidate]:
+        return [
+            DiscoveryCandidate(
+                identity_scheme="android_serial",
+                identity_value="expected-serial",
+                suggested_name="Moved Device",
+                detected_properties={
+                    "connection_target": "10.0.0.9",
+                    "ip_address": "10.0.0.9",
+                    "device_type": "real_device",
+                    "connection_type": "usb",
+                },
+                runnable=True,
+                missing_requirements=[],
+                field_errors=[],
+                feature_status=[],
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_pack_device_properties_direct_hit_skips_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = AdapterRegistry()
+    registry.set("appium-uiautomator2", "1.0", _NormalizeAdapter())  # type: ignore[arg-type]
+
+    async def explode(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("sweep must not run when the direct query answers")
+
+    monkeypatch.setattr("agent_app.pack.discovery.enumerate_pack_candidates", explode)
+    result = await pack_device_properties(
+        "serial1",
+        "appium-uiautomator2",
+        [_pack(platforms=[_platform()])],
+        adapter_registry=registry,
+        host_id="h1",
+    )
+    assert result is not None
+    assert result["identity_value"] == "serial1"
+
+
+@pytest.mark.asyncio
+async def test_pack_device_properties_direct_hit_with_matching_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = AdapterRegistry()
+    registry.set("appium-uiautomator2", "1.0", _NormalizeAdapter())  # type: ignore[arg-type]
+
+    async def explode(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("sweep must not run when identity matches the direct answer")
+
+    monkeypatch.setattr("agent_app.pack.discovery.enumerate_pack_candidates", explode)
+    result = await pack_device_properties(
+        "serial1",
+        "appium-uiautomator2",
+        [_pack(platforms=[_platform()])],
+        adapter_registry=registry,
+        host_id="h1",
+        identity_value="serial1",
+    )
+    assert result is not None
+    assert result["identity_value"] == "serial1"
+
+
+@pytest.mark.asyncio
+async def test_pack_device_properties_identity_mismatch_falls_back_to_sweep() -> None:
+    registry = AdapterRegistry()
+    registry.set("appium-uiautomator2", "1.0", _MovedDeviceAdapter())  # type: ignore[arg-type]
+    result = await pack_device_properties(
+        "10.0.0.5",
+        "appium-uiautomator2",
+        [_pack(platforms=[_platform()])],
+        adapter_registry=registry,
+        host_id="h1",
+        identity_value="expected-serial",
+    )
+    assert result is not None
+    assert result["identity_value"] == "expected-serial"
+    assert result["detected_properties"]["connection_target"] == "10.0.0.9"
+
+
+@pytest.mark.asyncio
+async def test_pack_device_properties_identity_not_found_anywhere() -> None:
+    registry = AdapterRegistry()
+    registry.set("appium-uiautomator2", "1.0", _MovedDeviceAdapter())  # type: ignore[arg-type]
+    result = await pack_device_properties(
+        "10.0.0.5",
+        "appium-uiautomator2",
+        [_pack(platforms=[_platform()])],
+        adapter_registry=registry,
+        host_id="h1",
+        identity_value="ghost-serial",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_pack_device_properties_endpoint_forwards_identity_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_properties(*args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"pack_id": "appium-uiautomator2"}
+
+    monkeypatch.setattr("agent_app.pack.router.pack_device_properties", fake_properties)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/agent/pack/devices/10.0.0.5/properties",
+            params={"pack_id": "appium-uiautomator2", "identity_value": "SER123"},
+        )
+    assert resp.status_code == 200
+    assert captured["identity_value"] == "SER123"

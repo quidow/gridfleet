@@ -79,6 +79,7 @@ async def pack_device_properties_route(
     adapter_registry: OptionalAdapterRegistryDep,
     host_id: HostIdDep,
     pack_id: PackIdQuery,
+    identity_value: str | None = None,
 ) -> dict[str, Any]:
     desired = pack_state_loop.latest_desired_packs if pack_state_loop else None
     data = await pack_device_properties(
@@ -87,6 +88,7 @@ async def pack_device_properties_route(
         desired,
         adapter_registry=adapter_registry,
         host_id=host_id,
+        identity_value=identity_value,
     )
     if data is None:
         raise http_exc(

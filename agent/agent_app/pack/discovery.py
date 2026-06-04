@@ -168,37 +168,17 @@ def _normalized_device_to_candidate(
     }
 
 
-async def pack_device_properties(
+async def _direct_device_properties(
     connection_target: str,
     pack_id: str,
     desired_packs: list[DesiredPack] | None,
     *,
-    adapter_registry: AdapterRegistry | None = None,
-    host_id: str = "",
+    adapter_registry: AdapterRegistry | None,
+    host_id: str,
 ) -> dict[str, Any] | None:
-    candidates = cast(
-        "list[dict[str, Any]]",
-        (
-            await enumerate_pack_candidates(
-                desired_packs,
-                adapter_registry=adapter_registry,
-                host_id=host_id,
-            )
-        ).get("candidates", []),
-    )
-    for c in candidates:
-        if c["pack_id"] != pack_id:
-            continue
-        props = c.get("detected_properties") or {}
-        if (
-            c.get("identity_value") == connection_target
-            or c.get("connection_target") == connection_target
-            or props.get("connection_target") == connection_target
-        ):
-            return c
+    """Resolve one device by querying its known connection target directly."""
     if desired_packs is None or adapter_registry is None:
         return None
-
     seen: set[tuple[str, str]] = set()
     for pack in desired_packs:
         if pack.id != pack_id or (pack.id, pack.release) in seen:
@@ -233,4 +213,56 @@ async def pack_device_properties(
                 pack_id=pack.id,
                 platform_id=platform_def.id,
             )
+    return None
+
+
+async def pack_device_properties(
+    connection_target: str,
+    pack_id: str,
+    desired_packs: list[DesiredPack] | None,
+    *,
+    adapter_registry: AdapterRegistry | None = None,
+    host_id: str = "",
+    identity_value: str | None = None,
+) -> dict[str, Any] | None:
+    # Direct adapter query to the known connection target first — one probe to
+    # the device instead of a host-wide discovery sweep (for network packs the
+    # sweep is SSDP plus a query to every device). The sweep below remains the
+    # fallback for devices that moved (DHCP) or did not answer directly; when
+    # the caller supplies the expected identity_value, a different device
+    # answering on the old address is detected and resolved via the sweep.
+    direct = await _direct_device_properties(
+        connection_target,
+        pack_id,
+        desired_packs,
+        adapter_registry=adapter_registry,
+        host_id=host_id,
+    )
+    if direct is not None and (identity_value is None or direct.get("identity_value") == identity_value):
+        return direct
+
+    candidates = cast(
+        "list[dict[str, Any]]",
+        (
+            await enumerate_pack_candidates(
+                desired_packs,
+                adapter_registry=adapter_registry,
+                host_id=host_id,
+            )
+        ).get("candidates", []),
+    )
+    for c in candidates:
+        if c["pack_id"] != pack_id:
+            continue
+        if identity_value is not None:
+            if c.get("identity_value") == identity_value:
+                return c
+            continue
+        props = c.get("detected_properties") or {}
+        if (
+            c.get("identity_value") == connection_target
+            or c.get("connection_target") == connection_target
+            or props.get("connection_target") == connection_target
+        ):
+            return c
     return None
