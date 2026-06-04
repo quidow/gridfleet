@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.devices.models import ConnectionType
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -218,6 +219,7 @@ def _roku_device(**overrides: object) -> SimpleNamespace:
         "identity_value": "SER123",
         "connection_target": "10.0.0.5",
         "pack_id": "roku",
+        "connection_type": ConnectionType.network,
         "os_version": None,
         "os_version_display": None,
         "software_versions": None,
@@ -286,4 +288,33 @@ async def test_apply_no_commit_when_connection_target_unchanged() -> None:
         },
     )
     assert device.connection_target == "10.0.0.5"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_skips_connection_target_for_non_network_device() -> None:
+    """Emulator/USB connection targets are owned by intake/verification, not refresh.
+
+    The android pack's discover reports the live adb serial while normalize
+    reports the stable AVD name — letting refresh write both forms would make
+    the row oscillate every cycle. Only network devices (the DHCP-move case)
+    get the connection_target heal.
+    """
+    svc = _discovery_service()
+    device = _roku_device(
+        identity_value="avd:Television_1080p",
+        connection_target="emulator-5554",
+        pack_id="appium-uiautomator2",
+        connection_type=ConnectionType.virtual,
+    )
+    session = AsyncMock()
+    await svc.apply_pack_device_properties(
+        session,
+        device,  # type: ignore[arg-type]
+        {
+            "identity_value": "avd:Television_1080p",
+            "detected_properties": {"connection_target": "Television_1080p"},
+        },
+    )
+    assert device.connection_target == "emulator-5554"
     session.commit.assert_not_awaited()

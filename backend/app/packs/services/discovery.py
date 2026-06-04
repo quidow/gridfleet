@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from sqlalchemy import select
 
-from app.devices.models import Device
+from app.devices.models import ConnectionType, Device
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import platform_label as platform_label_service
 from app.devices.services import write as device_write
@@ -225,10 +225,15 @@ class PackDiscoveryService:
 
         # The agent only returns a candidate whose identity matched the requested
         # identity_value; guard again here so a stale or mismatched payload can
-        # never repoint the device row at another device's address.
+        # never repoint the device row at another device's address. Network
+        # devices only (the DHCP-move case): emulator/USB targets are owned by
+        # intake/verification, and the android pack reports different target
+        # forms from discover (live serial) vs normalize (AVD name) — writing
+        # both would make the row oscillate every refresh cycle.
         new_connection_target = props.get("connection_target")
         if (
-            isinstance(new_connection_target, str)
+            device.connection_type == ConnectionType.network
+            and isinstance(new_connection_target, str)
             and new_connection_target
             and data.get("identity_value") == device.identity_value
             and device.connection_target != new_connection_target
