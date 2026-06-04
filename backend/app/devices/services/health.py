@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.services import locking as appium_node_locking
+from app.core.sentinels import UNSET, UnsetType
 from app.devices import locking as device_locking
 from app.devices.services.health_view import (
     build_public_summary,
@@ -109,8 +110,8 @@ class DeviceHealthService:
         db: AsyncSession,
         device: Device,
         *,
-        health_running: bool | None = None,
-        health_state: str | None = None,
+        health_running: bool | None | UnsetType = UNSET,
+        health_state: str | None | UnsetType = UNSET,
         mark_offline: bool = True,
         reason: str | None = None,
     ) -> None:
@@ -124,15 +125,22 @@ class DeviceHealthService:
         locked.appium_node = locked_node
         previous = build_public_summary(locked)
 
-        locked_node.health_running = health_running
-        locked_node.health_state = health_state
-        locked_node.last_health_checked_at = _now()
+        # UNSET = caller is not making a health statement: leave the columns
+        # (and the checked-at stamp) untouched. Explicit None = clear.
+        health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
+        if not isinstance(health_running, UnsetType):
+            locked_node.health_running = health_running
+        if not isinstance(health_state, UnsetType):
+            locked_node.health_state = health_state
+        if health_provided:
+            locked_node.last_health_checked_at = _now()
 
         # Reconcile when: (a) mark_offline=True (explicit offline intent), or
-        # (b) health_running=None (clearing a health signal → may restore to available).
-        # Do NOT reconcile when mark_offline=False and health_running=False (below-threshold
-        # failure recording — hysteresis: let the threshold be reached before offline derivation).
-        should_reconcile = mark_offline or health_running is None
+        # (b) the call clears or does not touch the health signal (→ may restore
+        # to available). Do NOT reconcile when mark_offline=False and
+        # health_running=False (below-threshold failure recording — hysteresis:
+        # let the threshold be reached before offline derivation).
+        should_reconcile = mark_offline or health_running is not False
         if should_reconcile:
             await IntentService(db).mark_dirty_and_reconcile(
                 locked.id,

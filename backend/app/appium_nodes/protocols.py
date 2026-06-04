@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.core.sentinels import UnsetType
     from app.devices.models import Device, DeviceEvent, DeviceEventType
     from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 
@@ -95,8 +96,8 @@ class DeviceNodeHealthWriter(Protocol):
         db: AsyncSession,
         device: Device,
         *,
-        health_running: bool | None = ...,
-        health_state: str | None = ...,
+        health_running: bool | None | UnsetType = ...,
+        health_state: str | None | UnsetType = ...,
         mark_offline: bool = ...,
         reason: str | None = ...,
     ) -> None: ...
