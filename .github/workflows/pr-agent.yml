@@ -26,7 +26,7 @@ jobs:
     steps:
       - name: PR Agent action
         # Pinned 2026-05-19 (release 0.35.0). Bump after observing upstream main for breaking changes.
-        uses: the-pr-agent/pr-agent@0bd56c0508504c718cc03d504cd4ceb6725ba3c7
+        uses: the-pr-agent/pr-agent@ffe1f89a4dafc7d8e88b9cf010a3233e30b49f43
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
