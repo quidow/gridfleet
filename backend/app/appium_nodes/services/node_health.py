@@ -294,8 +294,22 @@ class NodeHealthService:
             return
 
         if result.status == "indeterminate":
-            return
-        healthy = result.status == "ack"
+            if grid_device_ids is None or str(device.id) in grid_device_ids:
+                return
+            if _grid_registration_grace_active(node, settings=self._settings):
+                return
+            # The hub answered and no longer lists this device: grid absence
+            # is primary evidence of a dead node even though the agent probe
+            # is inconclusive (the agent host may be down — exactly when the
+            # hub's word is the only one left to go on).
+            healthy = False
+            logger.warning(
+                "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",
+                device.name,
+                node.port,
+            )
+        else:
+            healthy = result.status == "ack"
 
         if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
             if _grid_registration_grace_active(node, settings=self._settings):

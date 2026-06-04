@@ -1230,6 +1230,159 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     assert device.operational_state == DeviceOperationalState.available
 
 
+def _make_indeterminate_grid_device(identity: str, db_host: Host) -> Device:
+    with state_write_guard.bypass():
+        return Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=identity,
+            connection_target=identity,
+            name=f"Indeterminate Phone {identity}",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+
+
+def _indeterminate_grid_service(grid_data: dict[str, object]) -> NodeHealthService:
+    return NodeHealthService(
+        publisher=event_bus,
+        settings=FakeSettingsReader(
+            {
+                "general.node_max_failures": 3,
+                "appium_reconciler.restart_window_sec": 300,
+                "appium.startup_timeout_sec": 30,
+            }
+        ),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        grid=make_fake_grid(grid_data),
+        recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
+    )
+
+
+async def test_indeterminate_probe_with_grid_absence_counts_as_failure(db_session: AsyncSession, db_host: Host) -> None:
+    """The hub answered and no longer lists the device: grid absence is primary
+    evidence of a dead node even when the agent probe is inconclusive (the agent
+    host may be down — exactly when the hub's word is the only one left)."""
+    device = _make_indeterminate_grid_device("nh-indet-grid-1", db_host)
+    db_session.add(device)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4751,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4751,
+            pid=1,
+            active_connection_target="target",
+            # Past the startup grace window (started_at server-defaults to now).
+            started_at=datetime.now(UTC) - timedelta(minutes=5),
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    with (
+        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
+    ):
+        await _indeterminate_grid_service({"value": {"ready": True, "nodes": []}}).check_nodes(db_session)
+
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.health_running is False
+    assert device.appium_node.health_state == "error"
+    assert device.appium_node.consecutive_health_failures == 1
+    assert device_health.build_public_summary(device)["healthy"] is False
+
+
+async def test_indeterminate_probe_skipped_when_device_still_in_grid(db_session: AsyncSession, db_host: Host) -> None:
+    device = _make_indeterminate_grid_device("nh-indet-grid-2", db_host)
+    db_session.add(device)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4752,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4752,
+            pid=1,
+            active_connection_target="target",
+            # Past the startup grace window so the skip is pinned to the
+            # device-still-in-grid branch, not grace.
+            started_at=datetime.now(UTC) - timedelta(minutes=5),
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    grid_data = {
+        "value": {
+            "ready": True,
+            "nodes": [
+                {
+                    "availability": "UP",
+                    "slots": [{"stereotype": {"appium:gridfleet:deviceId": str(device.id)}}],
+                }
+            ],
+        }
+    }
+    with (
+        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
+    ):
+        await _indeterminate_grid_service(grid_data).check_nodes(db_session)
+
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.health_running is None
+    assert device.appium_node.health_state is None
+    assert device.appium_node.consecutive_health_failures == 0
+
+
+async def test_indeterminate_probe_with_grid_absence_respects_startup_grace(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    device = _make_indeterminate_grid_device("nh-indet-grid-3", db_host)
+    db_session.add(device)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4753,
+            grid_url="http://hub:4444",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4753,
+            pid=1,
+            active_connection_target="target",
+            started_at=datetime.now(UTC),
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    with (
+        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
+        patch("app.appium_nodes.services.node_health.assert_current_leader"),
+    ):
+        await _indeterminate_grid_service({"value": {"ready": True, "nodes": []}}).check_nodes(db_session)
+
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.health_state is None
+    assert device.appium_node.consecutive_health_failures == 0
+
+
 async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_host: Host) -> None:
     devices: list[Device] = []
     nodes: list[AppiumNode] = []
