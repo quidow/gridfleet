@@ -360,6 +360,16 @@ class AppiumProcessManager:
 
         self._grid_supervisors.pop(port, None)
 
+    @staticmethod
+    def _port_is_bindable(host: str, port: int) -> bool:
+        with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+            try:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind((host, port))
+            except OSError:
+                return False
+        return True
+
     def _allocate_node_port(self) -> int:
         # Skip ports already bound by another listener so the grid node HTTP
         # server does not race a third-party process on a stale port. Probe
@@ -368,15 +378,20 @@ class AppiumProcessManager:
         # docker-only DNS name like `host.docker.internal` that does not
         # resolve on the agent host and would fail probe + bind alike.
         probe_host = agent_settings.grid_node.grid_node_bind_host
+        wildcard_bind = probe_host in {"0.0.0.0", "::", ""}
         while True:
             port = self._next_node_port
             self._next_node_port += 1
-            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
-                try:
-                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    probe.bind((probe_host, port))
-                except OSError:
-                    continue
+            if not self._port_is_bindable(probe_host, port):
+                continue
+            # A wildcard bind succeeds even when a loopback-only listener
+            # holds the same port (e.g. an Android emulator's adb console on
+            # 127.0.0.1) — but the more-specific listener then shadows the
+            # node on the loopback path, which the fast-lane sidecar's
+            # loopback admin endpoints (healthz/activity) depend on. Probe
+            # loopback explicitly and skip shadowed ports.
+            if wildcard_bind and not self._port_is_bindable("127.0.0.1", port):
+                continue
             return port
 
     def _allocate_control_port(self) -> int:
@@ -385,13 +400,8 @@ class AppiumProcessManager:
         while True:
             port = self._next_control_port
             self._next_control_port += 1
-            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
-                try:
-                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    probe.bind(("127.0.0.1", port))
-                except OSError:
-                    continue
-            return port
+            if self._port_is_bindable("127.0.0.1", port):
+                return port
 
     def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> None:
         task = tasks.pop(port, None)
