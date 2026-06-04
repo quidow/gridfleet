@@ -45,7 +45,7 @@ class InstallConfig:
     grid_hub_url: str = "http://localhost:4444"
     grid_publish_url: str = "tcp://localhost:4442"
     grid_subscribe_url: str = "tcp://localhost:4443"
-    grid_node_port_start: int = 5555
+    grid_node_port_start: int = 7300
     advertise_ip: str | None = None
 
     def __post_init__(self) -> None:

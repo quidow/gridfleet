@@ -84,7 +84,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
-| `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First Python Grid Node HTTP port assigned on the host |
+| `AGENT_GRID_NODE_PORT_START` | `7300` | agent process | First Python Grid Node HTTP port assigned on the host |
 | `AGENT_GRID_NODE_BIND_HOST` | `0.0.0.0` | agent process | Local interface the Python Grid Node HTTP server binds. Independent of `AGENT_ADVERTISE_IP` (which is what the hub registers). The default wildcard works for every supported topology including docker-compose with `host.docker.internal` advertised. Set to a specific IP to restrict the listening interface. |
 | `AGENT_RELAY_FAST_LANE` | `auto` | agent process | Controls the grid-relay fast-lane sidecar. `auto` spawns the `gridfleet-relay-proxy` binary per node when the `gridfleet-agent-relay` package is installed and falls back to in-process proxying otherwise; `on` fails node start when the binary is missing; `off` forces in-process proxying. |
 | `AGENT_RELAY_CONTROL_PORT_START` | `7900` | agent process | First port of the loopback-only range the Python relay's control listener binds in fast-lane mode. One port per device node, allocated upward. |
@@ -105,7 +105,7 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 | `--grid-hub-url` | `http://localhost:4444` | installer CLI | Convenience input that becomes process `AGENT_GRID_HUB_URL` |
 | `--grid-publish-url` | `tcp://localhost:4442` | installer CLI | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | installer CLI | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
-| `--grid-node-port-start` | `5555` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
+| `--grid-node-port-start` | `7300` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
 | `--api-auth-username` | unset | installer CLI | Becomes process `AGENT_API_AUTH_USERNAME` in the generated service env; required together with `--api-auth-password` |
 | `--api-auth-password` | unset | installer CLI | Becomes process `AGENT_API_AUTH_PASSWORD` in the generated service env; required together with `--api-auth-username` |
 | `--advertise-ip` | unset | installer CLI | Becomes process `AGENT_ADVERTISE_IP` (hostname or IP the agent advertises, e.g. `host.docker.internal`) |

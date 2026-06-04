@@ -81,7 +81,17 @@ class GridNodeSettings(BaseSettings):
     grid_node_session_timeout_sec: float = 1800.0
     grid_node_proxy_timeout_sec: float = 60.0
     grid_node_bind_host: str = "0.0.0.0"
-    grid_node_port_start: int = 5555
+    # 7300+ deliberately avoids every port family documented around a device
+    # lab host: Android emulator console/adb pairs (5554-5585) and adb-over-
+    # wifi convention (5555), Selenium distributed components (5553-5559) and
+    # event bus/router (4442-4444), VNC/Screen Sharing (5800s-5900s), X11
+    # (6000-6063), Google Play Games emulator (6520), uia2 device-side ports
+    # often forwarded 1:1 (6790/7810), uia2 systemPort (8200-8299),
+    # chromedriver (9515+), and node-exporter/mjpeg (9100s). The previous
+    # 5555 default sat exactly on the emulator/adb range; a loopback-only
+    # adb listener there shadowed the relay fast-lane sidecar's admin
+    # endpoints (see _allocate_node_port's loopback probe).
+    grid_node_port_start: int = 7300
     # Relay fast lane: spawn the gridfleet-relay-proxy sidecar per node so
     # WebDriver commands bypass this process. "auto" enables it when the
     # binary is installed (the gridfleet-agent-relay package), "on" fails
