@@ -21,7 +21,7 @@ GridFleet supports a login gate for production-style deployments:
   - machine clients such as host agents, CI helpers, and metrics scrapers use `Authorization: Basic ...` with the dedicated machine credential pair
 - Mutating browser requests must include `X-CSRF-Token`. The frontend injects this automatically after session bootstrap.
 - Health probes stay open on `/health/live`, `/health/ready`, and `/api/health`.
-- All `/api/*`, `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are protected when auth is enabled. CI/testkit clients must send machine Basic auth (`GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` matching the manager's `GRIDFLEET_MACHINE_AUTH_*` pair) to call reservation, session, or driver-pack catalog endpoints. The Selenium Grid Hub itself remains unauthenticated and lives behind the same network boundary.
+- Protection is applied per-router via the `require_any_auth` dependency, not a global middleware. When auth is enabled, all `/api/*` paths are protected except the auth endpoints themselves (`/api/auth/login`, `/api/auth/session`, `/api/auth/logout`), which must stay reachable to authenticate, and the open health probe `/api/health`. The `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are likewise protected. CI/testkit clients must send machine Basic auth (`GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` matching the manager's `GRIDFLEET_MACHINE_AUTH_*` pair) to call reservation, session, or driver-pack catalog endpoints. The Selenium Grid Hub itself remains unauthenticated and lives behind the same network boundary.
 
 Network boundaries still matter even with the auth gate enabled:
 
@@ -61,8 +61,8 @@ exclusively probe-time values.
 
 The Backend provides event-based webhooks configured by Operators via the UI. When creating webhook endpoints:
 - Use HTTPS endpoints to protect payload transmission.
-- You can provide an optional secret token when defining the webhook. GridFleet will compute an HMAC SHA-256 signature of the payload using this secret.
-- The target system must verify the `x-gridfleet-signature` header to ensure the payload is authentic and originated from your GridFleet instance.
+- Webhook payloads are delivered as unsigned JSON POSTs (the same event envelope used for SSE and notifications). There is no per-webhook secret and no payload signing — GridFleet does not compute an HMAC signature or send an `x-gridfleet-signature` header.
+- Because deliveries are unauthenticated, receivers must rely on network controls for authenticity: terminate on an HTTPS endpoint and restrict or allow-list the GridFleet egress so only your instance can reach the target.
 
 ## Host Agent Logs
 

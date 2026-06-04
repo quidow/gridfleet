@@ -83,6 +83,9 @@ async def test_lifespan_stops_grid_node_supervisors_before_appium_shutdown() -> 
             patch.object(CapabilitiesCache, "run_refresh_loop", side_effect=_wait_forever),
             patch.object(RegistrationService, "run", side_effect=_wait_forever),
             patch("agent_app.appium.appium_mgr.shutdown", side_effect=_record_shutdown),
+            # shutdown is patched out, so the real maintenance task would never
+            # be cancelled — keep it from starting at all.
+            patch("agent_app.appium.appium_mgr.start_log_maintenance"),
         ):
             async with lifespan(app):
                 pass
@@ -91,3 +94,25 @@ async def test_lifespan_stops_grid_node_supervisors_before_appium_shutdown() -> 
         appium_mgr._grid_supervisors.clear()
 
     assert order == ["grid-node", "appium-shutdown"]
+
+
+async def test_lifespan_starts_appium_log_maintenance() -> None:
+    stop_event = asyncio.Event()
+
+    async def _wait_forever(*_args: object, **_kwargs: object) -> None:
+        await stop_event.wait()
+
+    try:
+        with (
+            patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+            patch.object(CapabilitiesCache, "run_refresh_loop", side_effect=_wait_forever),
+            patch.object(RegistrationService, "run", side_effect=_wait_forever),
+            patch("agent_app.appium.appium_mgr.start_log_maintenance") as start_maintenance,
+            patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
+        ):
+            async with lifespan(app):
+                pass
+    finally:
+        stop_event.set()
+
+    start_maintenance.assert_called_once_with()

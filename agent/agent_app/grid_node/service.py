@@ -164,6 +164,14 @@ class UvicornGridNodeHttpServer:
             lifespan="off",
         )
         self._server = uvicorn.Server(server_config)
+        # Stock `Server.serve()` swaps the process-wide SIGTERM/SIGINT
+        # handlers for its lifetime (`capture_signals`) and restores its
+        # start-time snapshot on exit. Relay servers run in-process next to
+        # the agent's own uvicorn server, so two relay lifetimes stopping out
+        # of nesting order reinstall a *dead* server's handler over the
+        # agent's — after which the agent ignores SIGTERM until SIGKILL.
+        # Relay servers must never touch process signal handling.
+        self._server.capture_signals = contextlib.nullcontext  # type: ignore[assignment]
         self._task = asyncio.create_task(self._serve_protected())
         for _ in range(100):
             if self._server.started:
@@ -299,8 +307,13 @@ class GridNodeService:
         # Reap stuck reservations first: a reservation that never reached
         # `commit()` (e.g. upstream Appium crashed mid-create) would otherwise
         # pin the slot forever — `state.reserve()` blocks new requests as soon
-        # as any slot is non-FREE.
-        self.state.expire_reservations(now=time.monotonic())
+        # as any slot is non-FREE. The TTL must outlive the upstream window:
+        # a reservation legitimately stays open for up to proxy_timeout_sec
+        # while the Appium create is in flight, and the hardcoded 30s default
+        # raced those creates (the agent default proxy timeout is 60s) — the
+        # reaper freed the slot mid-create and the later commit() raised
+        # ReservationGoneError after Appium had already created the session.
+        self.state.expire_reservations(now=time.monotonic(), ttl_sec=self.config.proxy_timeout_sec + 5.0)
         skip_idle_expiry = False
         if self._sidecar is not None:
             skip_idle_expiry = not await self._sync_sidecar_activity()

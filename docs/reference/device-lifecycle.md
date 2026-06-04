@@ -27,6 +27,20 @@ column.
      persisted column.
    - Emits the mapped event if the value actually changed.
 
+`apply_derived_state` has a single production caller: the `device_intent_reconciler`
+loop.  Besides that derived path, `set_operational_state` has **four direct
+(non-reconciler) production callers** for specific entry/exit states:
+
+- `app.verification.services.execution` — transient `verifying` entry state.
+- `app.sessions.service` (`register_session`) — sets `busy` on session registration.
+- `app.appium_nodes.services.heartbeat` — host-offline path that marks every device
+  on a downed host `offline`.
+- `app.runs.service_lifecycle_release` (`release_devices`) — restores the ready
+  operational state when a run ends.
+
+The verification pass / update-failure terminals are reconciler-derived, not direct
+writes.
+
 ### Derived axes at a glance
 
 | Axis | Derived from |
@@ -52,13 +66,31 @@ column.
 ### Sanctioned writers
 
 The `ALLOWLIST` dict in `state_write_guard.py` is the single source of truth for
-which production modules may write each protected column.
+which production modules may write each protected column.  The table below
+summarizes the authoritative-state columns (operational/derived state and the
+appium-node desired/transition state); for the full enumeration — including the
+observation columns described further down — defer to `state_write_guard.py::ALLOWLIST`.
 
 | Column | Sanctioned module |
 |--------|------------------|
 | `Device.operational_state` | `app.devices.services.state` (called by `apply_derived_state`); `app.devices.services.write` (initial device creation only) |
 | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` |
-| `AppiumNode.desired_state` / `desired_port` / `transition_token` / `transition_deadline` | `app.appium_nodes.services.desired_state_writer` |
+| `AppiumNode.desired_state` / `desired_port` | `app.appium_nodes.services.desired_state_writer` |
+| `AppiumNode.transition_token` / `transition_deadline` | `app.appium_nodes.services.desired_state_writer`, plus sanctioned direct clears by `app.appium_nodes.services.reconciler_agent` and `app.appium_nodes.routers.admin` (the latter under the device row lock) |
+
+The remaining protected columns are appium-node **observation** state, written by
+the observed-state writers (the `app.appium_nodes.services.reconciler*` modules;
+`app.devices.services.health` for the health fields; the active-target cache fill in
+`app.devices.services.capability`; verification teardown in
+`app.verification.services.execution`; and the node-creation paths for `port`):
+`pid`, `port`, `active_connection_target`, `health_running`, `health_state`,
+`last_health_checked_at`, `last_observed_at`.  Consult
+`state_write_guard.py::ALLOWLIST` for the exact per-column writer set rather than
+hand-copying it here.  Caveat: `last_observed_at` is written only by a SQLAlchemy
+Core bulk update in `app.appium_nodes.services.reconciler` (`_touch_last_observed`),
+which the attribute-event guard cannot intercept — Core updates never fire ORM
+`set` events — so the `ALLOWLIST` entry naming `heartbeat` for that column is stale
+and unenforced.
 
 Any new sanctioned writer must be added to `ALLOWLIST`; unlisted callers get
 `StateWriteOutsideSanctionedWriterError`.  Test fixtures seed state using
@@ -77,5 +109,5 @@ bypass it.
 
 `Device.lifecycle_policy_state` (the JSON column for `stop_pending`,
 `backoff_until`, `maintenance_reason`, `recovery_suppressed_reason`, etc.) is NOT
-derived by the reconciler.  Helpers in `app.services.lifecycle_policy_state`
+derived by the reconciler.  Helpers in `app.devices.services.lifecycle_policy_state`
 manage that column directly under the same row lock.

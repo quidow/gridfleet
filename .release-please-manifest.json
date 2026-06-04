@@ -1,7 +1,7 @@
 {
   "backend": "0.2.0",
-  "agent": "0.21.2",
+  "agent": "0.22.3",
   "frontend": "0.2.0",
-  "testkit": "0.9.4",
+  "testkit": "0.9.5",
   "relay-proxy": "0.1.0"
 }

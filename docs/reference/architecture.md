@@ -7,7 +7,7 @@ GridFleet uses a host-first orchestration model to manage Appium and Selenium Gr
 The backend is a multi-worker stateless group of HTTP API servers. State is stored entirely in PostgreSQL. 
 
 ### Advisory Locks and Background Loops
-Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a production Compose setup), the backend uses **PostgreSQL Advisory Locks** to ensure exactly one leader evaluates background maintenance tasks. The `app.main` lifespan starts ~10 distinct background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, etc.) that:
+Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a production Compose setup), the backend uses **PostgreSQL Advisory Locks** to ensure exactly one leader evaluates background maintenance tasks. The `app.main` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, grid_event_bus_subscriber, node_health, device_connectivity, property_refresh, etc.), plus a leader keepalive and a separate non-leader leader watcher task, that:
 
 - Monitor missing Agent heartbeats.
 - Evaluate node health via Appium and Grid calls.
@@ -45,7 +45,7 @@ API `effective_state` as the derived read model.
 
 ### Probe Sessions
 
-Session viability, node health, and device verification each run a sub-second probe against the Selenium Grid. Each probe is persisted as a single terminal `Session` row by its caller via `app.sessions.service_probes.record_probe_session`, not by the grid session-sync loop. Probe rows carry `test_name == "__gridfleet_probe__"` and a `requested_capabilities["gridfleet:probeCheckedBy"]` source attribution (`scheduled`, `manual`, `recovery`, `node_health`, or `verification`).
+Session viability, node health, and device verification each run a sub-second probe against the Selenium Grid. Each probe is persisted as a single terminal `Session` row by its caller via `app.sessions.service_probes.record_probe_session`, not by the grid session-sync loop. Probe rows carry `test_name == "__gridfleet_probe__"` and a `requested_capabilities["gridfleet:probeCheckedBy"]` source attribution (`scheduled`, `manual`, `recovery`, or `verification`).
 
 Probe rows are excluded from success-rate, throughput, utilization, error breakdown, and heatmap analytics via the existing `exclude_non_test_sessions` / `exclude_non_success_metric_sessions` filters keyed on `test_name`. Probe persistence does **not** emit `session.started` or `session.ended` events — webhooks and the event stream see no probe traffic. Operators surface probes on the Sessions page via the `include_probes` query parameter (off by default). Probes have their own retention window via `retention.probe_sessions_days` (default 7 days).
 

@@ -26,7 +26,7 @@ They are used to:
 - prefill connection target and OS version
 - prevent choosing devices that are already registered
 
-The Add Device modal treats this candidate list as live observed data. It shows an observed-device section with a live/count indicator and update timestamp so operators can tell when the host-visible list changed while the modal is open.
+The Add Device modal treats this candidate list as live observed data. It shows an observed-device section with a `Live` indicator badge and a device count (`N devices observed`), plus a transient `Device list updated just now` notice that appears when the host-visible list changes while the modal is open.
 
 ### Manual Fields
 
@@ -88,9 +88,11 @@ For several lanes, those values stay unresolved until verification runs.
 | Fire TV real device over USB/network as seen by host | Yes | Yes for host-visible device lanes | Optional display name |
 | Android real device over network | Yes | Optional | `IP:port` allowed if no candidate is selected |
 | Android emulator (`Virtual`) | Yes | Yes | Optional display name |
-| iOS real device | Yes | Yes | Optional display name |
+| iOS real device over USB | Yes | Yes | Optional display name |
+| iOS real device over network | Yes | Optional | Manual connection target allowed if no candidate is selected |
 | iOS simulator (`Virtual`) | Yes | Yes | Optional display name |
-| tvOS real device | Yes | Yes | Optional display name |
+| tvOS real device over USB | Yes | Yes | Optional display name |
+| tvOS real device over network | Yes | Optional | Manual connection target allowed if no candidate is selected |
 | tvOS simulator (`Virtual`) | Yes | Yes | Optional display name |
 | Roku | Yes | No | Roku IP address, Roku developer password, optional display name |
 
@@ -125,10 +127,10 @@ Operators normally choose the host-visible device rather than typing low-level i
 
 ### Virtual Devices (Emulators & Simulators)
 
-Virtual devices have unique explicit controls established during the intake and discovery configuration:
+Virtual devices have unique behaviors around their connection lanes, headless rendering, and boot lifecycle:
 
 - **Virtual connection lanes:** Emulators and simulators uniformly persist with their connection types constrained, requiring no manual IP input.
-- **Headless Mode Toggles:** Available for Android Emulators (AVDs), allowing the operator to instruct the agent to skip display rendering for faster setup and lower host load.
+- **Headless Mode:** For Android emulators (AVDs), headless rendering is controlled by the device-level `emulator_headless` tag, not by an intake or discovery toggle. The tag defaults to headless on; set it to `false` to render the display. The agent applies this setting in its emulator boot step before starting Appium.
 - **Auto-Boot Lifecycle:** Virtual devices natively expose their process state (e.g., `stopped`, `booting`, `running`). A `stopped` virtual device can be safely targeted; the agent is responsible for automatically launching the hardware artifact seamlessly before starting Appium.
 
 ### Roku

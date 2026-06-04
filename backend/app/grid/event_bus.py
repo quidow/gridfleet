@@ -72,10 +72,16 @@ def decode_event_frames(frames: list[bytes]) -> DecodedEvent:
 
 logger = logging.getLogger(__name__)
 
-# Selenium hub emits many event types; the subscriber forwards only
-# the ones session_sync_loop reacts to. Other types still count toward
-# events_received (bus-liveness signal) but do not invoke on_event.
-_ACTIONABLE_EVENT_TYPES: frozenset[str] = frozenset({"session-created", "session-closed"})
+# Selenium hub emits many event types; the subscriber forwards only the
+# ones a doorbell consumer reacts to: session events wake session_sync,
+# node events wake node_health (and session_sync — a dying node takes
+# its sessions with it without emitting session-closed). Other types
+# still count toward events_received (bus-liveness signal) but do not
+# invoke on_event. Event payloads are never parsed — events are pure
+# wake triggers; the 30s polls remain the drift backstop for lossy ZMQ.
+SESSION_EVENT_TYPES: frozenset[str] = frozenset({"session-created", "session-closed"})
+NODE_EVENT_TYPES: frozenset[str] = frozenset({"node-added", "node-removed"})
+_ACTIONABLE_EVENT_TYPES: frozenset[str] = SESSION_EVENT_TYPES | NODE_EVENT_TYPES
 
 
 @dataclass

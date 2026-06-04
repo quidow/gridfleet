@@ -34,7 +34,7 @@ Use maintenance when you want a clear manual hold for planned work, inspection, 
 
 ## Reconnect
 
-Reconnect is a targeted operator action for network-connected Android devices.
+Reconnect is a targeted operator action for network-connected devices whose driver pack implements it (today, Android).
 
 It is available from:
 
@@ -44,9 +44,11 @@ It is available from:
 
 Current reconnect rules:
 
-- Android platforms only
-- network-connected lanes only
-- device must have an IP address
+- the device's platform manifest must declare the `reconnect` lifecycle action
+- the device must be on a network-connected lane (`connection_type=network`)
+- it must have an IP address, plus an assigned host and connection target
+
+In practice only the Android (uiautomator2) adapter implements reconnect successfully — the Apple (xcuitest) platforms declare the action in their manifest but the adapter rejects it — so reconnect is effectively an Android-only operation today.
 
 If reconnect succeeds and the device has a known node, the manager attempts a best-effort node restart afterward.
 
@@ -61,8 +63,8 @@ The lifecycle summary shown on Devices and triage surfaces uses these states:
 | `Waiting to Retry` | Automatic recovery previously failed and is delayed until the backoff timer expires |
 | `Excluded from Run` | The device was excluded from an active run while the manager protects the run from an unhealthy member |
 | `Recovery Paused` | Automatic recovery is intentionally blocked, for example by maintenance or readiness problems |
+| `Start Failed` | The most recent automatic node start (Appium reconciler) failed; the device can still recover automatically when the next check succeeds |
 | `Offline - Can Recover` | The device can be brought back automatically when the next checks succeed |
-| `Manual Recovery` | The device has recovery work remaining and requires operator intervention to bring it back |
 
 These are lifecycle summaries, not separate editable statuses.
 
@@ -88,13 +90,9 @@ Depending on the current run/session context, the manager may:
 
 ### Devices Page
 
-The Devices table shows:
+The Devices table shows a readiness/health indicator (the Health cell, which folds active lifecycle summary states — recovery paused, backoff, recoverable — into its tone and reason popover) and an Availability cell whose tooltip surfaces the maintenance reason when the device is in maintenance. There is no separate lifecycle badge column in the table; the dedicated lifecycle badge appears on the dashboard incident views.
 
-- readiness badge
-- lifecycle badge when the summary is active
-- lifecycle detail text for the current summary
-
-The lifecycle chips also let operators filter directly by lifecycle state.
+Operators can filter the Devices table by availability status, platform, host, connection type, device type, OS version, hardware health, and needs-attention.
 
 ### Device Health Panel
 
@@ -125,11 +123,7 @@ The manager can move into `Stopping Soon` instead of killing the session immedia
 
 The device can be excluded from the run so the run can continue safely while the unhealthy member is taken out of service.
 
-This also applies when CI reports a preparation-time failure for one reserved device. In that case the manager excludes the device from the run, marks it `offline`, records the exact CI-supplied reason, and keeps healthy reserved siblings attached to the same run.
-
-### Auto-Manage Is Disabled
-
-The device can land in `Manual Recovery`. Operators must bring it back intentionally instead of waiting for automatic recovery.
+This also applies when CI reports a preparation-time failure for one reserved device. In that case the manager excludes the device from the run, places it into maintenance (operational state `maintenance`) with reason "CI preparation failure", records the exact CI-supplied reason, and keeps healthy reserved siblings attached to the same run.
 
 ### Maintenance Is Active
 
@@ -174,10 +168,6 @@ The most common blockers are:
 
 Automatic recovery is failing repeatedly. Use the failure reason and next backoff time in Device Health to decide whether to intervene manually.
 
-### Device shows manual recovery instead of recovering automatically
-
-Auto-manage is off, or another suppression rule is preventing automatic recovery. Operators need to return the device to service intentionally.
-
 ### Device is healthy again but still unavailable
 
 Check whether:
@@ -187,12 +177,12 @@ Check whether:
 - it is excluded from an active run
 - it is waiting for the backoff window to expire
 
-### Device went offline immediately after CI setup failed
+### Device went into maintenance immediately after CI setup failed
 
 That is expected for the current shipped contract. When CI calls the run-scoped preparation-failure endpoint for a reserved device, the manager:
 
 - excludes the device from the run
 - records the exact CI failure reason
-- marks the device unhealthy and sets operational state to `offline`
+- marks the device unhealthy and places it into maintenance (operational state `maintenance`) with a CI preparation-failure reason
 
 This keeps operator-visible device state aligned with reservation truth instead of leaving the device silently reserved.

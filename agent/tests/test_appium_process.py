@@ -3,7 +3,8 @@ import contextlib
 import json
 import signal
 from collections import deque
-from typing import Any, cast
+from collections.abc import Awaitable, Callable
+from typing import Any, BinaryIO, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from agent_app.appium.exceptions import (
     RuntimeNotInstalledError,
     StartupTimeoutError,
 )
+from agent_app.appium.log_files import appium_log_path
 from agent_app.appium.process import (
     AppiumInvocation,
     AppiumLaunchSpec,
@@ -60,12 +62,23 @@ def stub_port_probe() -> object:
         yield
 
 
-def _stream_with_lines(*lines: str) -> asyncio.StreamReader:
-    reader = asyncio.StreamReader()
-    for line in lines:
-        reader.feed_data(f"{line}\n".encode())
-    reader.feed_eof()
-    return reader
+def _seed_log_file(port: int, *lines: str) -> None:
+    path = appium_log_path(port)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in lines))
+
+
+def _spawn_writing(proc: "FakeProcess", *lines: str) -> Callable[..., Awaitable["FakeProcess"]]:
+    """create_subprocess_exec side effect: simulate child output landing in the log file."""
+
+    async def _spawn(*args: object, **kwargs: object) -> "FakeProcess":
+        stdout = cast("BinaryIO", kwargs["stdout"])
+        for line in lines:
+            stdout.write(f"{line}\n".encode())
+        stdout.flush()
+        return proc
+
+    return _spawn
 
 
 class FakeProcess:
@@ -266,11 +279,7 @@ def test_find_java_prefers_macos_java_home_over_usr_bin_stub() -> None:
 
 async def test_start_builds_processes_and_tracks_running_info() -> None:
     manager = AppiumProcessManager()
-    appium_proc = FakeProcess(
-        pid=1234,
-        stdout=_stream_with_lines("appium ready"),
-        stderr=_stream_with_lines("appium stderr"),
-    )
+    appium_proc = FakeProcess(pid=1234)
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
@@ -278,7 +287,7 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True) as wait_ready,
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
-            return_value=appium_proc,
+            side_effect=_spawn_writing(appium_proc, "appium ready"),
         ) as create_proc,
     ):
         info = await manager.start(
@@ -289,7 +298,6 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
             plugins=["images", "execute-driver"],
             extra_caps={"appium:platform": "phone"},
         )
-        await asyncio.sleep(0)
 
     assert info == AppiumProcessInfo(
         port=4723,
@@ -385,8 +393,6 @@ async def test_stop_calls_grid_node_supervisor_stop() -> None:
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=5002, connection_target="device-1", platform_id="android_mobile"
     )
-    manager._logs[4723] = deque(["line"], maxlen=10)
-    manager._log_tasks[4723] = []
 
     await manager.stop(4723)
 
@@ -406,6 +412,35 @@ def test_process_snapshot_includes_grid_node_status() -> None:
     snapshot = manager.process_snapshot()
 
     assert snapshot["running_nodes"][0]["grid_node_status"] == "up"
+
+
+@pytest.mark.parametrize("busy", [True, False])
+def test_process_snapshot_reports_session_activity_from_grid_node_service(busy: bool) -> None:
+    manager = AppiumProcessManager()
+    handle = ReconfigurableGridNodeHandle(ReconfigurableGridNodeService(busy=busy))
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    snapshot = manager.process_snapshot()
+
+    assert snapshot["running_nodes"][0]["has_active_session"] is busy
+
+
+def test_process_snapshot_omits_session_activity_when_service_unavailable() -> None:
+    manager = AppiumProcessManager()
+    handle = RecordingGridNodeHandle()  # service stays None
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    snapshot = manager.process_snapshot()
+
+    assert "has_active_session" not in snapshot["running_nodes"][0]
 
 
 async def test_start_requires_pack_metadata() -> None:
@@ -757,8 +792,6 @@ async def test_stop_pending_drains_relay_and_blocks_auto_restart() -> None:
         connection_target="device-1",
         platform_id="android_mobile",
     )
-    manager._logs[4723] = deque(["line"], maxlen=10)
-    manager._log_tasks[4723] = []
 
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
 
@@ -800,17 +833,17 @@ async def test_start_can_disable_session_override() -> None:
 
 async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
     manager = AppiumProcessManager()
-    appium_proc = FakeProcess(
-        pid=4321, stdout=_stream_with_lines("booting"), stderr=_stream_with_lines("still booting")
-    )
+    appium_proc = FakeProcess(pid=4321)
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
         patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=False),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
-        patch("agent_app.appium.process.asyncio.sleep", new_callable=AsyncMock),
-        pytest.raises(RuntimeError, match="did not become ready"),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            side_effect=_spawn_writing(appium_proc, "booting", "still booting"),
+        ),
+        pytest.raises(RuntimeError, match="did not become ready") as exc_info,
     ):
         await manager.start(
             connection_target="device-002",
@@ -819,9 +852,60 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
             **PACK_START_KWARGS,
         )
 
+    assert "booting" in str(exc_info.value)
     assert appium_proc.killed is True
     assert manager.list_running() == []
-    assert manager.get_logs(4724) == []
+    assert manager.get_logs(4724) == []  # brand-new port: file deleted on failure
+
+
+async def test_start_log_maintenance_sweeps_orphans_and_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.appium import log_files
+
+    monkeypatch.setattr("agent_app.appium.process.LOG_MAINTENANCE_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(log_files, "MAX_LOG_BYTES", 50)
+    monkeypatch.setattr(log_files, "TAIL_READ_BYTES", 10)
+    manager = AppiumProcessManager()
+    _seed_log_file(4723, "orphan from previous agent process")
+
+    manager.start_log_maintenance()
+    assert not appium_log_path(4723).exists()  # orphan swept synchronously
+
+    _seed_log_file(4724, "x" * 200)  # oversized file appearing while running
+    await asyncio.sleep(0.05)
+    assert appium_log_path(4724).stat().st_size == 10  # truncated by the loop
+
+    await manager.shutdown()
+    assert manager._log_maintenance_task is None
+
+
+async def test_start_log_maintenance_is_idempotent() -> None:
+    manager = AppiumProcessManager()
+    manager.start_log_maintenance()
+    first_task = manager._log_maintenance_task
+    manager.start_log_maintenance()
+    assert manager._log_maintenance_task is first_task
+    await manager.shutdown()
+
+
+async def test_get_logs_reads_file_tail() -> None:
+    manager = AppiumProcessManager()
+    _seed_log_file(4723, "one", "two", "three")
+    assert manager.get_logs(4723, lines=2) == ["two", "three"]
+    assert manager.get_logs(9999) == []
+
+
+async def test_stop_deletes_log_file() -> None:
+    manager = AppiumProcessManager()
+    appium_proc = FakeProcess(pid=5002)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5002, connection_target="device-1", platform_id="android_mobile"
+    )
+    _seed_log_file(4723, "line")
+
+    await manager.stop(4723)
+
+    assert not appium_log_path(4723).exists()
 
 
 async def test_stop_escalates_to_kill_after_timeout() -> None:
@@ -833,8 +917,6 @@ async def test_stop_escalates_to_kill_after_timeout() -> None:
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=8765, connection_target="device-001", platform_id="android_mobile"
     )
-    manager._logs[4723] = deque(["line"], maxlen=10)
-    manager._log_tasks[4723] = []
 
     async def wait_for_side_effect(_awaitable: object, *, timeout: float) -> object:
         del timeout
@@ -1894,10 +1976,10 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
-    # Pre-seed logs so we can assert they are cleared on failure
-    manager._logs[4723] = deque(["old log"], maxlen=10)
+    # Pre-seed the log file so we can assert it is cleared on failure
+    _seed_log_file(4723, "old log")
 
-    proc = FakeProcess(pid=1234, stdout=_stream_with_lines("booting"))
+    proc = FakeProcess(pid=1234)
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
@@ -1905,12 +1987,11 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=False),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=proc),
-        patch("agent_app.appium.process.asyncio.sleep", new_callable=AsyncMock),
         pytest.raises(StartupTimeoutError),
     ):
         await manager._start_appium_server(spec, clear_logs_on_failure=True)
 
-    assert 4723 not in manager._logs
+    assert not appium_log_path(4723).exists()
 
 
 async def test_reconfigure_unknown_grid_supervisor_raises() -> None:
@@ -1976,8 +2057,6 @@ async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() ->
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
-    manager._logs[4723] = deque(["log"], maxlen=10)
-    manager._log_tasks[4723] = [asyncio.create_task(asyncio.sleep(999))]
 
     with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("grid boom")):
         await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))

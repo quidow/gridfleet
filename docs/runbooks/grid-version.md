@@ -28,7 +28,7 @@ fixes are present. The most recent relevant fixes:
 
 1. Pick the new tag from https://github.com/SeleniumHQ/docker-selenium/releases.
 2. Skim https://github.com/SeleniumHQ/selenium/releases between the old and new tags for breaking changes. Grid changes between minor releases have been fixes only up through 4.43 — anything labeled "BREAKING" in the release notes is the stopping criterion.
-3. Check the Selenium Java CHANGELOG (`https://github.com/SeleniumHQ/selenium/blob/trunk/java/CHANGELOG`) for any `[grid] Accept legacy …` patches. If the wire format changed for an event we consume, port the lenient parser to `backend/app/grid/event_bus.py:parse_session_closed_id` and add tests.
+3. Check the Selenium Java CHANGELOG (`https://github.com/SeleniumHQ/selenium/blob/trunk/java/CHANGELOG`) for any `[grid] Accept legacy …` patches. If the wire format changed for an event we consume, port the lenient parsing into the wire-format decoder `decode_event_frames` in `backend/app/grid/event_bus.py` and extend its tests in `backend/tests/grid/test_event_bus_decoder.py`.
 4. Update both compose files + the agent version string.
 5. Restart the hub: `docker compose pull selenium-hub && docker compose up -d selenium-hub`.
 6. Drain a node mid-session and confirm the distributor retries the in-flight session.

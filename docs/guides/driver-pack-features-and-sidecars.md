@@ -9,7 +9,7 @@ This guide covers GridFleet driver pack feature actions, sidecar management, and
 **What you need before starting:**
 
 - **Admin role** in GridFleet. All export and feature-action endpoints require admin credentials; non-admin requests are rejected with HTTP 403.
-- Familiarity with driver pack manifests (schema in `backend/app/pack/manifest.py`).
+- Familiarity with driver pack manifests (schema in `backend/app/packs/manifest.py`).
 - For feature actions and sidecars: an uploaded pack whose adapter wheel implements the `feature_action` and/or `sidecar_lifecycle` hooks.
 
 ---
@@ -20,7 +20,7 @@ This guide covers GridFleet driver pack feature actions, sidecar management, and
 
 Features are optional capability bundles declared in a pack manifest's `features:` block. Each feature has:
 
-- A `display_name` and optional `description_md` / `help_url`.
+- A `display_name`, a `description_md` that defaults to an empty string, and an optional (nullable) `help_url`.
 - An `applies_when` block that filters by platform and device type.
 - A `requirements` block listing host tools or privileges needed.
 - An optional `sidecar` entry for long-running processes (see Sidecars section).
@@ -37,20 +37,21 @@ Feature actions require an uploaded pack whose adapter wheel implements:
 ```python
 async def feature_action(
     self,
-    *,
     feature_id: str,
     action_id: str,
     args: dict[str, Any],
-    context: dict[str, Any],
+    ctx: LifecycleContext,
 ) -> FeatureActionResult: ...
 ```
 
 `FeatureActionResult` is defined in `agent/agent_app/pack/adapter_types.py`:
 
 ```python
-class FeatureActionResult(TypedDict):
+@dataclass
+class FeatureActionResult:
     ok: bool
-    message: str
+    detail: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
 ```
 
 The action is POST-only and returns immediately. There is no long-poll or async job mechanism; the adapter is expected to complete synchronously.
@@ -59,8 +60,8 @@ The action is POST-only and returns immediately. There is no long-poll or async 
 
 Feature action buttons appear in the **Host Detail → Drivers panel**, under each driver pack that is currently enabled on that host. The buttons are only shown when:
 
-1. The pack has at least one feature with at least one action.
-2. The feature's `applies_when` predicate matches at least one device on the host.
+1. The pack has at least one feature with at least one action (features come from the catalog; the panel does not filter them by `applies_when`).
+2. The host's status for the pack is `installed`.
 
 Each button label comes from the action's `label` field in the manifest. Clicking the button sends:
 
@@ -83,7 +84,7 @@ curl -X POST \
 Returns the `FeatureActionResult` from the adapter:
 
 ```json
-{"ok": true, "message": "tunnel restarted"}
+{"ok": true, "detail": "tunnel restarted", "data": {}}
 ```
 
 ### Feature Status Tracking
@@ -103,14 +104,14 @@ CREATE TABLE host_pack_feature_status (
 );
 ```
 
-Status is updated after each feature action call and by the sidecar supervisor's periodic status polling. When the `ok` flag transitions:
+Status is updated after each feature action call and from the sidecar snapshot the agent POSTs to the backend's status-ingest endpoint. The backend's `PackStatusService.apply_status` calls `FeatureService.record_feature_status`, which upserts the row and, on a transition, queues the event. (The agent's sidecar supervisor only surfaces sidecar status in that snapshot; it has no DB access and emits no events.) When the `ok` flag transitions:
 
 | Transition | Webhook event |
 |-----------|--------------|
 | `ok` → `not ok` | `pack_feature.degraded` |
 | `not ok` → `ok` | `pack_feature.recovered` |
 
-Both events appear in the System Event stream (category `driver_pack`) and are delivered to any webhooks subscribed to those event kinds. The webhook payload carries `host_id`, `pack_id`, `feature_id`, `ok`, and `detail` fields.
+Both events appear in the System Event stream (category `operations_and_settings`) and are delivered to any webhooks subscribed to those event kinds. The webhook payload carries `host_id`, `pack_id`, `feature_id`, `ok`, and `detail` fields.
 
 ---
 
@@ -139,19 +140,19 @@ Sidecars are **adapter-driven** and require an uploaded pack. The adapter must i
 ```python
 async def sidecar_lifecycle(
     self,
-    *,
     feature_id: str,
     action: Literal["start", "stop", "status"],
-    context: dict[str, Any],
 ) -> SidecarStatus: ...
 ```
 
 `SidecarStatus` is defined in `agent/agent_app/pack/adapter_types.py`:
 
 ```python
-class SidecarStatus(TypedDict):
+@dataclass
+class SidecarStatus:
     ok: bool
-    detail: str
+    detail: str = ""
+    state: str = ""
 ```
 
 ### Sidecar Supervisor
@@ -161,20 +162,25 @@ Each agent process runs a single `SidecarSupervisor` instance (started in the ag
 - Maintains a `dict[(pack_id, release, feature_id)] -> SidecarHandle` mapping.
 - On `start(pack_id, release, feature_id)`: calls the adapter `sidecar_lifecycle("start")` once. If successful, schedules a background polling task that calls `sidecar_lifecycle("status")` every 30 seconds.
 - On `stop(...)`: calls `sidecar_lifecycle("stop")` and cancels the polling task.
-- On status polling: if `SidecarStatus.ok` flips to `False`, updates `host_pack_feature_status` and emits `pack_feature.degraded`; if it flips back to `True`, emits `pack_feature.recovered`.
+- On status polling: when a poll observes `SidecarStatus.ok == False` (or the poll raises), the supervisor records the bad state on its in-memory handle, logs it, and stops the poll loop. It has no DB access and emits no events; the not-ok state is surfaced in the status payload the agent POSTs to the backend, and the backend's status-ingest path (`apply_status` → `record_feature_status`) is what updates `host_pack_feature_status` and emits `pack_feature.degraded` / `pack_feature.recovered`. The supervisor never detects a flip back to `True` on its own — recovery is observed only after a restart re-runs `start()`.
 
-The supervisor's current snapshot is included in the agent's `/agent/driver-packs/status` response payload:
+The supervisor's current snapshot is included in the body the agent POSTs to the backend's `/agent/driver-packs/status` endpoint (a backend POST that returns `204`, not a GET the agent serves). The body has top-level keys `host_id`, `runtimes`, `packs`, `doctor`, and a flat `sidecars` list:
 
 ```json
 {
-  "runtime": [
+  "host_id": "...",
+  "runtimes": [],
+  "packs": [],
+  "doctor": [],
+  "sidecars": [
     {
       "pack_id": "acme/my-driver",
       "release": "1.0.0",
-      "installed": true,
-      "sidecars": [
-        {"feature_id": "remotexpc_tunnel", "ok": true, "detail": ""}
-      ]
+      "feature_id": "remotexpc_tunnel",
+      "ok": true,
+      "detail": "",
+      "state": "",
+      "last_error": null
     }
   ]
 }
@@ -205,7 +211,7 @@ Export is useful for:
 
 ### Using Export via the UI
 
-On the Drivers page, each pack row has an **Export tarball** button. Clicking it triggers a browser download of the `.tar.gz` file. The download filename is `<pack_id>-<release>.tar.gz` with slashes in `pack_id` replaced by underscores.
+On a driver pack's detail page, the header has an **Export Tarball** button that downloads the pack's current release as a `.tar.gz` file. The browser download name is `<pack_id>-<release>.tar.gz`, where the browser only replaces the first `/` in `pack_id` with an underscore (the release is left as-is). The server's `Content-Disposition` filename is stricter: it replaces every character outside `[a-zA-Z0-9._-]` with an underscore in both `pack_id` and `release`.
 
 ### Using Export via API
 
@@ -224,17 +230,19 @@ To import the exported tarball on another instance, use the standard upload endp
 
 ## Troubleshooting
 
-### Feature action returns `{"ok": false, "message": "..."}`
+### Feature action returns `{"ok": false, "detail": "..."}`
 
-This is an adapter-level response, not an HTTP error. The adapter ran but reported failure. Check the `detail` field and the host's system log for more context. The `host_pack_feature_status` row for this host/pack/feature will be updated with `ok=false` and the message, and a `pack_feature.degraded` webhook event will fire.
+This is an adapter-level response, not an HTTP error. The adapter ran but reported failure. Check the `detail` field and the host's system log for more context. The `host_pack_feature_status` row for this host/pack/feature will be updated with `ok=false` and the detail, and a `pack_feature.degraded` webhook event will fire.
 
 ### Feature action returns HTTP 404
 
-The backend could not find an active adapter for the pack on this host. Confirm that:
+The backend could not resolve the host, pack, release, or feature id in its database. Confirm that:
 
-1. The pack is `enabled` and not in `draft` or `disabled` state.
-2. The host has the pack in its installed set (visible on the Host Detail page under Drivers).
-3. The agent is reachable from the backend (check the host's connectivity status on the Hosts page).
+1. The host exists and the pack is `enabled` (not `draft` or `disabled`).
+2. The pack has a current release that declares the feature id you are invoking.
+3. The host has the pack in its installed set (visible on the Host Detail page under Drivers).
+
+Note: a missing or unloaded adapter on the agent does **not** surface as 404. The backend treats any agent error or unreachable agent as a failed dispatch and returns HTTP 502, recording the feature as degraded.
 
 ### Sidecar shows `ok: false` immediately after start
 

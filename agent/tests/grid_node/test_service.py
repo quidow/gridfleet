@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import signal
+import socket
 import time
 from typing import TYPE_CHECKING, Never
 
@@ -183,6 +186,33 @@ async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(mon
 
     assert service.state.snapshot().slots[0].state == "FREE"
     assert [event["type"] for event in bus.events][-2:] == ["session-closed", "node-heartbeat"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_reservation_reap_ttl_tracks_proxy_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A reservation only exists while a session create is in flight against
+    # Appium, and that call is bounded by proxy_timeout_sec. Reaping at the
+    # old hardcoded 30s default raced in-flight creates (the agent default
+    # proxy timeout is 60s): the reaper freed the slot mid-create and the
+    # later commit() raised ReservationGoneError after Appium had already
+    # created the session. The TTL must outlive the upstream window.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("agent_app.grid_node.service.time.monotonic", lambda: clock["now"])
+    service = GridNodeService(
+        config=_config(),  # proxy_timeout_sec=30.0 -> reap TTL 35.0
+        bus=RecordingBus(),
+        http_server=RecordingHttpServer(),
+        registration_probe=_probe(None),
+    )
+    service.state.reserve({"platformName": "Android"})
+
+    clock["now"] = 1032.0  # past the old 30s default, within proxy_timeout_sec + headroom
+    await service.run_heartbeat_once()
+    assert service.state.snapshot().slots[0].state == "RESERVED"
+
+    clock["now"] = 1036.0  # past proxy_timeout_sec + headroom — genuinely stuck
+    await service.run_heartbeat_once()
+    assert service.state.snapshot().slots[0].state == "FREE"
 
 
 @pytest.mark.asyncio
@@ -867,6 +897,72 @@ async def test_uvicorn_http_server_serve_protected_traps_system_exit(monkeypatch
     )
     with pytest.raises(RuntimeError, match="exited"):
         await server.start()
+
+
+def _free_port() -> int:
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _config_on_port(port: int) -> GridNodeConfig:
+    return GridNodeConfig(
+        node_id=f"node-{port}",
+        node_uri=f"http://127.0.0.1:{port}",
+        appium_upstream="http://127.0.0.1:4723",
+        slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+        hub_publish_url="tcp://127.0.0.1:4442",
+        hub_subscribe_url="tcp://127.0.0.1:4443",
+        heartbeat_sec=5.0,
+        session_timeout_sec=300.0,
+        proxy_timeout_sec=30.0,
+        bind_host="127.0.0.1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_uvicorn_http_server_preserves_process_signal_handlers() -> None:
+    # Regression for the "agent ignores SIGTERM, needs SIGKILL" wedge: relay
+    # servers run in-process next to the agent's own uvicorn server, and real
+    # `uvicorn.Server.serve()` swaps the process-wide SIGTERM/SIGINT handlers
+    # for its lifetime (capture_signals), restoring its saved snapshot on
+    # exit. Two relays stopping out of nesting order (start A, start B, stop
+    # A, stop B) therefore reinstall a *dead* server's handler over the
+    # agent's, and SIGTERM is swallowed forever after. Relay servers must
+    # never touch process signal handling — uses the real uvicorn.Server.
+    from agent_app.grid_node.service import UvicornGridNodeHttpServer
+
+    def sentinel_handler(signum: int, frame: object) -> None:  # pragma: no cover
+        pass
+
+    handled = (signal.SIGTERM, signal.SIGINT)
+    originals = {sig: signal.getsignal(sig) for sig in handled}
+    for sig in handled:
+        signal.signal(sig, sentinel_handler)
+    server_a = UvicornGridNodeHttpServer(
+        config=_config_on_port(_free_port()), state=NodeState(slots=[], now=time.monotonic), bus=RecordingBus()
+    )
+    server_b = UvicornGridNodeHttpServer(
+        config=_config_on_port(_free_port()), state=NodeState(slots=[], now=time.monotonic), bus=RecordingBus()
+    )
+    try:
+        await server_a.start()
+        try:
+            assert signal.getsignal(signal.SIGTERM) is sentinel_handler, (
+                "relay server start replaced the process SIGTERM handler"
+            )
+            await server_b.start()
+            await server_a.stop()  # non-nested stop order: A out from under live B
+        finally:
+            await server_b.stop()
+            await server_a.stop()
+        for sig in handled:
+            assert signal.getsignal(sig) is sentinel_handler, (
+                f"relay server lifecycle replaced the process handler for {signal.Signals(sig).name}"
+            )
+    finally:
+        for sig, handler in originals.items():
+            signal.signal(sig, handler)
 
 
 @pytest.mark.asyncio

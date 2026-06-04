@@ -119,17 +119,20 @@ def test_get_status_returns_node_snapshot(test_app: Starlette) -> None:
 
 
 def test_owner_endpoint_returns_true_for_known_session(test_app: Starlette, state: NodeState) -> None:
+    # Selenium serves IsSessionOwner on GET (Node.java registers
+    # `get("/se/grid/node/owner/{sessionId}")`); a POST-only registration is
+    # dead code and the canonical GET would fall through to the Appium proxy.
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="session-1", started_at=1.0)
     client = TestClient(test_app)
-    response = client.post("/se/grid/node/owner/session-1")
+    response = client.get("/se/grid/node/owner/session-1")
     assert response.status_code == 200
     assert response.json()["value"] is True
 
 
 def test_owner_endpoint_returns_false_for_unknown_session(test_app: Starlette) -> None:
     client = TestClient(test_app)
-    response = client.post("/se/grid/node/owner/missing")
+    response = client.get("/se/grid/node/owner/missing")
     assert response.status_code == 200
     assert response.json()["value"] is False
 
@@ -327,6 +330,157 @@ def test_node_drain_marks_state_and_blocks_new_sessions(test_app: Starlette, sta
     assert state.snapshot().drain is True
     blocked = client.post("/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert blocked.status_code == 503
+
+
+def test_node_drain_publishes_node_drain_started_with_node_id(
+    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient
+) -> None:
+    # Selenium's NodeDrainStarted event carries a bare NodeId; the hub's
+    # LocalGridModel listener cannot deserialize `{}` and would silently drop
+    # the DRAINING availability flip. The service-side drain publishers
+    # already send the bare node id — the HTTP route must match.
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=bus,
+        proxy_request_func=proxy.request,
+        node_id="node-1",
+    )
+    response = TestClient(app).post("/se/grid/node/drain")
+    assert response.status_code == 200
+    assert bus.events[-1] == {"type": "node-drain-started", "data": "node-1"}
+
+
+def test_stop_node_session_force_stops_and_returns_bare_200(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # Selenium's distributor escalates to DELETE /se/grid/node/session/{id}
+    # (StopNodeSession) when its client-style DELETE /session/{id} returned
+    # non-200 during orphaned-session cleanup. RemoteNode.stop decodes any
+    # non-200 as an error, and a real StopNodeSession answers a bare 200 with
+    # no body. The upstream DELETE must target Appium's /session/{id} — the
+    # inbound /se/grid/node/* path does not exist on Appium.
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=1.0)
+    with respx.mock:
+        route = respx.delete("http://appium/session/session-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
+        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
+    assert response.status_code == 200
+    assert response.content == b""
+    assert route.called
+    assert state.snapshot().slots[0].state == "FREE"
+    assert bus.events[-1]["type"] == "session-closed"
+
+
+def test_stop_node_session_releases_slot_even_when_upstream_delete_fails(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # Force-stop is the hub's last resort; it must not leave the slot pinned
+    # behind an unreachable Appium, and the hub treats any non-200 as an
+    # error, so the relay still answers 200 after releasing locally.
+    reservation = state.reserve({"platformName": "Android"})
+    state.commit(reservation.id, session_id="session-1", started_at=1.0)
+    with respx.mock:
+        respx.delete("http://appium/session/session-1").mock(side_effect=httpx.ConnectError("nope"))
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
+        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
+    assert response.status_code == 200
+    assert state.snapshot().slots[0].state == "FREE"
+
+
+def test_stop_node_session_kills_leaked_upstream_session_for_unowned_id(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # The escalation's main real-world trigger: the client-style DELETE hit
+    # the relay's 502 branch, which already released the local slot while the
+    # upstream Appium session stayed alive. The force-stop must still issue
+    # the upstream DELETE for a session the relay no longer tracks, without
+    # publishing a session-closed event for it.
+    with respx.mock:
+        route = respx.delete("http://appium/session/leaked-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
+        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/leaked-1")
+    assert response.status_code == 200
+    assert route.called
+    assert bus.events == []
+
+
+def test_post_session_cleans_up_upstream_when_reservation_reaped_mid_create(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # A create that outlives the reservation TTL has its reservation reaped
+    # by the heartbeat mid-flight; commit() then raises ReservationGoneError.
+    # The handler must delete the just-created (now untracked) Appium session
+    # — expire_idle only watches BUSY slots, so it would otherwise leak — and
+    # answer a W3C error envelope instead of an unparseable bare 500.
+    async def reaping_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+        # Simulates the heartbeat reaper firing while the upstream create is
+        # in flight: the handler's reservation is expired before it returns.
+        state.expire_reservations(now=10_000.0)
+        return JSONResponse({"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}})
+
+    with respx.mock:
+        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(
+            state=state,
+            appium_upstream="http://appium",
+            http_client=http_client,
+            bus=bus,
+            proxy_request_func=reaping_proxy,
+        )
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert delete_route.called
+    assert response.status_code == 500
+    assert response.json()["value"]["error"] == "session not created"
+    assert state.snapshot().slots[0].state == "FREE"
+    assert all(event["type"] != "session-created" for event in bus.events)
+
+
+def test_hub_create_session_cleans_up_upstream_when_reservation_reaped_mid_create(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # Same race on the hub-routed create path: the hub treats the W3C error
+    # envelope as a clean SessionNotCreated instead of choking on a bare 500.
+    def create_then_reap(_request: httpx.Request) -> httpx.Response:
+        state.expire_reservations(now=10_000.0)
+        return httpx.Response(
+            200, json={"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}}
+        )
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(side_effect=create_then_reap)
+        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert delete_route.called
+    assert response.status_code == 500
+    assert response.json()["value"]["error"] == "session not created"
+    assert state.snapshot().slots[0].state == "FREE"
+    assert all(event["type"] != "session-created" for event in bus.events)
 
 
 def test_wildcard_session_command_is_proxied(test_app: Starlette, proxy: RecordingProxy) -> None:
@@ -646,5 +800,38 @@ def test_node_api_status_is_served_locally_not_proxied(test_app: Starlette, prox
     client = TestClient(test_app)
     response = client.get("/se/grid/node/status")
     assert response.status_code == 200
-    assert response.json()["value"]["ready"] is True
+    assert "value" not in response.json()
+    assert proxy.requests == []
+
+
+def test_node_api_status_returns_bare_node_status(
+    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient
+) -> None:
+    # Selenium's router fetches GET /se/grid/node/status to learn the node's
+    # sessionTimeout (HandleSession.fetchNodeTimeout) and parses the body as
+    # a BARE NodeStatus — `Json().toType(body, NodeStatus.class)`. A
+    # `{"value": ...}` envelope fails NodeStatus.fromJson hub-side; the
+    # failed fetch is deliberately not cached, so the hub re-fetches on every
+    # proxied command and falls back to its default read timeout instead of
+    # this node's sessionTimeout.
+    node_status = {"nodeId": "node-1", "availability": "UP", "sessionTimeout": 1800000}
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        http_client=http_client,
+        bus=bus,
+        proxy_request_func=proxy.request,
+        node_status_payload=lambda: node_status,
+    )
+    client = TestClient(app)
+    bare = client.get("/se/grid/node/status")
+    assert bare.status_code == 200
+    assert bare.json() == node_status
+    # /status keeps the {"value": {ready, message, node}} envelope —
+    # RemoteNode.getStatus parses value.node at registration and on the
+    # periodic health check.
+    enveloped = client.get("/status")
+    assert enveloped.status_code == 200
+    assert enveloped.json()["value"]["ready"] is True
+    assert enveloped.json()["value"]["node"] == node_status
     assert proxy.requests == []

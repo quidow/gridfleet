@@ -8,7 +8,7 @@ The diagnostic export captures a coherent JSON snapshot of a device's orchestrat
 - `GET /api/diagnostics/devices/{device_id}/snapshots?limit=20&before=<id>`
 - `GET /api/diagnostics/devices/{device_id}/snapshots/{snapshot_id}?redact=false`
 
-All three live behind the standard `/api/devices/*` auth wall. The POST is rate-limited to one capture per device per 5 seconds; throttled calls return 429 with `Retry-After`.
+All three are gated by the same `require_any_auth` dependency as the rest of `/api/*` (they are registered under the `/api/diagnostics` prefix). The POST is rate-limited to one capture per device per 5 seconds; throttled calls return 429 with `Retry-After`.
 
 ## Bundle shape
 
@@ -36,7 +36,7 @@ When `redact=true`, the following fields are hashed using a per-deployment salt:
 - `reservations[].identity_value`, `reservations[].connection_target`, `reservations[].host_ip`
 - `sessions.*.session_id`
 - `related_runs[].name`
-- `events[].details`, recursively
+- `events[].details`: recursively walks the details blob and hashes only known-sensitive keys (`identity_value`, `connection_target`, `ip_address`, `host_ip`, `active_connection_target`, `session_id`) and UUID values that match IDs elsewhere in the bundle; other values are left intact.
 
 Hash format: `redacted:<8-hex>`. Hashes are deterministic within a single deployment and unlinkable across deployments. The salt is not exposed through the settings registry; operators cannot rotate or read it from the UI. To rotate it, delete the row in `control_plane_state_entries` under namespace `diagnostic_redaction`.
 

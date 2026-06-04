@@ -50,10 +50,13 @@ Current auth behavior:
 | `GET` | `/api/devices/{device_id}/capabilities` | Read generated Appium capabilities | path `device_id` | object of Appium capabilities |
 | `POST` | `/api/devices/{device_id}/maintenance` | Enter maintenance (stops the node immediately) | `DeviceMaintenanceUpdate` | `DeviceRead` |
 | `POST` | `/api/devices/{device_id}/maintenance/exit` | Exit maintenance | path `device_id` | `DeviceRead` |
-| `GET` | `/api/devices/{device_id}/sessions` | List recent sessions for one device | `limit` | `SessionRead[]` |
 | `GET` | `/api/devices/{device_id}/config` | Read device config, optionally filtered by key | `keys` | config object |
 | `PATCH` | `/api/devices/{device_id}/config` | Deep-merge config keys | partial config object | config object |
 | `GET` | `/api/devices/{device_id}/config/history` | Read config audit history | `limit` | config-audit entries |
+| `GET` | `/api/devices/{device_id}/test_data` | Read device test data | path `device_id` | `TestDataRead` |
+| `PUT` | `/api/devices/{device_id}/test_data` | Replace device test data | test-data object | `TestDataRead` |
+| `PATCH` | `/api/devices/{device_id}/test_data` | Deep-merge device test data | partial test-data object | `TestDataRead` |
+| `GET` | `/api/devices/{device_id}/test_data/history` | Read test-data audit history | `limit` | `TestDataAuditEntryRead[]` |
 | `GET` | `/api/devices/{device_id}/health` | Probe current device health through the assigned host | path `device_id` | health/status object |
 | `POST` | `/api/devices/{device_id}/lifecycle/{action}` | Run a pack-defined device lifecycle action | action args object | lifecycle action result |
 | `GET` | `/api/devices/{device_id}/logs` | Read device/agent log view | `lines` | log payload |
@@ -90,7 +93,7 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/portability/inventory` | Streaming read-only export of the live fleet | `format`, `columns`, list filters | CSV or JSON array |
 
-`GET /api/portability/inventory` exports the live fleet including runtime fields (operational_state, hold, telemetry, verification status). Query parameters:
+`GET /api/portability/inventory` exports the live fleet including runtime fields (operational_state, telemetry, verification status). Query parameters:
 
 - `format` — `csv` or `json`. CSV serializes JSONB columns as JSON strings; `json` returns a JSON array of nested objects.
 - `columns` — comma-separated allowlist of dot-path column names (see `app/portability/schemas.py` for the enum). Omitting or leaving empty returns all columns.
@@ -111,8 +114,8 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 
 > `effective_state` is a derived field with seven values:
 > `starting | running | stopping | stopped | restarting | blocked | error`.
-> See `.superpowers/specs/2026-05-10-appium-desired-state-phase5-cleanup.md`
-> §1 for the cascade rules. The legacy `state` field was removed in Phase 6.
+> See [device-lifecycle.md](device-lifecycle.md) for the cascade rules.
+> The legacy `state` field was removed in Phase 6.
 
 ## Hosts
 
@@ -127,6 +130,11 @@ Device list `search` uses PostgreSQL full-text syntax over `name`, identity and 
 | `GET` | `/api/hosts/{host_id}/agent-logs` | Read shipped agent-process logs for one host | `level`, `q`, `since`, `until`, `limit`, `offset` | `AgentLogPage` |
 | `GET` | `/api/hosts/{host_id}/events` | Read persisted system events scoped to one host | `types`, `since`, `until`, `limit`, `offset` | `HostEventsPage` |
 | `GET` | `/api/hosts/{host_id}/tools/status` | Read host agent Node, Node provider, and iOS helper versions | path `host_id` | `HostToolStatusRead` |
+| `GET` | `/api/hosts/{host_id}/driver-packs` | Read driver-pack runtime status for one host | path `host_id` | `HostDriverPacksOut` |
+| `POST` | `/api/hosts/{host_id}/driver-packs/{pack_id}/doctor` | Trigger driver-pack doctor checks on a host | path `host_id`, `pack_id` | `HostPackDoctorOut[]` |
+| `POST` | `/api/hosts/{host_id}/driver-packs/{pack_id}/features/{feature_id}/actions/{action_id}` | Invoke a driver-pack feature action on a host | action args | `FeatureActionResultOut` |
+| `GET` | `/api/hosts/{host_id}/tool-env` | Read per-host tool environment variables | path `host_id` | `HostToolEnvRead` |
+| `PUT` | `/api/hosts/{host_id}/tool-env` | Set per-host tool environment variables | tool-env object | `HostToolEnvRead` |
 | `DELETE` | `/api/hosts/{host_id}` | Delete an empty host | path `host_id` | empty `204` |
 | `POST` | `/api/hosts/{host_id}/approve` | Approve a pending host | path `host_id` | `HostRead` |
 | `POST` | `/api/hosts/{host_id}/reject` | Reject a pending host | path `host_id` | empty `204` |
@@ -174,6 +182,43 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `POST` | `/agent/driver-packs/status` | Agent reports installed runtimes, pack status, doctor checks, and sidecars | status payload | empty `204` |
 | `POST` | `/agent/{host_id}/log-batch` | Agent ships process log batches to the manager | `AgentLogBatchIngest` | `AgentLogIngestResult` (`202`) |
 
+## Driver Packs
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/driver-packs/catalog` | List the driver-pack catalog | none | `PackCatalog` |
+| `GET` | `/api/driver-packs/{pack_id}` | Read one driver pack | path `pack_id` | `PackOut` |
+| `GET` | `/api/driver-packs/{pack_id}/hosts` | List hosts that have this pack installed | path `pack_id` | `DriverPackHostsOut` |
+| `PATCH` | `/api/driver-packs/{pack_id}` | Transition pack lifecycle state | `PackPatch`, `override` | `PackOut` |
+| `PATCH` | `/api/driver-packs/{pack_id}/policy` | Update pack runtime policy | `RuntimePolicyPatch` | `PackOut` |
+| `DELETE` | `/api/driver-packs/{pack_id}` | Delete a driver pack | path `pack_id` | empty `204` |
+| `POST` | `/api/driver-packs/uploads` | Upload a driver-pack tarball | tarball upload | `PackOut` (`201`) |
+| `GET` | `/api/driver-packs/{pack_id}/releases` | List releases for a pack | path `pack_id` | `PackReleasesOut` |
+| `PATCH` | `/api/driver-packs/{pack_id}/releases/current` | Set the current release for a pack | release selector | `PackOut` |
+| `DELETE` | `/api/driver-packs/{pack_id}/releases/{release}` | Delete one release | path `pack_id`, `release` | empty `204` |
+| `GET` | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | Download a release tarball | path `pack_id`, `release` | tarball stream |
+| `POST` | `/api/driver-packs/{pack_id}/releases/{release}/export` | Export a release as a gzip tarball | path `pack_id`, `release` | tarball stream (`200`) |
+
+## Plugins
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `GET` | `/api/plugins` | List configured Appium plugins | none | `PluginRead[]` |
+| `POST` | `/api/plugins` | Create a plugin | `PluginCreate` | `PluginRead` (`201`) |
+| `PATCH` | `/api/plugins/{plugin_id}` | Update a plugin | `PluginUpdate` | `PluginRead` |
+| `DELETE` | `/api/plugins/{plugin_id}` | Delete a plugin | path `plugin_id` | empty `204` |
+| `POST` | `/api/plugins/sync-all` | Sync plugins across the fleet | none | `FleetPluginSyncResult` |
+| `GET` | `/api/hosts/{host_id}/plugins` | Read plugin status for one host | path `host_id` | `HostPluginStatus[]` |
+| `POST` | `/api/hosts/{host_id}/plugins/sync` | Sync plugins on one host | path `host_id` | `PluginSyncResult` |
+
+## Diagnostics
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/diagnostics/devices/{device_id}/export` | Capture a diagnostic snapshot for a device | path `device_id` | `DiagnosticExportResponse` |
+| `GET` | `/api/diagnostics/devices/{device_id}/snapshots` | List diagnostic snapshots for a device | path `device_id` | `DiagnosticSnapshotListResponse` |
+| `GET` | `/api/diagnostics/devices/{device_id}/snapshots/{snapshot_id}` | Read one diagnostic snapshot | path `device_id`, `snapshot_id` | `DiagnosticSnapshotDetail` |
+
 ## Runs
 
 | Method | Path | Purpose | Main input | Primary response |
@@ -184,6 +229,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `POST` | `/api/runs/{run_id}/ready` | Compatibility alias that transitions a preparing run to `active` | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/active` | Transition run from `preparing` to `active`. Required to begin associating Appium sessions with the run — sessions started while the run is `preparing` have `run_id = NULL` and never show up in Run Detail. | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
+| `POST` | `/api/runs/{run_id}/devices/{device_id}/cooldown` | Put one reserved device into cooldown for the run | `RunCooldownRequest` | cooldown result (`200`) |
 | `POST` | `/api/runs/{run_id}/heartbeat` | Refresh heartbeat and read current state | path `run_id` | `HeartbeatResponse` |
 | `POST` | `/api/runs/{run_id}/complete` | Complete a run and release devices | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/cancel` | Cancel a run and release devices | path `run_id` | `RunRead` |
@@ -212,7 +258,7 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/sessions` | List recorded Appium sessions | filters: `device_id`, `status`, `platform`, `started_after`, `started_before`, `limit`, `offset`, `sort_by`, `sort_dir`, `include_probes` | `{ items: SessionDetail[], total, limit, offset }` |
+| `GET` | `/api/sessions` | List recorded Appium sessions | filters: `device_id`, `status`, `pack_id`, `platform_id`, `run_id`, `started_after`, `started_before`, `limit`, `offset`, `cursor`, `direction`, `sort_by`, `sort_dir`, `include_probes` | `{ items: SessionDetail[], total, limit, offset }` |
 | `GET` | `/api/sessions/{session_id}` | Read one recorded session | path `session_id` | `SessionDetail` |
 | `POST` | `/api/sessions` | Create or register a tracked session attempt, including device-less setup failures | `SessionCreate` | `SessionRead` |
 | `PATCH` | `/api/sessions/{session_id}/status` | Write final session status from an external test harness | `SessionStatusUpdate` | `SessionRead` |
@@ -236,7 +282,7 @@ Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/prepar
 - `is_probe` (bool, default `false`) — true when the row represents a diagnostic probe session (session viability, node health, or device verification). Identified by `test_name == "__gridfleet_probe__"`.
 - `probe_checked_by` (string, optional) — probe source: `scheduled`, `manual`, `recovery`, `node_health`, or `verification`. Sourced from `requested_capabilities["gridfleet:probeCheckedBy"]`.
 
-`GET /api/sessions` and `GET /api/devices/{device_id}/sessions` accept `include_probes` (bool, default `false`). When omitted, probe sessions are hidden. Setting `include_probes=true` returns probes alongside real sessions. Probe rows never count toward success-rate, throughput, utilization, error breakdown, or heatmap analytics regardless of this flag.
+`GET /api/sessions` accepts `include_probes` (bool, default `false`). When omitted, probe sessions are hidden. Setting `include_probes=true` returns probes alongside real sessions. Probe rows never count toward success-rate, throughput, utilization, error breakdown, or heatmap analytics regardless of this flag. Per-device session listing uses the `device_id` query filter on `GET /api/sessions`.
 
 Run requirements use driver-pack platform identity:
 
@@ -295,6 +341,8 @@ For CI jobs that should consume the currently available matching fleet slice, us
 | `PATCH` | `/api/webhooks/{webhook_id}` | Update a webhook | `WebhookUpdate` with valid `event_types` | `WebhookRead` |
 | `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
 | `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic `webhook.test` event | path `webhook_id` | status object |
+| `GET` | `/api/webhooks/{webhook_id}/deliveries` | List recent delivery attempts for a webhook | `limit` | `WebhookDeliveryListRead` |
+| `POST` | `/api/webhooks/{webhook_id}/deliveries/{delivery_id}/retry` | Retry a single webhook delivery | path `webhook_id`, `delivery_id` | `WebhookDeliveryRead` |
 
 `GET /api/notifications` returns a paginated list of `SystemEventRead` objects. Each object includes a top-level `severity` field alongside `id`, `type`, `timestamp`, and `data`:
 
@@ -336,7 +384,7 @@ Filters compose with AND semantics. Example: `GET /api/notifications?types=node.
 - `default_severity` — the severity the backend assigns to this event type when no context-specific override applies. One of `info`, `success`, `warning`, `critical`, `neutral`.
 - `allowed_severities` — the set of severity values this event type may carry. The backend will never emit a severity outside this set for this event type. Clients can use this to validate or filter incoming events.
 
-`DeviceRead` / `DeviceDetail` expose device state as `operational_state` (`available`, `busy`, `offline`) plus nullable `hold` (`maintenance`, `reserved`, or `null`). UI clients derive the legacy status chip from `hold ?? operational_state`.
+`DeviceRead` / `DeviceDetail` expose device state as `operational_state` (one of `available`, `busy`, `offline`, `verifying`, `maintenance`). Reservation is exposed separately as the boolean `is_reserved` plus an optional `reservation` object.
 
 They also return the latest hardware telemetry snapshot fields:
 
@@ -371,7 +419,8 @@ Dynamic group request bodies now use `filters`, not `filter_rules`.
 
 Supported dynamic group filters:
 
-- `platform`
+- `pack_id`
+- `platform_id`
 - `status`
 - `host_id`
 - `identity_value`
@@ -379,6 +428,7 @@ Supported dynamic group filters:
 - `device_type`
 - `connection_type`
 - `os_version`
+- `os_version_display`
 - `hardware_health_status`
 - `hardware_telemetry_state`
 - `needs_attention`
@@ -394,7 +444,14 @@ Supported dynamic group filters:
 | `GET` | `/api/analytics/devices/utilization` | Read device utilization analytics | `date_from`, `date_to`, `format` | `DeviceUtilizationRow[]` |
 | `GET` | `/api/analytics/devices/reliability` | Read device reliability analytics | `date_from`, `date_to`, `format` | `DeviceReliabilityRow[]` |
 | `GET` | `/api/analytics/fleet/overview` | Read aggregate fleet analytics | `date_from`, `date_to` | `FleetOverview` |
-| `GET` | `/api/lifecycle/incidents` | Read recent lifecycle incident history | `limit`, optional `device_id` | `LifecycleIncidentRead[]` |
+| `GET` | `/api/analytics/fleet/capacity-timeline` | Read fleet capacity time series | `date_from`, `date_to`, `bucket_minutes` | `FleetCapacityTimeline` |
+| `GET` | `/api/lifecycle/incidents` | Read recent lifecycle incident history | `limit`, optional `device_id`, `cursor`, `direction` | `LifecycleIncidentListRead` (`{ items: LifecycleIncidentRead[], limit, next_cursor, prev_cursor }`) |
+
+## Admin
+
+| Method | Path | Purpose | Main input | Primary response |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/admin/appium-nodes/{node_id}/clear-transition` | Clear a stuck Appium node desired-state transition | path `node_id` | `AppiumNodeRead` |
 
 ## Notes
 

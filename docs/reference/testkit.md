@@ -13,7 +13,7 @@
 - Supported public allocation/session helpers: `AllocatedDevice`, `UnavailableInclude`, `build_error_session_payload`, `hydrate_allocated_device`, `hydrate_allocated_device_from_driver`, `resolve_device_handle_from_driver`
 - Supported public result types: `CooldownResult`, `CooldownSetResult`, `CooldownEscalatedResult`
 - Supported public exceptions: `UnknownIncludeError`, `ReserveCapabilitiesUnsupportedError`
-- Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`
+- Supported environment variables: `GRID_URL`, `GRIDFLEET_API_URL`, `GRIDFLEET_TESTKIT_USERNAME`, `GRIDFLEET_TESTKIT_PASSWORD`, `GRIDFLEET_TESTKIT_PACK_ID`, `GRIDFLEET_TESTKIT_PLATFORM_ID`, `GRIDFLEET_RUN_ID`
 - Manual hardware examples live under `testkit/examples/`
 
 The example screenshot scripts are examples, not CI-backed conformance tests. The maintained support promise is the installable package and documented import pattern.
@@ -39,7 +39,7 @@ uv pip install "git+https://github.com/<org>/<repo>.git#subdirectory=testkit"
 ```
 
 `Appium-Python-Client` is a runtime dependency because the pytest fixture creates real Appium sessions.
-The package supports Python 3.10 and newer.
+The package supports Python 3.10 through 3.14.
 
 ## Public Imports
 
@@ -126,6 +126,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
+| `GRIDFLEET_RUN_ID` | `free` | Sets the injected `gridfleet:run_id` capability that Selenium Grid uses to route sessions to nodes reserved for a run (`free` when unset) |
 
 ## Client Surface
 
@@ -142,6 +143,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.get_device_by_connection_target(connection_target)` | Fetch one device detail row by runtime connection target |
 | `GridFleetClient.get_driver_pack_catalog()` | Fetch enabled driver-pack catalog data for Appium platform selection |
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
+| `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.signal_ready(run_id)` | Compatibility alias that moves a preparing run to `active` |
 | `GridFleetClient.signal_active(run_id)` | Move a run from `preparing` to `active`. **Required** between preparation and real tests — Appium sessions registered before this call are not linked to the run (`run_id = NULL`) and do not appear in Run Detail. |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
@@ -149,6 +151,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
 | `GridFleetClient.register_session_from_driver(driver, fields)` | Extract session id and capabilities from an Appium driver and register the session |
 | `GridFleetClient.update_session_status(session_id, status)` | Report final session status |
+| `GridFleetClient.notify_session_finished(session_id)` | Tell the manager a WebDriver session has ended (POSTs `/sessions/{id}/finished`; idempotent). Also invoked automatically by the `driver.quit` wrapper installed by `register_session_from_driver` |
 | `GridFleetClient.complete_run(run_id)` | Complete a run |
 | `GridFleetClient.cancel_run(run_id)` | Cancel a run |
 | `GridFleetClient.cooldown_device(run_id, device_id, reason=..., ttl_seconds=...)` | Exclude a reserved device from the run with a cooldown TTL |
@@ -310,7 +313,7 @@ Advanced example:
 
 - `testkit/examples/test_roku_sideload_screenshot.py`
 
-The baseline examples intentionally share one simple flow: create session, print resolved connection context, save screenshot, and assert that the written file is non-empty.
+The baseline examples intentionally share one simple flow — create session, print resolved connection context, save screenshot, and assert that the written file is non-empty — except the Roku baseline, which additionally installs and activates the bundled dev app before the screenshot.
 
 ## Platform-Specific Notes
 
@@ -322,8 +325,8 @@ The baseline examples intentionally share one simple flow: create session, print
 - iOS:
   - the baseline example uses the simulator lane with `appium:device_type=simulator`
 - tvOS:
-  - the baseline example uses the real-device lane with `appium:device_type=real_device`
+  - the baseline example selects the tvOS real device via `pack_id`/`platform_id` (`appium-xcuitest` / `tvos`) and does not set an explicit `appium:device_type` capability
   - XCUITest / WebDriverAgent prerequisites must already be configured on the macOS host
 - Roku:
-  - baseline screenshot flow does not imply sideload is required
-  - the separate sideload example still expects Roku dev credentials in device config
+  - the baseline screenshot flow sideloads and activates the bundled dev app and requires Roku dev credentials in device config
+  - the separate sideload example runs the same flow plus explicit print logging of the sideloaded app path

@@ -2,6 +2,60 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.22.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.2...gridfleet-agent-v0.22.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* **agent:** adopt completed runtimes from disk on reconcile instead of reinstalling ([#505](https://github.com/quidow/gridfleet/issues/505)) ([b947337](https://github.com/quidow/gridfleet/commit/b947337b2611ef3daf51c946e3ebaf5e438d87d0))
+
+## [0.22.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.1...gridfleet-agent-v0.22.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **agent:** drain update on active sessions instead of running nodes ([#501](https://github.com/quidow/gridfleet/issues/501)) ([ddf427f](https://github.com/quidow/gridfleet/commit/ddf427f6b27532e4b737824472a5d959d5ebe302))
+
+
+### Dependencies
+
+* **deps:** bump starlette from 1.0.0 to 1.0.1 in /agent ([#503](https://github.com/quidow/gridfleet/issues/503)) ([c188ba2](https://github.com/quidow/gridfleet/commit/c188ba2c052dda420ed4e621df697cf656f651dd))
+
+
+### Documentation
+
+* **docs:** align all docs with the actual implementation state ([#499](https://github.com/quidow/gridfleet/issues/499)) ([1d7a4ea](https://github.com/quidow/gridfleet/commit/1d7a4ea2afafbd5872856a01a9f73792c9ce5f7f))
+
+## [0.22.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.0...gridfleet-agent-v0.22.1) (2026-06-04)
+
+
+### Performance Improvements
+
+* **agent:** declare sniffio so httpcore stops failing imports per call ([9f873dc](https://github.com/quidow/gridfleet/commit/9f873dc9f37e5388867738ad0370acaecf0ecb07))
+
+## [0.22.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.2...gridfleet-agent-v0.22.0) (2026-06-04)
+
+
+### Features
+
+* **agent:** add on-demand appium log file helpers ([c989572](https://github.com/quidow/gridfleet/commit/c989572e868151094554ae14b72f10f59e7f8726))
+* **agent:** redirect appium output to per-port log files read on demand ([07c49cf](https://github.com/quidow/gridfleet/commit/07c49cffc79fed1d6684b0d146cc399456904a59))
+* **agent:** redirect appium output to per-port log files read on demand ([5244b2d](https://github.com/quidow/gridfleet/commit/5244b2d1797dc897de797415c412c45333ec0fb9))
+* **agent:** sweep and size-cap appium log files ([ef7d984](https://github.com/quidow/gridfleet/commit/ef7d984143e542ba6f62f8d22f10f4f6ad9681e2))
+
+
+### Bug Fixes
+
+* **agent:** align relay node-API routes with Selenium 4.43 node protocol ([465ec76](https://github.com/quidow/gridfleet/commit/465ec76c8cb1bfb022da2be0356de401cc88d8fd))
+* **agent:** answer hub node-status checks in the relay ([5014fb9](https://github.com/quidow/gridfleet/commit/5014fb997715fa7f42ae86f5003775f5da8fee20))
+* **agent:** stop relay servers from capturing process signal handlers ([6a2be9a](https://github.com/quidow/gridfleet/commit/6a2be9a7c1152485d2efc24704ea7ce28557ff64))
+* **agent:** stop the relay reservation reaper racing in-flight creates ([34c813c](https://github.com/quidow/gridfleet/commit/34c813ca5c3b116125cdc93d4d3a1811ec20e570))
+
+
+### Dependencies
+
+* **deps:** bump uvicorn[standard] ([#491](https://github.com/quidow/gridfleet/issues/491)) ([bb1b1aa](https://github.com/quidow/gridfleet/commit/bb1b1aae4f5a4d04c6c796785f2798e92bfc5aa2))
+
 ## [0.21.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.21.1...gridfleet-agent-v0.21.2) (2026-06-03)
 
 

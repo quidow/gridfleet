@@ -19,7 +19,7 @@ import zmq.asyncio
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from app.grid import event_bus_loop
 from app.grid.services_container import GridServices
@@ -77,6 +77,7 @@ async def test_subscriber_loop_wakes_session_sync(
             session_factory=_fake_session_factory,
         ),
         session_sync_waker=waker,
+        node_health_waker=Mock(),
     )
     task = asyncio.create_task(loop.run())
     try:
@@ -93,8 +94,6 @@ async def test_subscriber_loop_wakes_session_sync(
 async def test_subscriber_loop_shuts_down_cleanly(
     hub_pub: zmq.asyncio.Socket,
 ) -> None:
-    from unittest.mock import Mock
-
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
             grid=make_fake_grid(),
@@ -102,9 +101,70 @@ async def test_subscriber_loop_shuts_down_cleanly(
             session_factory=_fake_session_factory,
         ),
         session_sync_waker=Mock(),
+        node_health_waker=Mock(),
     )
     task = asyncio.create_task(loop.run())
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def _wait_called(mock_method: Mock, timeout: float = 1.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not mock_method.called:
+        if asyncio.get_running_loop().time() > deadline:
+            raise TimeoutError(f"{mock_method} not called within {timeout}s")
+        await asyncio.sleep(0.01)
+
+
+async def test_node_event_wakes_node_health_and_session_sync(
+    hub_pub: zmq.asyncio.Socket,
+) -> None:
+    session_waker, node_waker = Mock(), Mock()
+    loop = event_bus_loop.GridEventBusSubscriberLoop(
+        services=GridServices(
+            grid=make_fake_grid(),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session_factory,
+        ),
+        session_sync_waker=session_waker,
+        node_health_waker=node_waker,
+    )
+    task = asyncio.create_task(loop.run())
+    try:
+        await asyncio.sleep(0.1)  # let SUB connect + subscribe
+        await hub_pub.send_multipart(_frames("node-removed", {"nodeId": "n-1"}))
+        await _wait_called(node_waker.wake)
+        # A dying node takes its sessions with it without emitting
+        # session-closed, so session_sync must look at the hub too.
+        await _wait_called(session_waker.wake)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+async def test_session_event_does_not_wake_node_health(
+    hub_pub: zmq.asyncio.Socket,
+) -> None:
+    session_waker, node_waker = Mock(), Mock()
+    loop = event_bus_loop.GridEventBusSubscriberLoop(
+        services=GridServices(
+            grid=make_fake_grid(),
+            settings=FakeSettingsReader({}),
+            session_factory=_fake_session_factory,
+        ),
+        session_sync_waker=session_waker,
+        node_health_waker=node_waker,
+    )
+    task = asyncio.create_task(loop.run())
+    try:
+        await asyncio.sleep(0.1)
+        await hub_pub.send_multipart(_frames("session-created", {"id": "s-1"}))
+        await _wait_called(session_waker.wake)
+        assert not node_waker.wake.called
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

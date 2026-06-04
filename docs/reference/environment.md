@@ -13,9 +13,9 @@ These are read directly by `backend/app/core/config.py` and domain config module
 | `GRIDFLEET_DATABASE_URL` | `postgresql+asyncpg://gridfleet:gridfleet@localhost:5432/gridfleet` | backend process | Required in production compose; SQLAlchemy async connection URL |
 | `GRIDFLEET_DB_POOL_SIZE` | `10` | backend process | Base SQLAlchemy connection pool size |
 | `GRIDFLEET_DB_MAX_OVERFLOW` | `20` | backend process | Additional burst connections allowed above pool size |
-| `GRIDFLEET_REQUEST_TIMEOUT_SEC` | `30` | backend process | Default timeout for outbound backend HTTP calls |
+| `GRIDFLEET_REQUEST_TIMEOUT_SEC` | `30` | backend process | Maximum execution time for an inbound API request; requests exceeding this receive a 504 `REQUEST_TIMEOUT` response envelope. The `/api/events` SSE route is exempt. |
 | `GRIDFLEET_ENVIRONMENT` | `local` | backend process | Deployment environment used for process-only behavior. `local`, `test`, and `staging` expose `/openapi.json`, `/docs`, and `/redoc`; any other value hides those routes. Production compose sets this to `prod`. |
-| `GRIDFLEET_ENV` | unset | backend logging | `dev` / `development` / `local` switches logs to console format; other values keep JSON logs |
+| `GRIDFLEET_ENV` | unset | backend logging | `dev` / `development` / `local` switches logs to console format; other values keep JSON logs. When `GRIDFLEET_ENV` is unset, the bare `ENV` variable is consulted as a fallback for the same console-vs-JSON decision. |
 | `GRIDFLEET_AUTH_ENABLED` | `false` | backend auth gate | Enables browser login cookies and machine Basic auth for protected manager routes. Production compose sets this to `true`; leave it `false` only for local development or isolated trusted-lab trials. |
 | `GRIDFLEET_AUTH_USERNAME` | unset | backend auth gate | Shared operator username used by `/api/auth/login` when auth is enabled |
 | `GRIDFLEET_AUTH_PASSWORD` | unset | backend auth gate | Shared operator password used by `/api/auth/login` when auth is enabled |
@@ -26,6 +26,10 @@ These are read directly by `backend/app/core/config.py` and domain config module
 | `GRIDFLEET_MACHINE_AUTH_PASSWORD` | unset | backend auth gate | Basic-auth password accepted for machine clients such as agents, CI helpers, and metrics scrapers |
 | `GRIDFLEET_AGENT_AUTH_USERNAME` | unset | backend process | Username sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_PASSWORD`. |
 | `GRIDFLEET_AGENT_AUTH_PASSWORD` | unset | backend process | Password sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_USERNAME`. |
+| `GRIDFLEET_RECONCILER_CONVERGENCE_ENABLED` | `true` (when unset) | backend process | When set to anything other than `1`/`true`/`yes`/`on`, disables Appium reconciler desired-state convergence. |
+| `GRIDFLEET_DRIVER_PACK_STORAGE_DIR` | `/var/lib/gridfleet/driver-packs` | backend process | Filesystem root where verified driver-pack tarballs are stored (`PackStorageService`). |
+| `GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL` | `tcp://selenium-hub:4442` | backend process | ZMQ XPUB URL (hub `:4442`) the manager's event-bus subscriber loop connects to for session-created/closed events. |
+| `GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL` | `tcp://selenium-hub:4443` | backend process | ZMQ XSUB URL (hub `:4443`) the manager would publish to; reserved for injecting events into the hub bus. No backend code currently emits events, so this knob is effectively unused at runtime. |
 
 ## Backend Settings-Registry Fallback Variables
 
@@ -39,7 +43,12 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
+| `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `general.node_check_interval_sec` | `30` | Appium node health-check cadence |
+| `GRIDFLEET_NODE_MAX_FAILURES` | `general.node_max_failures` | `3` | Failed node health checks before auto-restart |
+| `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `general.device_check_interval_sec` | `60` | Device connectivity verification cadence |
 | `GRIDFLEET_GRID_HUB_URL` | `grid.hub_url` | `http://selenium-hub:4444` | Grid hub URL used by the backend |
+| `GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL` | `grid.event_bus_subscribe_url` | `tcp://selenium-hub:4442` | Seeds the registry default. The live event-bus subscriber loop reads the `GridConfig` process value, not the registry copy, so changing this registry key at runtime has no effect on the running subscriber. |
+| `GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL` | `grid.event_bus_publish_url` | `tcp://selenium-hub:4443` | Seeds the registry default. See the subscribe-URL note above; the live process reads the `GridConfig` value rather than the registry copy. |
 | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |
 | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `appium.port_range_end` | `4823` | Managed Appium port range end |
 | `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |
@@ -66,7 +75,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_API_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username; required together with `AGENT_API_AUTH_PASSWORD`. When set, the agent enforces HTTP Basic on all `/agent/*` HTTP routes. |
 | `AGENT_API_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password; required together with `AGENT_API_AUTH_USERNAME`. |
 | `AGENT_AGENT_PORT` | `5100` | agent process | Agent listen port |
-| `AGENT_GRID_HUB_URL` | `http://selenium-hub:4444` | agent process | Grid hub URL used for manager-provided launch specs |
+| `AGENT_GRID_HUB_URL` | `http://localhost:4444` | agent process | Grid hub URL used for manager-provided launch specs |
 | `AGENT_GRID_PUBLISH_URL` | `tcp://localhost:4442` | agent process | Grid event-bus publish URL |
 | `AGENT_GRID_SUBSCRIBE_URL` | `tcp://localhost:4443` | agent process | Grid event-bus subscribe URL |
 | `AGENT_GRID_NODE_HEARTBEAT_SEC` | `5` | agent process | Seconds between Python Grid Node `NODE_STATUS` heartbeats. |
@@ -97,6 +106,9 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 | `--grid-publish-url` | `tcp://localhost:4442` | installer CLI | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
 | `--grid-subscribe-url` | `tcp://localhost:4443` | installer CLI | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
 | `--grid-node-port-start` | `5555` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
+| `--api-auth-username` | unset | installer CLI | Becomes process `AGENT_API_AUTH_USERNAME` in the generated service env; required together with `--api-auth-password` |
+| `--api-auth-password` | unset | installer CLI | Becomes process `AGENT_API_AUTH_PASSWORD` in the generated service env; required together with `--api-auth-username` |
+| `--advertise-ip` | unset | installer CLI | Becomes process `AGENT_ADVERTISE_IP` (hostname or IP the agent advertises, e.g. `host.docker.internal`) |
 
 ## External Client Variables
 

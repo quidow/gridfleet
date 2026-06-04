@@ -36,7 +36,7 @@ What happens next:
 
 - if `agent.auto_accept_hosts` is enabled, the new host is created as `online`
 - if `agent.auto_accept_hosts` is disabled, the new host is created as `pending`
-- successful accept also triggers background device discovery and driver sync
+- successful accept also triggers background device discovery and Appium plugin sync
 
 Use this path when the host is already running the installed agent from the deployment flow in [deployment.md](deployment.md).
 
@@ -49,7 +49,8 @@ Required fields:
 - hostname
 - IP address
 - OS type
-- agent port
+
+Agent port is optional. When omitted it defaults to the `agent.default_port` setting (the Add Host form pre-fills 5100).
 
 Manual add is useful when:
 
@@ -74,8 +75,9 @@ Approval behavior:
 
 - sets the host to `online`
 - triggers automatic discovery
-- ensures the configured Appium version
-- triggers automatic Appium driver sync after tool version checks
+- triggers automatic Appium plugin sync
+
+Driver packs are delivered separately by the pack desired-state pipeline that the agent pulls, not by approval. Appium itself ships inside each driver-pack runtime and is not version-ensured on approval.
 
 Rejection behavior:
 
@@ -89,7 +91,7 @@ Open the host in Hosts or Host Detail and confirm:
 - the reported IP and OS are correct
 - the reported agent version is not marked `outdated`
 - the capabilities block matches what the machine should support
-- the Tool Versions section shows the expected Node, Node provider, and iOS helper versions
+- the Host Tools card shows the expected Node and Node Provider versions (iOS-helper and other driver/platform tool versions, when present, appear separately under the Driver Pack Dependencies card, derived from each driver pack's tool dependencies)
 - the Appium Drivers section is present and can be synced
 
 The Host Detail page is the best place to confirm all of that before importing devices.
@@ -114,7 +116,7 @@ Expected flow:
 1. Install and start the agent.
 2. The agent registers itself.
 3. The host appears as `online`.
-4. Automatic discovery and driver sync begin.
+4. Automatic discovery and Appium plugin sync begin.
 
 ### Auto-Accept Disabled
 
@@ -124,7 +126,7 @@ Expected flow:
 2. The host registers itself.
 3. The host appears as `pending`.
 4. An operator approves it.
-5. Discovery and driver sync begin after approval.
+5. Discovery and Appium plugin sync begin after approval.
 
 ## Troubleshooting
 
