@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.22.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.2...gridfleet-agent-v0.22.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* **agent:** adopt completed runtimes from disk on reconcile instead of reinstalling ([#505](https://github.com/quidow/gridfleet/issues/505)) ([b947337](https://github.com/quidow/gridfleet/commit/b947337b2611ef3daf51c946e3ebaf5e438d87d0))
+
 ## [0.22.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.1...gridfleet-agent-v0.22.2) (2026-06-04)
 
 
