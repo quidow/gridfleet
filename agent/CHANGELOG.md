@@ -2,6 +2,23 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.22.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.1...gridfleet-agent-v0.22.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **agent:** drain update on active sessions instead of running nodes ([#501](https://github.com/quidow/gridfleet/issues/501)) ([ddf427f](https://github.com/quidow/gridfleet/commit/ddf427f6b27532e4b737824472a5d959d5ebe302))
+
+
+### Dependencies
+
+* **deps:** bump starlette from 1.0.0 to 1.0.1 in /agent ([#503](https://github.com/quidow/gridfleet/issues/503)) ([c188ba2](https://github.com/quidow/gridfleet/commit/c188ba2c052dda420ed4e621df697cf656f651dd))
+
+
+### Documentation
+
+* **docs:** align all docs with the actual implementation state ([#499](https://github.com/quidow/gridfleet/issues/499)) ([1d7a4ea](https://github.com/quidow/gridfleet/commit/1d7a4ea2afafbd5872856a01a9f73792c9ce5f7f))
+
 ## [0.22.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.0...gridfleet-agent-v0.22.1) (2026-06-04)
 
 
