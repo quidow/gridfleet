@@ -56,7 +56,7 @@ def test_format_update_dry_run_names_uv_and_restart_commands(tmp_path: Path) -> 
     assert "pip install" in output
     assert "gridfleet-agent==0.3.0" in output
     assert "systemctl --user restart gridfleet-agent" in output
-    assert "Wait for active local nodes to drain" in output
+    assert "Wait for active local sessions to drain" in output
     assert "http://localhost:5200/agent/health" in output
 
 
@@ -234,10 +234,65 @@ def test_wait_for_update_drain_returns_success_when_running_nodes_are_empty() ->
         get=lambda _url, timeout=2.0: Response(),
     )
 
-    assert result == DrainResult(ok=True, message="no active local nodes")
+    assert result == DrainResult(ok=True, message="no active local sessions")
 
 
-def test_wait_for_update_drain_times_out_while_running_nodes_remain() -> None:
+def test_wait_for_update_drain_succeeds_when_running_nodes_have_no_active_sessions() -> None:
+    # Running nodes are persistent per-connected-device processes; an idle
+    # node must not block the upgrade.
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "appium_processes": {
+                    "running_nodes": [
+                        {"port": 4723, "has_active_session": False},
+                        {"port": 4724, "has_active_session": False},
+                    ]
+                }
+            }
+
+    result = wait_for_update_drain(
+        "http://localhost:5200/agent/health",
+        timeout_sec=0.1,
+        interval_sec=0.01,
+        get=lambda _url, timeout=2.0: Response(),
+    )
+
+    assert result == DrainResult(ok=True, message="no active local sessions")
+
+
+def test_wait_for_update_drain_times_out_while_sessions_active() -> None:
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "appium_processes": {
+                    "running_nodes": [
+                        {"port": 4723, "has_active_session": True},
+                        {"port": 4724, "has_active_session": False},
+                    ]
+                }
+            }
+
+    result = wait_for_update_drain(
+        "http://localhost:5200/agent/health",
+        timeout_sec=0.01,
+        interval_sec=0.01,
+        get=lambda _url, timeout=2.0: Response(),
+    )
+
+    assert result.ok is False
+    assert "1 active local session" in result.message
+
+
+def test_wait_for_update_drain_treats_missing_session_state_as_active() -> None:
+    # Older serving agents do not report has_active_session; refuse to
+    # upgrade under them rather than risk killing an in-flight session.
     class Response:
         status_code = 200
 
@@ -253,7 +308,7 @@ def test_wait_for_update_drain_times_out_while_running_nodes_remain() -> None:
     )
 
     assert result.ok is False
-    assert "1 active local node" in result.message
+    assert "1 local node with unknown session state" in result.message
 
 
 def test_wait_for_update_drain_passes_basic_auth() -> None:
@@ -278,7 +333,7 @@ def test_wait_for_update_drain_passes_basic_auth() -> None:
         auth=("ops", "secret"),
     )
 
-    assert result == DrainResult(ok=True, message="no active local nodes")
+    assert result == DrainResult(ok=True, message="no active local sessions")
     assert captured == [("ops", "secret")]
 
 

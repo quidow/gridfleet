@@ -414,6 +414,35 @@ def test_process_snapshot_includes_grid_node_status() -> None:
     assert snapshot["running_nodes"][0]["grid_node_status"] == "up"
 
 
+@pytest.mark.parametrize("busy", [True, False])
+def test_process_snapshot_reports_session_activity_from_grid_node_service(busy: bool) -> None:
+    manager = AppiumProcessManager()
+    handle = ReconfigurableGridNodeHandle(ReconfigurableGridNodeService(busy=busy))
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    snapshot = manager.process_snapshot()
+
+    assert snapshot["running_nodes"][0]["has_active_session"] is busy
+
+
+def test_process_snapshot_omits_session_activity_when_service_unavailable() -> None:
+    manager = AppiumProcessManager()
+    handle = RecordingGridNodeHandle()  # service stays None
+    manager._grid_supervisors[4723] = handle
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    snapshot = manager.process_snapshot()
+
+    assert "has_active_session" not in snapshot["running_nodes"][0]
+
+
 async def test_start_requires_pack_metadata() -> None:
     manager = AppiumProcessManager()
 

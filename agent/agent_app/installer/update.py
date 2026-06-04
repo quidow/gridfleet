@@ -144,14 +144,22 @@ Operator: {operator.login} (uid={operator.uid}, home={operator.home})
 uv binary: {uv_path_display}
 
 Actions:
-  - Wait for active local nodes to drain: {_health_url(config)}
+  - Wait for active local sessions to drain: {_health_url(config)}
   - Upgrade package: {uv_command}
   - Restart service: {restart_command}
   - Poll local health: {_health_url(config)}
 """
 
 
-def _active_node_count(payload: object) -> int | None:
+def _drain_blockers(payload: object) -> tuple[int, int] | None:
+    """Count drain blockers as (nodes with an active session, nodes with unknown session state).
+
+    Running nodes are persistent per-connected-device processes, so node
+    existence alone must not block an upgrade — only in-flight sessions do.
+    Nodes that do not report ``has_active_session`` (older serving agents,
+    relay still starting) are counted as unknown and treated as blockers
+    rather than risk killing an in-flight session.
+    """
     if not isinstance(payload, dict):
         return None
     appium_processes = payload.get("appium_processes")
@@ -160,7 +168,14 @@ def _active_node_count(payload: object) -> int | None:
     running_nodes = appium_processes.get("running_nodes")
     if not isinstance(running_nodes, list):
         return None
-    return len(running_nodes)
+    active = 0
+    unknown = 0
+    for node in running_nodes:
+        if not isinstance(node, dict) or "has_active_session" not in node:
+            unknown += 1
+        elif node["has_active_session"] is True:
+            active += 1
+    return active, unknown
 
 
 def wait_for_update_drain(
@@ -180,14 +195,21 @@ def wait_for_update_drain(
             if status_code == 200:
                 json_body = getattr(response, "json", None)
                 payload = json_body() if callable(json_body) else None
-                active_count = _active_node_count(payload)
-                if active_count == 0:
-                    return DrainResult(ok=True, message="no active local nodes")
-                if active_count is None:
+                blockers = _drain_blockers(payload)
+                if blockers is None:
                     last_error = "health payload did not include appium_processes.running_nodes"
                 else:
-                    suffix = "node" if active_count == 1 else "nodes"
-                    last_error = f"{active_count} active local {suffix}"
+                    active, unknown = blockers
+                    if active == 0 and unknown == 0:
+                        return DrainResult(ok=True, message="no active local sessions")
+                    parts = []
+                    if active:
+                        suffix = "session" if active == 1 else "sessions"
+                        parts.append(f"{active} active local {suffix}")
+                    if unknown:
+                        suffix = "node" if unknown == 1 else "nodes"
+                        parts.append(f"{unknown} local {suffix} with unknown session state")
+                    last_error = ", ".join(parts)
             else:
                 last_error = f"unexpected status {status_code}"
         except Exception as exc:
