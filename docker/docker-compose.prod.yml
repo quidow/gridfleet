@@ -31,7 +31,7 @@ services:
         max-file: "3"
 
   selenium-hub:
-    image: selenium/hub:4.43.0-20260404
+    image: selenium/hub:4.44.0-20260505
     restart: unless-stopped
     ports:
       - "${GRID_PUBLISH_PORT:-4442}:4442"
