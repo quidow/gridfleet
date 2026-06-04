@@ -42,6 +42,7 @@ class PackDevicePropertiesFetcher(Protocol):
         connection_target: str,
         pack_id: str,
         *,
+        identity_value: str | None = None,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
         pool: AgentHttpPool | None = None,
@@ -193,6 +194,7 @@ class PackDiscoveryService:
             host.agent_port,
             refresh_target,
             device.pack_id,
+            identity_value=device.identity_value,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
             pool=self._pool,
@@ -219,6 +221,19 @@ class PackDiscoveryService:
         new_software_versions = props.get("software_versions") or None
         if isinstance(new_software_versions, dict) and device.software_versions != new_software_versions:
             device.software_versions = new_software_versions
+            changed = True
+
+        # The agent only returns a candidate whose identity matched the requested
+        # identity_value; guard again here so a stale or mismatched payload can
+        # never repoint the device row at another device's address.
+        new_connection_target = props.get("connection_target")
+        if (
+            isinstance(new_connection_target, str)
+            and new_connection_target
+            and data.get("identity_value") == device.identity_value
+            and device.connection_target != new_connection_target
+        ):
+            device.connection_target = new_connection_target
             changed = True
 
         if changed:

@@ -566,12 +566,16 @@ async def get_pack_device_properties(
     connection_target: str,
     pack_id: str,
     *,
+    identity_value: str | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
     pool: AgentHttpPool | None = None,
     circuit_breaker: CircuitBreakerProtocol,
 ) -> dict[str, Any] | None:
+    params: dict[str, str] = {"pack_id": pack_id}
+    if identity_value:
+        params["identity_value"] = identity_value
     response = await _send_request(
         "GET",
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/properties",
@@ -579,7 +583,7 @@ async def get_pack_device_properties(
         host=host,
         agent_port=agent_port,
         http_client_factory=http_client_factory,
-        params={"pack_id": pack_id},
+        params=params,
         timeout=timeout,
         settings=settings,
         pool=pool,
