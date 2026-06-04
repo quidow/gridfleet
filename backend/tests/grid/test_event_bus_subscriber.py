@@ -78,6 +78,32 @@ async def test_doorbell_fires_on_session_closed_legacy_payload(
         await sub.stop()
 
 
+async def test_doorbell_fires_on_node_added(inproc_pair: tuple[zmq.asyncio.Socket, str]) -> None:
+    pub, url = inproc_pair
+    doorbell = asyncio.Event()
+    sub = HubEventBusSubscriber(subscribe_url=url, on_event=lambda _e: doorbell.set())
+    await sub.start()
+    try:
+        await asyncio.sleep(0.05)
+        await pub.send_multipart(_frames("node-added", {"nodeId": "n-1"}))
+        await _await_event_set(doorbell)
+    finally:
+        await sub.stop()
+
+
+async def test_doorbell_fires_on_node_removed(inproc_pair: tuple[zmq.asyncio.Socket, str]) -> None:
+    pub, url = inproc_pair
+    doorbell = asyncio.Event()
+    sub = HubEventBusSubscriber(subscribe_url=url, on_event=lambda _e: doorbell.set())
+    await sub.start()
+    try:
+        await asyncio.sleep(0.05)
+        await pub.send_multipart(_frames("node-removed", {"nodeId": "n-1"}))
+        await _await_event_set(doorbell)
+    finally:
+        await sub.stop()
+
+
 async def test_unknown_event_type_does_not_fire_doorbell(
     inproc_pair: tuple[zmq.asyncio.Socket, str],
 ) -> None:
