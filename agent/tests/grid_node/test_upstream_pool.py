@@ -307,3 +307,54 @@ async def test_interim_1xx_response_raises_connect_error() -> None:
                 await pool.request("GET", "/status", [], b"")
         finally:
             await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stale_reused_connection_retries_once_on_fresh_connection() -> None:
+    async def one_response_then_close(
+        stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        # Express-style: answer one keep-alive response, then close the
+        # socket while the pool still holds the connection as idle.
+        await _read_request(stub, reader)
+        writer.write(_response(b"ok"))
+        await writer.drain()
+
+    async with StubServer(one_response_then_close) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            first = await pool.request("GET", "/status", [], b"")
+            # Give the server's close a moment to land on the idle socket.
+            await asyncio.sleep(0.05)
+            second = await pool.request("GET", "/status", [], b"")
+        finally:
+            await pool.aclose()
+
+    assert first.status == 200
+    assert second.status == 200
+    assert stub.connections == 2
+
+
+@pytest.mark.asyncio
+async def test_no_retry_after_response_bytes_received() -> None:
+    async def full_then_partial(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await _read_request(stub, reader)
+        writer.write(_response(b"ok"))
+        await writer.drain()
+        # Second request on the same (reused) connection: emit partial
+        # response bytes, then close — the command may have executed, so
+        # the pool must NOT retry.
+        await _read_request(stub, reader)
+        writer.write(b"HTTP/1.1 200 OK\r\nconte")
+        await writer.drain()
+
+    async with StubServer(full_then_partial) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            await pool.request("GET", "/status", [], b"")
+            with pytest.raises(UpstreamError):
+                await pool.request("POST", "/session/abc/element", [], b"{}")
+        finally:
+            await pool.aclose()
+
+    assert stub.connections == 1

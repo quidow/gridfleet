@@ -103,8 +103,17 @@ class AppiumUpstreamPool:
     async def _dispatch(self, payload: bytes) -> UpstreamResponse:
         if self._idle:
             reader, writer = self._idle.pop()
-        else:
-            reader, writer = await self._connect()
+            try:
+                return await self._roundtrip(reader, writer, payload)
+            except _StaleConnectionError:
+                # Appium's Express server closes idle keep-alive connections
+                # (~5 s default). A reused connection that died — error or
+                # EOF — before any response bytes arrived cannot have
+                # executed the command, so retry once on a fresh connection.
+                # Failures after bytes arrive never retry: WebDriver
+                # commands are not idempotent.
+                pass
+        reader, writer = await self._connect()
         try:
             return await self._roundtrip(reader, writer, payload)
         except _StaleConnectionError as exc:
