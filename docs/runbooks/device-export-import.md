@@ -6,11 +6,11 @@ This runbook covers using the device portability bundle to recover a registered 
 
 While the old instance is still running:
 
-1. Open the Devices page (`/devices`).
-2. Click **Export Config**. The browser downloads `gridfleet-devices-<timestamp>.json`.
+1. Open **Settings → Backup & Restore** (`/settings?tab=backup`).
+2. Click **Export Config** in the **Export configuration** card. The browser downloads `gridfleet-devices-<timestamp>.json`.
 3. Keep this file alongside any other ops artifacts you preserve across the install.
 
-The bundle is human-readable. You can hand-edit it before importing: strip rows, fix tags, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data only — runtime state (operational_state, holds, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
+The bundle is human-readable. You can hand-edit it before importing: strip rows, fix tags, redirect a row's `original_host.hostname`. The bundle carries identity + operator config + testkit data only — runtime state (operational_state, telemetry, verification stamps) is **not** preserved; the verification pipeline rediscovers it after import.
 
 > **Sensitive content.** The exported bundle includes per-device `test_data` and `device_config`. These may contain credentials, secrets, or other sensitive material your devices need at test time. Treat the bundle as a sensitive artifact — store it the same way you store other operator secrets, do not commit it to git, and rotate any embedded credentials if the file leaves operator hands.
 
@@ -24,13 +24,13 @@ Device imports require their target hosts to exist. Each agent host re-registers
 
 ## 4. Import the bundle
 
-1. Open **Devices → Import Devices** (`/devices/import`).
+1. Open **Settings → Backup & Restore** (`/settings?tab=backup`) and use the **Import devices** card (the legacy `/devices/import` URL redirects there).
 2. Upload the JSON bundle.
 3. The wizard validates the bundle and shows a per-row preview:
    - **valid** rows are pre-mapped to the best-matching registered host (case-insensitive hostname match). Override the target host where needed.
    - **conflict (skip)** rows already exist in this DB. They are excluded from the commit.
    - **duplicate in bundle** rows share an identity with another row in the same bundle. Edit the bundle to remove duplicates and re-upload.
-   - **invalid** rows are excluded; their issues column explains why (e.g. pack not installed).
+   - **invalid** rows are flagged with the **invalid** status badge and excluded from the commit (the wizard does not show per-row issue text).
 4. Confirm every row you want imported has a target host set.
 5. Click **Commit import**. The wizard reports `created / skipped / failed` counts.
 
@@ -48,10 +48,10 @@ Each created device is queued for verification on commit. Devices transition `of
 
 The Devices page also has an **Export Inventory** button. That export is a *read-only snapshot* with runtime fields included (operational_state, hardware telemetry, verification status). It is **not** round-trippable through the import wizard. Use it for spreadsheets, audits, or external tooling.
 
-Choose between CSV or JSON via the modal's format toggle. The column picker remembers your last selection in `localStorage`. Filters from the Devices page are passed through to the export (future enhancement: currently passes no filters by default — wire pending).
+Choose between CSV or JSON via the modal's format toggle. The column picker remembers your last selection in `localStorage`. The active Devices-page filters (excluding sort and pagination) are applied to the export.
 
 ## Out of scope
 
 - Re-importing hosts. Hosts come back through the standard agent registration flow.
-- Re-importing reservations, sessions, groups, holds, or lifecycle policy state.
+- Re-importing reservations, sessions, groups, or lifecycle policy state.
 - Bundle signing or supply-chain integrity verification beyond the canonical hash that defends against in-flight tampering.

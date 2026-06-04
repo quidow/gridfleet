@@ -35,13 +35,13 @@ The script refuses to run as root. The service runs as the operator that invoked
 
 ## Prerequisites
 
-The agent itself only needs Python 3.12, which `uv` fetches automatically. Host-level tools probed during `install`:
+The agent itself only needs Python 3.12, which `uv` fetches automatically. Host-level tools the agent uses — only Node.js is probed during `install` and wired onto the service `PATH`:
 
 | Tool | Needed for | Detection |
 |---|---|---|
-| Java 11+ | Android driver build tools | `java -version`, `JAVA_HOME`, `/usr/libexec/java_home` (macOS) |
-| Node.js 20+ | Per-pack Appium runtimes | `nvm`, `fnm`, `$PATH` |
-| Android SDK platform-tools | ADB-based devices | `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `~/Library/Android/sdk`, `~/Android/Sdk` |
+| Node.js 20+ | Per-pack Appium runtimes | `nvm` (`NVM_BIN`, `~/.nvm`), `fnm` (`FNM_DIR`, fnm default), then `$PATH` |
+
+Java is not probed at install time. It is resolved when Appium launches, in this order: `java` on `$PATH`, `JAVA_HOME`, `/usr/libexec/java_home` (macOS), then `~/.sdkman/candidates/java`. Android tooling (ADB, platform-tools) is provided by the per-pack runtime and adapter, not by the agent installer.
 
 ## Manual install
 
@@ -102,7 +102,7 @@ gridfleet-agent update --dry-run
 gridfleet-agent update --uv-bin /path/to/uv          # advanced
 ```
 
-Exit codes: `0` success; `1` drain timeout or post-restart health failure; `2` `uv pip install --upgrade` or restart command failed.
+Exit codes: `0` success; `1` drain timeout, no usable `uv` binary found, or post-restart health failure; `2` the upgrade command or restart command failed.
 
 ### `uninstall`
 ```bash

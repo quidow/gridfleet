@@ -11,13 +11,15 @@ This page documents the shipped live-event contract used by SSE subscribers, rec
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/events/catalog` | Read the canonical emitted-event catalog for UI pickers and filters | none | event catalog object |
 | `GET` | `/api/events` | Subscribe to live server-sent events | optional `types` and `device_ids` filters | SSE stream |
-| `GET` | `/api/notifications` | Read recent in-memory event history | `limit`, optional `types` | recent event array |
+| `GET` | `/api/notifications` | Read recent persisted `system_events` history (durable; in-memory fallback when persistence is unconfigured) | `limit`, `offset`, optional `types`, optional `severity` | recent event array |
 | `GET` | `/api/webhooks` | List webhooks | none | `WebhookRead[]` |
 | `POST` | `/api/webhooks` | Create a webhook | `WebhookCreate` with valid `event_types` only | `WebhookRead` |
 | `GET` | `/api/webhooks/{webhook_id}` | Read a webhook | path `webhook_id` | `WebhookRead` |
 | `PATCH` | `/api/webhooks/{webhook_id}` | Update a webhook | `WebhookUpdate` with valid `event_types` only | `WebhookRead` |
 | `DELETE` | `/api/webhooks/{webhook_id}` | Delete a webhook | path `webhook_id` | empty `204` |
 | `POST` | `/api/webhooks/{webhook_id}/test` | Publish a synthetic test event | path `webhook_id` | status object |
+| `GET` | `/api/webhooks/{webhook_id}/deliveries` | List recent delivery attempts for a webhook | path `webhook_id`, query `limit` | `WebhookDeliveryListRead` |
+| `POST` | `/api/webhooks/{webhook_id}/deliveries/{delivery_id}/retry` | Retry a webhook delivery | path `webhook_id`, `delivery_id` | `WebhookDeliveryRead` |
 
 ## Severity
 
@@ -64,12 +66,12 @@ The manager publishes one shared event object shape:
 ### Notification polling shape
 
 - `/api/notifications` returns an array of the same event envelopes
-- The event log is in-memory and recent-only; it is not a durable event store
+- The event log returned by `/api/notifications` comes from the durable `system_events` table (persisted `SystemEvent` rows, ordered newest-first); these rows are not pruned by retention cleanup. An in-memory recent-only buffer is used only as a fallback when persistence is not configured
 
 ### Webhook delivery shape
 
 - Webhooks receive the same JSON envelope via HTTP `POST`
-- Delivery currently retries up to 3 times with exponential backoff (`1s`, `4s`, `16s`)
+- Delivery is attempted up to 3 times total (the initial attempt plus up to 2 retries). Only retryable failures retry — network/timeout errors and HTTP `5xx` responses; `4xx` and other client-side errors are not retried and exhaust immediately. Retries use exponential backoff with jitter (base ~`1s` then ~`4s`, plus up to `2s` of random jitter)
 - Only enabled webhooks whose `event_types` include the published event name receive the event
 - Webhook create/update rejects unknown event names with `422`
 
@@ -93,13 +95,13 @@ The manager publishes one shared event object shape:
 
 Per-device crash signal. Fires whenever a `DeviceEvent` row of type `node_crash` is persisted. Distinct from `node.crash` (per-Appium-process): `device.crashed` is the device-granularity counterpart and aligns semantically with `device.operational_state_changed` and `device.health_changed`.
 
-**Sources:** `lifecycle.services.actions.handle_node_crash`, `heartbeat._ingest_appium_restart_events`, and `node_health._process_node_health`.
+**Sources:** `lifecycle.services.actions.handle_node_crash` and `heartbeat._ingest_appium_restart_events`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `device_id` | string (UUID) | Device identifier. |
 | `device_name` | string | Display name. |
-| `source` | string | One of `appium_crash`, `connectivity_lost`, `health_check_fail`, `agent_restart_exhausted`. |
+| `source` | string | Heartbeat-driven crashes use `appium_crash` or `agent_restart_exhausted`. Lifecycle/probe-driven crashes pass the raw lifecycle source string through, e.g. `connectivity`, `session_viability`, or `health_failure:<...>` variants. (Note: `connectivity_lost` / `health_check_fail` are `DeviceEventType` audit-row values, not `device.crashed` source values.) |
 | `reason` | string | Free-form; mirrors `DeviceEvent.details["reason"]` or crash error text. |
 | `will_restart` | bool | Whether lifecycle policy or agent restart logic will retry. |
 | `process` | string \| null | `"appium"` or `"grid_relay"` for heartbeat restart events; `null` for probe-driven and lifecycle-driven crashes. |
@@ -129,6 +131,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `run.cancelled` | `run_id`, `name` | `warning` | `warning`, `info` | cancel and force-release flows |
 | `run.expired` | `run_id`, `name`, `reason` | `critical` | `critical`, `warning` | run TTL or heartbeat expiration |
 | `run.never_activated` | `run_id`, `name`, `reason` | `warning` | `warning` | Run hit its TTL / heartbeat budget while still in `preparing` — `/api/runs/{id}/active` was never signaled. Fired immediately before `run.expired`. |
+| `run.routing_delivery_deferred` | `run_id`, `name`, `device_count` | `warning` | `warning` | Reservation routing reconfigure could not be delivered to the agent; the reconciler retries. |
 
 ### Groups, bulk actions, settings, and cleanup
 
@@ -149,11 +152,11 @@ Transactional events (those produced inside code paths that mutate the database)
 
 This is rollback-safe but not a durable outbox. Events are queued in memory on `Session.info`; the SQLAlchemy `after_commit` hook schedules `event_bus.publish` with `loop.create_task`, and `event_bus.publish` persists the `SystemEvent` row in a separate transaction. If the process exits between the writer commit and the `SystemEvent` commit, the event can be lost. A durable outbox is out of scope for issue #73.
 
-A small set of broadcasters publish eagerly without an outer transaction: in-memory circuit-breaker transitions, background-loop summaries, synthetic test events, per-device-session bulk summaries, and helpers that open their own short-lived persistence session before publishing. These are listed with rationale in `backend/tests/test_event_bus_publish_allowlist.py`.
+A small set of broadcasters publish eagerly without an outer transaction: in-memory circuit-breaker transitions, background-loop summaries, synthetic test events, per-device-session bulk summaries, and helpers that open their own short-lived persistence session before publishing. `backend/tests/events/test_event_bus_publish_allowlist.py` is a regression guard against new eager `event_bus.publish(` callsites (its allowlist is currently empty); it is not a rationale-annotated registry of broadcasters.
 
-Within a single transaction, events queued in source order dispatch in FIFO order. Cross-transaction ordering across event types is not guaranteed; subscribers that need ordering should use the event envelope `timestamp` field set by `app.services.event_bus.Event.to_dict()`. Per-type payloads do not consistently carry their own timestamps.
+Within a single transaction, events queued in source order dispatch in FIFO order. Cross-transaction ordering across event types is not guaranteed; subscribers that need ordering should use the event envelope `timestamp` field set by `app.events.event_bus.Event.to_dict()`. Per-type payloads do not consistently carry their own timestamps.
 
-Run terminal events (`run.completed`, `run.cancelled`, `run.expired`) now dispatch via the `after_commit` hook and can interleave with `_complete_deferred_stops_post_commit`. Subscribers must not assume deferred lifecycle cleanup has finished by the time the run terminal event arrives.
+Run terminal events (`run.completed`, `run.cancelled`, `run.expired`) now dispatch via the `after_commit` hook and can interleave with `complete_deferred_stops_post_commit`. Subscribers must not assume deferred lifecycle cleanup has finished by the time the run terminal event arrives.
 
 ## Persisted Device Event Types
 
@@ -173,6 +176,14 @@ The `device_events` table is narrower than the live event bus. The persisted enu
 - `lifecycle_recovered`
 - `lifecycle_run_excluded`
 - `lifecycle_run_restored`
+- `lifecycle_run_cooldown_set`
+- `lifecycle_run_cooldown_escalated`
+- `maintenance_entered`
+- `maintenance_exited`
+- `session_started`
+- `session_ended`
+- `auto_stopped`
+- `desired_state_changed`
 
 ## Notes
 

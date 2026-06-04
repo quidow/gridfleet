@@ -31,7 +31,7 @@ Reference pages should optimize for exactness and fast lookup. Put task narrativ
 - `architecture.md`
   - Manager, agent, frontend component split and communication patterns.
 - `device-lifecycle.md`
-  - Device operational states, holds, and state machine transitions.
+  - Device operational states, the derived-state writer model, reservation (computed `is_reserved`), and state-machine transitions.
 - `diagnostics.md`
   - Device diagnostic export bundle schema, redaction, and retention.
 - `intents.md`

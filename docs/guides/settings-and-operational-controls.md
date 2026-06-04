@@ -14,7 +14,6 @@ Current shipped behaviors:
 - the reset icon restores one key to its default
 - `Reset All Settings` restores every registry-backed setting to defaults
 - webhook and plugin tabs are operational registries on the same page, not part of the generic settings key registry
-- the Drivers tab is a handoff panel that links to the standalone Drivers page
 
 Use this page for shared fleet behavior. Do not use it as a replacement for device-specific setup or recovery.
 
@@ -25,12 +24,13 @@ Use this page for shared fleet behavior. Do not use it as a replacement for devi
 | `General` | manager loops, health timing, session viability, lifecycle backoff | changing these affects fleet-wide recovery and detection timing |
 | `Appium & Grid` | Grid URL, Grid polling, Appium port pool, startup timeout, default plugins | bad values can stop nodes from registering or probing correctly |
 | `Notifications` | in-app toast selection and threshold | too many events create alert fatigue; too few hide incidents |
-| `Device Defaults` | platform tag presets for newly added devices | only new devices pick up these defaults automatically |
+| `Device Defaults` | currently empty — no registry settings are backed under this category yet | none today (no settings render here) |
 | `Agent` | host auto-accept, minimum agent version, default port | directly changes host onboarding and version trust behavior |
 | `Reservations` | default TTL, heartbeat timeout, stale-run reaper timing | directly affects how long devices stay locked to runs |
 | `Data Retention` | cleanup age and cleanup cadence | aggressive values reduce history available for triage |
-| `Drivers` | handoff to the standalone driver-pack catalog | stale or disabled packs can leave hosts mismatched for verification or test startup |
+| `Backup & Restore` | export and import of a device-configuration bundle | importing a stale or wrong bundle can overwrite device config |
 | `Webhooks` | outbound event subscriptions and delivery targets | bad endpoints create noisy failures or missed downstream alerts |
+| `Appium Plugins` | plugin registry and per-host plugin sync | bad plugin versions can break node startup |
 
 ## General
 
@@ -112,9 +112,7 @@ Practical guidance:
 
 ## Device Defaults
 
-The `Device Defaults` tab affects new devices, not the entire existing registry.
-
-If you change a default, only later intake work picks up the new value automatically. Existing devices keep their current settings until edited directly or changed through bulk/group actions.
+The `Device Defaults` tab is currently empty: no registry settings are backed under the `devices` category, so the panel renders nothing. There are no platform-tag-preset settings here today.
 
 ## Agent
 
@@ -152,27 +150,30 @@ This tab directly changes how long devices stay reserved and how forgiving the m
 
 The `Data Retention` tab controls how long operational history stays available.
 
-Current cleanup buckets:
+Current cleanup buckets (the named `Retention Windows` section):
 
 - completed session history
 - audit-log entries
 - device-event / lifecycle-incident history
+- fleet capacity snapshot history
 - host resource telemetry history
 - cleanup loop cadence
+
+The registry also defines several additional retention keys (probe sessions, agent reconfigure outbox, agent process logs, device diagnostic snapshots) that surface under the `Other Settings` catch-all rather than the named `Retention Windows` section.
 
 Reduce these values only if storage pressure matters more than long-tail debugging history.
 
 ## Drivers
 
-The `Drivers` tab in Settings points operators to the standalone Drivers page.
+The standalone Drivers page (reached from the main sidebar nav, not from Settings) is the driver-pack catalog.
 
 Operators can:
 
 - see the current installed driver-pack count
 - open the Drivers page to upload, inspect, enable, drain, export, or delete driver packs
-- use Host Detail for per-host driver runtime status and sync actions
+- use Host Detail for per-host driver runtime status and Run Doctor checks
 
-Host Detail has a per-host `Sync Drivers` action. Use that when one host is mismatched after the driver-pack catalog changes.
+Host Detail exposes a per-pack `Run Doctor` action (plus any driver-pack-defined feature actions) for per-host driver runtime status. Note that `Sync Plugins` / `Sync All Hosts` apply to plugins, not drivers.
 
 ## Safe Change Playbook
 

@@ -2,7 +2,7 @@
 
 > HTTP contract between the FastAPI manager and the FastAPI host agents. Covers endpoint catalog, ack semantics, failure model, circuit breaker, auth surface, and idempotency.
 
-GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend→agent; the agent talks back only for two flows (desired-pack pull and pack-state status push). All host-aware logic on the backend lives behind the `agent_operations` typed wrapper (`backend/app/services/agent_operations.py`).
+GridFleet has two HTTP-speaking processes per host: the centralised backend and the per-host agent. Most traffic flows backend→agent; the agent initiates a handful of flows back (host registration, desired-pack pull, pack-state status push, tarball download, and log shipping). All host-aware logic on the backend lives behind the `agent_operations` typed wrapper (`backend/app/agent_comm/operations.py`, imported as `from app.agent_comm import operations as agent_operations`).
 
 This doc specifies that contract.
 
@@ -37,7 +37,7 @@ The CI runner / test client speaks **only** to the Selenium Grid hub for session
 
 The two directions are asymmetric today.
 
-- **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `_agent_basic_auth` in `backend/app/agent_client.py`. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
+- **Backend → agent.** Optional HTTP Basic auth is supported. The backend sends credentials from `GRIDFLEET_AGENT_AUTH_USERNAME` / `GRIDFLEET_AGENT_AUTH_PASSWORD` via `build_agent_basic_auth` in `backend/app/agent_comm/http_pool.py`, applied per request by the pool. The agent enforces Basic auth on every `/agent/*` HTTP route when `AGENT_API_AUTH_USERNAME` / `AGENT_API_AUTH_PASSWORD` are set, through `agent/agent_app/api_auth.py:BasicAuthMiddleware`. Leave all four unset for local dev or a trusted private lab network.
 - **Agent → backend.** `agent/agent_app/lifespan.py` and `agent/agent_app/registration.py` construct `httpx.BasicAuth(manager_auth_username, manager_auth_password)` from `AGENT_MANAGER_AUTH_USERNAME` / `AGENT_MANAGER_AUTH_PASSWORD` when configured. Used for `/agent/driver-packs/desired`, `/agent/driver-packs/status`, and host registration. This satisfies backend machine auth when `GRIDFLEET_AUTH_ENABLED=true`.
 - **Browser → backend** (out of scope for this doc). Session cookie + CSRF for non-GET; that path never hits agents directly.
 
@@ -45,7 +45,7 @@ There is no HMAC or message signing. When the optional backend→agent Basic-aut
 
 ## Endpoint catalog (backend → agent)
 
-All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is `backend/app/services/agent_operations.py`.
+All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is `backend/app/agent_comm/operations.py` (imported as `agent_operations`).
 
 | Method | Path | Caller (backend) | Purpose | Ack semantics |
 | --- | --- | --- | --- | --- |
@@ -57,16 +57,18 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | GET | `/agent/pack/devices/{ct}/telemetry` | `hardware_telemetry_loop` | adapter-driven hardware telemetry | 200 → dict, 404 → `None` |
 | POST | `/agent/pack/devices/{ct}/lifecycle/{action}` | lifecycle/operator actions | run a pack-defined lifecycle action (e.g. boot, shutdown) | 2xx required |
 | POST | `/agent/pack/devices/normalize` | intake/discovery | normalise raw input to canonical device fields | 200 → dict, 404 → `None` |
+| POST | `/agent/pack/{pack_id}/doctor` | host onboarding/diagnostics (`hosts/router`, wrapper `pack_doctor`) | run pack adapter doctor checks | 2xx → checks list |
 | POST | `/agent/pack/features/{feat}/actions/{act}` | feature dispatch | dispatch arbitrary pack feature action | 2xx required |
-| POST | `/agent/appium/start` | `node_service.start_node`, `restart_node_via_agent` | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
-| POST | `/agent/appium/stop` | `node_service.stop_node`, `restart_node_via_agent` | kill an Appium node | wrapper returns `httpx.Response`; `stop_remote_temporary_node` maps 2xx → `True`, transport/HTTP error → `False` |
-| GET | `/agent/appium/{port}/status` | `node_health`, `_wait_for_remote_appium_ready` | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
+| POST | `/agent/appium/start` | `reconciler_agent` (`appium_start`, via the `start_node` service method) | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
+| POST | `/agent/appium/stop` | `reconciler_agent` (`appium_stop`, via the `stop_node` service method) and the orphan-reconcile `_stop` helper in `reconciler` | kill an Appium node | wrapper returns `httpx.Response`; consumers call `response.raise_for_status()`, so 2xx → success and transport/HTTP error raises |
+| POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / Grid run scope | 2xx → `dict` |
+| GET | `/agent/appium/{port}/status` | `node_health` reconcile path | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
 | GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
 | POST | `/agent/plugins/sync` | plugin sync flow | install/remove plugin set | 2xx required |
 | GET | `/agent/tools/status` | host onboarding | Node provider and host helper versions | 2xx required |
 
-Each row has a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). Routers and services should never call `httpx` directly — go through these wrappers so the circuit breaker and metrics fire.
+Most rows have a typed function in `agent_operations.py`. The function signature pins the response shape and the ack contract (`bool`, `bool | None`, `dict | None`, etc.). The one exception is the feature-dispatch endpoint (`/agent/pack/features/{feat}/actions/{act}`), which has no wrapper in `operations.py`: it is issued from `app/packs/services/feature_dispatch.py` via the shared `app.agent_comm.client.request`, so the circuit breaker and metrics still fire. Routers and services should never call `httpx` directly — go through these wrappers (or that shared `request`) so the circuit breaker and metrics fire.
 
 ### `/agent/appium/start` cap surfaces
 
@@ -75,7 +77,7 @@ The Appium start payload carries three distinct capability surfaces. They have s
 | Field             | Source of truth                                                                                                                                                             | Consumer                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `stereotype_caps` | Pack manifest `capabilities.stereotype` (with `{device.*}` interpolation) + manager-owned sentinels (`appium:gridfleet:deviceId`, `gridfleet:run_id`) + tag fanout          | Selenium Grid hub: stored per-slot, matched against client requests, exposed on `/status` |
-| `extra_caps`      | `build_extra_caps(device, ...)` — full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent relay: merged into Appium `/session` request body (`agent/agent_app/appium/process.py`) |
+| `extra_caps`      | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py` — full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent relay: merged into Appium `/session` request body (`agent/agent_app/appium/process.py`) |
 | `allocated_caps`  | `appium_node_resource_service.get_capabilities(...)` (UDID + reserved ports)                                                                                                | Agent → Appium driver                                                                   |
 
 **Cross-component invariant.** The Grid slot stereotype is the routing surface. Backend MUST NOT include Appium-only device metadata (manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`) in `stereotype_caps`. That metadata MUST flow via `extra_caps` only. The agent enforces the same separation in `agent_app/grid_node/protocol.build_slots` and `agent_app/appium/process.AppiumProcessManager._start_grid_node_service`. The `gridfleet:available` sentinel was removed in release 2026.05 — `AppiumNode.accepting_new_sessions` plus Selenium `NodeStatus.availability` cover the routing-suppression cases.
@@ -87,12 +89,14 @@ The Appium start payload carries three distinct capability surfaces. They have s
 | POST | `/api/hosts/register` | bootstrap | one-time host registration | 2xx, returns `Host` row id |
 | GET | `/agent/driver-packs/desired` | `PackStateLoop` (~10 s) | desired pack list for this host | 200 → `{packs: [...]}` |
 | POST | `/agent/driver-packs/status` | `PackStateLoop` after each tick | report runtime/adapter state | 204 |
+| GET | `/api/driver-packs/{pack_id}/releases/{release}/tarball` | `tarball_fetch` | download the sha256-pinned pack tarball | 2xx → tarball bytes |
+| POST | `/agent/{host_id}/log-batch` | `logs.shipper` | ship buffered agent logs to the backend | 2xx |
 
-Defined in `backend/app/routers/agent_driver_packs.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
+The `/agent/driver-packs/desired` and `/agent/driver-packs/status` routes are defined in `backend/app/packs/routers/agent_state.py` (router prefix `/agent/driver-packs`); the tarball download is served by `backend/app/packs/routers/uploads.py` and log batches by `backend/app/hosts/router_agent_logs.py`. Note: there is **no agent-initiated callback for node state changes**. The agent reports node lifecycle only by responding to backend polls such as Appium status — the backend pulls, the agent does not push. This is intentional and important: it means the backend is the only authority deciding "is this node up", which is what makes the leader-only health loop sufficient.
 
 ## Request envelope
 
-Every backend→agent call goes through `request()` in `backend/app/agent_client.py`:
+Every backend→agent call goes through `request()` in `backend/app/agent_comm/client.py`:
 
 ```text
 1. agent_circuit_breaker.before_request(host)   # may raise CircuitOpenError
@@ -126,11 +130,11 @@ flowchart TD
     q3 -- 5xx --> r5["AgentResponseError"]
 ```
 
-Loop callers map all three terminal errors to `None` (indeterminate). API mutators map them to user-visible 502/503 via the FastAPI exception handlers in `backend/app/errors.py`.
+Loop callers map all three terminal errors to `None` (indeterminate). API mutators map them to user-visible 502/503 via the FastAPI exception handlers in `backend/app/core/errors.py`.
 
 ## Circuit breaker
 
-`AgentCircuitBreaker` (`backend/app/services/agent_circuit_breaker.py`).
+`AgentCircuitBreaker` (`backend/app/agent_comm/circuit_breaker.py`).
 
 - **Per host.** State is keyed by host IP/hostname. One bad host does not block others.
 - **Failure threshold.** 5 consecutive failures → `open`. Cooldown is 30 s.
@@ -194,7 +198,7 @@ The agent endpoint whose result is a tri-state probe (`/agent/appium/{port}/stat
 
 - **`appium_status`** (`agent_operations.py`). 200 → `dict` (and the consumer reads `running: bool`). Non-200 → `None`. 
 
-- **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The caller (`stop_remote_temporary_node`) bridges into the DB-flip rule: `resp.raise_for_status()` success → `True`; `AgentCallError` or `httpx.HTTPError` → `False`; only `True` allows `mark_node_stopped`.
+- **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The consumers bridge into the DB-flip rule by calling `response.raise_for_status()`: the `_stop` helper in `app/appium_nodes/services/reconciler.py` does this on the orphan-reconcile path before calling `mark_node_stopped` (defined in `reconciler_agent.py`), and the `stop_node` service method in `reconciler_agent.py` is the other `appium_stop` consumer. Success → proceed; `AgentCallError` or `httpx.HTTPError` → the stop did not take and the DB flip is skipped.
 
 The agent does not expose a WebDriver session probe endpoint. Probe sessions are created by the backend through Selenium Grid so health checks exercise the same routing path as CI clients.
 
@@ -226,7 +230,7 @@ When a backend loop initiates a request with no inbound request id bound in stru
 
 ## Connection pooling
 
-Backend → agent calls reuse `httpx.AsyncClient` instances pooled by `(host_ip, agent_port)` via `app.services.agent_http_pool.AgentHttpPool`. A pooled client lives for the lifetime of the backend process; on lifespan shutdown the pool drains via `aclose()`.
+Backend → agent calls reuse `httpx.AsyncClient` instances pooled by `(host_ip, agent_port)` via `app.agent_comm.http_pool.AgentHttpPool`. A pooled client lives for the lifetime of the backend process unless its tuning config changes (see below); on lifespan shutdown the pool drains via `aclose()`.
 
 The pool is opt-in via two guards: `agent.http_pool_enabled` (default `true`) **and** the caller using the default `httpx.AsyncClient` factory. Tests that inject a fake `http_client_factory` always go through the legacy per-call path. This is by design — the explicit-factory seam is used by unit tests and special-purpose call sites, and pooling must not surprise them.
 
@@ -234,7 +238,9 @@ The pool is opt-in via two guards: `agent.http_pool_enabled` (default `true`) **
 
 Auth is not part of the pool key because Basic auth is applied per request, not bound to the pooled `httpx.AsyncClient`. Credential changes are process-env changes; restart the backend process after changing `GRIDFLEET_AGENT_AUTH_*`.
 
-Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process — toggling `agent.http_pool_enabled` off only routes new calls through the legacy path; existing pooled clients stay open and resume serving if the toggle is flipped back on. Process restart is the only drain.
+Pooled clients are also replaced at runtime — without a restart — when `agent.http_pool_max_keepalive` or `agent.http_pool_idle_seconds` change. `get_client` compares the entry's tuning config; on a mismatch it moves the stale client onto a bounded deferred-close list and serves new calls from a fresh client. The stale client is `aclose()`d after its safe-close timestamp, `max(DEFERRED_GRACE_SECONDS = 90 s, largest observed request timeout)`, so in-flight requests are not cut off; the deferred list is capped at `DEFERRED_MAX` entries.
+
+Operational note: pooled clients do not refresh DNS until they are closed. If a host's IP changes mid-flight (lab reorg), restart the backend process — toggling `agent.http_pool_enabled` off only routes new calls through the legacy path; existing pooled clients stay open and resume serving if the toggle is flipped back on. A process restart is the drain for DNS/IP changes; a tuning-config change is the other (non-restart) drain path.
 
 ## Versioning
 
@@ -253,18 +259,22 @@ When evolving an endpoint:
 The Appium lifecycle endpoints return structured failure detail as `{"code": "<ENUM_VALUE>", "message": "<human text>"}`. Other agent endpoints may still use ordinary FastAPI `detail` strings or endpoint-specific payloads. The Appium error enum is mirrored on both sides:
 
 - `agent/agent_app/error_codes.py:AgentErrorCode`
-- `backend/app/services/agent_error_codes.py:AgentErrorCode`
+- `backend/app/agent_comm/error_codes.py:AgentErrorCode`
 
 `backend/tests/test_agent_error_code_parity.py` enforces drift detection. Backend matches `code` via `agent_operations.parse_agent_error_detail`; substring matching on `detail.message` is forbidden.
 
+The exception classes below are defined in `agent_app/appium/exceptions.py`; the exception → `AgentErrorCode` / HTTP-status mapping is done in `agent_app/appium/router.py` (and `agent_app/pack/router.py` for the pack-resolution codes). `appium/process.py` raises most of these classes but is not where they are defined.
+
 | Code | Source | Meaning |
 | --- | --- | --- |
-| `PORT_OCCUPIED` | `appium.process.PortOccupiedError` | External listener already bound the requested port |
-| `ALREADY_RUNNING` | `appium.process.AlreadyRunningError` | Managed Appium already running on this port |
-| `STARTUP_TIMEOUT` | `appium.process.StartupTimeoutError` | Appium did not become ready in `appium.startup_timeout_sec` |
-| `RUNTIME_MISSING` | `appium.process.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
-| `DEVICE_NOT_FOUND` | `appium.process.DeviceNotFoundError` | Connection target not visible to the host adapter |
-| `INVALID_PAYLOAD` | `appium.process.InvalidStartPayloadError` | Start request missing required fields |
+| `PORT_OCCUPIED` | `appium.exceptions.PortOccupiedError` | External listener already bound the requested port |
+| `ALREADY_RUNNING` | `appium.exceptions.AlreadyRunningError` | Managed Appium already running on this port |
+| `STARTUP_TIMEOUT` | `appium.exceptions.StartupTimeoutError` | Appium did not become ready in `appium.startup_timeout_sec` |
+| `RUNTIME_MISSING` | `appium.exceptions.RuntimeMissingError` / `RuntimeNotInstalledError` | Required runtime tools are absent |
+| `DEVICE_NOT_FOUND` | `appium.exceptions.DeviceNotFoundError` | Connection target not visible to the host adapter |
+| `INVALID_PAYLOAD` | `appium.exceptions.InvalidStartPayloadError` | Start request missing required fields |
+| `NO_ADAPTER` | `pack.dependencies` / `pack.router` | No pack adapter available to serve the request |
+| `UNKNOWN_PLATFORM` | `pack.dependencies` | Requested pack/platform is not in the host's desired list |
 | `INTERNAL_ERROR` | route catch-all | Agent-side state corruption or unclassified adapter failure |
 
 ## Open contract questions / known gaps

@@ -9,7 +9,7 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
 - `slow-system.md`
   - Readiness, metrics, Grid, database, and log checks when the stack feels slow or queue-backed.
 - `agent-not-connecting.md`
-  - Manager-to-agent reachability, service-manager checks, and recovery flow for missing heartbeats.
+  - Manager-to-agent reachability, service-manager checks, and recovery flow (host approval + discovery refresh) for hosts stuck `pending` or flipped `offline`.
 - `stuck-devices.md`
   - Recovery steps for devices stuck in `busy` or `reserved`.
 - `../reference/diagnostics.md`
@@ -19,7 +19,7 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
 - `backend-deploy-restart-rollback.md`
   - Manual production restart, deploy, verification, and rollback procedure for the single-stack compose deployment.
 - `appium-node-desync.md`
-  - Recovery when Appium nodes desync from the Grid hub.
+  - Recovery when a node's derived `effective_state` (e.g. `stopped`) diverges from the host agent's actual running Appium process — orphaned/stuck process or stuck `transition_token`, converged by the leader `appium_reconciler` loop.
 - `device-export-import.md`
   - Bulk device export and re-import workflow.
 - `device-ip-ping-recovery.md`

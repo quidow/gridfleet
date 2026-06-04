@@ -15,13 +15,20 @@ The IP ping health check runs ICMP ping probes against a device's `ip_address` f
 
 The check only activates when:
 
-- The device has a non-null `ip_address` (operator-set in Settings → Device → IP)
-- The device's pack manifest has `device_checks.ip_ping` enabled (opt-in via `applies_when`)
-- The device is not in `held` state
+- The device has a non-null `ip_address` (operator-set via the device edit modal on the Devices page — the "IP Address" field)
+- The device's pack manifest lists an `ip_ping` entry under `health_checks` that applies to it (opt-in via `applies_when`)
+- The device is not in `maintenance` state
 
 ## Configuration Settings
 
-Three settings control IP ping behavior. Adjust them via the Settings UI (Settings → Device Settings):
+Three settings control IP ping behavior. They live in the `device_checks` settings-registry category, which is not surfaced as a Settings UI tab, so edit them via the settings API:
+
+```bash
+curl -X PUT -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  http://localhost:8000/api/settings/device_checks.ip_ping.consecutive_fail_threshold \
+  -d '{"value": 5}'
+```
 
 ### `device_checks.ip_ping.consecutive_fail_threshold`
 
@@ -52,7 +59,7 @@ Follow these steps to verify the check works end-to-end:
 cd docker && docker compose up --build -d
 ```
 
-Wait for all services to be healthy (backend, Postgres, frontend). Check the UI at http://localhost:5173.
+Wait for all services to be healthy (backend, Postgres, frontend). Check the UI at http://localhost:3000 (the compose stack maps the frontend to host port 3000; port 5173 only applies to a standalone `npm run dev`).
 
 ### Step 2: Seed or prepare an Android USB device
 
@@ -64,7 +71,7 @@ The device must have a reachable IP address on the same network as the backend/a
 
 ### Step 3: Confirm healthy state
 
-Open the UI and find the device row. The `device_checks_summary` column should show "Healthy" with a green indicator.
+Open the UI and find the device row. The device's health summary should show "Healthy" with a green indicator.
 
 Verify the counter is zero by hitting the metrics endpoint:
 
@@ -75,7 +82,7 @@ curl -s http://localhost:8000/metrics | grep 'gridfleet_ip_ping_consecutive_fail
 Expected output (or similar):
 
 ```
-gridfleet_ip_ping_consecutive_failures{device_identity="<device_id>",device_platform="android"} 0.0
+gridfleet_ip_ping_consecutive_failures{device_identity="<device_id>",host="<agent_hostname>"} 0.0
 ```
 
 ### Step 4: Disconnect the device's Wi-Fi
@@ -89,7 +96,7 @@ Wait for three connectivity loop intervals to pass. The default interval is 60 s
 Return to the UI and check the device row:
 
 - `status` should change from `available` to `offline`
-- `device_checks_summary` should mention "ICMP unreachable" or a similar health failure
+- The device's health summary should mention "ICMP echo unanswered" (or read "Failed checks: ip ping") or a similar health failure
 
 Verify the counter incremented by hitting metrics:
 
@@ -137,11 +144,11 @@ Should show `0.0` again (or no row if the device recovered fully).
 
 ### All USB devices flip offline when you run the smoke test
 
-**Cause:** The agent runtime does not have `ping` available, or the container lacks `cap_net_raw` capability.
+**Cause:** The agent host does not have a working `ping` binary, or the host's `ping` lacks the privileges (CAP_NET_RAW / setuid) needed to open raw ICMP sockets.
 
 **Fix:**
-- Verify the `ping` binary exists in the agent runtime image. The Dockerfile should include `iputils-ping` or equivalent.
-- Check that the container runs with `--cap-add=NET_RAW` (or equivalent in docker-compose.yml) to allow raw sockets for ICMP.
+- The agent is a native process on each device host (not a container); it shells out to the host's system `ping`. Verify the `ping` binary exists on the agent host (e.g., the `iputils-ping` package or equivalent).
+- Ensure the host `ping` can open raw sockets — it should be setuid-root or have the CAP_NET_RAW capability.
 - Test directly on the agent host: `ping <device_ip> -c 1 -W 5` should succeed if the device is reachable.
 
 ### Device stays offline even after Wi-Fi is restored
@@ -159,7 +166,7 @@ Should show `0.0` again (or no row if the device recovered fully).
 **Fix:**
 - Wait one more connectivity loop interval (default 60 seconds).
 - Check the device's `ip_address` is set correctly: `curl -s -u ... http://localhost:8000/api/devices/<device_id> | python -m json.tool | grep ip_address`.
-- Manually ping from the agent: `docker compose exec agent ping <device_ip> -c 1 -W 5` should succeed if the device is reachable.
+- Manually ping from the agent host: `ping <device_ip> -c 1 -W 5` should succeed if the device is reachable.
 
 ## Disabling IP Ping
 
@@ -167,16 +174,19 @@ To disable IP ping checks entirely:
 
 ### Option 1: Raise the threshold to an unreachable value
 
-```
-Settings → Device Settings → device_checks.ip_ping.consecutive_fail_threshold = 50
+```bash
+curl -X PUT -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  http://localhost:8000/api/settings/device_checks.ip_ping.consecutive_fail_threshold \
+  -d '{"value": 50}'
 ```
 
 Devices will rarely or never flip offline due to IP ping failures (set high enough that normal transients never trigger it).
 
 ### Option 2: Remove from the pack manifest
 
-Edit the device pack manifest (in `driver-packs/curated/<platform>/<pack>/manifest.yaml`) and remove or comment out the `device_checks.ip_ping` section. Reapply the manifest and refresh the pack on affected devices.
+Edit the device pack manifest (in `driver-packs/curated/<pack>/manifest.yaml`) and remove or comment out the `- id: ip_ping` entry (or its `applies_when` block) under the pack's `health_checks:` list. Reapply the manifest and refresh the pack on affected devices.
 
 ### Option 3: Clear the device's `ip_address`
 
-Open the device in the UI (Settings → Device → IP) and delete the IP address. Without an `ip_address`, the check will not run.
+Open the device on the Devices page, edit it, and clear the "IP Address" field. Without an `ip_address`, the check will not run.

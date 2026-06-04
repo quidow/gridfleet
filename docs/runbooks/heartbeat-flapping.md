@@ -39,7 +39,7 @@ If 48 hours pass without a dominant boundary: do **not** implement B1/B2/B3.
 
 | Evidence                                                          | Implement                                                                                                                            |
 |-------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| Pooled requests fail; fresh requests succeed in same window       | B1 — heartbeat uses fresh client (`http_client_factory=httpx.AsyncClient`)                                                           |
+| Pooled requests fail; fresh requests succeed in same window       | B1 — make the heartbeat skip the connection pool: set `agent.http_pool_enabled=false` (drives `_heartbeat_client_mode` / `_pool_enabled` to the fresh branch), or pass a non-default `http_client_factory` / `pool=None` so `_send_request` takes the fresh-client branch. Note the heartbeat already passes `http_client_factory=httpx.AsyncClient`, which is the default factory, so that argument permits pooling rather than forcing a fresh client. |
 | Alternate target succeeds while LAN IP fails                      | B2 — set `AGENT_ADVERTISE_IP=host.docker.internal` on the co-located agent and re-register; remote agents stay on UDP-trick discovery |
 | Pooled fails intermittently, alternate targets behave identically | B3 — reduce `agent.http_pool_idle_seconds` (60 → 15)                                                                                 |
 

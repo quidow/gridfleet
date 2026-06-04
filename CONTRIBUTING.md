@@ -31,7 +31,7 @@ Install component dependencies:
 ```bash
 cd backend && uv sync --extra dev
 cd ../agent && uv sync --extra dev
-cd ../testkit && uv sync --extra dev --extra appium
+cd ../testkit && uv sync --extra dev
 cd ../frontend && npm ci
 ```
 
@@ -62,7 +62,7 @@ uv run pytest -q
 Testkit:
 
 ```bash
-cd testkit && uv run --extra dev --extra appium pytest -q
+cd testkit && uv run --extra dev pytest -q
 ```
 
 Frontend:

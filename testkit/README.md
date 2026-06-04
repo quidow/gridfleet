@@ -68,7 +68,7 @@ From a Git checkout or VCS URL that contains this package:
 uv pip install "git+https://github.com/<org>/<repo>.git#subdirectory=testkit"
 ```
 
-The package supports Python 3.10 and newer.
+The package supports Python 3.10 through 3.14.
 `Appium-Python-Client` is installed as a runtime dependency because the pytest fixtures create real Appium sessions.
 
 ## Environment
@@ -117,7 +117,7 @@ If you need raw Appium control instead, omit `pack_id` and `platform_id`, then p
 
 - Creates an Appium session through `GRID_URL`
 - Injects `gridfleet:testName` with the pytest test name
-- Injects `gridfleet:run_id` when a `GRIDFLEET_RUN_ID` environment variable is present (for example, inside a reserved run)
+- Always injects `gridfleet:run_id`, taken from the `GRIDFLEET_RUN_ID` environment variable when set (for example, inside a reserved run), otherwise defaulting to `"free"`
 - Reports final session status back to `GRIDFLEET_API_URL`
 - Exposes `device_config` for post-session config lookup using the runtime connection target
 - Exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
@@ -218,7 +218,7 @@ When an operator edits device tags, GridFleet marks the device for re-verificati
 
 ### Worker Identity
 
-`worker_id` is an arbitrary string used for reservation telemetry and run attribution. For pytest-xdist, pass `request.config.workerinput["workerid"]` from worker processes; values are normally `gw0`, `gw1`, and so on. For controller-only flows, use `"controller"` or a stable hostname. For custom schedulers, use a UUID or job-specific worker name.
+The `gridfleet_worker_id` fixture is informational only: it returns the pytest-xdist worker id (normally `gw0`, `gw1`, and so on), or `"controller"` for non-worker processes. It is never transmitted to the manager; use it client-side for local sharding or log correlation. For run attribution, pass the `created_by` argument to `GridFleetClient.reserve_devices` — that is the only run-attribution field the reservation request carries.
 
 ### Reservation Flow
 
@@ -353,11 +353,12 @@ client = GridFleetClient()
 run = client.reserve_devices(
     name="my-test-run",
     requirements=[...],
-    include=("config", "capabilities"),
+    include=("config",),
 )
 for device_handle in run["devices"]:
     allocated = hydrate_allocated_device(device_handle, run_id=run["id"], client=client)
-    # zero follow-up GETs; allocated.config / allocated.live_capabilities populated inline
+    # no config follow-up GET; allocated.config populated inline.
+    # For capabilities, pass include= on this per-worker hydrate_allocated_device call.
 ```
 
 `device_config` and inline `config` payloads are returned verbatim from the manager. The testkit does not perform client-side secret masking or reveal toggles. Protect device config with manager authentication, operator access control, and your lab's secret-handling policy.
@@ -366,7 +367,7 @@ for device_handle in run["devices"]:
 
 `include=` must be a sequence of strings (tuple or list) — order is preserved in the emitted query parameter. Passing a bare string like `include="config"` raises `TypeError` to avoid silently splitting the value into characters.
 
-`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries or rows returned by `get_device_by_connection_target`.
+`hydrate_allocated_device` accepts device-handle payloads such as `reserve_response["devices"]` entries, which carry a top-level `device_id`. A `get_device_by_connection_target` row keys its primary id as `id`, so it must have that field remapped to `device_id` before being passed in.
 
 ## Examples
 

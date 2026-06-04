@@ -23,7 +23,7 @@ curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" 'http://loc
 
 Focus on:
 
-- `status`
+- `operational_state` (and `is_reserved`)
 - `reservation`
 - `health_summary`
 - lifecycle summary state

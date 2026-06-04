@@ -19,13 +19,11 @@ Readiness is separate from availability:
 
 ## Current Missing-Setup Rules
 
-The shipped blocking setup rules are intentionally narrow and explicit:
+There are two distinct, intentionally narrow rules. Do not conflate them.
 
-- network-connected devices require an IP address
-- virtual devices do not require IP-based setup
-- Roku devices require a Roku developer password in device config
+A device stays in `Setup Required` (and verification will not start) when a pack device-field marked `required_for_session` is empty — for example the Roku developer password, the tvOS WDA base URL (`appium:wdaBaseUrl`), or the tvOS updated WDA bundle ID. This state is derived solely from the active pack's required device fields.
 
-If those fields are missing, the device stays in `Setup Required` and verification will not start.
+The IP-address requirement is a separate pack-level rule (`connection_behavior.requires_ip_address`) enforced at save/validation time, not a `Setup Required` trigger. It is currently `true` only for the Roku network platform. The Android and Fire TV network platforms set `requires_ip_address: false`, so they do not require an IP address to save. Virtual devices never require IP-based setup.
 
 ## Where Verification Starts
 
@@ -36,13 +34,7 @@ Verification can begin from several operator surfaces:
 - `Verify` / `Re-verify` from Device Detail
 - guided re-verification after readiness-impacting edits
 
-Readiness-impacting edit paths currently include saved changes to:
-
-- connection target
-- IP address
-- Roku developer password
-- tvOS preinstalled-WDA choice
-- tvOS updated WDA bundle ID
+Readiness-impacting edit paths currently include saved changes to the connection target, the IP address, or any pack-defined device-config field — for example the Roku developer password and the tvOS WDA base URL (`appium:wdaBaseUrl`), preinstalled-WDA choice, and updated WDA bundle ID.
 
 Those edits do not silently keep the old verified state. The UI hands you into guided verification instead.
 
@@ -54,7 +46,7 @@ Every verification job uses the same six-stage progress model:
 | --- | --- |
 | `Validate Input` | Normalizes the payload, resolves host/diagnostics-derived values, and blocks missing setup |
 | `Check Device Health` | Asks the selected host agent whether the device target is actually reachable and healthy |
-| `Start Temporary Node` | Starts a temporary Appium node for probing |
+| `Start Appium Node` | Starts a temporary Appium node for probing |
 | `Probe Appium Session` | Creates and tears down a real Grid-routed Appium session |
 | `Clean Up Probe` | Stops the temporary node, or retains it as the managed node when allowed |
 | `Save Device` | Persists the verified create or verified update |

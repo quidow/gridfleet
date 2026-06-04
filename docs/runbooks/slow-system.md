@@ -33,8 +33,8 @@ Prioritize these patterns:
   - one control-plane loop is failing repeatedly
 - `pending_jobs` climbing:
   - durable work is backing up
-- `agent_calls_total{outcome="error"}` increasing:
-  - the backend is spending time failing remote agent calls
+- `agent_calls_total{outcome!="success"}` increasing:
+  - the backend is spending time failing remote agent calls (the only non-failure value is `success`; explicit failure values are `circuit_open`, `http_error`, `timeout`, `dns_error`, `connect_error`, `unexpected_error`)
 
 ## 3. Inspect container logs for the slow component
 

@@ -12,65 +12,80 @@ This doc is the contract for those axes: what each one means, where it lives, wh
 
 | Axis | Source of truth | Type | Writers |
 | --- | --- | --- | --- |
-| Readiness | derived from `Device.verified_at` + setup gates | computed | `device_readiness.is_ready_for_use_async` |
-| Operational state + hold | `Device.operational_state`, `Device.hold` | enum + nullable enum | node/session loops + operator/run mutators through `device_state` |
+| Readiness | derived from `Device.verified_at` + setup gates | computed | `app.devices.services.readiness.is_ready_for_use_async` |
+| Operational state | `Device.operational_state` | 5-value enum | `device_intent_reconciler` loop via `apply_derived_state`, plus four direct entry/exit writers through `app.devices.services.state.set_operational_state` |
+| Reservation | `device_reservations` rows | computed flag (`is_reserved`) | run/reservation logic via inserts into the `device_reservations` table |
 | Hardware health | `Device.hardware_health_status` | enum | `hardware_telemetry` loop |
-| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` through `lifecycle_policy_state.write_state` |
-| Node state | `AppiumNode.state` | enum | `node_service` and health/reconciliation paths through `device_health.apply_node_state_transition` |
+| Lifecycle policy | `Device.lifecycle_policy_state` | JSON | `lifecycle_policy` / `lifecycle_policy_actions` through `app.devices.services.lifecycle_policy_state.write_state` |
+| Node state | `AppiumNode.desired_state` + observed columns | desired enum + observed columns; effective state derived | desired state via `app.appium_nodes.services.desired_state_writer.write_desired_state`; observed columns via reconciler/health/heartbeat writers |
 | Health | `Device.device_checks_*`, `Device.session_viability_*`, `Device.emulator_state`, `AppiumNode.health_*` | typed columns | `device_health` service |
 
-The DB columns are always authoritative. The public `health_summary` returned by `/api/devices` is derived on read by `app.services.device_health.build_public_summary(device)`.
+The DB columns are always authoritative. The public `health_summary` returned by `/api/devices` is derived on read by `app.devices.services.health_view.build_public_summary(device)` (re-exported via `app.devices.services.health`).
 
 ## Axis 1 — Readiness
 
 Readiness answers "is the saved configuration safe to start a node against?". It is derived, not stored as a single column.
 
 - Inputs: `Device.verified_at` (last successful verification), `Device.device_config` (Roku password, tvOS WDA, etc.), `Device.ip_address` for network-connected lanes, `Device.connection_type`.
-- Computed by `app.services.device_readiness.is_ready_for_use_async`.
+- Computed by `app.devices.services.readiness.is_ready_for_use_async`.
 - Surfaces as the readiness badge (`Setup Required` / `Needs Verification` / `Verified`).
 
-Readiness is the **first gate** on every state-changing API call. `node_service.start_node` (`backend/app/services/node_service.py`) refuses to start a node when readiness fails.
+Readiness is the **first gate** on every state-changing API call. The start-node path (`app.appium_nodes.routers.nodes.start_node`, and `app.appium_nodes.services.reconciler_agent.start_node`) refuses to start a node when `is_ready_for_use_async` fails.
 
 Readiness changes only when an operator-driven flow updates `verified_at` or readiness-impacting fields. There is no background loop that flips it.
 
-## Axis 2 — Operational state + hold
+## Axis 2 — Operational state
 
-Two orthogonal columns replace the legacy availability enum:
+A single authoritative enum captures what the device is doing right now:
 
 ```text
-Device.operational_state : available | busy | offline   (NOT NULL)
-Device.hold              : maintenance | reserved | null
+Device.operational_state : available | busy | offline | verifying | maintenance   (NOT NULL)
 ```
 
-Defined in `backend/app/models/device.py` as `DeviceOperationalState` and `DeviceHold`.
+Defined in `backend/app/devices/models/device.py` as `DeviceOperationalState`. There is no separate `hold` column or `DeviceHold` enum: `maintenance` is just one of the five `operational_state` values, and **reservation is orthogonal but not a column** — it is the computed `is_reserved` flag derived from the `device_reservations` table (see Reservation, below).
 
 Semantics:
 
-- **operational_state** — what the device is doing right now. Owned by node lifecycle (`available`/`offline`) and `session_sync_loop` (`busy`).
-- **hold** — what is blocking use, regardless of operational state. Owned by operator actions (`maintenance`) and run/reservation logic (`reserved`).
+- **operational_state** — what the device is doing right now. The authoritative runtime writer is the `device_intent_reconciler` loop, which derives the value via `apply_derived_state`. `verifying` is the one transient state set directly by the verification job; the four direct (non-reconciler) writers are listed below.
+- `maintenance` is the operator-hold value; `offline` is the unhealthy/node-down value; `busy` is set when a client session registers; `available` is the ready value the reconciler derives once health and node state allow.
 
-The combinations make sense in any pairing. `operational_state=offline, hold=reserved` means the agent died but the reservation is still live; the operator sees "Reserved (offline)" and the run keeps the device. `operational_state=available, hold=maintenance` means the node is up but the operator put the device on hold; the chip reads "Maintenance".
+### Reservation (computed, not a column)
+
+Reservation is tracked in a separate table, not on `Device`. Active reservations are rows in `device_reservations` (`app.devices.models.reservation.DeviceReservation`). The `is_reserved` flag is computed from those rows via `app.devices.services.reservation_query.device_is_reserved` and surfaced through the presenter. A device can be reserved while `operational_state=offline` (the agent died but the reservation is still live, so the run keeps the device) — that combination is reservation-row-plus-operational-state, not a second column on `Device`.
 
 ### Sanctioned writers
 
-Two helpers in `backend/app/services/device_state.py` own writes:
+The authoritative runtime path is `app.devices.services.state_derivation.apply_derived_state`, whose **sole production caller** is the `device_intent_reconciler` loop (`app.devices.services.intent_reconciler`). It derives `operational_state` from durable facts (health flags, session rows, `maintenance_reason`) recorded by the observation loops.
+
+The single low-level writer it (and the direct callers) go through is `set_operational_state` in `app.devices.services.state`:
 
 ```text
-set_operational_state(device, new_state, *, reason=None, publish_event=True)
-set_hold(device, new_hold, *, reason=None, publish_event=True)
+async def set_operational_state(
+    device, new_state, *, reason=None, publish_event=True,
+    severity=None, publisher: EventPublisher,
+) -> bool
 ```
 
-Both assert the device is loaded in a session, publish `device.operational_state_changed` / `device.hold_changed` on transition unless `publish_event=False`, and return `False` when the value is unchanged. A row-level lock is required before calling them. Most writers acquire it through `device_locking.lock_device` or `lock_devices`; run creation uses its matching query's `SELECT ... FOR UPDATE SKIP LOCKED` window before setting `hold=reserved`. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
+It publishes `device.operational_state_changed` via `publisher.queue_for_session` (queued for commit) unless `publish_event=False`, and returns `False` when the value is unchanged. A row-level lock is required before calling it; most writers acquire it through `app.devices.locking.lock_device` or `lock_devices`.
+
+Besides the reconciler, `set_operational_state` has **four direct (non-reconciler) production callers** for specific entry/exit states:
+
+- `app.verification.services.execution` — transient `verifying` entry state.
+- `app.sessions.service` (`register_session`) — sets `busy` on session registration.
+- `app.appium_nodes.services.heartbeat` — host-offline path that marks every device on a downed host `offline`.
+- `app.runs.service_lifecycle_release` (`release_devices`) — restores the ready operational state when a run ends.
+
+Run allocation does not write `operational_state` to reserve; it inserts rows into the `device_reservations` table. Its matching query uses a `SELECT ... FOR UPDATE SKIP LOCKED` window (`with_for_update(of=Device, skip_locked=True)` in `app.runs.service_allocator._find_matching_devices`) to lock allocatable rows before reserving them. `backend/tests/test_no_direct_device_state_writes.py` enforces the single-writer rule.
 
 ### UI projection
 
-The legacy chip, one of `available|busy|offline|maintenance|reserved`, is computed:
+The status chip is simply `operational_state`, one of the five values `available|busy|offline|maintenance|verifying`:
 
 ```text
-chip = hold if hold else operational_state
+chip = operational_state
 ```
 
-Frontend implements this in `frontend/src/lib/deviceState.ts`. Backend exposes the audit-only legacy label via `device_state.legacy_label_for_audit(device)` for log messages.
+Frontend implements this in `frontend/src/lib/deviceState.ts` (`deviceChipStatus` returns `device.operational_state`). `reserved` is **not** part of the chip projection — it is a separate server-side device-list filter value (`DEVICE_FILTER_STATUSES`) derived from active reservations.
 
 ### Transition rules
 
@@ -78,27 +93,23 @@ Frontend implements this in `frontend/src/lib/deviceState.ts`. Backend exposes t
 stateDiagram-v2
     direction LR
     [*] --> opOffline
-    state operational {
-        opOffline: offline
-        opAvailable: available
-        opBusy: busy
-        opOffline --> opAvailable: node started + ready
-        opAvailable --> opOffline: node stopped / health failed
-        opAvailable --> opBusy: client opens session
-        opBusy --> opAvailable: session ends
-    }
-    state hold {
-        noHold: null
-        holdMaintenance: maintenance
-        holdReserved: reserved
-        noHold --> holdMaintenance: operator
-        holdMaintenance --> noHold: operator
-        noHold --> holdReserved: run created
-        holdReserved --> noHold: run completes / cancelled
-    }
+    opOffline: offline
+    opAvailable: available
+    opBusy: busy
+    opVerifying: verifying
+    opMaintenance: maintenance
+    opOffline --> opAvailable: node started + ready (reconciler)
+    opAvailable --> opOffline: node stopped / health failed (reconciler)
+    opAvailable --> opBusy: client registers session
+    opBusy --> opAvailable: run release restores ready state
+    opAvailable --> opVerifying: verification job (direct)
+    opVerifying --> opAvailable: verification pass (reconciler-derived)
+    opVerifying --> opMaintenance: verification update failure (reconciler-derived)
+    opAvailable --> opMaintenance: operator hold (reconciler-derived)
+    opMaintenance --> opAvailable: operator clears hold (reconciler-derived)
 ```
 
-The two state machines run independently. Node lifecycle never touches `hold`; operator and run logic never touch `operational_state` except when a stop transition flips operational state to `offline` as a side effect of entering maintenance.
+Apart from the transient `verifying` entry state (set directly by the verification job) and the other three direct entry/exit writers (session register → `busy`, host-offline → `offline`, run release → ready), every transition is derived by the `device_intent_reconciler` loop via `apply_derived_state`. Operator and run intent are recorded as durable facts (`maintenance_reason`, `device_reservations` rows) that the reconciler folds into the derived value; they are not written to `operational_state` directly.
 
 ## Axis 3 — Hardware health (`Device.hardware_health_status`)
 
@@ -118,7 +129,7 @@ Live event surface:
 
 JSON blob on `Device` (`device.py`). Captures the auto-recovery state machine — last action, failure source, deferred-stop intent, run-exclusion, backoff, suppression reason, manual-recovery hold.
 
-- Low-level writer: `app.services.lifecycle_policy_state.write_state`.
+- Low-level writer: `app.devices.services.lifecycle_policy_state.write_state` (read side: `.state`).
 - Sanctioned service writers: `app.lifecycle.services.policy` and `app.lifecycle.services.actions`. The run-preparation failure path calls `actions.record_ci_preparation_failed`, so `run_service` does not import the low-level JSON writer directly.
 - Read by: every loop that decides whether to attempt recovery (`node_health`, `device_connectivity`, `session_viability`).
 - Surface: lifecycle summary chip, derived through `DeviceLifecyclePolicySummaryState`.
@@ -137,27 +148,29 @@ Current fields:
 | `recovery_suppressed_reason` | Why automatic recovery is currently blocked |
 | `backoff_until` / `recovery_backoff_attempts` | Automatic recovery backoff state |
 
-## Axis 5 — Node state (`AppiumNode.state`)
+## Axis 5 — Node state (desired vs observed)
 
+There is no single `AppiumNode.state` column or `NodeState` enum. The node row carries an **intent** column plus separate **observed** columns; the effective state is derived, not stored.
+
+```text
+AppiumNode.desired_state : running | stopped   (NOT NULL, DB CHECK constraint)
+observed: pid · port · active_connection_target · health_running · health_state
+          · last_observed_at · last_health_checked_at · consecutive_health_failures
 ```
-running · stopped · error
-```
 
-`backend/app/models/appium_node.py` (`NodeState`). The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
+`backend/app/appium_nodes/models/node.py` defines `AppiumDesiredState` (with `CheckConstraint("desired_state IN ('running', 'stopped')")`). The effective state is derived in `app.devices.schemas.device` (`DesiredNodeState` / `EffectiveNodeState`). The Appium node is a **separate row** (one-to-one with `Device`, FK with cascade). This separation is deliberate: a device exists without a node, but a node cannot exist without a device.
 
-Sanctioned writers:
+Sanctioned writers (defer to `app.devices.services.state_write_guard.ALLOWLIST` as the authoritative enumeration):
 
-| Writer | Transition | File |
-| --- | --- | --- |
-| `mark_node_started` | `stopped/error → running` | `node_service.py` |
-| `mark_node_stopped` | `running/error → stopped` | `node_service.py` |
-| `_process_node_health` (auto-recover branch) | `running → error`, then `error → running` on auto-restart | `node_health.py` |
-| `_stop_disconnected_node` | `running → stopped/error` after connectivity loss, depending on agent stop ack | `device_connectivity.py` |
-| `_ingest_appium_restart_events` | local agent restart events update node health and can restore `running` | `heartbeat.py` |
-| `restart_node_via_agent` | mutates `port/pid/state` together inside its own lock window | `node_service.py` |
-| `nodes` API router post-service refresh | re-applies the service result to health columns after `start/stop/restart` | `routers/nodes.py` |
+| Column(s) | Writers |
+| --- | --- |
+| `desired_state`, `desired_port` | only `app.appium_nodes.services.desired_state_writer.write_desired_state`, under the device row lock |
+| `transition_token`, `transition_deadline` | `desired_state_writer.write_desired_state`, plus direct clears in `app.appium_nodes.routers.admin` (under the device row lock) and `app.appium_nodes.services.reconciler_agent` |
+| `pid`, `port`, `active_connection_target` | reconciler writers (`app.appium_nodes.services.reconciler*`); active-target cache fill in `app.devices.services.capability` |
+| `health_running`, `health_state`, `last_health_checked_at` | `app.devices.services.health.apply_node_state_transition` (and the reconciler/heartbeat health writers per the ALLOWLIST) |
+| `last_observed_at` | the reconciler's Core bulk update (`_touch_last_observed`) |
 
-Writers outside this list are bugs unless they route through `device_health.apply_node_state_transition` while holding the documented locks. The API-router refresh rows are current implementation detail; the durable node-state transition is still owned by `node_service`.
+The intent-vs-observation split mirrors the operational-state axis. Operator routes and lifecycle flows write **desired state only** (`mark_node_started` / `mark_node_stopped` / `restart_node` live in `app.appium_nodes.services.reconciler_agent`). `apply_node_state_transition` (`app.devices.services.health`) writes only `health_running` / `health_state` / `last_health_checked_at` and then delegates state derivation to `IntentService.mark_dirty_and_reconcile`; it does not write a node `state` enum. Observation loops live at `app.appium_nodes.services.node_health` (`_process_node_health`), `app.devices.services.connectivity` (`_stop_disconnected_node`), and `app.appium_nodes.services.heartbeat` (`_ingest_appium_restart_events`).
 
 Doc 2 covers the full transition graph and the agent-acknowledgement contract that gates `running → stopped`.
 
@@ -172,38 +185,38 @@ The public health snapshot is not stored in KV. Health-relevant state lives in t
 - `Device.session_viability_error : str | null`
 - `Device.session_viability_checked_at : timestamptz | null`
 - `Device.emulator_state : str | null`
-- `AppiumNode.state` (Axis 5, lifecycle: running|stopped|error)
+- `AppiumNode.desired_state` plus observed columns (Axis 5: `pid`, `port`, `active_connection_target`; effective state derived as `EffectiveNodeState`)
 - `AppiumNode.health_running : bool | null`, `AppiumNode.health_state : text | null`
 - `AppiumNode.consecutive_health_failures : int`
 - `AppiumNode.last_health_checked_at : timestamptz | null`
 
-The public summary returned by `/api/devices` is computed by `app.services.device_health.build_public_summary(device)`, a pure function that reads the row plus `device.appium_node`. There is no separate document to keep in sync.
+The public summary returned by `/api/devices` is computed by `app.devices.services.health_view.build_public_summary(device)` (re-exported via `app.devices.services.health`), a pure function that reads the row plus `device.appium_node`. There is no separate document to keep in sync.
 
 ### Three rules the writers must obey
 
-1. **`update_device_checks` and `update_session_viability` take typed values.** `update_device_checks(healthy: bool, ...)` requires a real bool. Indeterminate probe results must short-circuit before the call. See `app.services.agent_probe_result.ProbeResult`.
-2. **Cross-link to operational state is centralised.** Failed signals can flip `available -> offline`; healthy recovery can lift `offline -> available` when readiness and node state allow. Writers use `set_operational_state` for these paths and never touch `hold`.
+1. **`update_device_checks` and `update_session_viability` take typed values.** `update_device_checks(healthy: bool, ...)` requires a real bool. Indeterminate probe results must short-circuit before the call. See `app.agent_comm.probe_result.ProbeResult`.
+2. **Cross-link to operational state is centralised.** Observation writers record durable health facts and mark the device dirty; the `device_intent_reconciler` then derives `available -> offline` on a definitive failure and lifts `offline -> available` once readiness and node state recover. Observation writers never write `operational_state` directly.
 3. **No public health KV.** The legacy health-summary and node-health counter namespaces no longer exist. `control_plane_state_store` still exists for ephemeral loop coordination and diagnostics, such as heartbeat failure counts, appium-process snapshots, connectivity "previously offline" markers, and session-viability in-progress state. Those entries are not the public device health source of truth.
 
 ### Health → operational-state cross-link
 
-Two cross-links exist intentionally:
+The cross-link is reconciler-mediated, not a pair of direct flip helpers:
 
-- `_mark_offline_for_failed_signal` — when a definitive failure arrives and the device is currently `available`, drop it to `offline` so the UI does not advertise an unhealthy device for allocation.
-- `_restore_available_for_healthy_signal` — when the derived health projection recovers (node running + checks healthy + readiness OK) and the device is `offline`, lift it back to `available`.
+- On a definitive failure the observation writer records the durable health fact (e.g. `apply_node_state_transition` / `update_session_viability` in `app.devices.services.health`, or the connectivity loop) and calls `IntentService.mark_dirty_and_reconcile` / `mark_dirty`. The reconciler then drops an `available` device to `offline` so the UI does not advertise an unhealthy device for allocation.
+- On recovery (node running + checks healthy + readiness OK) the same path marks the device dirty and the reconciler lifts it back to `available`.
 
-Both run under the device row lock and only act on `operational_state` (`available` only ↔ `offline`). They do not change `hold`, so operator/run intent is preserved.
+The `device_intent_reconciler` loop (`app.devices.services.intent_reconciler`, the sole production caller of `apply_derived_state`) owns the `available` ↔ `offline` derivation under the device row lock. Operator/run intent (`maintenance_reason`, `device_reservations` rows) is preserved because it lives in durable facts the reconciler folds in, not in a column the observation writers touch.
 
 ## The locking invariant
 
 ```text
-Any write to Device.operational_state, Device.hold, or Device.lifecycle_policy_state
+Any write to Device.operational_state or Device.lifecycle_policy_state
 MUST hold a row-level lock in the same transaction as the write.
 ```
 
-Prefer `backend/app/services/device_locking.py` (`lock_device` / `lock_devices`) for that lock. The current run allocator is the exception: `_find_matching_devices` in `run_service.py` locks allocatable rows with `SELECT ... FOR UPDATE SKIP LOCKED` before reserving them. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
+Prefer `app.devices.locking` (`backend/app/devices/locking.py`, `lock_device` / `lock_devices`) for that lock. The current run allocator is the exception: `_find_matching_devices` in `app.runs.service_allocator` locks allocatable rows with `SELECT ... FOR UPDATE SKIP LOCKED` (`with_for_update(of=Device, skip_locked=True)`) before reserving them. The reason is concrete: API mutators run on every Uvicorn worker, but background loops only run on the leader. The advisory lock keeps loops singleton; the device row lock keeps loops and API workers from racing each other on the same device.
 
-`AppiumNode.state` writes additionally hold the `appium_node_locking.lock_appium_node_for_device` row lock — both `mark_node_started` and `mark_node_stopped` acquire it after the device lock (`node_service.py`).
+`AppiumNode` desired-state writes additionally hold the `app.appium_nodes.services.locking.lock_appium_node_for_device` row lock — `mark_node_started` and `mark_node_stopped` (in `app.appium_nodes.services.reconciler_agent`) acquire it after the device lock.
 
 Multi-row mutators (group actions, bulk reconnect) must use `lock_devices` which sorts ids ascending. Mixing single-row and batch callers stays deadlock-free as long as the batch order matches.
 
@@ -216,15 +229,15 @@ flowchart LR
     classDef ui fill:#e9f7ec,stroke:#1f7a3a,color:#000
 
     subgraph Sources of truth
-      ready["device_readiness derived"]:::col
-      state["Device.operational_state and Device.hold"]:::col
+      ready["readiness derived"]:::col
+      state["Device.operational_state"]:::col
       lc["Device.lifecycle_policy_state"]:::col
       hw["Device.hardware_health_status"]:::col
-      node["AppiumNode.state"]:::col
+      node["AppiumNode desired + observed"]:::col
     end
 
     subgraph Projection
-      derived["build_public_summary(device)"]:::proj
+      derived["health_view.build_public_summary(device)"]:::proj
     end
 
     subgraph UI surfaces
@@ -252,12 +265,12 @@ The UI health chip reads the derived public summary, not a stored health documen
 | "Offline + healthy" rendered together | Derived health writer bypassed `apply_node_state_transition` | Route node health/lifecycle transitions through `device_health` |
 | Device flaps `available -> offline -> available` every minute | Loop coerced indeterminate probe result to refused | Use `ProbeResult` and short-circuit `indeterminate` (commit `a58c8e5`) |
 | Device shows `stopped` in DB but Grid still routes to it | `mark_node_stopped` ran without agent ack | Gate node-state flip on agent ack returning `True` (commits `4171847`, `bdfae85`) |
-| Operator sets `maintenance` and a loop reverts it to `available` | Loop wrote `hold` or derived chip state instead of only updating `operational_state` | Loop must call `set_operational_state` and leave `hold` untouched |
+| Operator sets `maintenance` and a loop reverts it to `available` | A loop wrote `operational_state` directly instead of recording a durable fact and letting the reconciler derive it | Observation loops must record durable facts and call `IntentService.mark_dirty` / `mark_dirty_and_reconcile`; only the reconciler (and the four sanctioned direct callers) write `operational_state` |
 | Two workers race on the same device | Mutator skipped the row lock | Acquire row lock before any device-state/lifecycle write |
 
 ## What this doc does NOT cover
 
-- The full state machine for `AppiumNode.state` and the agent acknowledgement contract — see Doc 2.
+- The full state machine for the Appium node (desired vs effective state) and the agent acknowledgement contract — see Doc 2.
 - The cadence and contracts of background loops — see Doc 3.
 - The HTTP shapes between backend and agent — see Doc 4.
 - Owner allocations, port pools, and Grid sessions — see Doc 5.

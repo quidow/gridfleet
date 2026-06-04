@@ -32,11 +32,13 @@ Create a production build:
 npm run build
 ```
 
-Run Playwright end-to-end tests:
+Run the Playwright end-to-end tests against a mocked backend (self-contained, no infrastructure required):
 
 ```bash
-npm run test:e2e
+npm run test:e2e:mocked
 ```
+
+The full `npm run test:e2e` also runs the live suite (`npm run test:e2e:live`). The live suite auto-starts a uvicorn backend and the Vite dev server, but still requires a reachable Postgres database and the backend's `uv` environment, so it fails without them.
 
 ## Main Areas
 

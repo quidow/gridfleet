@@ -7,10 +7,10 @@ GridFleet uses independent component releases. Each component — backend, agent
 Each component uses SemVer tags with a component prefix:
 
 ```text
-backend-v0.2.0
-agent-v0.1.1
-frontend-v0.3.0
-testkit-v0.2.0
+gridfleet-backend-v0.2.0
+gridfleet-agent-v0.1.1
+gridfleet-frontend-v0.3.0
+gridfleet-testkit-v0.2.0
 ```
 
 Until a component reaches `v1.0.0`, it is in public preview:
@@ -34,7 +34,7 @@ Allowed scopes: `backend`, `agent`, `frontend`, `testkit`, `docker`, `ci`, `docs
 
 Breaking changes use `!` after the scope: `feat(backend)!: description`.
 
-release-please reads commits for the release-managed component scopes (`backend`, `agent`, `frontend`, `testkit`) to decide which components need a version bump and what type (patch, minor, major).
+release-please routes each commit to a component by the file paths it changed, mapped to the package directories in `.release-please-config.json` (`backend/`, `agent/`, `frontend/`, `testkit/`) — not by the conventional-commit scope. A commit that touches files under `agent/` bumps the agent component regardless of its scope (a `deps`- or `backend`-scoped commit modifying `agent/` files still bumps the agent release). The commit type (`fix`/`perf`/`deps`/`feat`/`!`) then determines the bump magnitude (patch, minor, major) for that component.
 
 Use one of these types when a component-scoped commit should create a release note and version bump:
 
@@ -54,7 +54,7 @@ Use a release-please type when the change should appear in the component CHANGEL
 2. release-please opens a Release PR per component with pending changes.
 3. The Release PR updates the component's `CHANGELOG.md`, version in `pyproject.toml` or `package.json`, and the `.release-please-manifest.json`.
 4. Merging the Release PR creates a GitHub release and a component-prefixed git tag.
-5. Tag-triggered CI publishes PyPI packages for `agent` and `testkit`.
+5. In the same push-to-main run, the `publish-agent` and `publish-testkit` jobs in `.github/workflows/release-please.yml` publish the `agent` and `testkit` PyPI packages when release-please reports `release_created` for that component (they check out the new tag ref but are not triggered by a tag-push event).
 
 ## Changelogs
 

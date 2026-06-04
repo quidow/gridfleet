@@ -1,10 +1,10 @@
 # Security Policy
 
-GridFleet controls Appium nodes, Selenium Grid routing, host agents, driver-pack execution, and optional host web terminals. Treat every deployment as infrastructure with privileged access to device hosts.
+GridFleet controls Appium nodes, Selenium Grid routing, host agents, and driver-pack execution. Treat every deployment as infrastructure with privileged access to device hosts.
 
 ## Supported Versions
 
-Security fixes are accepted against the `main` branch until formal release channels are defined. If tagged releases are introduced later, this policy should be updated with a supported-version table.
+GridFleet releases each component independently via release-please (per-component tags such as `gridfleet-backend-v*`, `gridfleet-agent-v*`, `gridfleet-frontend-v*`, and `gridfleet-testkit-v*`; the agent and testkit are published to PyPI). Security fixes target the `main` branch and are delivered in the next release of each affected component. Only the latest release of each component, plus `main`, is supported. See [docs/reference/release-policy.md](docs/reference/release-policy.md).
 
 ## Reporting A Vulnerability
 
@@ -25,7 +25,7 @@ The maintainer will acknowledge valid reports as soon as practical, coordinate a
 
 ## Security Boundaries
 
-GridFleet is designed for trusted lab and CI networks. Do not expose the backend, Selenium Grid, agent ports, or host web terminal directly to the public internet.
+GridFleet is designed for trusted lab and CI networks. Do not expose the backend, Selenium Grid, or agent ports directly to the public internet.
 
 Use the production auth gate, TLS, and network controls for shared or production-style deployments:
 
@@ -41,7 +41,6 @@ The following areas deserve special care in reports, reviews, and deployments:
 
 - Host agents can start Appium and Selenium Grid relay processes on device hosts.
 - Uploaded driver-pack adapter wheels execute Python code on agent hosts without a sandbox.
-- The host web terminal is remote shell access and must stay disabled unless explicitly needed.
 - Selenium Grid is not an authentication boundary.
 - Device configuration can contain sensitive setup fields such as developer passwords.
 - Logs, event streams, screenshots, and database backups may contain device identifiers or lab topology details.

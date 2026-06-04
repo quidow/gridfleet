@@ -1,6 +1,6 @@
 # Hosts And Host Detail Operations
 
-This guide covers the day-to-day host workflows after a host exists in the system: approval, inspection, discovery, driver sync, and deletion.
+This guide covers the day-to-day host workflows after a host exists in the system: approval, inspection, discovery, driver-pack status review, and deletion.
 
 For initial enrollment and self-registration behavior, start with [Host Onboarding](host-onboarding.md).
 
@@ -16,9 +16,9 @@ Use `Hosts` when you need fleet-wide host operations:
 Use `Host Detail` when you need one host's full operational picture:
 
 - host identity and heartbeat history
-- capabilities
+- live host tool versions and driver-pack dependencies
 - devices currently attached to that host
-- per-host Appium driver sync status
+- per-host driver-pack status, including installed-versus-desired Appium driver versions
 - host-scoped discovery and import flow
 
 ## Host States
@@ -32,7 +32,7 @@ The current operator-facing host states are:
 - `offline`
   - the host exists but heartbeat checks currently consider it unreachable
 
-`pending` hosts offer approve/reject actions. Accepted hosts offer discovery and, from Host Detail, driver sync.
+`pending` hosts offer approve/reject actions. Accepted hosts offer discovery and, from Host Detail, per-pack driver doctor checks.
 
 ## Hosts Page Workflow
 
@@ -50,39 +50,47 @@ The row-level discovery action is useful when you want a fast diff without leavi
 
 ## Host Detail Workflow
 
-Host Detail is the operational checklist for one machine.
+Host Detail is the operational checklist for one machine. It is a tabbed page.
 
-Main sections:
+Tabs:
 
-- `Host Info`
-  - IP, OS, agent port, status, version, heartbeat, created time
-- `Actions`
-  - approve/reject if pending, or `Discover Devices` if accepted
-- `Capabilities`
-  - platform and tool summary reported by the agent
-- `Diagnostics`
-  - per-host circuit-breaker state, latest managed Appium processes snapshot, and recent agent-local Appium recovery events
+- `Overview`
+  - `Host Info` (IP, OS, agent port, status, version, heartbeat, created time), with an agent-version notice when the version is below the configured minimum or recommended version
+  - the resource strip and circuit-breaker card
+  - the `Host Tools` panel (Node and Node Provider) and, when at least one desired pack declares them, the `Driver Pack Dependencies` panel
+  - resource telemetry
+  - an `Actions` card (Approve/Reject) that appears only while the host is pending
 - `Devices`
-  - current attached device records for that host
-- `Tool Versions`
-  - Node provider, Node, and iOS helper versions
-- `Appium Drivers`
-  - required versus installed driver versions plus `Sync Drivers`
+  - current attached device records for that host, with a `Discover Devices` button in the tab header
+- `Drivers`
+  - per-pack driver status (see [Driver Status](#driver-status))
+- `Plugins`
+  - host plugin status
+- `Environment`
+  - per-host tool environment variables
+- `Agent Logs`
+  - recent agent-local log output
+- `Events`
+  - recent host events
+
+Legacy `?tab=diagnostics` redirects to `Overview` and `?tab=logs` redirects to `Agent Logs`.
 
 Use this page before large discovery/import work, after agent upgrades, or when many devices on one host start failing together.
 
 ## Diagnostics
 
-Host Detail now includes a dedicated `Diagnostics` section backed by `GET /api/hosts/{host_id}/diagnostics`.
+The `GET /api/hosts/{host_id}/diagnostics` payload is consumed across two tabs rather than a single dedicated section:
 
-Use it when you need to answer:
+- the `Overview` tab renders the circuit-breaker card from `circuit_breaker`
+- the `Devices` tab uses the managed Appium process snapshot (`appium_processes.running_nodes`) to show node state, including unmapped process ports
+
+Use these surfaces when you need to answer:
 
 - is the shared backend agent circuit currently open for this host
 - when did this host last report managed Appium process state
 - which Appium ports are currently reported as running, including unmapped process ports
-- whether the agent recently detected a local Appium crash, recovered it, or exhausted local restart attempts
 
-This surface is diagnostic only. It does not add manual diagnostics controls.
+These surfaces are diagnostic only. They do not add manual diagnostics controls.
 
 ## Agent Version Notices
 
@@ -94,10 +102,12 @@ Current outcomes:
   - no warning
 - `Outdated`
   - host version is below `agent.min_version`
+- `Update available`
+  - host version is at or above `agent.min_version` but below the configured `agent.recommended_version` (the backend sets `agent_update_available`); it renders as an `Update available` table badge and an `Agent update available` detail notice
 - `Unknown`
   - the host reported a version the manager could not parse against the configured minimum
 
-An outdated or unknown host can still appear operational, but operator trust should be lower until the agent is updated or corrected.
+An outdated, update-available, or unknown host can still appear operational, but operator trust should be lower until the agent is updated or corrected.
 
 ## Discovery From Host Surfaces
 
@@ -117,17 +127,16 @@ Operators can:
 
 For the device-side meaning of those discovery results, continue to [Device Intake And Discovery](device-intake-and-discovery.md).
 
-## Driver Sync
+## Driver Status
 
-Host Detail shows the current required-versus-installed driver picture for that host.
+The `Drivers` tab shows a per-pack table for that host: pack status and release, the installed-versus-desired Appium driver version (with a `wanted: <version>` drift indicator when they differ), the isolated runtime, and per-pack and per-feature health.
 
-Use per-host `Sync Drivers` when:
+Per-pack and per-feature actions:
 
-- one host missed a previous rollout
-- capabilities changed on one machine
-- troubleshooting shows mismatched or missing drivers only on that host
+- `Run Doctor` (`POST /api/hosts/{host_id}/driver-packs/{pack_id}/doctor`) re-runs that pack's doctor checks and expands the per-check results
+- per-feature action buttons run the feature actions declared in the pack manifest
 
-Use driver pack reconciliation from Settings when installed host runtimes should converge with the active pack catalog.
+There is no per-host driver-sync action. Driver runtime convergence is driven by driver-pack reconciliation from Settings, which is how installed host runtimes converge with the active pack catalog.
 
 ## Deleting A Host
 
@@ -149,19 +158,19 @@ That means host cleanup is usually:
 
 1. review IP, OS, and version
 2. approve it if expected
-3. wait for discovery and driver sync, or run discovery manually
+3. wait for discovery and driver-pack reconciliation, or run discovery manually
 
 ### One host looks unhealthy
 
 1. compare `Last Heartbeat`
-2. check version warning and capabilities
+2. check the version notice and the `Host Tools` panel on the Overview tab
 3. confirm whether the issue is host-wide by reviewing the host's device list
 4. run discovery only after agent reachability is restored
 
 ### You just updated driver definitions
 
 1. open the affected host in Host Detail
-2. use `Sync Drivers` to reconcile that host's Appium driver runtime with the current catalog
+2. open the `Drivers` tab to review per-pack status and installed-versus-desired Appium driver versions, and use `Run Doctor` on a pack to re-check its health; runtime convergence is driven by driver-pack reconciliation from Settings
 
 ## Related Guides
 
