@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -213,6 +213,47 @@ def _plugin_install_command(appium: str, name: str, version: str, source: str, p
     return cmd
 
 
+_RUNTIME_COMPLETE_MARKER = ".runtime-complete"
+
+
+def _write_runtime_marker(env: RuntimeEnv) -> None:
+    """Record a successful install. Written LAST so a partial/crashed install
+    never carries the marker and falls through to a clean reinstall."""
+    home = Path(env.appium_home)
+    home.mkdir(parents=True, exist_ok=True)
+    (home / _RUNTIME_COMPLETE_MARKER).write_text(json.dumps(asdict(env)))
+
+
+def _adopt_runtime_from_disk(rid: str, appium_home: str) -> RuntimeEnv | None:
+    """Rebuild a RuntimeEnv from a completed install left by a previous agent
+    process. The dir name is the spec hash, so contents match the spec by
+    construction. Returns None (→ reinstall) on any validation failure."""
+    try:
+        data = json.loads((Path(appium_home) / _RUNTIME_COMPLETE_MARKER).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    appium_bin = data.get("appium_bin")
+    if not isinstance(appium_bin, str) or not Path(appium_bin).is_file() or not os.access(appium_bin, os.X_OK):
+        return None
+    server_package = data.get("server_package")
+    server_version = data.get("server_version")
+    driver_versions = data.get("driver_versions")
+    plugin_statuses = data.get("plugin_statuses")
+    if not isinstance(server_package, str) or not isinstance(server_version, str):
+        return None
+    if not isinstance(driver_versions, dict) or not isinstance(plugin_statuses, list):
+        return None
+    return RuntimeEnv(
+        runtime_id=rid,
+        appium_home=appium_home,
+        appium_bin=appium_bin,
+        server_package=server_package,
+        server_version=server_version,
+        driver_versions=driver_versions,
+        plugin_statuses=plugin_statuses,
+    )
+
+
 class AppiumRuntimeManager:
     def __init__(self, runner: NpmRunner | None = None, root_dir: Path | None = None) -> None:
         self._runner = runner or RealNpmRunner()
@@ -251,6 +292,10 @@ class AppiumRuntimeManager:
                 if rid in self._installed:
                     continue
                 appium_home = str(self._root / rid)
+                adopted = _adopt_runtime_from_disk(rid, appium_home)
+                if adopted is not None:
+                    self._installed[rid] = adopted
+                    continue
                 try:
                     bin_path = await self._runner.install_appium(spec.server_package, spec.server_version, appium_home)
                     for drv_name, drv_version, drv_source, drv_github_repo in spec.drivers:
@@ -292,7 +337,7 @@ class AppiumRuntimeManager:
                                     "blocked_reason": None,
                                 }
                             )
-                    self._installed[rid] = RuntimeEnv(
+                    env = RuntimeEnv(
                         runtime_id=rid,
                         appium_home=appium_home,
                         appium_bin=bin_path,
@@ -305,6 +350,8 @@ class AppiumRuntimeManager:
                         },
                         plugin_statuses=plugin_statuses,
                     )
+                    _write_runtime_marker(env)
+                    self._installed[rid] = env
                 except Exception as exc:
                     failed_rids[rid] = f"rid={rid} appium_home={appium_home}: {exc}"
 
