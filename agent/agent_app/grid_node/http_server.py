@@ -59,36 +59,45 @@ def build_app(
         slot.id: slot.stereotype.to_dict() for slot in (slots or [])
     }
 
+    def _node_status_dict() -> dict[str, object]:
+        if node_status_payload is not None:
+            return node_status_payload()
+        return {
+            "message": "GridFleet Python Grid Node",
+            "slots": [
+                {
+                    "id": slot.slot_id,
+                    "state": slot.state,
+                    "sessionId": slot.session_id,
+                }
+                for slot in state.snapshot().slots
+            ],
+        }
+
     async def status(_request: Request) -> JSONResponse:
         # Selenium hub's `RemoteNode.getStatus` parses /status as
         # `{"value": {"node": <NodeStatus>, "ready": <bool>}}`. The W3C-style
         # node summary (with `message`/`slots`) used during early development
         # is not enough — registration silently fails without a NodeStatus.
-        snapshot = state.snapshot()
-        node_status = (
-            node_status_payload()
-            if node_status_payload is not None
-            else {
-                "message": "GridFleet Python Grid Node",
-                "slots": [
-                    {
-                        "id": slot.slot_id,
-                        "state": slot.state,
-                        "sessionId": slot.session_id,
-                    }
-                    for slot in snapshot.slots
-                ],
-            }
-        )
         return JSONResponse(
             {
                 "value": {
                     "ready": True,
                     "message": "GridFleet Python Grid Node",
-                    "node": node_status,
+                    "node": _node_status_dict(),
                 }
             }
         )
+
+    async def node_status(_request: Request) -> JSONResponse:
+        # Selenium's router fetches this endpoint once per node URI to size
+        # its per-command read timeout (`HandleSession.fetchNodeTimeout`) and
+        # parses the body as a BARE NodeStatus — no `{"value": ...}` envelope.
+        # A wrapped body fails `NodeStatus.fromJson` hub-side; failed fetches
+        # are deliberately not cached, so the hub re-fetches on every proxied
+        # command and falls back to its default read timeout instead of this
+        # node's sessionTimeout.
+        return JSONResponse(_node_status_dict())
 
     async def owner(request: Request) -> JSONResponse:
         session_id = request.path_params["session_id"]
@@ -144,17 +153,32 @@ def build_app(
         )
         return response
 
-    async def delete_session(request: Request) -> Response:
-        session_id = request.path_params["session_id"]
+    def _tracked_session_info(session_id: str) -> tuple[bool, dict[str, object], str | None]:
         # Capture session capabilities + start time from NodeState BEFORE the
-        # upstream proxy call, since `state.release()` clears them afterward.
-        prev_caps: dict[str, object] = {}
-        prev_start: str | None = None
+        # upstream call, since `state.release()` clears them afterward.
         for slot in state.snapshot().slots:
             if slot.session_id == session_id:
-                prev_caps = dict(slot.session_capabilities or {})
-                prev_start = slot.session_start_iso
-                break
+                return True, dict(slot.session_capabilities or {}), slot.session_start_iso
+        return False, {}, None
+
+    def _session_closed_payload(session_id: str, caps: dict[str, object], start_iso: str | None) -> dict[str, object]:
+        # Selenium SessionClosedEvent expects a SessionClosedData object —
+        # not just a SessionId. Missing fields cause the listener to drop
+        # the event silently.
+        now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        return {
+            "sessionId": session_id,
+            "reason": "QUIT_COMMAND",
+            "nodeId": node_id or "",
+            "nodeUri": node_uri or "",
+            "capabilities": caps,
+            "startTime": start_iso or now_iso,
+            "endTime": now_iso,
+        }
+
+    async def delete_session(request: Request) -> Response:
+        session_id = request.path_params["session_id"]
+        _, prev_caps, prev_start = _tracked_session_info(session_id)
         try:
             response = await _proxy_http(request)
         except Exception:
@@ -171,25 +195,42 @@ def build_app(
             )
         if 200 <= response.status_code < 300 or response.status_code in {404, 410}:
             state.release(session_id)
-            now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            # Selenium SessionClosedEvent expects a SessionClosedData object —
-            # not just a SessionId. Missing fields cause the listener to drop
-            # the event silently.
-            payload: dict[str, object] = {
-                "sessionId": session_id,
-                "reason": "QUIT_COMMAND",
-                "nodeId": node_id or "",
-                "nodeUri": node_uri or "",
-                "capabilities": prev_caps,
-                "startTime": prev_start or now_iso,
-                "endTime": now_iso,
-            }
-            await _publish_safely(publisher, event_envelope(EventType.SESSION_CLOSED, payload))
+            await _publish_safely(
+                publisher,
+                event_envelope(EventType.SESSION_CLOSED, _session_closed_payload(session_id, prev_caps, prev_start)),
+            )
         return response
+
+    async def stop_node_session(request: Request) -> Response:
+        # Selenium's force-stop route (StopNodeSession). The distributor
+        # escalates here when its client-style DELETE /session/{id} returned
+        # non-200 during orphaned-session cleanup — which includes the relay's
+        # own 502 branch above, where the local slot is already free but the
+        # upstream Appium session may still be alive. Termination is therefore
+        # unconditional: best-effort upstream DELETE (issued directly, since
+        # proxying the inbound /se/grid/node/* path verbatim would 404 on
+        # Appium), always release the slot, and answer the bare 200
+        # `RemoteNode.stop` expects — it decodes any non-200 as an error.
+        session_id = request.path_params["session_id"]
+        owned, prev_caps, prev_start = _tracked_session_info(session_id)
+        try:
+            await http_client.delete(f"{appium_upstream}/session/{session_id}", timeout=proxy_timeout)
+        except httpx.HTTPError:
+            logger.warning("stop_node_session upstream delete failed for %s", session_id, exc_info=True)
+        state.release(session_id)
+        if owned:
+            await _publish_safely(
+                publisher,
+                event_envelope(EventType.SESSION_CLOSED, _session_closed_payload(session_id, prev_caps, prev_start)),
+            )
+        return Response(status_code=200)
 
     async def drain(_request: Request) -> JSONResponse:
         state.mark_drain()
-        await _publish_safely(publisher, event_envelope(EventType.NODE_DRAIN, {}))
+        # Selenium NodeDrainStarted expects a bare NodeId string (matching the
+        # service-side drain publishers); the hub's LocalGridModel listener
+        # cannot deserialize `{}` and would drop the DRAINING flip.
+        await _publish_safely(publisher, event_envelope(EventType.NODE_DRAIN, node_id or ""))
         return JSONResponse({"value": True})
 
     async def hub_create_session(request: Request) -> Response:
@@ -321,17 +362,19 @@ def build_app(
     return Starlette(
         routes=[
             Route("/status", status, methods=["GET"]),
-            # Selenium's hub checks node liveness via the node-API status
-            # endpoint on (at least) every proxied command. Without this
-            # route the request fell through the catch-all and was proxied
-            # to Appium, which 404'd it — one phantom Appium round-trip per
-            # WebDriver command.
-            Route("/se/grid/node/status", status, methods=["GET"]),
+            # Selenium's hub fetches the node-API status endpoint to learn
+            # the node's sessionTimeout (memoized per node URI on success).
+            # Without this route the request fell through the catch-all and
+            # was proxied to Appium, which 404'd it — one phantom Appium
+            # round-trip per WebDriver command. Unlike /status, the response
+            # is a bare NodeStatus with no {"value": ...} envelope.
+            Route("/se/grid/node/status", node_status, methods=["GET"]),
             Route("/session", create_session, methods=["POST"]),
             Route("/session/{session_id}", delete_session, methods=["DELETE"]),
             Route("/se/grid/node/session", hub_create_session, methods=["POST"]),
+            Route("/se/grid/node/session/{session_id}", stop_node_session, methods=["DELETE"]),
             Route("/se/grid/node/drain", drain, methods=["POST"]),
-            Route("/se/grid/node/owner/{session_id}", owner, methods=["POST"]),
+            Route("/se/grid/node/owner/{session_id}", owner, methods=["GET"]),
             Route("/{path:path}", command_proxy, methods=["GET", "POST", "PUT", "DELETE", "PATCH"]),
             WebSocketRoute("/{path:path}", websocket_proxy),
         ]
