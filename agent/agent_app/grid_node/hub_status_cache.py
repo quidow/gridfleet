@@ -36,8 +36,17 @@ async def _fetch_hub_nodes(hub_status_url: str) -> list[dict[str, Any]] | None:
     return [node for node in nodes if isinstance(node, dict)]
 
 
-async def get_hub_nodes(hub_status_url: str) -> list[dict[str, Any]] | None:
-    """Return the hub's node list, or ``None`` when the hub is unreachable/unparseable."""
+async def get_hub_nodes(hub_status_url: str, *, fresh: bool = False) -> list[dict[str, Any]] | None:
+    """Return the hub's node list, or ``None`` when the hub is unreachable/unparseable.
+
+    ``fresh=True`` bypasses the cached snapshot (used to confirm a node's
+    absence definitively — a cached snapshot may predate the node's own
+    NODE_ADDED) and replaces the cache entry for subsequent callers.
+    """
+    if fresh:
+        nodes = await _fetch_hub_nodes(hub_status_url)
+        _cache.put(hub_status_url, nodes)
+        return nodes
 
     async def _fetch() -> list[dict[str, Any]] | None:
         return await _fetch_hub_nodes(hub_status_url)

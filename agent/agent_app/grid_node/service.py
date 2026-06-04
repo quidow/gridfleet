@@ -41,6 +41,15 @@ async def _probe_hub_registration(hub_status_url: str, node_id: str) -> bool | N
     nodes = await hub_status_cache.get_hub_nodes(hub_status_url)
     if nodes is None:
         return None
+    if any(node.get("id") == node_id for node in nodes):
+        return True
+    # The shared snapshot may have been fetched before the hub ingested this
+    # node's own NODE_ADDED (fresh-node race) — absence is only definitive on
+    # a cache-bypassing fetch, otherwise a just-registered node would fire a
+    # spurious re-registration self-heal.
+    nodes = await hub_status_cache.get_hub_nodes(hub_status_url, fresh=True)
+    if nodes is None:
+        return None
     return any(node.get("id") == node_id for node in nodes)
 
 

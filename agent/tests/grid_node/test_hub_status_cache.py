@@ -88,3 +88,18 @@ async def test_urls_are_cached_independently(monkeypatch: pytest.MonkeyPatch) ->
     await hub_status_cache.get_hub_nodes("http://hub-a:4444")
     await hub_status_cache.get_hub_nodes("http://hub-b:4444")
     assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_fresh_fetch_bypasses_and_updates_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _FakeClient(_FakeResponse(200, {"value": {"nodes": [{"id": "n1"}]}}))
+    _install(monkeypatch, client)
+    await hub_status_cache.get_hub_nodes("http://hub:4444")  # populate cache
+    client.response = _FakeResponse(200, {"value": {"nodes": [{"id": "n1"}, {"id": "n2"}]}})
+    fresh = await hub_status_cache.get_hub_nodes("http://hub:4444", fresh=True)
+    assert fresh == [{"id": "n1"}, {"id": "n2"}]
+    assert len(client.calls) == 2
+    # the fresh result replaced the cached snapshot for subsequent callers
+    cached = await hub_status_cache.get_hub_nodes("http://hub:4444")
+    assert cached == [{"id": "n1"}, {"id": "n2"}]
+    assert len(client.calls) == 2

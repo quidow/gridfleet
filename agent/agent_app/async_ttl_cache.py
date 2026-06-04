@@ -5,6 +5,11 @@ request once per node/device (hub status probes, discovery sweep fallbacks):
 concurrent callers for the same key await one fetch, and the result —
 including a failed-fetch ``None`` — is served from cache until the TTL
 expires.
+
+Keys must come from a bounded set (URLs, pack tuples): per-key locks are kept
+for the cache's lifetime and are only dropped by ``clear()``. A caller keying
+on an unbounded space (device ids, connection targets) would leak one Lock per
+distinct key — use a ref-counted helper like ``pack.tarball_fetch`` instead.
 """
 
 from __future__ import annotations
@@ -35,6 +40,10 @@ class AsyncTTLCache[K: Hashable, V]:
             value = await fetch()
             self._entries[key] = (self._now() + self._ttl_seconds, value)
             return value
+
+    def put(self, key: K, value: V) -> None:
+        """Store ``value`` for ``key`` directly, starting a fresh TTL window."""
+        self._entries[key] = (self._now() + self._ttl_seconds, value)
 
     def clear(self) -> None:
         """Drop all entries (test hook / explicit invalidation)."""
