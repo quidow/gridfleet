@@ -829,6 +829,35 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
     assert manager.get_logs(4724) == []  # brand-new port: file deleted on failure
 
 
+async def test_start_log_maintenance_sweeps_orphans_and_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_app.appium import log_files
+
+    monkeypatch.setattr("agent_app.appium.process.LOG_MAINTENANCE_INTERVAL_SEC", 0.01)
+    monkeypatch.setattr(log_files, "MAX_LOG_BYTES", 50)
+    monkeypatch.setattr(log_files, "TAIL_READ_BYTES", 10)
+    manager = AppiumProcessManager()
+    _seed_log_file(4723, "orphan from previous agent process")
+
+    manager.start_log_maintenance()
+    assert not appium_log_path(4723).exists()  # orphan swept synchronously
+
+    _seed_log_file(4724, "x" * 200)  # oversized file appearing while running
+    await asyncio.sleep(0.05)
+    assert appium_log_path(4724).stat().st_size == 10  # truncated by the loop
+
+    await manager.shutdown()
+    assert manager._log_maintenance_task is None
+
+
+async def test_start_log_maintenance_is_idempotent() -> None:
+    manager = AppiumProcessManager()
+    manager.start_log_maintenance()
+    first_task = manager._log_maintenance_task
+    manager.start_log_maintenance()
+    assert manager._log_maintenance_task is first_task
+    await manager.shutdown()
+
+
 async def test_get_logs_reads_file_tail() -> None:
     manager = AppiumProcessManager()
     _seed_log_file(4723, "one", "two", "three")

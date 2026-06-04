@@ -28,9 +28,12 @@ from agent_app.appium.exceptions import (
     StartupTimeoutError,
 )
 from agent_app.appium.log_files import (
+    LOG_MAINTENANCE_INTERVAL_SEC,
     appium_log_path,
     open_log_file,
+    sweep_log_dir,
     tail_lines,
+    truncate_oversized_logs,
 )
 from agent_app.config import agent_settings
 from agent_app.grid_node.config import GridNodeConfig
@@ -307,6 +310,7 @@ class AppiumProcessManager:
         self._grid_supervisors: dict[int, GridNodeSupervisorHandle] = {}
         self._info: dict[int, AppiumProcessInfo] = {}
         self._launch_specs: dict[int, AppiumLaunchSpec] = {}
+        self._log_maintenance_task: asyncio.Task[None] | None = None
         self._appium_watch_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_attempts: dict[int, collections.deque[float]] = {}
@@ -328,6 +332,21 @@ class AppiumProcessManager:
 
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
+
+    def start_log_maintenance(self) -> None:
+        """Sweep orphaned Appium log files and start the periodic size-cap pass."""
+        sweep_log_dir()
+        if self._log_maintenance_task is not None and not self._log_maintenance_task.done():
+            return
+        self._log_maintenance_task = asyncio.create_task(self._log_maintenance_loop())
+
+    async def _log_maintenance_loop(self) -> None:
+        while True:
+            await asyncio.sleep(LOG_MAINTENANCE_INTERVAL_SEC)
+            try:
+                truncate_oversized_logs()
+            except Exception as exc:  # maintenance must never kill the loop
+                logger.warning("appium log maintenance pass failed: %s", sanitize_log_value(exc))
 
     def iter_grid_supervisors(self) -> list[tuple[int, GridNodeSupervisorHandle]]:
         """Snapshot of (port, supervisor) pairs; safe to iterate while mutating."""
@@ -1187,6 +1206,9 @@ class AppiumProcessManager:
             for task in task_map.values():
                 task.cancel()
             task_map.clear()
+        if self._log_maintenance_task is not None:
+            self._log_maintenance_task.cancel()
+            self._log_maintenance_task = None
 
     async def _fetch_appium_status(self, port: int) -> dict[str, Any] | None:
         client = http_client.get_client()
