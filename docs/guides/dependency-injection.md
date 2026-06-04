@@ -14,7 +14,8 @@ composition root wires all implementations at startup.
 | `app/{domain}/services_container.py` | Frozen dataclass holding a domain's service instances |
 | `app/{domain}/protocols.py` | Protocol definitions consumed by the domain |
 | `app/{domain}/dependencies.py` | FastAPI `Depends()` wiring for routers |
-| `app/core/protocols.py` | Cross-domain Protocol definitions (settings, emit) |
+| `app/core/protocols.py` | Cross-domain Protocol definitions (settings reader) |
+| `app/events/protocols.py` | Event-domain Protocols (EventPublisher / EventReader / EventSubscriber) |
 | `app/dependencies.py` | App-level `AppServicesDep` for routers that span domains |
 
 ## How It Works
@@ -24,9 +25,8 @@ composition root wires all implementations at startup.
 `app/main.py` lifespan calls `compose_app()` once, which:
 
 1. Creates concrete service instances (EventBus, SettingsService, etc.)
-2. Patches module-level singletons for backward compatibility
-3. Packs everything into `AppServices` -- a frozen dataclass tree
-4. Stores `AppServices` on `app.state.services`
+2. Packs everything into `AppServices` -- a frozen dataclass tree
+3. Stores `AppServices` on `app.state.services`
 
 ### Request Path
 
@@ -73,7 +73,7 @@ class CircuitBreakerProtocol(Protocol):
 @dataclass(frozen=True, slots=True)
 class AgentCommServices:
     http_pool: AgentHttpPool
-    circuit_breaker: AgentCircuitBreaker
+    circuit_breaker: CircuitBreakerProtocol
 ```
 
 ### 3. Wire in `compose_app()`
@@ -101,8 +101,12 @@ AgentCommServicesDep = Annotated["AgentCommServices", Depends(get_agent_comm_ser
 
 ```python
 # tests/agent_comm/test_protocols.py
+from unittest.mock import AsyncMock
+
+from tests.fakes import FakeSettingsReader
+
 def test_agent_circuit_breaker_satisfies_protocol() -> None:
-    breaker = AgentCircuitBreaker()
+    breaker = AgentCircuitBreaker(publisher=AsyncMock(), settings=FakeSettingsReader())
     assert isinstance(breaker, CircuitBreakerProtocol)
 ```
 
@@ -141,11 +145,12 @@ app.dependency_overrides[get_agent_comm_services] = lambda: test_services
 - **Protocols live in the consumer**, not the provider. If `hosts` depends on
   the circuit breaker, the Protocol goes in `app/hosts/protocols.py` (or
   `app/core/protocols.py` if shared widely).
-- **`composition.py` is the only file that imports concrete classes** from
-  multiple domains. Domain code imports Protocols or its own types only.
-- **Module-level singletons are deprecated.** They exist for backward
-  compatibility during migration. New code should receive dependencies through
-  containers or function arguments.
+- **`composition.py` and the `main.py` lifespan together form the composition
+  surface** -- the only places that import concrete classes across multiple
+  domains. Other domain code imports Protocols or its own types only.
+- **Module-level service singletons have been removed.** Services are obtained
+  only through the `AppServices` containers or via function/constructor
+  arguments.
 - **Containers are frozen dataclasses** with `slots=True`. They are immutable
   after construction.
 - **Every Protocol must have a conformance test** using `isinstance()` with the

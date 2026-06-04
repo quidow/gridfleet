@@ -48,6 +48,8 @@ Guide pages should explain:
   - Building and uploading custom driver pack tarballs.
 - `frontend-development.md`
   - Frontend dev setup, conventions, and design-system usage.
+- `dependency-injection.md`
+  - Backend Protocol-based dependency injection, the composition root (`app/composition.py`), and SOLID service-wiring conventions.
 - `security.md`
   - Threat model, auth gate, network boundaries, and pack trust.
 - `testkit-integration.md`

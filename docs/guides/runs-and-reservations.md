@@ -9,7 +9,7 @@ A run is the reservation record that locks devices for one CI or test workflow.
 The manager uses it to:
 
 - select matching devices
-- mark those devices as `reserved`
+- reserve those devices (tracked via the orthogonal `is_reserved` flag)
 - track heartbeat and TTL safety limits
 - expose the reservation on Devices, Dashboard, and Runs pages
 - release devices automatically when the run ends or expires
@@ -31,7 +31,7 @@ Completing, cancelling, expiring, or force-releasing the run clears the reservat
 
 ## Where Operators See Runs
 
-`Test Runs` is the primary surface for investigating execution flows. Start there when a CI job failed or behaved unexpectedly. The `Sessions` page remains available as an advanced explorer for cross-run debugging and for sessions that predate or fall outside a run (use `Sessions → Sessions (advanced)` in the sidebar).
+`Test Runs` is the primary surface for investigating execution flows. Start there when a CI job failed or behaved unexpectedly. The `Sessions` page remains available as an advanced explorer for cross-run debugging and for sessions that predate or fall outside a run (use the `Sessions` link in the sidebar).
 
 Use these surfaces together:
 
@@ -39,7 +39,7 @@ Use these surfaces together:
   - list, filter, sort, cancel, or force release
 - `Run Detail`
   - inspect timeline, TTL, heartbeat, error, reserved-device membership, and the Appium sessions that ran under this execution
-- `Sessions (advanced explorer)`
+- `Sessions`
   - cross-run history, ad-hoc sessions, and sessions with no associated run
 - `Devices` and `Device Detail`
   - see `Reserved by <run>` ownership on affected devices
@@ -51,7 +51,7 @@ Use these surfaces together:
 The normal reservation path today is:
 
 1. create a run through `/api/runs`
-2. matching devices become `reserved`
+2. matching devices are reserved (`is_reserved` becomes true; `operational_state` stays `available`/`busy`)
 3. the run starts in `preparing`
 4. CI prepares the reserved devices
 5. if one reserved device fails preparation, CI can call `/api/runs/{id}/devices/{device_id}/preparation-failed` to exclude only that device and preserve the exact failure reason
@@ -73,14 +73,14 @@ Run creation supports two allocation modes per requirement:
 | `cancelled` | operator-initiated stop and release | `cancel` or `force-release` |
 | `expired` | safety timeout released the fleet | missed heartbeat or TTL exceeded |
 
-The UI contract also recognizes `pending`, `completing`, and `failed`, but the current run service does not normally transition runs into those states during standard operator/CI flow.
+The UI contract also recognizes `pending` and `failed`, but the current run service does not normally transition runs into those states during standard operator/CI flow.
 
 ## Preparation Sessions
 
 CI often opens one or more Appium sessions on reserved devices while the run is still `preparing` — installing builds, warming caches, signing in, or running smoke checks. GridFleet does not link those sessions to the run:
 
 - `Session.run_id` is `NULL` for any session that starts while the owning reservation's run is in `preparing`.
-- These sessions are visible under **Sessions (advanced)** only. They never appear in Run Detail.
+- These sessions are visible under **Sessions** only. They never appear in Run Detail.
 - The run state does not auto-flip on observed session activity. CI must call `POST /api/runs/{id}/active` between the preparation stage and the real test stage. The testkit exposes this as `GridFleetClient.signal_active(run_id)`.
 
 If a run reaches its TTL or heartbeat budget still in `preparing` (the client never called `/active`), the reaper emits a `run.never_activated` event (severity `warning`) before the usual `run.expired` event, and sets the run's `error` to a message stating the run was never activated. This surfaces misconfigured CI in Run Detail's error banner.
@@ -89,7 +89,7 @@ If a run reaches its TTL or heartbeat budget still in `preparing` (the client ne
 
 While a run owns a device:
 
-- the device availability becomes `reserved`
+- the device is marked reserved (the `is_reserved` flag); its operational state stays `available` or `busy`
 - node start, stop, and restart are blocked for direct device actions
 - the Devices and Device Detail surfaces show which run owns the reservation
 - lifecycle logic can exclude one device from the run if that device becomes unhealthy, while the rest of the run continues
@@ -100,7 +100,7 @@ If CI explicitly reports a preparation failure for a reserved device, the manage
 
 - excludes that device from the run
 - preserves the exact CI message on the reservation as the exclusion reason
-- marks the device `offline` and unhealthy
+- places the device into `maintenance` and marks it unhealthy
 - leaves healthy reserved siblings attached to the run
 
 ## Runs Page Workflow
@@ -197,4 +197,4 @@ Those defaults come from Settings and can be overridden per run create request.
 - [Settings And Operational Controls](settings-and-operational-controls.md)
 - [Dashboard And Triage](dashboard-and-triage.md)
 - [Lifecycle, Maintenance, And Recovery](lifecycle-maintenance-and-recovery.md)
-- [CI Integration Guide](../ci-integration.md)
+- [CI Integration Guide](ci-integration.md)

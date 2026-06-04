@@ -18,9 +18,12 @@ Session truth notes:
 ## Override Precedence
 
 When GridFleet builds Appium capabilities, later sources override earlier ones:
-manager-owned base capabilities, manifest default capabilities, manifest `device_fields_schema`
-capabilities from `device_config`, user `device_config.appium_caps`, and finally live
-parallel-resource allocations. Existing stored `appium_caps` are treated as user overrides.
+manifest default capabilities, manifest `device_fields_schema` capabilities from
+`device_config`, user `device_config.appium_caps`, live parallel-resource allocations,
+and finally the manager-owned base capabilities (`platformName`, `appium:udid`,
+`appium:deviceName`, `appium:gridfleet:deviceId`, `appium:gridfleet:deviceName`), which take
+the highest precedence (`appium:automationName` is likewise written last by the builder
+when the pack resolves one). Existing stored `appium_caps` are treated as user overrides.
 
 ## API Endpoint
 
@@ -113,7 +116,7 @@ Where a driver supports both real and virtual hardware, the platform id stays th
   "appium:platformVersion": "17.4",
   "appium:wdaLocalPort": 8100,
   "appium:mjpegServerPort": 9100,
-  "appium:derivedDataPath": "/tmp/gridfleet/wda/example-ios-001"
+  "appium:derivedDataPath": "/tmp/gridfleet/derived-data/9f8c2a1b4d6e47f0a1b2c3d4e5f60718"
 }
 ```
 
@@ -129,7 +132,7 @@ Where a driver supports both real and virtual hardware, the platform id stays th
   "appium:simulatorRunning": true,
   "appium:wdaLocalPort": 8101,
   "appium:mjpegServerPort": 9101,
-  "appium:derivedDataPath": "/tmp/gridfleet/wda/example-ios-sim-001"
+  "appium:derivedDataPath": "/tmp/gridfleet/derived-data/3b1e7d20c8a94f15b6027e9a4c5d1f83"
 }
 ```
 
@@ -147,7 +150,7 @@ Where a driver supports both real and virtual hardware, the platform id stays th
   "appium:updatedWDABundleId": "com.test.WebDriverAgentRunner",
   "appium:wdaLocalPort": 8102,
   "appium:mjpegServerPort": 9102,
-  "appium:derivedDataPath": "/tmp/gridfleet/wda/example-tvos-001"
+  "appium:derivedDataPath": "/tmp/gridfleet/derived-data/c47a9f02e1b84d36a5f0918c2d7e4b6a"
 }
 ```
 
@@ -165,7 +168,7 @@ Note: The Appium process must have `APPIUM_XCUITEST_PREFER_DEVICECTL=1` set in i
   "appium:simulatorRunning": true,
   "appium:wdaLocalPort": 8103,
   "appium:mjpegServerPort": 9103,
-  "appium:derivedDataPath": "/tmp/gridfleet/wda/example-tvos-sim-001"
+  "appium:derivedDataPath": "/tmp/gridfleet/derived-data/7d2f5a08b3c64e91a0e8146f3b9c5d27"
 }
 ```
 
@@ -173,7 +176,7 @@ Note: The Appium process must have `APPIUM_XCUITEST_PREFER_DEVICECTL=1` set in i
 
 ```json
 {
-  "platformName": "Roku",
+  "platformName": "roku",
   "appium:automationName": "Roku",
   "appium:udid": "192.168.1.80",
   "appium:deviceName": "Roku Ultra",
@@ -182,24 +185,24 @@ Note: The Appium process must have `APPIUM_XCUITEST_PREFER_DEVICECTL=1` set in i
 }
 ```
 
-Note: `appium:ip` is auto-injected from the device's `connection_target` / network metadata for Roku devices. `appium:password` is auto-injected from the device's `device_config["roku_dev_password"]` if present.
+Note: `appium:ip` is auto-injected from the device's `connection_target` / network metadata for Roku devices. `appium:password` is auto-injected from the device's `device_config["roku_password"]` if present.
 
 ## Manual Example Request Capabilities
 
 The `testkit/examples/` files do not fetch `GET /api/devices/{id}/capabilities` first. They make a request through Selenium Grid using the pytest plugin `pack_id` + `platform_id` selector plus the minimum extra capabilities needed for that lane.
 
-Typical request capabilities for the baseline examples:
+The baseline examples parametrize the `appium_driver` fixture with a `pack_id` + `platform_id` selector (plus an extra cap only where the lane needs one). The testkit derives `appium:platform`, `platformName`, and `appium:automationName` itself; the examples never pass those literally. The selectors used by `testkit/examples/`:
 
-| Example lane | Minimal request capabilities |
+| Example lane | Fixture selector |
 | --- | --- |
-| Android Mobile | `{"appium:platform": "android_mobile", "appium:automationName": "UiAutomator2"}` |
-| Android TV | `{"appium:platform": "android_tv", "appium:automationName": "UiAutomator2"}` |
-| Fire TV | `{"appium:platform": "firetv_real", "appium:automationName": "UiAutomator2"}` |
-| iOS simulator | `{"appium:platform": "ios", "appium:automationName": "XCUITest", "appium:device_type": "simulator"}` |
-| tvOS real device | `{"appium:platform": "tvos", "appium:automationName": "XCUITest", "appium:device_type": "real_device"}` |
-| Roku | `{"appium:platform": "roku_network", "appium:automationName": "Roku"}` |
+| Android Mobile | `{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}` |
+| Android TV | `{"pack_id": "appium-uiautomator2", "platform_id": "android_tv"}` |
+| Fire TV | `{"pack_id": "appium-uiautomator2", "platform_id": "firetv_real"}` |
+| iOS simulator | `{"pack_id": "appium-xcuitest", "platform_id": "ios", "appium:device_type": "simulator"}` |
+| tvOS real device | `{"pack_id": "appium-xcuitest", "platform_id": "tvos"}` |
+| Roku | `{"pack_id": "appium-roku-dlenroc", "platform_id": "roku_network"}` |
 
-`appium:platform` is the Grid stereotype key for the selected pack platform. Run and reservation APIs use `pack_id` plus `platform_id`; raw Appium capabilities use the stereotype generated from the resolved driver platform.
+The derived `appium:platform` is the Grid stereotype key for the selected pack platform. Run and reservation APIs use `pack_id` plus `platform_id`; raw Appium capabilities use the stereotype generated from the resolved driver platform.
 
 Manual request routing notes:
 
@@ -218,7 +221,7 @@ The Selenium Grid slot stereotype is the **routing surface**. It carries only th
 - `appium:gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
 - Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
 
-Keys that describe the device for Appium's benefit (`appium:manufacturer`, `appium:model`, `appium:gridfleet:deviceName`, `appium:ip`, sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the Grid stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` plus Selenium's `NodeStatus.availability` cover the routing-suppression cases.
+Keys that describe the device for Appium's benefit (`appium:ip` and sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the Grid stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` plus Selenium's `NodeStatus.availability` cover the routing-suppression cases.
 
 ## Manager-Owned Session Caps
 

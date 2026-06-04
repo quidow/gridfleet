@@ -103,25 +103,27 @@ Driver and plugin management is split on purpose:
 - **Drivers**
   - Synced from the manager registry through the host agent.
   - Driver sync runs Appium doctor afterward and stores the latest result on the host.
-  - Some drivers do not expose doctor checks; the host UI shows that as not applicable instead of as a failure.
+  - Some drivers do not expose doctor checks; the host UI shows that as "No doctor checks" (neutral text) instead of as a failure.
 - **Plugins**
   - Installed or removed to match the manager registry.
   - Plugin activation is separate and controlled by `appium.default_plugins`.
   - Installing or uninstalling a plugin does not restart already-running Appium nodes.
 
-## Missing-Prerequisite Warnings
+## Detected Host Tools
 
-Hosts report `missing_prerequisites` from registration and periodic capability refresh.
+The agent does not currently emit automated missing-prerequisite warnings. The `missing_prerequisites` list reported from registration and capability refresh is always empty.
 
-Those warnings are shown in the host surfaces so operators can distinguish:
+What the agent does report is a `tools` map of successfully detected tool versions, gathered from the loaded driver-pack adapters during registration and periodic capability refresh. Tools that are absent are simply omitted from that map rather than flagged in a missing list.
 
-- a host that is enrolled but cannot yet run a lane
-- a host that still needs manual setup
+So operators infer missing host-level tooling indirectly:
+
+- a tool such as `adb` or `java` that you expect is absent from the reported `tools` map
+- the host's supported lanes do not include a platform you prepared the host for
 
 Current remediation behavior:
 
 - Appium runtimes are reconciled by the desired driver-pack loop.
-- Missing host-level tools such as `go_ios`, `java`, `adb`, Xcode, or the Android SDK are informational and require operator setup.
+- Missing host-level tools such as `go_ios`, `java`, `adb`, Xcode, or the Android SDK require operator setup, using the verification checks below.
 
 ## Verification Checklist
 
@@ -173,6 +175,6 @@ What good looks like:
 
 - [Host Onboarding](host-onboarding.md)
 - [Hosts And Host Detail Operations](hosts-and-host-detail-operations.md)
-- [Deployment Guide](../deployment.md)
+- [Deployment Guide](deployment.md)
 - [Environment Reference](../reference/environment.md)
 - [Settings Reference](../reference/settings.md)

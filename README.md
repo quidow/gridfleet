@@ -40,7 +40,7 @@ gridfleet/
 ├── testkit/       Supported Python pytest/Appium helper package
 ├── docker/        Development and production compose files
 ├── docs/          Guides, references, and runbooks
-└── scripts/       Demo, backup/restore, and driver-pack helpers
+└── scripts/       Backup/restore, agent install, and driver-pack helpers
 ```
 
 ## Quick Start
@@ -151,7 +151,7 @@ npm run dev
 Host agents can be bootstrapped from the published Python package:
 
 ```bash
-VERSION=0.3.0 sudo -E bash scripts/install-agent.sh --manager-url http://MANAGER_IP:8000
+VERSION=0.3.0 bash scripts/install-agent.sh --manager-url http://MANAGER_IP:8000
 ```
 
 ## Validation

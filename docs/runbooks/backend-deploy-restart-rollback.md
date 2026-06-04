@@ -9,7 +9,7 @@ export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
 export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 ```
 
-`/health/live`, `/health/ready` stay open and do not need `-u`.
+`/metrics`, `/docs`, `/redoc`, and `/openapi.json` are also gated when auth is enabled, so they need `-u` too. Only `/health/live` and `/health/ready` stay open and do not need `-u`.
 
 ## 1. Pre-deploy checklist
 
@@ -47,7 +47,7 @@ docker compose --env-file .env -f docker-compose.prod.yml restart backend
 ```bash
 curl -s http://localhost:8000/health/live | python -m json.tool
 curl -s http://localhost:8000/health/ready | python -m json.tool
-curl -s http://localhost:8000/metrics | egrep '^(pending_jobs|active_sessions|background_loop_runs_total|background_loop_errors_total)'
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | egrep '^(pending_jobs|active_sessions|background_loop_runs_total|background_loop_errors_total)'
 curl -s http://localhost:4444/status | python -m json.tool
 curl -I http://localhost:3000/
 ```

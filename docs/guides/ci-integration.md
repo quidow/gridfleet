@@ -104,7 +104,7 @@ Practical notes:
 
 - size the worker pool from the `devices` array returned by `POST /api/runs`
 - keep the run heartbeat active while workers are running
-- call `/api/runs/{id}/active` after preparation, or let session sync activate the run after the first reserved session starts
+- call `/api/runs/{id}/ready` or `/api/runs/{id}/active` after preparation — this is required; session sync never auto-activates a run. Appium sessions registered while the run is still `preparing` are not linked to it (run_id stays NULL), and a run left in `preparing` is eventually expired with the message that `/api/runs/{id}/active` was never signaled.
 - resolve the assigned manager device row from the session connection target with `/api/devices/by-connection-target/{target}` when a test needs device config or metadata
 - finish with the normal `complete` or `cancel` call; there is no per-worker release call
 
@@ -124,7 +124,7 @@ If CI discovers that one reserved device failed setup, it can report that exact 
 
 - exclude only that device from the run
 - preserve the exact CI-supplied message as the exclusion reason
-- mark the device `offline` and unhealthy for operator visibility
+- place the device into `maintenance` and mark it unhealthy for operator visibility
 - keep healthy reserved siblings attached to the same run
 
 Use:
@@ -221,12 +221,12 @@ jobs:
         run: curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
 
       - name: Run tests
+        env:
+          GRID_URL: ${{ env.GRID_URL }}          # hub URL, no /api suffix
+          GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
+          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
         run: |
-          pytest tests/firetv/ \
-            -n $WORKERS \
-            --grid-url $GRID_URL \
-            --gridfleet-url $GRIDFLEET_URL \
-            --gridfleet-run-id $RUN_ID
+          pytest tests/firetv/ -n $WORKERS  # -n requires pytest-xdist (not a testkit dep)
 
       - name: Release devices
         if: always()
@@ -334,12 +334,12 @@ jobs:
         run: curl -sf -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" -X POST $GRIDFLEET_URL/api/runs/$RUN_ID/ready
 
       - name: Run ${{ matrix.platform }} tests
+        env:
+          GRID_URL: ${{ env.GRID_URL }}          # hub URL, no /api suffix
+          GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
+          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
         run: |
-          pytest ${{ matrix.test_dir }} \
-            -n ${{ matrix.workers }} \
-            --grid-url $GRID_URL \
-            --gridfleet-url $GRIDFLEET_URL \
-            --gridfleet-run-id $RUN_ID
+          pytest ${{ matrix.test_dir }} -n ${{ matrix.workers }}  # -n requires pytest-xdist (not a testkit dep)
 
       - name: Release devices
         if: always()
@@ -387,7 +387,9 @@ worker_count = len(devices)
 # Start background heartbeat
 heartbeat_thread = client.start_heartbeat(run_id, interval=30)
 
-# Register cleanup (runs on exit, SIGTERM, SIGINT)
+# Register atexit cleanup: by default this only stops the heartbeat thread; it does
+# NOT complete/cancel the run and installs no SIGTERM/SIGINT handlers. Pass
+# on_exit="complete" / install_signal_handlers=True to opt into run finalization.
 register_run_cleanup(client, run_id, heartbeat_thread)
 
 # ... run your preparation scripts ...

@@ -19,7 +19,7 @@ A WebDriver session is what consumes a node. A `Session` row is the manager's re
 The split matters because the **reapers are different**:
 
 - `session_sync_loop` reaps `Session` rows whose Grid session no longer exists.
-- Run release paths that end a run abnormally (`cancel_run`, `force_release`, `expire_run` through `run_reaper_loop`) explicitly call `grid_service.terminate_grid_session(...)` on each running session before clearing the reservation. Normal `complete_run` does not terminate Grid sessions; the test client/operator owns normal WebDriver teardown.
+- Run release paths that end a run abnormally (`cancel_run`, `force_release`, `expire_run` through `run_reaper_loop`) explicitly call `grid_service.terminate_session(...)` on each running session before clearing the reservation. Normal `complete_run` does not terminate Grid sessions; the test client/operator owns normal WebDriver teardown.
 - Operator stop/restart of a node never touches Grid sessions directly — Appium's own teardown is what cancels them.
 
 This doc focuses on resource ownership across those three.
@@ -34,27 +34,17 @@ appium_node_resource_claims(
     host_id         uuid not null,
     capability_key  text not null,
     port            integer not null,
-    node_id         uuid null references appium_nodes(id) on delete cascade,
-    owner_token     text null,
+    node_id         uuid not null references appium_nodes(id) on delete cascade,
     claimed_at      timestamptz not null,
-    expires_at      timestamptz null,
-    unique (host_id, capability_key, port),
-    check (
-      (node_id is not null and owner_token is null and expires_at is null)
-      or
-      (node_id is null and owner_token is not null and expires_at is not null)
-    )
+    unique (host_id, capability_key, port)
 );
 ```
 
-Two flavours of row:
+Every claim is a **managed claim**: it is inserted already bound to a `node_id`. Lifetime is tied to `AppiumNode` — drop the node and the claim cascades via `ON DELETE CASCADE`. A confirmed stop can release claims early via `appium_node_resource_service.release_managed(node_id)`, or release a single capability via `release_capability(node_id, capability_key)`.
 
-- **Managed claim** — `node_id` set, `owner_token` null. Lifetime is tied to `AppiumNode`. Drop the node and the claim cascades. Confirmed stop can release early via `appium_node_resource_service.release_managed(node_id)`.
-- **Temporary claim** — `node_id` null, `owner_token` set, `expires_at` set. Used during the start window for managed starts and verification probes. Released by `release_temporary(host_id, owner_token)` on teardown, or reaped by `appium_resource_sweeper_loop` after the TTL.
+Besides the `(host_id, capability_key, port)` unique constraint, a partial unique index enforces one managed row per `(node_id, capability_key)`.
 
-Additional partial unique indexes enforce one temporary row per `(host_id, owner_token, capability_key)` and one managed row per `(node_id, capability_key)`.
-
-Every reservation begins as temporary. The token is `device:<uuid>` for first-time managed starts and refresh-of-managed verifications, or `temp:<host>:<identity>` for verification of a not-yet-saved transient device. Once the agent ACKs the start, `mark_node_started` upserts the `AppiumNode` row, then calls `transfer_temporary_to_managed(host_id, owner_token, node_id)` in the same transaction to rebind the claim under the FK.
+There is no temporary/promotion step: ports are reserved directly under `node_id` by `reserve_appium_port` (which calls `appium_node_resource_service.reserve(host_id, capability_key, start_port, node_id)`) around the agent start. `mark_node_started` upserts the `AppiumNode` row and promotes non-port capabilities via `set_node_extra_capability`.
 
 Non-port managed capabilities, such as XCUITest `appium:derivedDataPath`, live in `appium_nodes.live_capabilities` and are merged with port claims by `appium_node_resource_service.get_capabilities(node_id)`.
 
@@ -74,10 +64,11 @@ Only the first range is the "main" Appium port. The other two come into play aft
 
 ### `candidate_ports`
 
-`candidate_ports` in `backend/app/services/node_service.py`:
+`candidate_ports` in `backend/app/appium_nodes/services/reconciler_allocation.py`:
 
 ```text
-1. used = ports of AppiumNode rows where state = running
+1. used = ports of AppiumNode rows whose process is live
+            (pid AND active_connection_target set) OR desired_state = running
             JOIN Device WHERE Device.host_id = :host_id
 2. excluded = caller-provided exclude set (e.g. ports we already tried this attempt)
 3. for port in [start..end]:
@@ -103,13 +94,13 @@ flowchart LR
     F -->|"no"| G["raise NodePortConflictError"]
 ```
 
-`_start_with_owner` (`node_service.py`) iterates candidates until one succeeds or the pool is exhausted. The rule from commit `54707d1` — agent drops stale node state on a managed-port conflict — is what makes this loop converge: an agent that was bouncing requests on the same port should accept the next attempt instead of permanently rejecting.
+`_start_for_node` (`backend/app/appium_nodes/services/reconciler_agent.py`) iterates candidates until one succeeds or the pool is exhausted. The rule from commit `54707d1` — agent drops stale node state on a managed-port conflict — is what makes this loop converge: an agent that was bouncing requests on the same port should accept the next attempt instead of permanently rejecting.
 
-The operator `restart_node` path marks the old node stopped after an acknowledged stop, so the old port is available and is passed as the preferred candidate. The loop-driven `restart_node_via_agent` path does **not** mark the node stopped between stop and start; the DB row remains `state=running`, so `candidate_ports` intentionally excludes the old port and the restart binds to a different free port. Doc 2 covers why this avoids racing an unconfirmed orphan.
+The operator `restart_node` path marks the old node stopped after an acknowledged stop, so the old port is available and is passed as the preferred candidate. The loop-driven `restart_node_via_agent` path does **not** mark the node stopped between stop and start; the DB row keeps `desired_state=running` (and its observed process may still be live), so `candidate_ports` intentionally excludes the old port and the restart binds to a different free port. Doc 2 covers why this avoids racing an unconfirmed orphan.
 
 ## Grid sessions and Selenium Grid registration
 
-Each Appium node is paired on the agent host with an in-process Python Grid Node service that registers the Appium server with the central hub over Selenium Grid's event bus. The backend sees this only indirectly via `grid_service.get_grid_status()` (`backend/app/services/grid_service.py`), which fetches `/status` from the hub.
+Each Appium node is paired on the agent host with an in-process Python Grid Node service that registers the Appium server with the central hub over Selenium Grid's event bus. The backend sees this only indirectly via `grid_service.get_status()` (`backend/app/grid/service.py`), which fetches `/status` from the hub.
 
 Two consequences for the lifecycle:
 
@@ -117,11 +108,11 @@ Two consequences for the lifecycle:
 
 2. **Stopped Appium does not guarantee no Grid registration.** Killing the Appium process should also tear down the Python Grid Node, but only if the agent acknowledged the stop. An orphan Appium plus its still-registered Grid Node means Grid will keep routing sessions to it. This is the operational reality behind the commit `4171847` rule: do not flip the DB to `stopped` without ack, because Grid is still using the slot.
 
-`available_node_device_ids` (`grid_service.py`) extracts the set of GridFleet-tagged device IDs from `/status` so loops can see "what does Grid think is available right now" without scraping HTML.
+`available_node_device_ids` (`backend/app/grid/service.py`) extracts the set of GridFleet-tagged device IDs from `/status` so loops can see "what does Grid think is available right now" without scraping HTML.
 
 ### Reaping a Grid session
 
-`grid_service.terminate_grid_session(session_id)` issues `DELETE /session/{id}` to the hub. A 404 is treated as success (the session was already gone). Used by:
+`grid_service.terminate_session(session_id)` issues `DELETE /session/{id}` to the hub. A 404 is treated as success (the session was already gone). Used by:
 
 - `run_service.cancel_run`
 - `run_service.force_release`
@@ -142,34 +133,34 @@ sequenceDiagram
     participant Reaper as run_reaper_loop
 
     Client->>Run: POST /api/runs (capabilities, count)
-    Run->>Pg: insert TestRun and DeviceReservation rows
-    Run->>Pg: SELECT FOR UPDATE SKIP LOCKED then set_hold(reserved)
-    Note over Pg: Devices gain reservation hold
+    Run->>Pg: insert TestRun row
+    Run->>Pg: SELECT FOR UPDATE SKIP LOCKED then insert DeviceReservation rows
+    Note over Pg: Devices become reserved (computed is_reserved)
     Client->>Grid: WebDriver POST /session against reserved device
     Grid-->>Client: session id
     Sync->>Grid: GET /status
     Grid-->>Sync: list of active sessions
-    Sync->>Pg: insert Session row, link to run, set operational_state=busy
+    Sync->>Pg: insert Session row, link to run, mark device dirty
     Client->>Grid: DELETE /session/{id}
     Sync->>Grid: GET /status
     Grid-->>Sync: empty
-    Sync->>Pg: mark Session ended, set operational_state=available/offline
-    Note over Pg: Reservation hold remains while run is active
+    Sync->>Pg: mark Session ended, mark device dirty
+    Note over Pg: Reservation rows remain while run is active
 
     alt Run completes normally
       Run->>Pg: TestRun.state=completed
-      Run->>Pg: clear DeviceReservation rows and clear hold
+      Run->>Pg: clear DeviceReservation rows
     else Run abandoned (no signal in time)
-      Reaper->>Grid: terminate_grid_session for each device's open session
-      Reaper->>Pg: TestRun.state expired or failed, clear reservations and hold
+      Reaper->>Grid: terminate_session for each device's open session
+      Reaper->>Pg: TestRun.state expired or failed, clear reservations
     end
 ```
 
 Key facts:
 
-- `hold = reserved` is the **run's** hold on a device, separate from any active session. It stays `reserved` between sessions while the run is alive.
-- `hold: null → reserved` happens when the run is created. `reserved → null` happens when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
-- `operational_state: available → busy` is the per-session flip done by `session_sync_loop`. The reverse sets operational state back to `available` or `offline` and leaves any reservation hold untouched.
+- A **reservation** is the run's hold on a device, tracked as a `DeviceReservation` row (the computed `is_reserved` flag derives from it), separate from any active session. The row stays in place between sessions while the run is alive.
+- A `DeviceReservation` row is inserted when the run is created (`is_reserved` becomes true). It is cleared when the run completes/cancels OR when the device is excluded from the run for health reasons (lifecycle policy).
+- `operational_state: available → busy` is the per-session change, but `session_sync_loop` does not write it directly. On a new session it locks the device and marks it dirty via `IntentService`; the `device_intent_reconciler` derives `busy` (running session present). When the session ends, `session_sync_loop` again marks the device dirty and the reconciler derives `available` or `offline`, leaving any reservation row untouched.
 - `node_health_loop` polls Appium `/status` on every running node — reserved or busy included — because the probe is a process-liveness check, not a session probe.
 
 ### Run-routed Grid sessions
@@ -182,11 +173,10 @@ The agent publishes a slot stereotype with `gridfleet:run_id` set to the active 
 
 | Symptom | Likely leak | Fix surface |
 | --- | --- | --- |
-| `start_node` keeps failing with "already in use" but the DB row says `stopped` | Released a claim while orphan still running; allocator handed the port back | Release typed claims only on confirmed stop |
+| `start_node` keeps failing with "already in use" but the DB row says `desired_state=stopped` | Released a claim while orphan still running; allocator handed the port back | Release typed claims only on confirmed stop |
 | Two relays registered for the same device on Grid | Restart issued before stop ack; orphan + new node both alive | Refuse to start during restart unless stop is acknowledged (commit `4171847`) |
 | Device shows `reserved` forever after run abandoned | `run_reaper_loop` did not run (leader down? frozen?) or grid session terminate failed | Inspect leader state; manually `DELETE /session/{id}` via Grid hub or use lifecycle exclusion |
 | `Session` row stays `running` after Grid session ended | `session_sync_loop` skipped a tick | Reaper retries on next cycle; only escalate if persistent |
-| Temporary claim exists but no `AppiumNode` row | `mark_node_started` never ran (start failed after reserve but before promotion) | `appium_resource_sweeper_loop` reaps after `appium.reservation_ttl_sec`; confirmed cleanup can call `release_temporary` |
 | Port range exhausted | Confirmed stop did not release claims, or old managed rows were not deleted | `candidate_ports` raises `NodeManagerError("No free ports available...")`. Audit `appium_node_resource_claims` |
 
 The recurring pattern: the device row, the `AppiumNode` row, typed resource claims, and the agent process must all agree on "is this device served right now". When they disagree, you have a leak. The split-brain rules in Doc 2 keep them aligned at write time; the reapers in Doc 3 catch what slips through.
@@ -195,11 +185,11 @@ The recurring pattern: the device row, the `AppiumNode` row, typed resource clai
 
 For new code that touches these resources, follow this order:
 
-1. **Acquire.** Insert temporary resource claims BEFORE asking the agent to start. Promote only after agent ACK and node-row upsert.
+1. **Acquire.** Reserve resource claims (bound to the `node_id`) BEFORE asking the agent to start, via `reserve_appium_port` / `appium_node_resource_service.reserve`.
 2. **Verify.** After agent says OK, poll `/agent/appium/{port}/status` until ready. Only then write DB state.
-3. **Persist.** `mark_node_started` writes `AppiumNode`, `Device.operational_state`, and node health via `device_health.apply_node_state_transition` in one transaction. The public summary is derived on read.
+3. **Persist.** `mark_node_started` writes the `AppiumNode` row and node-health fields and calls `device_health.apply_node_state_transition`, which conditionally restores `Device.operational_state` (offline → available) only when health signals are healthy — it does not set `operational_state` directly. The public summary is derived on read.
 4. **Release on stop.** Agent ack required for `release_managed`, `mark_node_stopped`, and the node-health transition.
-5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_grid_session` + state restore, not direct DB writes that bypass the helpers.
+5. **Reap on abandonment.** Loop-driven cleanup uses `terminate_session` + state restore, not direct DB writes that bypass the helpers.
 
 If a code path skips one of these steps it will eventually leak, and the symptoms will look exactly like the failure-mode rows above.
 

@@ -213,7 +213,7 @@ cd docker
 docker compose up --build -d
 ```
 
-This uses `docker/docker-compose.yml`, which keeps the old development-friendly defaults and optional `pgadmin` profile.
+This uses `docker/docker-compose.yml`, which keeps the old development-friendly defaults and an optional pgAdmin service gated behind the `debug` Compose profile (enable it with `docker compose --profile debug up`).
 
 Main local endpoints:
 

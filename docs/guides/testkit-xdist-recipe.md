@@ -7,10 +7,9 @@ This recipe shows one pytest-xdist shape for GridFleet runs:
 - the controller process creates and owns the run
 - the controller owns the heartbeat
 - workers read shared run state
-- each test claims one device and releases it in a `finally` path
-- device-level failures release with cooldown
+- workers resolve their grid-routed device handle per test (no per-worker claim or release; Selenium Grid routes sessions to the run's tagged nodes via `gridfleet:run_id`)
 
-The policy decisions are intentionally visible. Tune the run-state path, retry budget, cooldown TTL, and device-level error classifier for your test suite.
+The policy decisions are intentionally visible. Tune the run-state path for your test suite.
 
 ## Inputs
 
@@ -57,6 +56,7 @@ def pytest_configure(config: pytest.Config) -> None:
     if hasattr(config, "workerinput"):
         config.stash[GRIDFLEET_RUN] = json.loads(RUN_STATE_PATH.read_text())
         config.stash[GRIDFLEET_CLIENT] = GridFleetClient()
+        os.environ["GRIDFLEET_RUN_ID"] = config.stash[GRIDFLEET_RUN]["id"]
         return
 
     client = GridFleetClient()
@@ -66,6 +66,7 @@ def pytest_configure(config: pytest.Config) -> None:
         ttl_minutes=int(os.environ.get("GRIDFLEET_RUN_TTL_MIN", "60")),
     )
     RUN_STATE_PATH.write_text(json.dumps(run))
+    os.environ["GRIDFLEET_RUN_ID"] = run["id"]
 
     heartbeat = client.start_heartbeat(run["id"])
     cleanup = register_run_cleanup(client, run["id"], heartbeat)
@@ -100,7 +101,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 Tune this:
 
-- Prefer `PYTEST_XDIST_TESTRUNUID` for local xdist runs because it is shared across workers.
+- `PYTEST_XDIST_TESTRUNUID` is exported only inside worker subprocesses (xdist `remote.py`), so the controller process — the one that writes the run-state file — never sees it and falls back to `os.getpid()`. Writer (controller) and readers (workers) then compute different default `RUN_STATE_PATH` values, so workers will not find the controller-written file. For xdist runs, set `GRIDFLEET_RUN_STATE_PATH` explicitly, or derive a shared path the controller can also compute (the controller can read the run id via `config.getoption("testrunuid")`).
 - Set `GRIDFLEET_RUN_STATE_PATH` explicitly in CI when your launcher controls shared workspace paths.
 - The `os.getpid()` fallback prevents non-xdist tempfile collisions; it is not the worker-sharing contract.
 - The controller writes the run-state file once before workers read it. Do not write run state from workers.
@@ -129,7 +130,7 @@ def allocated_device(request: pytest.FixtureRequest):
 
 Tune this:
 
-- The testkit's `appium_driver` fixture injects `gridfleet:run_id`, so Selenium Grid routes the session to a node reserved for the run.
+- The testkit's `appium_driver` fixture injects `gridfleet:run_id` from the `GRIDFLEET_RUN_ID` env var (default `"free"`). Export `GRIDFLEET_RUN_ID = run["id"]` in `pytest_configure` (both the controller and worker branches above) so Selenium Grid routes the session to a node reserved for the run; otherwise sessions land on `free`, untagged nodes.
 - Resolve device metadata after the session starts, when the driver exposes the runtime connection target.
 - Device-level failures should be reported with `report_preparation_failure(...)` before the session starts, or by normal session outcome reporting after the session exists.
 

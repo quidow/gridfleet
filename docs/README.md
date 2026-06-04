@@ -47,6 +47,16 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - React/Tailwind architectural standards and UI development workflows.
 - `guides/security.md`
   - Threat models, network boundary definitions, and authorization controls.
+- `guides/driver-pack-features-and-sidecars.md`
+  - Driver pack feature declarations and sidecar service lifecycle.
+- `guides/driver-pack-tarball-upload.md`
+  - Building and uploading custom driver-pack tarballs.
+- `guides/testkit-integration.md`
+  - Integrating gridfleet_testkit into pytest suites.
+- `guides/testkit-xdist-recipe.md`
+  - Running testkit tests in parallel with pytest-xdist.
+- `guides/dependency-injection.md`
+  - Backend Protocol-based dependency-injection conventions and the composition root.
 - `guides/README.md`
   - Guide index and placement rules for future operator docs.
 
@@ -62,6 +72,22 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - Delivery inspection, retry, test-event, and disable/fix flow for webhooks.
 - `runbooks/backend-deploy-restart-rollback.md`
   - Manual deployment, restart, and rollback flow for the production compose stack.
+- `runbooks/appium-node-desync.md`
+  - Recovery when Appium nodes desync from the Grid hub.
+- `runbooks/device-export-import.md`
+  - Bulk device export and re-import workflow.
+- `runbooks/device-ip-ping-recovery.md`
+  - IP connectivity recovery for unreachable devices.
+- `runbooks/grid-version.md`
+  - Checking and upgrading the Selenium Grid version.
+- `runbooks/heartbeat-flapping.md`
+  - Diagnosis and resolution of flapping agent heartbeats.
+- `runbooks/lifecycle-stuck-deferred-stop.md`
+  - Recovery for devices stuck in deferred-stop lifecycle state.
+- `runbooks/publish-agent.md`
+  - Steps to publish a new agent release to PyPI.
+- `runbooks/publish-testkit.md`
+  - Steps to publish a new testkit release to PyPI.
 - `runbooks/README.md`
   - Runbook index and placement rules for future incident docs.
 
@@ -87,3 +113,9 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
   - How GridFleet derives Appium capabilities from stored device state.
 - `reference/release-policy.md`
   - Versioning, compatibility, and release checklist for public tags.
+- `reference/device-lifecycle.md`
+  - Device operational states and state-machine transitions.
+- `reference/diagnostics.md`
+  - Device diagnostic export bundle schema, redaction, and retention.
+- `reference/intents.md`
+  - Device intent resolution and desired-state reconciliation.

@@ -29,6 +29,7 @@ Dynamic groups use the same backend-owned contract as `GET /api/devices`, except
 
 Current dynamic-group filter surface:
 
+- driver pack
 - platform
 - status
 - host
@@ -37,7 +38,6 @@ Current dynamic-group filter surface:
 - device type
 - connection type
 - OS version
-- lifecycle state
 - exact-match tags
 
 Static groups are just named member lists.
@@ -66,12 +66,10 @@ Current shipped behaviors:
 | Reconnect | Yes | Yes | only works for eligible network Android / Fire TV devices |
 | Enter maintenance | Yes | Yes | |
 | Exit maintenance | Yes | Yes | device must already be in maintenance |
-| Apply template | Yes | Yes | template picker requires one shared platform |
 | Update tags | Yes | Yes | merge or replace behavior is supported |
 | Delete devices | Yes | Yes | deletes device records, not just group membership |
-| Auto-manage toggle | Yes | No | currently available only from the ad hoc bulk toolbar |
 
-That last row is important: whole-group actions are broad, but they are not perfectly identical to the temporary bulk toolbar.
+Both surfaces expose the same actions; they differ only in scope (the bulk toolbar acts on the current selection, the whole-group bar acts on every current group member).
 
 ## Bulk Selection Workflow
 
@@ -79,7 +77,6 @@ The temporary bulk toolbar is best when:
 
 - you filtered Devices down to a short-lived target set
 - you want to act on only some members of a static group
-- you need the `Auto-Manage` toggle, which the whole-group bar does not currently expose
 
 Bulk actions report success and failure per device. If some devices fail, the UI opens an error dialog rather than hiding partial failure.
 
@@ -97,7 +94,7 @@ Use static groups when:
 
 Use dynamic groups when:
 
-- the target set is defined by fleet traits such as platform, host, lifecycle state, status, or tags
+- the target set is defined by fleet traits such as platform, host, status, or tags
 - membership should update automatically as the fleet changes
 - you want an operational cohort without maintaining member lists manually
 
@@ -118,17 +115,15 @@ Common blockers:
 
 The action surface is broad, but it is intentionally not a bypass around reservation, maintenance, or readiness rules.
 
-## Templates And Tags
+## Tags
 
-`Apply Template` and `Update Tags` are configuration-shaping tools, not transport controls.
+`Update Tags` is a configuration-shaping tool, not a transport control.
 
 Shipped behavior:
 
-- template apply can merge or replace
 - tag update can merge or replace
-- template apply requires a single platform across the current target set so the template picker stays valid
 
-Use these actions when standardizing a cohort before verification, maintenance, or repeated CI use.
+Use this action when standardizing a cohort before verification, maintenance, or repeated CI use.
 
 ## Maintenance Flows
 

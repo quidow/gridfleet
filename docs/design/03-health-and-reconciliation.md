@@ -12,7 +12,7 @@ loop ⇄ pg_try_advisory_lock(6001)
        released on shutdown via pg_advisory_unlock
 ```
 
-`backend/app/services/control_plane_leader.py`. The lock is **process-wide**, held on a dedicated `AsyncConnection` for the whole leader lifetime, and not re-entrant. If `try_acquire` returns `False`, the worker becomes a non-leader: it serves the API and runs only the watcher loop.
+`backend/app/core/leader/advisory.py` (singleton `control_plane_leader`, class `ControlPlaneLeader`, lock id `CONTROL_PLANE_LEADER_LOCK_ID = 6001`); the contract is split across `app/core/leader/{advisory,keepalive,watcher}.py`. The lock is **process-wide**, held on a dedicated `AsyncConnection` for the whole leader lifetime, and not re-entrant. If `try_acquire` returns `False`, the worker becomes a non-leader: it serves the API and runs only the watcher loop.
 
 ```mermaid
 sequenceDiagram
@@ -52,31 +52,34 @@ The advisory lock (`pg_try_advisory_lock(6001)`) is the only fact of leadership.
 - Privilege model: `pg_terminate_backend` is allowed when the calling role is a member of the target backend's role, when the calling role has `pg_signal_backend`, or when the caller is a superuser. Same-role replicas, the default in `docker-compose.yml`, can terminate each other without a separate grant. In restricted deployments lacking those privileges, preemption degrades to a no-op and failover falls back to TCP keepalive; this is logged once via `control_plane_leader_preempt_no_op`.
 - Kill switch: `general.leader_keepalive_enabled = false` disables both the keepalive write fail-fast and the watcher's preemption path. While disabled, the watcher short-circuits before reading the heartbeat row. To re-enable after the toggle has been off longer than `general.leader_stale_threshold_sec`, restart the current leader replica first so it rewrites a fresh row, then flip the toggle back on, then bring the rest of the fleet online.
 
-**Fencing on leader-owned writes:** `control_plane_leader.assert_current_leader(db)` is the implemented lease-token fence. It reads `control_plane_leader_heartbeats.id = 1` and raises `LeadershipLost` unless the row's `holder_id` still matches this process's `control_plane_leader.holder_id` and `lock_backend_pid` is present. Lifecycle-critical loops call it after slow external awaits and before durable writes: `heartbeat`, `node_health`, `device_connectivity`, `session_sync`, and `run_reaper`. If fencing fails, the process exits via `os._exit(70)` so the supervisor restarts it. When `general.leader_keepalive_enabled=false`, the fence no-ops and failover falls back to the older advisory-lock/TCP-keepalive behavior.
+**Fencing on leader-owned writes:** the module function `assert_current_leader(db, settings=...)` (from `app.core.leader.advisory`, not a method on `control_plane_leader`) is the implemented lease-token fence; `settings` is required and each loop passes its own `SettingsReader` (e.g. `self._settings`). It reads `control_plane_leader_heartbeats.id = 1` and raises `LeadershipLost` unless the row's `holder_id` still matches this process's `control_plane_leader.holder_id` and `lock_backend_pid` is present. Lifecycle-critical loops call it after slow external awaits and before durable writes: `heartbeat`, `node_health`, `device_connectivity`, `session_sync`, `run_reaper`, `appium_reconciler`, and `device_intent_reconciler`. If fencing fails, the process exits via `os._exit(70)` so the supervisor restarts it. When `general.leader_keepalive_enabled=false`, the fence no-ops and failover falls back to the older advisory-lock/TCP-keepalive behavior.
 
 ## Loop registry
 
-Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. The watcher is spawned after the startup `try_acquire` decision, outside the leader-only list, so non-leaders can preempt stale holders without a startup self-preempt race. The table below captures the invariant data; cadences are the registry defaults from `backend/app/services/settings_registry.py` (DB-tunable at runtime via the Settings UI).
+Leader-owned loops are spawned in `backend/app/main.py` under the leader gate. The watcher is spawned after the startup `try_acquire` decision, outside the leader-only list, so non-leaders can preempt stale holders without a startup self-preempt race. The table below captures the invariant data; cadences are the registry defaults from the `_DEFINITIONS` list of `SettingDefinition` in `backend/app/settings/registry.py` (DB-tunable at runtime via the Settings UI).
 
 | Loop | Default cadence | Reads | Writes | Sole writer of |
 | --- | --- | --- | --- | --- |
-| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.state` (recovery only), `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.operational_state` (cross-link) | `Host.status` (offline/online) |
+| `heartbeat_loop` | 15 s | Agent `/agent/health` | `Device.device_checks_*`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, `AppiumNode.consecutive_health_failures`, `Device.operational_state` (host-offline path only — marks all devices on a downed host offline) | `Host.status` (offline/online) |
 | `control_plane_leader_keepalive` | 5 s | `control_plane_leader_heartbeats` | `control_plane_leader_heartbeats.last_heartbeat_at` | leader liveness row |
 | `control_plane_leader_watcher` | 5 s | `control_plane_leader_heartbeats` | terminates stale lock-holder backend only | stale-leader preemption |
-| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link, gated by failure threshold) | node-health counter, auto-restart trigger |
-| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.state`, `AppiumNode.last_health_checked_at`, lifecycle JSON, `Device.operational_state` (cross-link) | `Device.device_checks_*` |
-| `session_sync_loop` | 5 s | Grid `/status` | `Session` rows, `Device.operational_state` (busy↔available) | `Session.state`, run-claim transitions |
-| `session_viability_loop` | 60 s wake / per-device 3600 s | Grid WebDriver probe session | `Device.session_viability_*`, `Device.operational_state` (cross-link) | `Device.session_viability_*` |
+| `node_health_loop` | 30 s | Agent `/agent/appium/{port}/status`, Grid `/status` | `AppiumNode.consecutive_health_failures`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON; on max failures registers auto-recovery intents via `IntentService.register_intents_and_reconcile` (does not write `operational_state` directly) | node-health counter, auto-restart trigger |
+| `device_connectivity_loop` | 60 s | Agent `/agent/pack/devices` | `Device.device_checks_*`, `Device.emulator_state`, `AppiumNode.health_running`, `AppiumNode.health_state`, `AppiumNode.last_health_checked_at`, lifecycle JSON; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.device_checks_*` |
+| `session_sync_loop` | 30 s (`grid.session_poll_interval_sec`) — doorbell/event-bus-driven, woken by `grid_event_bus_subscriber_loop`; the 30 s tick is only the drift-reconciler timeout | Grid `/status` | `Session` rows; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Session.state`, run-claim transitions |
+| `grid_event_bus_subscriber_loop` | continuous subscription (not a fixed poll) | Selenium Grid event bus | wakes `session_sync_loop` on Grid session create/delete events | real-time session-sync wakeups |
+| `appium_reconciler_loop` | `appium_reconciler.interval_sec` | `AppiumNode` desired vs observed state | node start/stop transition execution, `AppiumNode.pid`/`port`/`active_connection_target` observation columns (calls `assert_current_leader` before durable writes) | `AppiumNode` observed-state reconciliation |
+| `device_intent_reconciler_loop` | `general.intent_reconcile_interval_sec` | device intents + durable facts | `Device.operational_state` via `apply_derived_state` → `set_operational_state` (calls `assert_current_leader`) | derived `Device.operational_state` (sole runtime writer) |
+| `session_viability_loop` | 60 s wake / per-device 3600 s | Grid WebDriver probe session | `Device.session_viability_*`; calls `IntentService.mark_dirty_and_reconcile` (does not write `operational_state` directly) | `Device.session_viability_*` |
 | `property_refresh_loop` | 600 s | Agent `/agent/pack/devices/.../properties` | `Device.os_version`, `software_versions`, etc. | device property fields |
 | `hardware_telemetry_loop` | 300 s | Agent telemetry endpoints | `Device.battery_*`, `hardware_health_status` | hardware fields |
 | `host_resource_telemetry_loop` | 60 s | Agent `/agent/host/telemetry` | `host_resource_telemetry` table | host telemetry rows |
-| `run_reaper_loop` | 15 s | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, Grid `DELETE /session/{id}` through `grid_service.terminate_grid_session` | abandoned-run reaping |
+| `run_reaper_loop` | 15 s | `TestRun`, `DeviceReservation`, `Session` rows | run state transitions, reservation release, Grid `DELETE /session/{id}` through `grid_service.terminate_session` | abandoned-run reaping |
 | `webhook_delivery_loop` | 1 s poll | `outbound_webhook_deliveries` | webhook delivery rows | webhook delivery state |
 | `durable_job_worker_loop` | 1 s poll | `durable_jobs` | durable job state | durable-job state |
 | `pack_drain_loop` | 60 s | pack desired-state | drain progress | pack-drain rows |
 | `data_cleanup_loop` | 1 h | various retention windows | deletes old rows | data-retention deletions |
 | `fleet_capacity_collector_loop` | 60 s | aggregate device counts | `fleet_capacity_snapshots` | capacity snapshot rows |
-| `appium_resource_sweeper_loop` | 300 s | `appium_node_resource_claims` | deletes expired temporary claims | TTL-based reaping of unfinalised Appium resource claims |
+| `background_loop_flush_loop` | `general.background_loop_flush_interval_sec` | in-memory background-loop heartbeat/observability snapshots | persists those snapshots to the control-plane state table | durable background-loop heartbeat snapshots |
 
 The lifecycle-critical loops are `heartbeat`, `node_health`, `device_connectivity`, and `session_sync`. `control_plane_leader_keepalive` and `control_plane_leader_watcher` own leadership liveness; the remaining loops are telemetry, queue workers, and housekeeping.
 
@@ -96,21 +99,21 @@ Loops that consume probes **must** branch on `result.status` explicitly:
 - `result.status == "refused"` — increment `AppiumNode.consecutive_health_failures`, write transient health detail, escalate when `count >= max_failures`.
 - `result.status == "indeterminate"` — early-return. Do not change health columns, do not increment the counter, do not flip availability.
 
-Reference implementation: `node_health._check_node_health`, `app.services.agent_probe_result`, and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
+Reference implementation: `node_health._check_node_health`, `app.agent_comm.probe_result` (dataclass `ProbeResult`, projector `from_status_response`), and the consumer at `_process_node_health`. Commit `a58c8e5` made every transient agent blip stop flapping device health by enforcing this rule.
 
-`appium_status` returns `None` for non-2xx responses (`agent_operations.py`). `node_health_loop` only consumes that liveness signal — it does not create Grid WebDriver sessions. Deeper end-to-end session probes belong to `session_viability_loop`, which uses `probe_session_via_grid` to create a WebDriver session through the node's `grid_url` (falling back to `grid.hub_url` for callers without a node), tags it with `gridfleet:probeSession=true`, and deletes it through the hub.
+`appium_status` returns `None` when the response status is not 200 (`app/agent_comm/operations.py`). `node_health_loop` only consumes that liveness signal — it does not create Grid WebDriver sessions. Deeper end-to-end session probes belong to `session_viability_loop`, which uses `probe_session_via_grid` to create a WebDriver session through the node's `grid_url` (falling back to `grid.hub_url` for callers without a node), tags it with `gridfleet:probeSession=true`, and deletes it through the hub.
 
 ## Idempotency rules
 
 Loops can run multiple times against the same device without ill effect, provided they obey:
 
-1. **Conditional writes only.** Writers compare the current value before mutating. `set_operational_state` and `set_hold` early-return when `old == new`. `device_health` only queues `device.health_changed` when the derived public summary's `healthy` value changes.
+1. **Conditional writes only.** Writers compare the current value before mutating. `set_operational_state` (`app/devices/services/state.py`) early-returns when `old == new`. `app.devices.services.health` only queues `device.health_changed` when the derived public summary's `healthy` value changes.
 
 2. **Facts have one home.** Device checks, session viability, emulator state, node lifecycle, transient node health detail, and node failure counts live in typed columns. Readers compose them on demand.
 
 3. **Counters live on the node row, not in memory.** `node_health` keeps consecutive-failure counts in `AppiumNode.consecutive_health_failures` so a leader handoff does not lose history or double-count.
 
-4. **Stale-result detection.** `_process_node_health` records the observed `state/port/pid/active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
+4. **Stale-result detection.** `_process_node_health` records the observed `port`/`pid`/`active_connection_target` at probe time and rechecks against the locked node before mutating (`node_health.py`). If the node was restarted while a probe was in flight, the result is dropped silently. Other loops should follow the same pattern when the probe duration can exceed the iteration interval.
 
 ## Where Health State Lives
 
@@ -119,11 +122,11 @@ Every public health fact has exactly one durable home:
 - `Device.device_checks_*` — owned by `device_connectivity_loop` and `heartbeat_loop`
 - `Device.session_viability_*` — owned by `session_viability_loop`
 - `Device.emulator_state` — owned by `device_connectivity_loop`
-- `AppiumNode.state` — owned by `node_service.mark_node_*` and recovery/escalation paths
-- `AppiumNode.health_running` / `AppiumNode.health_state` — transient node-health detail
+- `AppiumNode.desired_state` (running/stopped intent) — written via `app.appium_nodes.services.desired_state_writer.write_desired_state`
+- `AppiumNode.health_running` / `AppiumNode.health_state` (e.g. `health_state="error"`) — observed node-health detail, written via `apply_node_state_transition`
 - `AppiumNode.consecutive_health_failures` — owned by `node_health_loop`
 
-`device_health.build_public_summary(device)` is the only consumer projection. Readers call it on demand. There is no eventually consistent health layer to drift.
+`app.devices.services.health.build_public_summary(device)` is the only consumer projection. Readers call it on demand. There is no eventually consistent health layer to drift.
 
 `control_plane_state_store` still exists, but not as a public health source of truth. Current namespaces are used for ephemeral coordination and diagnostics:
 
@@ -142,13 +145,13 @@ These entries can be rebuilt or expire by behavior; they must not be used as can
 
 Loops are independent in the steady state but must not contradict each other when state transitions race:
 
-- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session has `operational_state = busy`. `node_health` checks the Appium `/status` endpoint on every running node regardless of operational state — it is a process-liveness probe, not a session check — so a busy device is still polled. `session_sync` flips operational state back to `available` or `offline` independently while preserving any reservation hold.
+- **`session_sync_loop` and `node_health_loop`.** A device that is in a live session has `operational_state = busy`. `node_health` checks the Appium `/status` endpoint on every running node regardless of operational state — it is a process-liveness probe, not a session check — so a busy device is still polled. `session_sync` reconciles `Session` rows and run-claim transitions, then calls `IntentService.mark_dirty_and_reconcile`; the `device_intent_reconciler` derives `Device.operational_state` (available/offline) from those facts. (Reservation is computed from the `device_reservations` table; there is no hold column.)
 
 - **`device_connectivity_loop` and `node_health_loop`.** If the agent is unreachable, both loops see indeterminate results. Neither flips state. The first loop to see a definitive failure writes its typed column; the public summary aggregates them. Auto-restart only fires from `node_health` (one source for that escalation path).
 
-- **`session_viability_loop` and `node_health_loop`.** Two-tier probing. `node_health` is the fast per-node liveness check (every 30 s) against agent `/status`; it feeds `AppiumNode.health_*` / `AppiumNode.state` and drives auto-restart on `general.node_max_failures` consecutive refusals. `session_viability` is the deep per-device end-to-end probe on a long cadence (default 1h) that creates a real Grid WebDriver session; it feeds `Device.session_viability_*`. The cheap probe runs often so 30 s cadence stays sustainable; the expensive probe runs rarely so it does not flood Grid.
+- **`session_viability_loop` and `node_health_loop`.** Two-tier probing. `node_health` is the fast per-node liveness check (every 30 s) against agent `/status`; it feeds `AppiumNode.health_running` / `AppiumNode.health_state` and drives auto-restart on `general.node_max_failures` consecutive refusals. `session_viability` is the deep per-device end-to-end probe on a long cadence (default 1h) that creates a real Grid WebDriver session; it feeds `Device.session_viability_*`. The cheap probe runs often so 30 s cadence stays sustainable; the expensive probe runs rarely so it does not flood Grid.
 
-- **`run_reaper_loop` and `session_sync_loop`.** Run reaping expires abandoned runs through `run_service.expire_run`, which calls `grid_service.terminate_grid_session` for each running session before releasing reservations. `session_sync` then observes Grid `/status` and reconciles the now-cleared session list; it does not delete Grid sessions itself.
+- **`run_reaper_loop` and `session_sync_loop`.** Run reaping expires abandoned runs through `run_service.expire_run` → `release_devices(terminate_grid_sessions=True)`, which calls `grid_service.terminate_session` (DELETE /session/{id} against `grid.hub_url`) for each running session before releasing reservations. `session_sync` then observes Grid `/status` and reconciles the now-cleared session list; it does not delete Grid sessions itself.
 
 ## Failure escalation ladder
 
@@ -162,13 +165,13 @@ flowchart TD
     B -- refused --> E["increment counter"]
     E --> F{"count >= max_failures?"}
     F -- no --> G["health_running false, keep lifecycle running"]
-    F -- yes --> J["restart_node_via_agent"]
-    J --> K{"restart succeeded?"}
-    K -- yes --> L["lifecycle auto_recovered, clear health override"]
-    K -- no --> M["lifecycle recovery_failed, node.state error, offline"]
+    F -- yes --> J["_attempt_node_restart: register auto-recovery intents (NODE_PROCESS start + RECOVERY)"]
+    J --> K{"reconciler-derived restart outcome"}
+    K -- recovered --> L["lifecycle auto_recovered, clear health override"]
+    K -- failed --> M["lifecycle recovery_failed, health_state error, offline"]
 ```
 
-Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general.node_max_failures`, default `3`. Each rung records a lifecycle action via `lifecycle_policy.record_control_action` so the operator-facing summary reflects the escalation.
+`_attempt_node_restart` registers auto-recovery intents via `IntentService.register_intents_and_reconcile`; the actual restart and the recovered/failed terminals are derived by `appium_reconciler` / `device_intent_reconciler`, not written directly by `node_health`. Defined in `_process_node_health` (`node_health.py`). `max_failures` is `general.node_max_failures`, default `3`. Each rung records a lifecycle action via `lifecycle_policy.record_control_action` so the operator-facing summary reflects the escalation.
 
 ## When loops do NOT run
 
@@ -182,13 +185,13 @@ When adding a new periodic task, copy the `node_health_loop` shape:
 
 1. Add the loop function under `backend/app/services/<name>.py`. Wrap the body in `observe_background_loop(LOOP_NAME, interval).cycle()` for metrics.
 2. Spawn it in `app/main.py` lifespan **inside the `try_acquire` branch** so non-leaders never run it. Never spawn a bare `asyncio.create_task`.
-3. Read settings via `settings_service.get(...)`. Add the setting to `settings_registry.py` if it is operator-tunable.
+3. Read settings via `settings_service.get(...)`. Add the setting to the `_DEFINITIONS` list in `app/settings/registry.py` if it is operator-tunable.
 4. Acquire device row locks via `device_locking.lock_device` for any device-state mutation.
 5. Use the tri-state probe pattern for any agent or Grid call.
-6. Route health and node-health writes through `app.services.device_health` so locks, cross-links, and `device.health_changed` events stay centralized.
+6. Route health and node-health writes through `app.devices.services.health` (class `DeviceHealthService`) so locks, cross-links, and `device.health_changed` events stay centralized.
 7. Add a Prometheus gauge or counter via the metrics module so the loop is visible on the dashboards.
-8. Call `assert_current_leader(db)` after slow external awaits and before durable writes when the loop can outlive a leader handoff.
-9. Defer `event_bus.publish` to after-commit when the published change must align with a durable transition (use `_schedule_health_event_after_commit` as the model).
+8. Call `assert_current_leader(db, settings=...)` after slow external awaits and before durable writes when the loop can outlive a leader handoff. `settings` is required — pass the loop's own `SettingsReader` (e.g. `self._settings`).
+9. Defer `event_bus.publish` to after-commit when the published change must align with a durable transition (use `_maybe_emit_health_changed` as the model — it compares the public summary's `healthy` value and calls `publisher.queue_for_session(...)` to emit `device.health_changed` on change).
 
 ## What this doc does NOT cover
 
