@@ -214,6 +214,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         grid_event_bus = GridEventBusSubscriberLoop(
             services=app_services.grid,
             session_sync_waker=app_services.sessions.sync,
+            node_health_waker=app_services.appium_nodes.node_health,
         )
         pack_drain = PackDrainLoop(services=app_services.packs)
         job_worker = app_services.jobs

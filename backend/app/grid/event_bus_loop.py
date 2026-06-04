@@ -18,13 +18,14 @@ from app.core.observability import get_logger, observe_background_loop
 from app.grid import grid_settings
 from app.grid.event_bus import (
     GRID_EVENT_BUS_LAST_EVENT_AGE_SECONDS,
+    NODE_EVENT_TYPES,
     DecodedEvent,
     HubEventBusSubscriber,
     SubscriberMetrics,
 )
 
 if TYPE_CHECKING:
-    from app.grid.protocols import SessionSyncWaker
+    from app.grid.protocols import NodeHealthWaker, SessionSyncWaker
     from app.grid.services_container import GridServices
 
 logger = get_logger(__name__)
@@ -34,13 +35,23 @@ _HEARTBEAT_INTERVAL_SEC = 5.0
 
 
 class GridEventBusSubscriberLoop:
-    def __init__(self, *, services: GridServices, session_sync_waker: SessionSyncWaker) -> None:
+    def __init__(
+        self,
+        *,
+        services: GridServices,
+        session_sync_waker: SessionSyncWaker,
+        node_health_waker: NodeHealthWaker,
+    ) -> None:
         self._services = services
         self._session_sync_waker = session_sync_waker
+        self._node_health_waker = node_health_waker
 
     def _handle_event(self, event: DecodedEvent) -> None:
-        # Subscriber only forwards session-created / session-closed.
-        # Either one means session_sync_loop should look at the hub now.
+        # Node events mean device availability changed now; a removed node
+        # also takes its sessions with it without emitting session-closed,
+        # so every actionable event wakes session_sync_loop too.
+        if event.type in NODE_EVENT_TYPES:
+            self._node_health_waker.wake()
         self._session_sync_waker.wake()
         logger.debug("grid_event_bus_event", type=event.type)
 
