@@ -17,3 +17,8 @@ class GridServiceProtocol(Protocol):
 @runtime_checkable
 class SessionSyncWaker(Protocol):
     def wake(self) -> None: ...
+
+
+@runtime_checkable
+class NodeHealthWaker(Protocol):
+    def wake(self) -> None: ...

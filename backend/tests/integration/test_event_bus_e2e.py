@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import json
 import socket
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -81,6 +81,7 @@ async def test_real_hub_session_created_wakes_session_sync(monkeypatch: pytest.M
             session_factory=_fake_session_factory,
         ),
         session_sync_waker=waker,
+        node_health_waker=Mock(),
     )
     task = asyncio.create_task(loop.run())
     try:
