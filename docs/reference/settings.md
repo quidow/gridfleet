@@ -1,6 +1,6 @@
 # Settings Reference
 
-This page documents the shipped settingss registry. Each setting has a persisted key, category, default, validation metadata, and operational meaning. If an env var is listed, the registry uses that env var as the device default fallback.
+This page documents the shipped settings registry. Each setting has a persisted key, category, default, validation metadata, and operational meaning. If an env var is listed, the registry uses that env var as the device default fallback.
 
 ## Categories
 
