@@ -188,6 +188,33 @@ async def test_heartbeat_releases_idle_sessions_and_publishes_session_closed(mon
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_reservation_reap_ttl_tracks_proxy_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A reservation only exists while a session create is in flight against
+    # Appium, and that call is bounded by proxy_timeout_sec. Reaping at the
+    # old hardcoded 30s default raced in-flight creates (the agent default
+    # proxy timeout is 60s): the reaper freed the slot mid-create and the
+    # later commit() raised ReservationGoneError after Appium had already
+    # created the session. The TTL must outlive the upstream window.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr("agent_app.grid_node.service.time.monotonic", lambda: clock["now"])
+    service = GridNodeService(
+        config=_config(),  # proxy_timeout_sec=30.0 -> reap TTL 35.0
+        bus=RecordingBus(),
+        http_server=RecordingHttpServer(),
+        registration_probe=_probe(None),
+    )
+    service.state.reserve({"platformName": "Android"})
+
+    clock["now"] = 1032.0  # past the old 30s default, within proxy_timeout_sec + headroom
+    await service.run_heartbeat_once()
+    assert service.state.snapshot().slots[0].state == "RESERVED"
+
+    clock["now"] = 1036.0  # past proxy_timeout_sec + headroom — genuinely stuck
+    await service.run_heartbeat_once()
+    assert service.state.snapshot().slots[0].state == "FREE"
+
+
+@pytest.mark.asyncio
 async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())

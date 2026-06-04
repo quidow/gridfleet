@@ -12,7 +12,13 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 
-from agent_app.grid_node.node_state import NodeState, NoFreeSlotError, NoMatchingSlotError, Reservation
+from agent_app.grid_node.node_state import (
+    NodeState,
+    NoFreeSlotError,
+    NoMatchingSlotError,
+    Reservation,
+    ReservationGoneError,
+)
 from agent_app.grid_node.protocol import EventType, Slot, Stereotype, event_envelope
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket
 
@@ -104,6 +110,23 @@ def build_app(
         owned = any(slot.session_id == session_id for slot in state.snapshot().slots)
         return JSONResponse({"value": owned})
 
+    async def _abandon_reaped_session(session_id: str) -> JSONResponse:
+        # The reservation was reaped (TTL) while the upstream create was in
+        # flight, so commit() lost the slot — it may already be re-reserved.
+        # The just-created Appium session is untracked (expire_idle only
+        # watches BUSY slots), so it must be killed here or it leaks until
+        # Appium's own newCommandTimeout. Fail the create with a W3C
+        # envelope — a bare 500 is unparseable for the hub's error decoder.
+        logger.warning("reservation reaped during session create; deleting upstream session %s", session_id)
+        try:
+            await http_client.delete(f"{appium_upstream}/session/{session_id}", timeout=proxy_timeout)
+        except httpx.HTTPError:
+            logger.warning("cleanup delete failed for reaped session %s", session_id, exc_info=True)
+        return JSONResponse(
+            {"value": {"error": "session not created", "message": "Reservation expired during session creation"}},
+            status_code=500,
+        )
+
     async def create_session(request: Request) -> Response:
         try:
             body = await request.json()
@@ -140,13 +163,16 @@ def build_app(
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
         start_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        state.commit(
-            reservation.id,
-            session_id=session_id,
-            started_at=time.monotonic(),
-            capabilities=returned_caps,
-            session_start_iso=start_iso,
-        )
+        try:
+            state.commit(
+                reservation.id,
+                session_id=session_id,
+                started_at=time.monotonic(),
+                capabilities=returned_caps,
+                session_start_iso=start_iso,
+            )
+        except ReservationGoneError:
+            return await _abandon_reaped_session(session_id)
         await _publish_safely(
             publisher,
             event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),
@@ -298,13 +324,16 @@ def build_app(
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
 
         start_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        state.commit(
-            reservation.id,
-            session_id=session_id,
-            started_at=time.monotonic(),
-            capabilities=returned_caps,
-            session_start_iso=start_iso,
-        )
+        try:
+            state.commit(
+                reservation.id,
+                session_id=session_id,
+                started_at=time.monotonic(),
+                capabilities=returned_caps,
+                session_start_iso=start_iso,
+            )
+        except ReservationGoneError:
+            return await _abandon_reaped_session(session_id)
         await _publish_safely(
             publisher,
             event_envelope(EventType.SESSION_STARTED, {"sessionId": session_id, "slotId": reservation.slot_id}),

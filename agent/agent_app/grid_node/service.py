@@ -270,8 +270,13 @@ class GridNodeService:
         # Reap stuck reservations first: a reservation that never reached
         # `commit()` (e.g. upstream Appium crashed mid-create) would otherwise
         # pin the slot forever — `state.reserve()` blocks new requests as soon
-        # as any slot is non-FREE.
-        self.state.expire_reservations(now=time.monotonic())
+        # as any slot is non-FREE. The TTL must outlive the upstream window:
+        # a reservation legitimately stays open for up to proxy_timeout_sec
+        # while the Appium create is in flight, and the hardcoded 30s default
+        # raced those creates (the agent default proxy timeout is 60s) — the
+        # reaper freed the slot mid-create and the later commit() raised
+        # ReservationGoneError after Appium had already created the session.
+        self.state.expire_reservations(now=time.monotonic(), ttl_sec=self.config.proxy_timeout_sec + 5.0)
         for session_id in self.state.expire_idle(now=time.monotonic(), timeout_sec=self.config.session_timeout_sec):
             self.state.release(session_id)
             now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")

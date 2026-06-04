@@ -417,6 +417,72 @@ def test_stop_node_session_kills_leaked_upstream_session_for_unowned_id(
     assert bus.events == []
 
 
+def test_post_session_cleans_up_upstream_when_reservation_reaped_mid_create(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # A create that outlives the reservation TTL has its reservation reaped
+    # by the heartbeat mid-flight; commit() then raises ReservationGoneError.
+    # The handler must delete the just-created (now untracked) Appium session
+    # — expire_idle only watches BUSY slots, so it would otherwise leak — and
+    # answer a W3C error envelope instead of an unparseable bare 500.
+    async def reaping_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+        # Simulates the heartbeat reaper firing while the upstream create is
+        # in flight: the handler's reservation is expired before it returns.
+        state.expire_reservations(now=10_000.0)
+        return JSONResponse({"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}})
+
+    with respx.mock:
+        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(
+            state=state,
+            appium_upstream="http://appium",
+            http_client=http_client,
+            bus=bus,
+            proxy_request_func=reaping_proxy,
+        )
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert delete_route.called
+    assert response.status_code == 500
+    assert response.json()["value"]["error"] == "session not created"
+    assert state.snapshot().slots[0].state == "FREE"
+    assert all(event["type"] != "session-created" for event in bus.events)
+
+
+def test_hub_create_session_cleans_up_upstream_when_reservation_reaped_mid_create(
+    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+) -> None:
+    import respx
+
+    # Same race on the hub-routed create path: the hub treats the W3C error
+    # envelope as a clean SessionNotCreated instead of choking on a bare 500.
+    def create_then_reap(_request: httpx.Request) -> httpx.Response:
+        state.expire_reservations(now=10_000.0)
+        return httpx.Response(
+            200, json={"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}}
+        )
+
+    with respx.mock:
+        respx.post("http://appium/session").mock(side_effect=create_then_reap)
+        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
+            return_value=httpx.Response(200, json={"value": None})
+        )
+        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+        )
+    assert delete_route.called
+    assert response.status_code == 500
+    assert response.json()["value"]["error"] == "session not created"
+    assert state.snapshot().slots[0].state == "FREE"
+    assert all(event["type"] != "session-created" for event in bus.events)
+
+
 def test_wildcard_session_command_is_proxied(test_app: Starlette, proxy: RecordingProxy) -> None:
     response = TestClient(test_app).post("/session/session-1/element", json={"using": "id", "value": "login"})
     assert response.status_code == 200
