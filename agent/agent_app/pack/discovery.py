@@ -4,6 +4,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from agent_app.async_ttl_cache import AsyncTTLCache
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_dispatch import dispatch_discover, dispatch_normalize_device
 
@@ -13,6 +14,14 @@ if TYPE_CHECKING:
     from agent_app.pack.manifest import DesiredPack, DesiredPlatform
 
 logger = logging.getLogger(__name__)
+
+# Collapses concurrent/back-to-back sweep fallbacks (e.g. a DHCP reshuffle
+# making every device on a host miss its direct query at once) into one
+# discovery pass. Deliberately NOT used by enumerate_pack_candidates callers —
+# intake UI scans stay live.
+_SWEEP_CACHE_TTL_SECONDS = 15.0
+_SweepKey = tuple[str, frozenset[tuple[str, str]]]
+_sweep_cache: AsyncTTLCache[_SweepKey, dict[str, Any]] = AsyncTTLCache(ttl_seconds=_SWEEP_CACHE_TTL_SECONDS)
 
 
 class _AdapterDiscoveryCtx:
@@ -241,15 +250,21 @@ async def pack_device_properties(
     if direct is not None and (identity_value is None or direct.get("identity_value") == identity_value):
         return direct
 
+    sweep_key: _SweepKey = (
+        host_id,
+        frozenset((pack.id, pack.release) for pack in desired_packs or []),
+    )
+
+    async def _sweep() -> dict[str, Any]:
+        return await enumerate_pack_candidates(
+            desired_packs,
+            adapter_registry=adapter_registry,
+            host_id=host_id,
+        )
+
     candidates = cast(
         "list[dict[str, Any]]",
-        (
-            await enumerate_pack_candidates(
-                desired_packs,
-                adapter_registry=adapter_registry,
-                host_id=host_id,
-            )
-        ).get("candidates", []),
+        (await _sweep_cache.get(sweep_key, _sweep)).get("candidates", []),
     )
     for c in candidates:
         if c["pack_id"] != pack_id:

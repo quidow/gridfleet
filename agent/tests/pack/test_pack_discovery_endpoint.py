@@ -1,3 +1,4 @@
+import asyncio
 from typing import ClassVar
 
 import pytest
@@ -539,3 +540,46 @@ async def test_pack_device_properties_endpoint_forwards_identity_value(
         )
     assert resp.status_code == 200
     assert captured["identity_value"] == "SER123"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sweep_fallbacks_share_one_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    async def counting_enumerate(*args: object, **kwargs: object) -> dict[str, object]:
+        calls["n"] += 1
+        await asyncio.sleep(0)
+        return {"candidates": []}
+
+    monkeypatch.setattr("agent_app.pack.discovery.enumerate_pack_candidates", counting_enumerate)
+    registry = AdapterRegistry()  # no adapters -> direct path misses, sweep fallback runs
+    pack = _pack(platforms=[_platform()])
+    results = await asyncio.gather(
+        *(
+            pack_device_properties(
+                f"10.0.0.{i}",
+                "appium-uiautomator2",
+                [pack],
+                adapter_registry=registry,
+                host_id="h1",
+            )
+            for i in range(5)
+        )
+    )
+    assert all(r is None for r in results)
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_intake_enumeration_route_bypasses_sweep_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    async def counting_enumerate(*args: object, **kwargs: object) -> dict[str, object]:
+        calls["n"] += 1
+        return {"candidates": []}
+
+    monkeypatch.setattr("agent_app.pack.router.enumerate_pack_candidates", counting_enumerate)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/agent/pack/devices")
+        await client.get("/agent/pack/devices")
+    assert calls["n"] == 2  # operator scans stay live, never cached
