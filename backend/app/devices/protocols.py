@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.analytics.schemas import FleetCapacityTimeline
     from app.appium_nodes.models import AppiumNode
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
+    from app.core.sentinels import UnsetType
     from app.devices.models import (
         ConnectionType,
         Device,
@@ -328,8 +329,8 @@ class DeviceHealthProtocol(Protocol):
         db: AsyncSession,
         device: Device,
         *,
-        health_running: bool | None = ...,
-        health_state: str | None = ...,
+        health_running: bool | None | UnsetType = ...,
+        health_state: str | None | UnsetType = ...,
         mark_offline: bool = ...,
         reason: str | None = ...,
     ) -> None: ...
