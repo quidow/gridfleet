@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import httpx
 import pytest
 from starlette.responses import JSONResponse, Response
 from starlette.testclient import TestClient
@@ -11,10 +11,9 @@ from starlette.testclient import TestClient
 from agent_app.grid_node.http_server import _session_info_from_response, _w3c_candidate_caps, build_app
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
+from agent_app.grid_node.upstream_pool import UpstreamConnectError, UpstreamResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.websockets import WebSocket
@@ -43,7 +42,7 @@ class RecordingProxy:
         self.requests: list[RecordedRequest] = []
         self.websocket_paths: list[str] = []
 
-    async def request(self, request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+    async def request(self, request: Request, *, pool: object) -> JSONResponse:
         self.requests.append(RecordedRequest(path=request.url.path))
         if request.url.path == "/session" and request.method == "POST":
             return JSONResponse(
@@ -76,24 +75,42 @@ def proxy() -> RecordingProxy:
     return RecordingProxy()
 
 
-@pytest.fixture
-def http_client() -> Iterator[httpx.AsyncClient]:
-    # Tests override `proxy_request_func`, so this client is never actually
-    # invoked. Constructed only to satisfy `build_app`'s required arg.
-    client = httpx.AsyncClient()
-    try:
-        yield client
-    finally:
-        # `aclose()` is async; not awaited because the client is never used.
-        pass
+class FakePool:
+    """Stand-in for AppiumUpstreamPool at build_app's direct call sites."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []  # (method, target)
+        self.handlers: dict[tuple[str, str], object] = {}
+
+    async def request(self, method: str, target: str, headers: list[tuple[str, str]], body: bytes) -> UpstreamResponse:
+        self.requests.append((method, target))
+        outcome = self.handlers.get((method, target), UpstreamResponse(200, [], b'{"value": null}'))
+        if callable(outcome):
+            outcome = outcome()
+        if isinstance(outcome, BaseException):
+            raise outcome
+        assert isinstance(outcome, UpstreamResponse)
+        return outcome
+
+    def called(self, method: str, target: str) -> bool:
+        return (method, target) in self.requests
+
+
+def _json_response(payload: object, status: int = 200) -> UpstreamResponse:
+    return UpstreamResponse(status, [(b"content-type", b"application/json")], json.dumps(payload).encode())
 
 
 @pytest.fixture
-def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient) -> Starlette:
+def pool() -> FakePool:
+    return FakePool()
+
+
+@pytest.fixture
+def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy, pool: FakePool) -> Starlette:
     return build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=proxy.request,
         proxy_websocket_func=proxy.websocket,
@@ -101,11 +118,11 @@ def test_app(state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_cl
 
 
 @pytest.fixture
-def app_with_connect_error_proxy(state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient) -> Starlette:
+def app_with_connect_error_proxy(state: NodeState, bus: RecordingBus, pool: FakePool) -> Starlette:
     return build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=_connect_error_proxy,
     )
@@ -249,16 +266,14 @@ def test_post_session_returns_400_for_invalid_json_encoding(test_app: Starlette,
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_post_session_aborts_reservation_when_proxy_raises(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
-) -> None:
-    async def raising_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
+def test_post_session_aborts_reservation_when_proxy_raises(state: NodeState, bus: RecordingBus, pool: FakePool) -> None:
+    async def raising_proxy(_request: Request, *, pool: object) -> Response:
         raise RuntimeError("proxy failed")
 
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=raising_proxy,
     )
@@ -270,12 +285,12 @@ def test_post_session_aborts_reservation_when_proxy_raises(
 
 
 def test_post_session_commit_survives_session_started_publish_failure(
-    state: NodeState, proxy: RecordingProxy, http_client: httpx.AsyncClient
+    state: NodeState, proxy: RecordingProxy, pool: FakePool
 ) -> None:
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=FailingBus(),
         proxy_request_func=proxy.request,
         proxy_websocket_func=proxy.websocket,
@@ -299,20 +314,18 @@ def test_delete_session_releases_slot_and_publishes_session_closed(
 
 
 def test_delete_session_releases_slot_when_upstream_session_is_gone(
-    state: NodeState, proxy: RecordingProxy, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, proxy: RecordingProxy, bus: RecordingBus, pool: FakePool
 ) -> None:
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="missing-session", started_at=1.0)
 
-    async def missing_session_proxy(
-        _request: Request, *, upstream: str, timeout: float, client: object
-    ) -> JSONResponse:
+    async def missing_session_proxy(_request: Request, *, pool: object) -> JSONResponse:
         return JSONResponse({"value": {"error": "invalid session id"}}, status_code=404)
 
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=missing_session_proxy,
         proxy_websocket_func=proxy.websocket,
@@ -333,7 +346,7 @@ def test_node_drain_marks_state_and_blocks_new_sessions(test_app: Starlette, sta
 
 
 def test_node_drain_publishes_node_drain_started_with_node_id(
-    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, pool: FakePool
 ) -> None:
     # Selenium's NodeDrainStarted event carries a bare NodeId; the hub's
     # LocalGridModel listener cannot deserialize `{}` and would silently drop
@@ -342,7 +355,7 @@ def test_node_drain_publishes_node_drain_started_with_node_id(
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=proxy.request,
         node_id="node-1",
@@ -353,10 +366,8 @@ def test_node_drain_publishes_node_drain_started_with_node_id(
 
 
 def test_stop_node_session_force_stops_and_returns_bare_200(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, pool: FakePool
 ) -> None:
-    import respx
-
     # Selenium's distributor escalates to DELETE /se/grid/node/session/{id}
     # (StopNodeSession) when its client-style DELETE /session/{id} returned
     # non-200 during orphaned-session cleanup. RemoteNode.stop decodes any
@@ -365,89 +376,70 @@ def test_stop_node_session_force_stops_and_returns_bare_200(
     # inbound /se/grid/node/* path does not exist on Appium.
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="session-1", started_at=1.0)
-    with respx.mock:
-        route = respx.delete("http://appium/session/session-1").mock(
-            return_value=httpx.Response(200, json={"value": None})
-        )
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
-        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool, bus=bus)
+    response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
     assert response.status_code == 200
     assert response.content == b""
-    assert route.called
+    assert pool.called("DELETE", "/session/session-1")
     assert state.snapshot().slots[0].state == "FREE"
     assert bus.events[-1]["type"] == "session-closed"
 
 
 def test_stop_node_session_releases_slot_even_when_upstream_delete_fails(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, pool: FakePool
 ) -> None:
-    import respx
-
     # Force-stop is the hub's last resort; it must not leave the slot pinned
     # behind an unreachable Appium, and the hub treats any non-200 as an
     # error, so the relay still answers 200 after releasing locally.
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="session-1", started_at=1.0)
-    with respx.mock:
-        respx.delete("http://appium/session/session-1").mock(side_effect=httpx.ConnectError("nope"))
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
-        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
+    pool.handlers[("DELETE", "/session/session-1")] = UpstreamConnectError("nope")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool, bus=bus)
+    response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/session-1")
     assert response.status_code == 200
     assert state.snapshot().slots[0].state == "FREE"
 
 
 def test_stop_node_session_kills_leaked_upstream_session_for_unowned_id(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, pool: FakePool
 ) -> None:
-    import respx
-
     # The escalation's main real-world trigger: the client-style DELETE hit
     # the relay's 502 branch, which already released the local slot while the
     # upstream Appium session stayed alive. The force-stop must still issue
     # the upstream DELETE for a session the relay no longer tracks, without
     # publishing a session-closed event for it.
-    with respx.mock:
-        route = respx.delete("http://appium/session/leaked-1").mock(
-            return_value=httpx.Response(200, json={"value": None})
-        )
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
-        response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/leaked-1")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool, bus=bus)
+    response = TestClient(app, raise_server_exceptions=False).delete("/se/grid/node/session/leaked-1")
     assert response.status_code == 200
-    assert route.called
+    assert pool.called("DELETE", "/session/leaked-1")
     assert bus.events == []
 
 
 def test_post_session_cleans_up_upstream_when_reservation_reaped_mid_create(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, pool: FakePool
 ) -> None:
-    import respx
-
     # A create that outlives the reservation TTL has its reservation reaped
     # by the heartbeat mid-flight; commit() then raises ReservationGoneError.
     # The handler must delete the just-created (now untracked) Appium session
     # — expire_idle only watches BUSY slots, so it would otherwise leak — and
     # answer a W3C error envelope instead of an unparseable bare 500.
-    async def reaping_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+    async def reaping_proxy(_request: Request, *, pool: object) -> JSONResponse:
         # Simulates the heartbeat reaper firing while the upstream create is
         # in flight: the handler's reservation is expired before it returns.
         state.expire_reservations(now=10_000.0)
         return JSONResponse({"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}})
 
-    with respx.mock:
-        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
-            return_value=httpx.Response(200, json={"value": None})
-        )
-        app = build_app(
-            state=state,
-            appium_upstream="http://appium",
-            http_client=http_client,
-            bus=bus,
-            proxy_request_func=reaping_proxy,
-        )
-        response = TestClient(app, raise_server_exceptions=False).post(
-            "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
-    assert delete_route.called
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        pool=pool,
+        bus=bus,
+        proxy_request_func=reaping_proxy,
+    )
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert pool.called("DELETE", "/session/appium-session-1")
     assert response.status_code == 500
     assert response.json()["value"]["error"] == "session not created"
     assert state.snapshot().slots[0].state == "FREE"
@@ -455,28 +447,20 @@ def test_post_session_cleans_up_upstream_when_reservation_reaped_mid_create(
 
 
 def test_hub_create_session_cleans_up_upstream_when_reservation_reaped_mid_create(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, pool: FakePool
 ) -> None:
-    import respx
-
     # Same race on the hub-routed create path: the hub treats the W3C error
     # envelope as a clean SessionNotCreated instead of choking on a bare 500.
-    def create_then_reap(_request: httpx.Request) -> httpx.Response:
+    def create_then_reap() -> UpstreamResponse:
         state.expire_reservations(now=10_000.0)
-        return httpx.Response(
-            200, json={"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}}
-        )
+        return _json_response({"value": {"sessionId": "appium-session-1", "capabilities": {"platformName": "Android"}}})
 
-    with respx.mock:
-        respx.post("http://appium/session").mock(side_effect=create_then_reap)
-        delete_route = respx.delete("http://appium/session/appium-session-1").mock(
-            return_value=httpx.Response(200, json={"value": None})
-        )
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client, bus=bus)
-        response = TestClient(app, raise_server_exceptions=False).post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
-    assert delete_route.called
+    pool.handlers[("POST", "/session")] = create_then_reap
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool, bus=bus)
+    response = TestClient(app, raise_server_exceptions=False).post(
+        "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
+    )
+    assert pool.called("DELETE", "/session/appium-session-1")
     assert response.status_code == 500
     assert response.json()["value"]["error"] == "session not created"
     assert state.snapshot().slots[0].state == "FREE"
@@ -496,7 +480,7 @@ def test_cdp_websocket_route_invokes_proxy_websocket(test_app: Starlette, proxy:
     assert proxy.websocket_paths == ["/session/session-1/se/cdp"]
 
 
-async def _connect_error_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
+async def _connect_error_proxy(_request: Request, *, pool: object) -> Response:
     return Response(status_code=502)
 
 
@@ -508,11 +492,11 @@ class ExplodingBus:
         raise RuntimeError("boom")
 
 
-def test_publish_safely_catches_publish_exception(state: NodeState, http_client: httpx.AsyncClient) -> None:
+def test_publish_safely_catches_publish_exception(state: NodeState, pool: FakePool) -> None:
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=ExplodingBus(),
     )
     response = TestClient(app, raise_server_exceptions=False).post(
@@ -524,14 +508,14 @@ def test_publish_safely_catches_publish_exception(state: NodeState, http_client:
 # --- create_session proxy status >= 300 (lines 133-134) ---
 
 
-def test_create_session_aborts_when_proxy_returns_300_plus(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    async def bad_status_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> JSONResponse:
+def test_create_session_aborts_when_proxy_returns_300_plus(state: NodeState, pool: FakePool) -> None:
+    async def bad_status_proxy(_request: Request, *, pool: object) -> JSONResponse:
         return JSONResponse({"value": {}}, status_code=300)
 
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         proxy_request_func=bad_status_proxy,
     )
     response = TestClient(app, raise_server_exceptions=False).post(
@@ -544,19 +528,17 @@ def test_create_session_aborts_when_proxy_returns_300_plus(state: NodeState, htt
 # --- delete_session proxy exception (lines 162-170) ---
 
 
-def test_delete_session_returns_502_on_proxy_exception(
-    state: NodeState, bus: RecordingBus, http_client: httpx.AsyncClient
-) -> None:
+def test_delete_session_returns_502_on_proxy_exception(state: NodeState, bus: RecordingBus, pool: FakePool) -> None:
     reservation = state.reserve({"platformName": "Android"})
     state.commit(reservation.id, session_id="session-1", started_at=1.0)
 
-    async def broken_proxy(_request: Request, *, upstream: str, timeout: float, client: object) -> Response:
+    async def broken_proxy(_request: Request, *, pool: object) -> Response:
         raise RuntimeError("boom")
 
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=broken_proxy,
     )
@@ -568,127 +550,87 @@ def test_delete_session_returns_502_on_proxy_exception(
 # --- hub_create_session (lines 201-282) ---
 
 
-def test_hub_create_session_returns_400_for_malformed_json(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+def test_hub_create_session_returns_400_for_malformed_json(state: NodeState, pool: FakePool) -> None:
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post("/se/grid/node/session", content="{", headers={"content-type": "application/json"})
     assert response.status_code == 400
     assert response.json()["value"]["error"] == "invalid argument"
 
 
-def test_hub_create_session_returns_404_for_mismatch(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+def test_hub_create_session_returns_404_for_mismatch(state: NodeState, pool: FakePool) -> None:
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}}})
     assert response.status_code == 404
 
 
-def test_hub_create_session_returns_503_when_no_free_slot(state: NodeState, http_client: httpx.AsyncClient) -> None:
+def test_hub_create_session_returns_503_when_no_free_slot(state: NodeState, pool: FakePool) -> None:
     state.reserve({"platformName": "Android"})
-    app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
     client = TestClient(app, raise_server_exceptions=False)
     response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 503
 
 
-def test_hub_create_session_returns_502_on_upstream_error(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(side_effect=httpx.ConnectError("nope"))
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_returns_502_on_upstream_error(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = UpstreamConnectError("nope")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 502
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_hub_create_session_returns_502_on_bad_json_from_upstream(
-    state: NodeState, http_client: httpx.AsyncClient
-) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(return_value=httpx.Response(200, content=b"not json"))
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_returns_502_on_bad_json_from_upstream(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = UpstreamResponse(200, [], b"not json")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 502
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_hub_create_session_returns_502_on_missing_session_id(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(return_value=httpx.Response(200, json={"value": {"capabilities": {}}}))
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_returns_502_on_missing_session_id(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = _json_response({"value": {"capabilities": {}}})
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 502
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_hub_create_session_returns_502_on_missing_capabilities(
-    state: NodeState, http_client: httpx.AsyncClient
-) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(
-            return_value=httpx.Response(200, json={"value": {"sessionId": "sid-1"}})
-        )
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_returns_502_on_missing_capabilities(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = _json_response({"value": {"sessionId": "sid-1"}})
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 502
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_hub_create_session_returns_upstream_status_on_non_2xx(
-    state: NodeState, http_client: httpx.AsyncClient
-) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(return_value=httpx.Response(500, content=b"internal error"))
-        app = build_app(state=state, appium_upstream="http://appium", http_client=http_client)
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_returns_upstream_status_on_non_2xx(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = UpstreamResponse(500, [], b"internal error")
+    app = build_app(state=state, appium_upstream="http://appium", pool=pool)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 500
     assert state.snapshot().slots[0].state == "FREE"
 
 
-def test_hub_create_session_happy_path(state: NodeState, http_client: httpx.AsyncClient, bus: RecordingBus) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(
-            return_value=httpx.Response(200, json={"value": {"sessionId": "hub-sid", "capabilities": {"x": 1}}})
-        )
-        app = build_app(
-            state=state,
-            appium_upstream="http://appium",
-            http_client=http_client,
-            bus=bus,
-            node_uri="http://node:5555",
-            node_id="node-1",
-            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
-        )
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}}
-        )
+def test_hub_create_session_happy_path(state: NodeState, pool: FakePool, bus: RecordingBus) -> None:
+    pool.handlers[("POST", "/session")] = _json_response({"value": {"sessionId": "hub-sid", "capabilities": {"x": 1}}})
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        pool=pool,
+        bus=bus,
+        node_uri="http://node:5555",
+        node_id="node-1",
+        slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"alwaysMatch": {"platformName": "Android"}}})
     assert response.status_code == 200
     data = response.json()
     assert data["value"]["sessionResponse"]["session"]["sessionId"] == "hub-sid"
@@ -697,42 +639,32 @@ def test_hub_create_session_happy_path(state: NodeState, http_client: httpx.Asyn
     assert state.snapshot().slots[0].session_id == "hub-sid"
 
 
-def test_hub_create_session_flat_capabilities_no_wrapper(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(
-            return_value=httpx.Response(200, json={"value": {"sessionId": "flat-sid", "capabilities": {}}})
-        )
-        app = build_app(
-            state=state,
-            appium_upstream="http://appium",
-            http_client=http_client,
-            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
-        )
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post("/se/grid/node/session", json={"capabilities": {"platformName": "Android"}})
+def test_hub_create_session_flat_capabilities_no_wrapper(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = _json_response({"value": {"sessionId": "flat-sid", "capabilities": {}}})
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        pool=pool,
+        slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/se/grid/node/session", json={"capabilities": {"platformName": "Android"}})
     assert response.status_code == 200
 
 
-def test_hub_create_session_with_first_match_caps(state: NodeState, http_client: httpx.AsyncClient) -> None:
-    import respx
-
-    with respx.mock:
-        respx.post("http://appium/session").mock(
-            return_value=httpx.Response(200, json={"value": {"sessionId": "fm-sid", "capabilities": {}}})
-        )
-        app = build_app(
-            state=state,
-            appium_upstream="http://appium",
-            http_client=http_client,
-            slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
-        )
-        client = TestClient(app, raise_server_exceptions=False)
-        response = client.post(
-            "/se/grid/node/session",
-            json={"capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "Android"}]}},
-        )
+def test_hub_create_session_with_first_match_caps(state: NodeState, pool: FakePool) -> None:
+    pool.handlers[("POST", "/session")] = _json_response({"value": {"sessionId": "fm-sid", "capabilities": {}}})
+    app = build_app(
+        state=state,
+        appium_upstream="http://appium",
+        pool=pool,
+        slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        "/se/grid/node/session",
+        json={"capabilities": {"alwaysMatch": {}, "firstMatch": [{"platformName": "Android"}]}},
+    )
     assert response.status_code == 200
 
 
@@ -805,7 +737,7 @@ def test_node_api_status_is_served_locally_not_proxied(test_app: Starlette, prox
 
 
 def test_node_api_status_returns_bare_node_status(
-    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, http_client: httpx.AsyncClient
+    state: NodeState, bus: RecordingBus, proxy: RecordingProxy, pool: FakePool
 ) -> None:
     # Selenium's router fetches GET /se/grid/node/status to learn the node's
     # sessionTimeout (HandleSession.fetchNodeTimeout) and parses the body as
@@ -818,7 +750,7 @@ def test_node_api_status_returns_bare_node_status(
     app = build_app(
         state=state,
         appium_upstream="http://appium",
-        http_client=http_client,
+        pool=pool,
         bus=bus,
         proxy_request_func=proxy.request,
         node_status_payload=lambda: node_status,
