@@ -92,7 +92,6 @@ exclude_lines = [
 
 [dependency-groups]
 dev = [
-    "respx>=0.23.1",
     "vulture>=2.16",
 ]
 
