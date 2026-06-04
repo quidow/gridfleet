@@ -1195,6 +1195,9 @@ class AppiumProcessManager:
             status = supervisor_snapshot.get("status")
             if status is not None:
                 payload["grid_node_status"] = status
+            service = supervisor.service
+            if service is not None:
+                payload["has_active_session"] = service.has_active_session()
         return payload
 
     async def shutdown(self) -> None:
