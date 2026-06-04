@@ -27,6 +27,14 @@ from agent_app.appium.exceptions import (
     RuntimeNotInstalledError,
     StartupTimeoutError,
 )
+from agent_app.appium.log_files import (
+    LOG_MAINTENANCE_INTERVAL_SEC,
+    appium_log_path,
+    open_log_file,
+    sweep_log_dir,
+    tail_lines,
+    truncate_oversized_logs,
+)
 from agent_app.config import agent_settings
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.event_bus import EventBus
@@ -51,7 +59,6 @@ def _has_lifecycle_action(actions: list[dict[str, Any]], action_id: str) -> bool
 READINESS_TIMEOUT = 30
 READINESS_POLL_INTERVAL = 1
 STOP_GRACE_PERIOD = 5
-MAX_LOG_LINES = 5000
 AUTO_RESTART_DELAYS_SEC = (1, 2, 4, 8, 16, 30)
 AUTO_RESTART_MAX_ATTEMPTS = 5
 AUTO_RESTART_WINDOW_SEC = 300
@@ -303,8 +310,7 @@ class AppiumProcessManager:
         self._grid_supervisors: dict[int, GridNodeSupervisorHandle] = {}
         self._info: dict[int, AppiumProcessInfo] = {}
         self._launch_specs: dict[int, AppiumLaunchSpec] = {}
-        self._logs: dict[int, collections.deque[str]] = {}
-        self._log_tasks: dict[int, list[asyncio.Task[None]]] = {}
+        self._log_maintenance_task: asyncio.Task[None] | None = None
         self._appium_watch_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_tasks: dict[int, asyncio.Task[None]] = {}
         self._appium_restart_attempts: dict[int, collections.deque[float]] = {}
@@ -327,6 +333,21 @@ class AppiumProcessManager:
     def set_adapter_registry(self, registry: AdapterRegistry) -> None:
         self._adapter_registry = registry
 
+    def start_log_maintenance(self) -> None:
+        """Sweep orphaned Appium log files and start the periodic size-cap pass."""
+        sweep_log_dir()
+        if self._log_maintenance_task is not None and not self._log_maintenance_task.done():
+            return
+        self._log_maintenance_task = asyncio.create_task(self._log_maintenance_loop())
+
+    async def _log_maintenance_loop(self) -> None:
+        while True:
+            await asyncio.sleep(LOG_MAINTENANCE_INTERVAL_SEC)
+            try:
+                truncate_oversized_logs()
+            except Exception as exc:  # maintenance must never kill the loop
+                logger.warning("appium log maintenance pass failed: %s", sanitize_log_value(exc))
+
     def iter_grid_supervisors(self) -> list[tuple[int, GridNodeSupervisorHandle]]:
         """Snapshot of (port, supervisor) pairs; safe to iterate while mutating."""
 
@@ -336,15 +357,6 @@ class AppiumProcessManager:
         """Remove a supervisor entry by port. No-op if absent."""
 
         self._grid_supervisors.pop(port, None)
-
-    async def _read_stream(self, port: int, stream: asyncio.StreamReader, prefix: str) -> None:
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            text = line.decode(errors="replace").rstrip("\n")
-            if port in self._logs:
-                self._logs[port].append(f"[{prefix}] {text}")
 
     def _allocate_node_port(self) -> int:
         # Skip ports already bound by another listener so the grid node HTTP
@@ -364,29 +376,6 @@ class AppiumProcessManager:
                 except OSError:
                     continue
             return port
-
-    def _track_stream_logs(
-        self,
-        port: int,
-        process: asyncio.subprocess.Process,
-        *,
-        prefix: str,
-    ) -> list[asyncio.Task[None]]:
-        tasks: list[asyncio.Task[None]] = []
-        if process.stdout:
-            tasks.append(asyncio.create_task(self._read_stream(port, process.stdout, prefix)))
-        if process.stderr:
-            tasks.append(asyncio.create_task(self._read_stream(port, process.stderr, prefix)))
-        self._log_tasks.setdefault(port, []).extend(tasks)
-        return tasks
-
-    def _remove_log_tasks(self, port: int, tasks: list[asyncio.Task[None]]) -> None:
-        existing = self._log_tasks.get(port)
-        if existing is None:
-            return
-        self._log_tasks[port] = [task for task in existing if task not in tasks]
-        if not self._log_tasks[port]:
-            self._log_tasks.pop(port, None)
 
     def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> None:
         task = tasks.pop(port, None)
@@ -729,33 +718,30 @@ class AppiumProcessManager:
                 "stop the existing process before starting a new managed node"
             )
 
+        log_file = open_log_file(spec.port)
         try:
             appium_proc = await asyncio.create_subprocess_exec(
                 *appium_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stdout=log_file,
+                stderr=log_file,
                 env=env,
             )
         except FileNotFoundError:
             raise RuntimeMissingError(f"appium executable not found (last tried: {appium_bin})") from None
-
-        self._logs.setdefault(spec.port, collections.deque(maxlen=MAX_LOG_LINES))
-        log_tasks = self._track_stream_logs(spec.port, appium_proc, prefix="appium")
+        finally:
+            # Only the agent's copy of the fd — the child inherited its own.
+            log_file.close()
 
         ready = await self._wait_for_readiness(spec.port, appium_proc)
         if not ready:
-            await asyncio.sleep(0.5)
-            recent_logs = list(self._logs.get(spec.port, []))[-20:]
             try:
                 appium_proc.kill()
                 await appium_proc.wait()
             except ProcessLookupError:
                 logger.debug("Appium process on port %d already exited before kill", spec.port, exc_info=True)
-            for task in log_tasks:
-                task.cancel()
-            self._remove_log_tasks(spec.port, log_tasks)
+            recent_logs = tail_lines(appium_log_path(spec.port), 20)
             if clear_logs_on_failure:
-                self._logs.pop(spec.port, None)
+                appium_log_path(spec.port).unlink(missing_ok=True)
             log_snippet = "\n".join(recent_logs) if recent_logs else "(no output captured)"
             raise StartupTimeoutError(
                 f"Appium on port {spec.port} did not become ready within {READINESS_TIMEOUT}s. Output:\n{log_snippet}"
@@ -1097,8 +1083,8 @@ class AppiumProcessManager:
             except TimeoutError:
                 appium_proc.kill()
                 await appium_proc.wait()
-        for task in self._log_tasks.pop(port, []):
-            task.cancel()
+        # The log file is intentionally kept: permanent grid-node startup
+        # failure is exactly when an operator wants the Appium output.
         # Intentionally do NOT discard `_intentional_stop_ports` here. Cleanup
         # represents permanent grid-node startup failure: any straggler exit
         # handler must NOT trigger an auto-restart against the now-cleared
@@ -1166,8 +1152,7 @@ class AppiumProcessManager:
                     appium_proc.kill()
                     await appium_proc.wait()
 
-            for t in self._log_tasks.pop(port, []):
-                t.cancel()
+            appium_log_path(port).unlink(missing_ok=True)
             self._intentional_stop_ports.discard(port)
 
     async def status(self, port: int) -> dict[str, Any]:
@@ -1181,11 +1166,7 @@ class AppiumProcessManager:
         return {"running": True, "port": port, "pid": proc.pid, "appium_status": appium_status}
 
     def get_logs(self, port: int, lines: int = 100) -> list[str]:
-        buf = self._logs.get(port)
-        if buf is None:
-            return []
-        all_lines = list(buf)
-        return all_lines[-lines:]
+        return tail_lines(appium_log_path(port), lines)
 
     def list_running(self) -> list[AppiumProcessInfo]:
         running: list[AppiumProcessInfo] = []
@@ -1225,13 +1206,9 @@ class AppiumProcessManager:
             for task in task_map.values():
                 task.cancel()
             task_map.clear()
-        # If a per-port `stop()` raised before reaching its `_log_tasks.pop`,
-        # the log-streamer tasks survive shutdown and leak into the next
-        # event-loop tick. Cancel anything still tracked here.
-        for port, tasks in list(self._log_tasks.items()):
-            for task in tasks:
-                task.cancel()
-            self._log_tasks.pop(port, None)
+        if self._log_maintenance_task is not None:
+            self._log_maintenance_task.cancel()
+            self._log_maintenance_task = None
 
     async def _fetch_appium_status(self, port: int) -> dict[str, Any] | None:
         client = http_client.get_client()

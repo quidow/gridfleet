@@ -290,6 +290,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reg_task = _start_registration_task()
     appium_mgr.set_runtime_registry(runtime_registry)
     appium_mgr.set_adapter_registry(adapter_registry)
+    appium_mgr.start_log_maintenance()
 
     pack_task: asyncio.Task[None] | None = None
     log_shipper_task: asyncio.Task[None] | None = None
