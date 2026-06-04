@@ -1543,3 +1543,61 @@ async def test_agent_unreachable_skips_remaining_devices(db_session: AsyncSessio
     assert device.operational_state == DeviceOperationalState.available
     mock_lifecycle_policy.note_connectivity_loss.assert_not_awaited()
     mock_lifecycle_policy.handle_health_failure.assert_not_awaited()
+
+
+async def test_healthy_non_offline_device_clears_previously_offline_flag(db_session: AsyncSession) -> None:
+    """A healthy available device must clear a stale previously-offline flag so a
+    later genuine recovery picks the startup-recovery reason."""
+    _host, device, _ = await _setup_host_and_device(db_session)
+    await track_previously_offline_device(db_session, "dc-001")
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True},
+        ),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+    assert "dc-001" not in await get_connectivity_control_plane_state(db_session)
+
+
+async def test_absent_device_hard_failure_does_not_touch_ip_ping_counter(db_session: AsyncSession) -> None:
+    """A disconnected device failing hard checks must not skew the ip_ping
+    hysteresis counter or metrics — the verdict is unhealthy regardless."""
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import IP_PING_NAMESPACE
+
+    _host, _device, _ = await _setup_host_and_device(db_session)
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            return_value={
+                "healthy": False,
+                "checks": [{"check_id": "adb", "ok": False}, {"check_id": "ip_ping", "ok": False}],
+            },
+        ),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dc-001")
+    assert counter is None

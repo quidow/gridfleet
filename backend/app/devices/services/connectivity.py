@@ -328,7 +328,12 @@ class ConnectivityService:
         else:
             others_ok = all(bool(c.get("ok")) for c in other_checks if isinstance(c, dict))
         gated_ip_ping_ok = True
-        if ip_ping_entry is not None and device.operational_state != DeviceOperationalState.maintenance:
+        # Apply the hysteresis counter and ip_ping metrics only when the verdict
+        # hinges on ip_ping (other checks pass): when hard checks already fail —
+        # the absent/disconnected-device shape — the device is unhealthy
+        # regardless, and mutating the persisted counter and failure gauges
+        # would skew ip_ping telemetry for devices that are simply gone.
+        if others_ok and ip_ping_entry is not None and device.operational_state != DeviceOperationalState.maintenance:
             gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
                 db,
                 device,
@@ -368,6 +373,11 @@ class ConnectivityService:
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
         if device.operational_state != DeviceOperationalState.offline:
+            # Healthy without being offline: clear any stale previously-offline
+            # flag so a later genuine offline->online recovery reports the
+            # startup-recovery reason (restores the old endpoint-health
+            # branch's cleanup, now unified for every device).
+            await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
             return
         if not await is_ready_for_use_async(db, device):
             logger.debug("Device %s is connected but still awaiting setup/verification", device.name)
@@ -454,7 +464,15 @@ class ConnectivityService:
                     enumeration_done = True
                     await assert_current_leader(db, settings=self._settings)
                 if connected_targets is None:
-                    break  # Agent unreachable — skip remaining devices (heartbeat handles host status)
+                    # Agent enumeration unreachable — skip remaining devices this
+                    # cycle (heartbeat handles host status); already-committed
+                    # writes for earlier devices came from successful direct
+                    # probes and stand on their own.
+                    logger.warning(
+                        "Agent enumeration unreachable for host %s; skipping remaining devices this cycle",
+                        host.hostname,
+                    )
+                    break
 
                 if _device_expected_aliases(device) & connected_targets:
                     # Present but failing — keep the health-failure path.
