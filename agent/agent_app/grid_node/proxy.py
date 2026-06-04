@@ -6,17 +6,20 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
 import websockets
 from starlette.responses import Response
 from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosed
+
+from agent_app.grid_node.upstream_pool import UpstreamConnectError, UpstreamTimeoutError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from starlette.requests import Request
     from starlette.websockets import WebSocket
+
+    from agent_app.grid_node.upstream_pool import AppiumUpstreamPool
 
 logger = logging.getLogger(__name__)
 
@@ -39,34 +42,25 @@ def strip_hop_header_items(headers: Iterable[tuple[str, str]]) -> list[tuple[str
 async def proxy_request(
     request: Request,
     *,
-    upstream: str,
-    timeout: float,
-    client: httpx.AsyncClient,
+    pool: AppiumUpstreamPool,
 ) -> Response:
     body = await request.body()
-    target = f"{upstream}{request.url.path}"
-    upstream_request = client.build_request(
-        request.method,
-        target,
-        params=request.query_params,
-        content=body,
-        headers=strip_hop_header_items(
-            [(key.decode("latin-1"), value.decode("latin-1")) for key, value in request.headers.raw]
-        ),
-        timeout=timeout,
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    headers = strip_hop_header_items(
+        [(key.decode("latin-1"), value.decode("latin-1")) for key, value in request.headers.raw]
     )
     try:
-        upstream_response = await client.send(upstream_request, stream=True)
-    except httpx.ConnectError:
+        upstream_response = await pool.request(request.method, target, headers, body)
+    except UpstreamConnectError:
         return Response(status_code=502)
-    except httpx.TimeoutException:
+    except UpstreamTimeoutError:
         return Response(status_code=504)
-    try:
-        response_body = await upstream_response.aread()
-        response_headers = strip_hop_header_items(upstream_response.headers.multi_items())
-    finally:
-        await upstream_response.aclose()
-    response = Response(response_body, status_code=upstream_response.status_code)
+    response_headers = strip_hop_header_items(
+        [(key.decode("latin-1"), value.decode("latin-1")) for key, value in upstream_response.headers]
+    )
+    response = Response(upstream_response.body, status_code=upstream_response.status)
     for key, value in response_headers:
         # Starlette's Response() already set Content-Length for the buffered
         # body; appending the upstream copy would emit the header twice. The

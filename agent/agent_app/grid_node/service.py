@@ -16,6 +16,7 @@ from agent_app.grid_node.http_server import build_app
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
 from agent_app.grid_node.sidecar import RelayActivity, SidecarExitedError
+from agent_app.grid_node.upstream_pool import AppiumUpstreamPool
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -123,7 +124,7 @@ class UvicornGridNodeHttpServer:
         self._node_status_payload = node_status_payload
         self._server: uvicorn.Server | None = None
         self._task: asyncio.Task[None] | None = None
-        self._http_client: httpx.AsyncClient | None = None
+        self._pool: AppiumUpstreamPool | None = None
 
     async def start(self) -> None:
         if self._task is not None:
@@ -131,13 +132,15 @@ class UvicornGridNodeHttpServer:
         parsed = urlparse(self._config.node_uri)
         if parsed.scheme not in {"http", "https"} or parsed.hostname is None or parsed.port is None:
             raise RuntimeError(f"invalid grid node URI: {self._config.node_uri}")
-        self._http_client = httpx.AsyncClient(timeout=self._config.proxy_timeout_sec)
+        appium = urlparse(self._config.appium_upstream)
+        if appium.scheme != "http" or appium.hostname is None or appium.port is None:
+            raise RuntimeError(f"invalid appium upstream URL: {self._config.appium_upstream}")
+        self._pool = AppiumUpstreamPool(appium.hostname, appium.port, timeout_sec=self._config.proxy_timeout_sec)
         app = build_app(
             state=self._state,
             appium_upstream=self._config.appium_upstream,
-            http_client=self._http_client,
+            pool=self._pool,
             bus=self._bus,
-            proxy_timeout=self._config.proxy_timeout_sec,
             node_status_payload=self._node_status_payload,
             node_uri=self._config.node_uri,
             node_id=self._config.node_id,
@@ -205,10 +208,10 @@ class UvicornGridNodeHttpServer:
                 await self._task
             self._task = None
         self._server = None
-        if self._http_client is not None:
+        if self._pool is not None:
             with contextlib.suppress(Exception):
-                await self._http_client.aclose()
-            self._http_client = None
+                await self._pool.aclose()
+            self._pool = None
 
 
 class GridNodeService:

@@ -4,33 +4,50 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
-import httpx
 import pytest
 import websockets
-from httpx import Response as HttpxResponse
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route, WebSocketRoute
+from starlette.routing import WebSocketRoute
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket
+from agent_app.grid_node.upstream_pool import (
+    UpstreamConnectError,
+    UpstreamError,
+    UpstreamResponse,
+    UpstreamTimeoutError,
+)
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
 
 
-@pytest.mark.asyncio
-async def test_proxy_request_forwards_status() -> None:
-    async def status(_request: Request) -> JSONResponse:
-        return JSONResponse({"value": {"ready": True}}, headers={"connection": "close", "x-appium": "stub"})
+class FakePool:
+    def __init__(self, *, response: UpstreamResponse | None = None, error: Exception | None = None) -> None:
+        self.requests: list[tuple[str, str, list[tuple[str, str]], bytes]] = []
+        self._response = response
+        self._error = error
 
-    app = Starlette(routes=[Route("/status", status)])
-    transport = httpx.ASGITransport(app=app)
-    request = _request("GET", "/status")
-    async with httpx.AsyncClient(transport=transport, base_url="http://appium") as client:
-        response = await proxy_request(request, upstream="http://appium", timeout=1.0, client=client)
+    async def request(self, method: str, target: str, headers: list[tuple[str, str]], body: bytes) -> UpstreamResponse:
+        self.requests.append((method, target, headers, body))
+        if self._error is not None:
+            raise self._error
+        assert self._response is not None
+        return self._response
+
+
+@pytest.mark.asyncio
+async def test_proxy_request_forwards_status_and_strips_hop_headers() -> None:
+    pool = FakePool(
+        response=UpstreamResponse(
+            200,
+            [(b"connection", b"close"), (b"x-appium", b"stub"), (b"content-type", b"application/json")],
+            b'{"value": {"ready": true}}',
+        )
+    )
+    response = await proxy_request(_request("GET", "/status"), pool=pool)
 
     assert response.status_code == 200
     assert json.loads(response.body)["value"]["ready"] is True
@@ -39,22 +56,29 @@ async def test_proxy_request_forwards_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_proxy_request_preserves_duplicate_response_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
-        return httpx.Response(
-            200,
-            headers=[("set-cookie", "a=1; Path=/"), ("set-cookie", "b=2; Path=/")],
-            content=b"{}",
-        )
+async def test_proxy_request_strips_request_hop_headers_and_keeps_query() -> None:
+    pool = FakePool(response=UpstreamResponse(200, [], b"{}"))
+    request = _request(
+        "GET",
+        "/session/s1/screenshot",
+        query=b"scale=2",
+        headers=[(b"connection", b"keep-alive"), (b"x-custom", b"yes")],
+    )
+    await proxy_request(request, pool=pool)
 
-    async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "send", send)
-        response = await proxy_request(
-            _request("GET", "/status"),
-            upstream="http://appium",
-            timeout=1.0,
-            client=client,
-        )
+    method, target, headers, _body = pool.requests[0]
+    assert method == "GET"
+    assert target == "/session/s1/screenshot?scale=2"
+    assert ("x-custom", "yes") in headers
+    assert all(name.lower() != "connection" for name, _value in headers)
+
+
+@pytest.mark.asyncio
+async def test_proxy_request_preserves_duplicate_response_headers() -> None:
+    pool = FakePool(
+        response=UpstreamResponse(200, [(b"set-cookie", b"a=1; Path=/"), (b"set-cookie", b"b=2; Path=/")], b"{}")
+    )
+    response = await proxy_request(_request("GET", "/status"), pool=pool)
 
     set_cookie_headers = [
         value.decode("latin-1") for key, value in response.raw_headers if key.lower() == b"set-cookie"
@@ -63,59 +87,41 @@ async def test_proxy_request_preserves_duplicate_response_headers(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_proxy_request_closes_upstream_response_when_body_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed = False
+async def test_proxy_request_emits_single_content_length() -> None:
+    # Starlette's Response() sets Content-Length for the buffered body; the
+    # upstream copy must not be appended on top. The duplicate was harmless
+    # behind the Java hub's client but is rejected as malformed by strict h1
+    # parsers (e.g. the relay fast-lane sidecar), surfacing as a 502 on every
+    # proxied control-leg response.
+    pool = FakePool(
+        response=UpstreamResponse(
+            200, [(b"content-type", b"application/json"), (b"content-length", b"15")], b'{"value": null}'
+        )
+    )
+    response = await proxy_request(_request("DELETE", "/session/abc"), pool=pool)
 
-    class FailingReadResponse(HttpxResponse):
-        async def aread(self) -> bytes:
-            raise RuntimeError("read failed")
+    content_length_headers = [value for key, value in response.raw_headers if key.lower() == b"content-length"]
+    assert content_length_headers == [b"15"]
 
-        async def aclose(self) -> None:
-            nonlocal closed
-            closed = True
-            await super().aclose()
 
-    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
-        return FailingReadResponse(200, content=b"{}")
-
-    async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "send", send)
-        with pytest.raises(RuntimeError, match="read failed"):
-            await proxy_request(
-                _request("GET", "/status"),
-                upstream="http://appium",
-                timeout=1.0,
-                client=client,
-            )
-
-    assert closed is True
+@pytest.mark.asyncio
+async def test_proxy_request_propagates_mid_response_failure() -> None:
+    pool = FakePool(error=UpstreamError("upstream closed mid-response"))
+    with pytest.raises(UpstreamError, match="mid-response"):
+        await proxy_request(_request("GET", "/status"), pool=pool)
 
 
 @pytest.mark.asyncio
 async def test_proxy_connection_refused_returns_502() -> None:
-    async with httpx.AsyncClient() as client:
-        response = await proxy_request(
-            _request("GET", "/status"),
-            upstream="http://127.0.0.1:1",
-            timeout=0.1,
-            client=client,
-        )
+    pool = FakePool(error=UpstreamConnectError("connect failed"))
+    response = await proxy_request(_request("GET", "/status"), pool=pool)
     assert response.status_code == 502
 
 
 @pytest.mark.asyncio
-async def test_proxy_timeout_returns_504(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def raise_timeout(*_args: object, **_kwargs: object) -> object:
-        raise httpx.TimeoutException("timed out")
-
-    async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "send", raise_timeout)
-        response = await proxy_request(
-            _request("GET", "/status"),
-            upstream="http://127.0.0.1:5555",
-            timeout=0.1,
-            client=client,
-        )
+async def test_proxy_timeout_returns_504() -> None:
+    pool = FakePool(error=UpstreamTimeoutError("deadline exceeded"))
+    response = await proxy_request(_request("GET", "/status"), pool=pool)
     assert response.status_code == 504
 
 
@@ -190,7 +196,14 @@ async def test_proxy_websocket_rejects_client_when_upstream_connect_fails() -> N
     await asyncio.to_thread(run_client)
 
 
-def _request(method: str, path: str, *, body: bytes = b"") -> Request:
+def _request(
+    method: str,
+    path: str,
+    *,
+    body: bytes = b"",
+    query: bytes = b"",
+    headers: list[tuple[bytes, bytes]] | None = None,
+) -> Request:
     async def receive() -> dict[str, object]:
         return {"type": "http.request", "body": body, "more_body": False}
 
@@ -200,34 +213,11 @@ def _request(method: str, path: str, *, body: bytes = b"") -> Request:
             "method": method,
             "path": path,
             "raw_path": path.encode("ascii"),
-            "query_string": b"",
-            "headers": [],
+            "query_string": query,
+            "headers": headers or [],
             "server": ("testserver", 80),
             "scheme": "http",
             "client": ("testclient", 50000),
         },
         receive,
     )
-
-
-@pytest.mark.asyncio
-async def test_proxy_request_emits_single_content_length(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Starlette's Response() sets Content-Length for the buffered body; the
-    # upstream copy must not be appended on top. The duplicate was harmless
-    # behind the Java hub's client but is rejected as malformed by the relay
-    # fast-lane sidecar's strict h1 parser, surfacing as a 502 on every
-    # proxied control-leg response (e.g. session DELETE cleanup).
-    async def send(_request: httpx.Request, *, stream: bool) -> httpx.Response:
-        return httpx.Response(200, headers=[("content-type", "application/json")], content=b'{"value": null}')
-
-    async with httpx.AsyncClient() as client:
-        monkeypatch.setattr(client, "send", send)
-        response = await proxy_request(
-            _request("DELETE", "/session/abc"),
-            upstream="http://appium",
-            timeout=1.0,
-            client=client,
-        )
-
-    content_length_headers = [value for key, value in response.raw_headers if key.lower() == b"content-length"]
-    assert content_length_headers == [b"15"]

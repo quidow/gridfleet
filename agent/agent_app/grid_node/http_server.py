@@ -7,7 +7,6 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-import httpx
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
@@ -21,12 +20,15 @@ from agent_app.grid_node.node_state import (
 )
 from agent_app.grid_node.protocol import EventType, Slot, Stereotype, event_envelope
 from agent_app.grid_node.proxy import proxy_request, proxy_websocket
+from agent_app.grid_node.upstream_pool import UpstreamError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from starlette.requests import Request
     from starlette.websockets import WebSocket
+
+    from agent_app.grid_node.upstream_pool import AppiumUpstreamPool
 
 
 class EventPublisher(Protocol):
@@ -46,20 +48,17 @@ def build_app(
     *,
     state: NodeState,
     appium_upstream: str,
-    http_client: httpx.AsyncClient,
+    pool: AppiumUpstreamPool,
     bus: EventPublisher | None = None,
     proxy_request_func: Callable[..., Awaitable[Response]] = proxy_request,
     proxy_websocket_func: Callable[..., Awaitable[None]] = proxy_websocket,
-    proxy_timeout: float = 30.0,
     node_status_payload: Callable[[], dict[str, object]] | None = None,
     node_uri: str | None = None,
     node_id: str | None = None,
     slots: list[Slot] | None = None,
 ) -> Starlette:
-    # A single httpx.AsyncClient is shared across all routes for the lifetime
-    # of the app. Instantiating one per request leaks ~0.8 MB per call on
-    # macOS — TLS contexts, anyio sync primitives, and certifi parse caches
-    # are not fully released by the native allocator even after `aclose()`.
+    # The upstream pool is owned by the server lifecycle (constructed in
+    # UvicornGridNodeHttpServer.start, closed in stop); routes only borrow it.
     publisher = bus or NoopPublisher()
     stereotypes_by_slot_id: dict[str, dict[str, object]] = {
         slot.id: slot.stereotype.to_dict() for slot in (slots or [])
@@ -119,8 +118,8 @@ def build_app(
         # envelope — a bare 500 is unparseable for the hub's error decoder.
         logger.warning("reservation reaped during session create; deleting upstream session %s", session_id)
         try:
-            await http_client.delete(f"{appium_upstream}/session/{session_id}", timeout=proxy_timeout)
-        except httpx.HTTPError:
+            await pool.request("DELETE", f"/session/{session_id}", [], b"")
+        except UpstreamError:
             logger.warning("cleanup delete failed for reaped session %s", session_id, exc_info=True)
         return JSONResponse(
             {"value": {"error": "session not created", "message": "Reservation expired during session creation"}},
@@ -145,12 +144,7 @@ def build_app(
             return JSONResponse({"value": {"error": "session not created"}}, status_code=404)
 
         try:
-            response = await proxy_request_func(
-                request,
-                upstream=appium_upstream,
-                timeout=proxy_timeout,
-                client=http_client,
-            )
+            response = await proxy_request_func(request, pool=pool)
         except Exception:
             state.abort(reservation.id)
             logger.warning("upstream session creation proxy failed", exc_info=True)
@@ -240,8 +234,8 @@ def build_app(
         session_id = request.path_params["session_id"]
         owned, prev_caps, prev_start = _tracked_session_info(session_id)
         try:
-            await http_client.delete(f"{appium_upstream}/session/{session_id}", timeout=proxy_timeout)
-        except httpx.HTTPError:
+            await pool.request("DELETE", f"/session/{session_id}", [], b"")
+        except UpstreamError:
             logger.warning("stop_node_session upstream delete failed for %s", session_id, exc_info=True)
         state.release(session_id)
         if owned:
@@ -292,20 +286,21 @@ def build_app(
             return JSONResponse({"value": {"error": "session not created"}}, status_code=404)
 
         try:
-            upstream = await http_client.post(
-                f"{appium_upstream}/session",
-                json={"capabilities": w3c_capabilities},
-                timeout=proxy_timeout,
+            upstream = await pool.request(
+                "POST",
+                "/session",
+                [("content-type", "application/json")],
+                json.dumps({"capabilities": w3c_capabilities}).encode("utf-8"),
             )
-        except httpx.HTTPError:
+        except UpstreamError:
             state.abort(reservation.id)
             return JSONResponse({"value": {"error": "session not created"}}, status_code=502)
 
-        if upstream.status_code < 200 or upstream.status_code >= 300:
+        if upstream.status < 200 or upstream.status >= 300:
             state.abort(reservation.id)
-            return Response(content=upstream.content, status_code=upstream.status_code)
+            return Response(content=upstream.body, status_code=upstream.status)
 
-        upstream_bytes = upstream.content
+        upstream_bytes = upstream.body
         try:
             upstream_payload = json.loads(upstream_bytes)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -381,12 +376,7 @@ def build_app(
         await proxy_websocket_func(websocket, upstream=appium_upstream)
 
     async def _proxy_http(request: Request) -> Response:
-        return await proxy_request_func(
-            request,
-            upstream=appium_upstream,
-            timeout=proxy_timeout,
-            client=http_client,
-        )
+        return await proxy_request_func(request, pool=pool)
 
     return Starlette(
         routes=[
