@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_app.grid_node.upstream_pool import AppiumUpstreamPool
+from agent_app.grid_node.upstream_pool import (
+    AppiumUpstreamPool,
+    UpstreamConnectError,
+    UpstreamError,
+    UpstreamTimeoutError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -204,3 +209,101 @@ async def test_aclose_closes_idle_connections() -> None:
         await pool.request("GET", "/status", [], b"")
         await pool.aclose()
         await asyncio.wait_for(stub.client_eof.wait(), timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_connect_refused_raises_connect_error() -> None:
+    # Grab a port that is guaranteed closed: bind, read it, release it.
+    probe = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    port = probe.sockets[0].getsockname()[1]
+    probe.close()
+    await probe.wait_closed()
+
+    pool = AppiumUpstreamPool("127.0.0.1", port, timeout_sec=2.0)
+    with pytest.raises(UpstreamConnectError):
+        await pool.request("GET", "/status", [], b"")
+
+
+@pytest.mark.asyncio
+async def test_deadline_expiry_raises_timeout_error() -> None:
+    async def handler(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await _read_request(stub, reader)
+        # Hold the response until the client gives up; on deadline the pool
+        # closes its socket, this read sees EOF, and the handler exits (so
+        # Server.wait_closed() — which waits for handlers on 3.12.1+ — does
+        # not block the test teardown).
+        await reader.read(1)
+
+    async with StubServer(handler) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=0.2)
+        try:
+            # Outer guard so a missing deadline implementation fails in 5 s
+            # instead of hanging pytest forever.
+            with pytest.raises(UpstreamTimeoutError):
+                await asyncio.wait_for(pool.request("GET", "/status", [], b""), timeout=5.0)
+        finally:
+            await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fresh_connection_eof_raises_upstream_error_without_retry() -> None:
+    async def handler(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        return  # close immediately, no response
+
+    async with StubServer(handler) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            with pytest.raises(UpstreamError):
+                await pool.request("GET", "/status", [], b"")
+        finally:
+            await pool.aclose()
+
+    assert stub.connections == 1
+
+
+@pytest.mark.asyncio
+async def test_mid_response_close_raises_upstream_error() -> None:
+    async def handler(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await _read_request(stub, reader)
+        writer.write(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\npartial")
+        await writer.drain()
+
+    async with StubServer(handler) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            with pytest.raises(UpstreamError, match="mid-response"):
+                await pool.request("GET", "/status", [], b"")
+        finally:
+            await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_garbage_response_raises_upstream_error() -> None:
+    async def handler(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await _read_request(stub, reader)
+        writer.write(b"NOT HTTP AT ALL\r\n\r\n")
+        await writer.drain()
+
+    async with StubServer(handler) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            with pytest.raises(UpstreamError, match="unparseable"):
+                await pool.request("GET", "/status", [], b"")
+        finally:
+            await pool.aclose()
+
+
+@pytest.mark.asyncio
+async def test_interim_1xx_response_raises_connect_error() -> None:
+    async def handler(stub: StubServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await _read_request(stub, reader)
+        writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+        await writer.drain()
+
+    async with StubServer(handler) as stub:
+        pool = AppiumUpstreamPool("127.0.0.1", stub.port, timeout_sec=2.0)
+        try:
+            with pytest.raises(UpstreamConnectError, match="interim"):
+                await pool.request("GET", "/status", [], b"")
+        finally:
+            await pool.aclose()

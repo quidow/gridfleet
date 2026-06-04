@@ -92,7 +92,13 @@ class AppiumUpstreamPool:
 
     async def request(self, method: str, target: str, headers: list[tuple[str, str]], body: bytes) -> UpstreamResponse:
         payload = self._serialize(method, target, headers, body)
-        return await self._dispatch(payload)
+        try:
+            # One overall deadline covering connect + write + read (httpx
+            # applied the timeout per phase; this is intentionally tighter).
+            async with asyncio.timeout(self._timeout_sec):
+                return await self._dispatch(payload)
+        except TimeoutError as exc:
+            raise UpstreamTimeoutError(f"{method} {target} exceeded {self._timeout_sec}s") from exc
 
     async def _dispatch(self, payload: bytes) -> UpstreamResponse:
         if self._idle:
