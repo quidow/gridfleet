@@ -14,12 +14,6 @@ from agent_app.appium.log_files import (
     truncate_if_oversized,
     truncate_oversized_logs,
 )
-from agent_app.config import agent_settings
-
-
-@pytest.fixture(autouse=True)
-def isolated_runtime_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_settings.runtime, "runtime_root", str(tmp_path))
 
 
 def test_log_path_lives_under_runtime_root(tmp_path: Path) -> None:
