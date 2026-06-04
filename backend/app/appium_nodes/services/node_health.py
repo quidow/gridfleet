@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import httpx
+from prometheus_client import Counter
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
@@ -51,6 +52,12 @@ logger = get_logger(__name__)
 LOOP_NAME = "node_health"
 PROBE_CONCURRENCY_PER_HOST = 2
 
+NODE_HEALTH_WAKE_SOURCE_TOTAL = Counter(
+    "gridfleet_node_health_wake_source",
+    "Why node_health_loop ran a cycle: doorbell (bus event) or tick (timeout).",
+    labelnames=("source",),
+)
+
 
 @dataclass(frozen=True)
 class NodeHealthCheckRequest:
@@ -92,6 +99,29 @@ class NodeHealthService:
         self._recovery_control = recovery_control
         self._health = health
         self._incidents = incidents
+        self._doorbell: asyncio.Event | None = None  # lazy: created on first access on the running loop
+
+    def _get_doorbell(self) -> asyncio.Event:
+        if self._doorbell is None:
+            self._doorbell = asyncio.Event()
+        return self._doorbell
+
+    def wake(self) -> None:
+        self._get_doorbell().set()
+
+    async def wait_for_wake(self, timeout: float) -> bool:
+        """Wait for a doorbell wake or timeout; clear and report which fired.
+
+        Returns True if doorbell-woken, False on timeout.
+        """
+        doorbell = self._get_doorbell()
+        try:
+            await asyncio.wait_for(doorbell.wait(), timeout=timeout)
+            woke = True
+        except TimeoutError:
+            woke = False
+        doorbell.clear()
+        return woke
 
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
@@ -384,12 +414,20 @@ class NodeHealthLoop:
         self._services = services
 
     async def run(self) -> None:
-        """Background loop that checks Appium node health."""
+        """Background loop that checks Appium node health.
+
+        Wakes on either the doorbell (set by the hub event-bus subscriber
+        on ``node-added`` / ``node-removed``) or the registry-configured
+        timeout, whichever comes first. The poll continues to run as a
+        drift reconciler against any bus event that was missed (hub
+        restart, network partition, slow joiner).
+        """
+        node_health = self._services.node_health
         while True:
             interval = float(self._services.settings.get("general.node_check_interval_sec"))
             try:
                 async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.node_health.check_nodes(db)
+                    await node_health.check_nodes(db)
             except LeadershipLost as exc:
                 logger.error(
                     "node_health_loop_leadership_lost",
@@ -399,4 +437,5 @@ class NodeHealthLoop:
                 os._exit(70)
             except Exception:
                 logger.exception("Node health check failed")
-            await asyncio.sleep(interval)
+            woke = await node_health.wait_for_wake(interval)
+            NODE_HEALTH_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
