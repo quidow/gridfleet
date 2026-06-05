@@ -335,10 +335,16 @@ class NodeHealthService:
                     source="node_health",
                 )
             locked_node.consecutive_health_failures = 0
+            # Direct probe acked: the node is the authoritative health signal
+            # post-cutover (there is no Grid /status to defer to). Persist the
+            # positive result truthfully — health_running=True — instead of
+            # clearing the columns to NULL and relying on the pid-based fallback
+            # in node_running_signal. ``health_state`` is cleared so the public
+            # summary label stays "running" rather than echoing an "error" stamp.
             await self._health.apply_node_state_transition(
                 db,
                 device,
-                health_running=None,
+                health_running=True,
                 health_state=None,
                 mark_offline=False,
             )

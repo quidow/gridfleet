@@ -167,6 +167,41 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
     write_state(device, next_state)
 
 
+def clear_operator_start_suppression(device: Device) -> None:
+    """Clear recovery-suppression residue when an operator explicitly starts the node.
+
+    An operator stop records ``recovery_suppressed_reason`` (e.g. "Operator stopped
+    the node") plus a sticky RECOVERY-axis deny intent. The start path revokes the
+    intents but leaves the JSON suppression in place, so the device keeps deriving
+    ``recovery_state="suppressed"`` (presenter "blocked" / "Recovery Paused") even
+    though it is running and available. An explicit operator start overrides any
+    prior failure/suppression, so clear the suppression reason, the backoff window,
+    and the stale failure trail, then stamp a coherent action.
+
+    Leaves the maintenance-hold tautology
+    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched: a node cannot be started
+    while the device is held in maintenance, and that suppression is governed by
+    the maintenance-exit path instead. No-op when nothing is suppressed so an
+    already-clean device emits no spurious action churn.
+
+    Caller must hold the device row lock and is responsible for the commit; this
+    helper performs an in-memory read-modify-write through ``write_state``.
+    """
+    next_state = state(device)
+    suppression = next_state.get("recovery_suppressed_reason")
+    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
+        return
+    backoff_active = bool(next_state.get("backoff_until")) or bool(next_state.get("recovery_backoff_attempts"))
+    if not suppression and not backoff_active and not next_state.get("last_failure_reason"):
+        return
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    next_state["last_failure_source"] = None
+    next_state["last_failure_reason"] = None
+    set_action(next_state, "operator_started")
+    write_state(device, next_state)
+
+
 def set_maintenance_reason(device: Device, reason: str) -> None:
     next_state = state(device)
     next_state["maintenance_reason"] = reason

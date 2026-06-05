@@ -119,6 +119,11 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
     await db_session.refresh(node)
     assert node.observed_running
+    # A successful direct probe persists the positive health signal truthfully
+    # instead of clearing the columns to NULL (the post-cutover regression).
+    assert node.health_running is True
+    assert node.health_state is None
+    assert node.last_health_checked_at is not None
 
 
 async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession, db_host: Host) -> None:
