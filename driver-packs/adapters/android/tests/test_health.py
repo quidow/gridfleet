@@ -222,3 +222,117 @@ async def test_health_check_marks_ip_ping_failure(monkeypatch: pytest.MonkeyPatc
     assert len(ip_ping_results) == 1
     assert ip_ping_results[0].ok is False
     assert ip_ping_results[0].detail != "", "detail must be non-empty on failure"
+
+
+def _network_ctx(expected: str | None = "G070EXPECTED") -> _Ctx:
+    ctx = _Ctx("192.168.1.254:5555")
+    ctx.connection_type = "network"
+    if expected is not None:
+        ctx.expected_identity_value = expected  # type: ignore[attr-defined]
+    return ctx
+
+
+def _fake_run_cmd_factory(serialno: str | None) -> object:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd[-1] == "get-state":
+            return "device"
+        if cmd[-2:] == ["echo", "ok"]:
+            return "ok"
+        if cmd[-1] == "sys.boot_completed":
+            return "1"
+        if cmd[-1] == "ro.serialno":
+            if serialno is None:
+                raise TimeoutError("adb hung")
+            return serialno
+        return ""
+
+    return fake_run_cmd
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_mismatch_fails_for_network_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A different device answering at the stored adb target is a definitive failure."""
+    monkeypatch.setattr("adapter.health.run_cmd", _fake_run_cmd_factory("G070STRANGER"))
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    results = await health_check(_network_ctx())
+
+    identity = next(result for result in results if result.check_id == "identity")
+    assert identity.ok is False
+    assert "G070STRANGER" in identity.detail
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_match_passes_for_network_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("adapter.health.run_cmd", _fake_run_cmd_factory("G070EXPECTED"))
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    results = await health_check(_network_ctx())
+
+    identity = next(result for result in results if result.check_id == "identity")
+    assert identity.ok is True
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_inconclusive_serial_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty/failed serial read must not flap health — the check is omitted."""
+    monkeypatch.setattr("adapter.health.run_cmd", _fake_run_cmd_factory(""))
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    results = await health_check(_network_ctx())
+
+    assert not any(result.check_id == "identity" for result in results)
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_skipped_for_usb_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """USB devices are addressed by serial — nothing to verify."""
+
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        assert cmd[-1] != "ro.serialno", "identity must not be queried for usb devices"
+        if cmd[-1] == "get-state":
+            return "device"
+        if cmd[-2:] == ["echo", "ok"]:
+            return "ok"
+        if cmd[-1] == "sys.boot_completed":
+            return "1"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    ctx = _Ctx("ABC123")
+    ctx.connection_type = "usb"
+    ctx.expected_identity_value = "ABC123"  # type: ignore[attr-defined]
+    results = await health_check(ctx)
+
+    assert not any(result.check_id == "identity" for result in results)
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_skipped_when_not_connected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An adb-disconnected target cannot answer a serial query — skip it."""
+
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        assert cmd[-1] != "ro.serialno", "identity must not be queried when disconnected"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=False))
+
+    results = await health_check(_network_ctx())
+
+    assert not any(result.check_id == "identity" for result in results)

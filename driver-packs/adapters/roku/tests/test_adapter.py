@@ -106,3 +106,124 @@ async def test_health_check_fails_when_both_attempts_fail(monkeypatch: pytest.Mo
     assert attempts["count"] == 2
     assert not any(check.ok for check in result)
     assert all(check.detail == "Roku ECP port 8060 unreachable" for check in result)
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_mismatch_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A different device answering at the stored address is a definitive failure."""
+
+    class _Ctx:
+        device_identity_value = "192.168.1.50"
+        allow_boot = False
+        expected_identity_value = "SER123"
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        return True
+
+    async def fake_device_info(ip_address: str) -> dict[str, str]:
+        assert ip_address == "192.168.1.50"
+        return {"serial-number": "STRANGER999"}
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.normalize.fetch_device_info", fake_device_info)
+
+    result = await Adapter().health_check(_Ctx())
+
+    identity = next(check for check in result if check.check_id == "identity")
+    assert identity.ok is False
+    assert "STRANGER999" in identity.detail
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_match_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Ctx:
+        device_identity_value = "192.168.1.50"
+        allow_boot = False
+        expected_identity_value = "SER123"
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        return True
+
+    async def fake_device_info(ip_address: str) -> dict[str, str]:
+        return {"serial-number": "SER123"}
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.normalize.fetch_device_info", fake_device_info)
+
+    result = await Adapter().health_check(_Ctx())
+
+    identity = next(check for check in result if check.check_id == "identity")
+    assert identity.ok is True
+
+
+@pytest.mark.asyncio
+async def test_health_check_identity_inconclusive_query_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient ECP failure must not flap health — the identity check is omitted."""
+
+    class _Ctx:
+        device_identity_value = "192.168.1.50"
+        allow_boot = False
+        expected_identity_value = "SER123"
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        return True
+
+    async def failing_device_info(ip_address: str) -> dict[str, str]:
+        raise TimeoutError("ECP busy")
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.normalize.fetch_device_info", failing_device_info)
+
+    result = await Adapter().health_check(_Ctx())
+
+    assert [check.check_id for check in result] == ["ping", "ecp"]
+    assert all(check.ok for check in result)
+
+
+@pytest.mark.asyncio
+async def test_health_check_without_expected_identity_skips_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old agents (no expected_identity_value on ctx) keep today's behavior."""
+
+    class _Ctx:
+        device_identity_value = "192.168.1.50"
+        allow_boot = False
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        return True
+
+    async def explode(ip_address: str) -> dict[str, str]:
+        raise AssertionError("device-info must not be queried without an expected identity")
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.normalize.fetch_device_info", explode)
+
+    result = await Adapter().health_check(_Ctx())
+
+    assert [check.check_id for check in result] == ["ping", "ecp"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_unreachable_skips_identity_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Ctx:
+        device_identity_value = "192.168.1.50"
+        allow_boot = False
+        expected_identity_value = "SER123"
+
+    async def fake_reachable(host: str, port: int, *, timeout: float) -> bool:
+        return False
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    async def explode(ip_address: str) -> dict[str, str]:
+        raise AssertionError("device-info must not be queried when the device is unreachable")
+
+    monkeypatch.setattr("adapter.tcp_reachable", fake_reachable)
+    monkeypatch.setattr("adapter.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("adapter.normalize.fetch_device_info", explode)
+
+    result = await Adapter().health_check(_Ctx())
+
+    assert [check.check_id for check in result] == ["ping", "ecp"]

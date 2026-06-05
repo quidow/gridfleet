@@ -35,6 +35,30 @@ async def _tcp_reachable_with_retry(host: str, port: int, *, timeout: float = 5.
     return await tcp_reachable(host, port, timeout=timeout)
 
 
+async def _verify_identity(target: str, expected: str) -> HealthCheckResult | None:
+    """Compare the serial reported at ``target`` with the expected identity.
+
+    Only a definitive mismatch fails (a different device answering on a
+    reused address); an inconclusive ECP query — timeout, missing serial —
+    reports nothing, so transient device-info failures never flap health.
+    """
+    from adapter.normalize import fetch_device_info
+
+    try:
+        info = await fetch_device_info(target)
+    except Exception:  # noqa: BLE001 — inconclusive, not a health failure
+        return None
+    serial = info.get("serial-number") or info.get("device-id") or ""
+    if not serial:
+        return None
+    ok = serial == expected
+    return HealthCheckResult(
+        check_id="identity",
+        ok=ok,
+        detail="" if ok else f"Device at target reports serial {serial}, expected {expected}",
+    )
+
+
 class Adapter:
     pack_id: str = ""
     pack_release: str = ""
@@ -54,7 +78,7 @@ class Adapter:
         # on transient network blips during high-traffic sessions. One retry
         # with a short backoff debounces these without hiding genuine outages.
         reachable = await _tcp_reachable_with_retry(target, 8060, timeout=5.0)
-        return [
+        results = [
             HealthCheckResult(
                 check_id="ping",
                 ok=reachable,
@@ -66,6 +90,12 @@ class Adapter:
                 detail="" if reachable else "Roku ECP port 8060 unreachable",
             ),
         ]
+        expected = getattr(ctx, "expected_identity_value", None)
+        if reachable and expected:
+            identity = await _verify_identity(target, str(expected))
+            if identity is not None:
+                results.append(identity)
+        return results
 
     async def lifecycle_action(
         self,
