@@ -56,6 +56,24 @@ def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalStat
     return DeviceOperationalState.available
 
 
+def device_in_service(device: Device) -> bool:
+    """Eligibility gate for ``baseline:idle`` node starts (F-G1).
+
+    A device withdrawn from service must never receive a baseline-started
+    node. Withdrawal facts only (``verified_at``, ``maintenance_reason``,
+    ``review_required``) — deliberately NOT the full ``ready`` fact:
+    ``device_allows_allocation`` inspects node health, so using full
+    readiness here would deadlock a stopped node against ever
+    baseline-starting. Keep in lockstep with the withdrawal facts in
+    ``gather_device_state_facts``.
+    """
+    return (
+        device.verified_at is not None
+        and policy_state(device).get("maintenance_reason") is None
+        and not device.review_required
+    )
+
+
 async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: datetime) -> DeviceStateFacts:
     """Gather all inputs needed for state derivation via async DB queries.
 
