@@ -41,14 +41,11 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from agent_app.appium.process import AppiumProcessManager
-    from agent_app.grid_node.supervisor import GridNodeSupervisorHandle
     from agent_app.pack.manifest import DesiredPack
     from agent_app.pack.runtime import RuntimeEnv
     from agent_app.pack.state import AdapterLoaderFn
 
 logger = logging.getLogger(__name__)
-GRID_NODE_SHUTDOWN_TIMEOUT_SEC = 10.0
 
 
 def _watchdog(
@@ -207,39 +204,6 @@ async def _start_log_shipper_when_ready(
     await shipper.run()
 
 
-async def _stop_grid_node_supervisors_for_shutdown(
-    manager: AppiumProcessManager,
-    *,
-    timeout_sec: float = GRID_NODE_SHUTDOWN_TIMEOUT_SEC,
-) -> None:
-    supervisors = manager.iter_grid_supervisors()
-    if not supervisors:
-        return
-
-    async def _stop_one(port: int, supervisor: GridNodeSupervisorHandle) -> int:
-        await supervisor.stop()
-        return port
-
-    tasks = [asyncio.create_task(_stop_one(port, supervisor)) for port, supervisor in supervisors]
-    try:
-        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout_sec)
-    except TimeoutError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        # Leave timed-out supervisor handles registered so the immediate
-        # `appium_mgr.shutdown()` can re-attempt the stop.
-        # `GridNodeSupervisorHandle.stop()` is idempotent (cancelled task is a
-        # no-op on the second pass), so retrying is safe and orphans nothing.
-        logger.warning("timed out stopping grid node supervisors during shutdown")
-        return
-    for result in results:
-        if isinstance(result, int):
-            manager.pop_grid_supervisor(result)
-        elif isinstance(result, Exception):
-            logger.warning("failed to stop grid node supervisor during shutdown", exc_info=result)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     host_identity = HostIdentity()
@@ -315,7 +279,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             log_shipper_task.cancel()
         reg_task.cancel()
         capabilities_task.cancel()
-        await _stop_grid_node_supervisors_for_shutdown(appium_mgr)
         await appium_mgr.shutdown()
         await sidecar_supervisor.shutdown()
         await close_shared_http_client()

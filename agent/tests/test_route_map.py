@@ -31,7 +31,6 @@ EXPECTED_HTTP_ROUTES = {
     ("POST", "/agent/pack/devices/normalize"),
     ("POST", "/agent/pack/features/{feature_id}/actions/{action_id}"),
     ("POST", "/agent/pack/{pack_id}/doctor"),
-    ("POST", "/grid/node/{node_id}/reregister"),
     ("GET", "/agent/plugins"),
     ("POST", "/agent/plugins/sync"),
     ("GET", "/agent/tools/status"),
@@ -43,7 +42,7 @@ def _gridfleet_http_routes() -> set[tuple[str, str]]:
     for route in app.routes:
         if not isinstance(route, Route):
             continue
-        if not route.path.startswith(("/agent/", "/grid/")):
+        if not route.path.startswith("/agent/"):
             continue
         for method in route.methods or set():
             if method == "HEAD":
@@ -54,13 +53,6 @@ def _gridfleet_http_routes() -> set[tuple[str, str]]:
 
 def test_route_map_matches_golden() -> None:
     assert _gridfleet_http_routes() == EXPECTED_HTTP_ROUTES
-
-
-def test_grid_node_reregister_response_model_preserved() -> None:
-    from agent_app.grid_node.schemas import GridNodeReregisterResponse
-
-    route = _find_route("POST", "/grid/node/{node_id}/reregister")
-    assert route.response_model is GridNodeReregisterResponse
 
 
 def test_normalize_device_response_model_preserved() -> None:

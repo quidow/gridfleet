@@ -29,7 +29,6 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
         session_override=False,
         device_type="real_device",
         ip_address="10.0.0.1",
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         appium_platform_name=None,

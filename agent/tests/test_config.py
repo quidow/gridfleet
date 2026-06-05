@@ -30,31 +30,6 @@ def test_agent_settings_accepts_api_auth_pair(monkeypatch: pytest.MonkeyPatch) -
     assert settings.api_auth.api_auth_password.get_secret_value() == "secret"
 
 
-def test_grid_node_settings_defaults() -> None:
-    settings = AgentSettings()
-    assert settings.grid_node.grid_node_heartbeat_sec == 5.0
-    assert settings.grid_node.grid_node_session_timeout_sec == 1800.0
-    assert settings.grid_node.grid_node_proxy_timeout_sec == 60.0
-
-
-def test_grid_node_settings_reject_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_GRID_NODE_HEARTBEAT_SEC", "0")
-    with pytest.raises(ValueError, match="AGENT_GRID_NODE_HEARTBEAT_SEC"):
-        AgentSettings()
-
-
-def test_grid_node_settings_reject_nan(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC", "nan")
-    with pytest.raises(ValueError, match="AGENT_GRID_NODE_SESSION_TIMEOUT_SEC"):
-        AgentSettings()
-
-
-def test_grid_node_settings_reject_inf(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC", "inf")
-    with pytest.raises(ValueError, match="AGENT_GRID_NODE_PROXY_TIMEOUT_SEC"):
-        AgentSettings()
-
-
 def test_core_settings_reads_agent_host_id(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent_app.config import CoreSettings
 

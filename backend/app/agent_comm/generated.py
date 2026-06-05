@@ -115,14 +115,6 @@ class FeatureActionResponse(BaseModel):
     ok: Annotated[bool, Field(title="Ok")]
 
 
-class GridNodeReregisterRequest(BaseModel):
-    target_run_id: Annotated[UUID | None, Field(title="Target Run Id")] = None
-
-
-class GridNodeReregisterResponse(BaseModel):
-    grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")]
-
-
 class HealthCheckResult(BaseModel):
     model_config = ConfigDict(
         extra="allow",

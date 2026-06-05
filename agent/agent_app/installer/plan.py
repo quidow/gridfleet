@@ -42,10 +42,6 @@ class InstallConfig:
     manager_auth_password: str | None = None
     api_auth_username: str | None = None
     api_auth_password: str | None = None
-    grid_hub_url: str = "http://localhost:4444"
-    grid_publish_url: str = "tcp://localhost:4442"
-    grid_subscribe_url: str = "tcp://localhost:4443"
-    grid_node_port_start: int = 5555
     advertise_ip: str | None = None
 
     def __post_init__(self) -> None:
@@ -181,10 +177,6 @@ def render_config_env(config: InstallConfig, discovery: ToolDiscovery, *, redact
     lines = [
         f"AGENT_MANAGER_URL={config.manager_url}",
         f"AGENT_AGENT_PORT={config.port}",
-        f"AGENT_GRID_HUB_URL={config.grid_hub_url}",
-        f"AGENT_GRID_PUBLISH_URL={config.grid_publish_url}",
-        f"AGENT_GRID_SUBSCRIBE_URL={config.grid_subscribe_url}",
-        f"AGENT_GRID_NODE_PORT_START={config.grid_node_port_start}",
         f"AGENT_RUNTIME_ROOT={config.agent_dir}/runtimes",
         f"PATH={build_service_path(discovery)}",
     ]
@@ -246,10 +238,6 @@ def load_installed_config(defaults: InstallConfig | None = None) -> InstallConfi
         manager_auth_password=values.get("AGENT_MANAGER_AUTH_PASSWORD", base.manager_auth_password),
         api_auth_username=values.get("AGENT_API_AUTH_USERNAME", base.api_auth_username),
         api_auth_password=values.get("AGENT_API_AUTH_PASSWORD", base.api_auth_password),
-        grid_hub_url=values.get("AGENT_GRID_HUB_URL", base.grid_hub_url),
-        grid_publish_url=values.get("AGENT_GRID_PUBLISH_URL", base.grid_publish_url),
-        grid_subscribe_url=values.get("AGENT_GRID_SUBSCRIBE_URL", base.grid_subscribe_url),
-        grid_node_port_start=_env_int(values, "AGENT_GRID_NODE_PORT_START", base.grid_node_port_start),
         advertise_ip=values.get("AGENT_ADVERTISE_IP", base.advertise_ip),
     )
 
@@ -316,10 +304,6 @@ def _launchd_env_entries(config: InstallConfig, discovery: ToolDiscovery) -> str
         "PATH": build_service_path(discovery),
         "AGENT_MANAGER_URL": config.manager_url,
         "AGENT_AGENT_PORT": str(config.port),
-        "AGENT_GRID_HUB_URL": config.grid_hub_url,
-        "AGENT_GRID_PUBLISH_URL": config.grid_publish_url,
-        "AGENT_GRID_SUBSCRIBE_URL": config.grid_subscribe_url,
-        "AGENT_GRID_NODE_PORT_START": str(config.grid_node_port_start),
         "AGENT_RUNTIME_ROOT": f"{config.agent_dir}/runtimes",
     }
     if config.advertise_ip:
@@ -366,9 +350,6 @@ Settings:
   User: {config.user}
   Agent port: {config.port}
   Manager URL: {config.manager_url}
-  Grid hub URL: {config.grid_hub_url}
-  Grid publish URL: {config.grid_publish_url}
-  Grid subscribe URL: {config.grid_subscribe_url}
   Advertise IP: {config.advertise_ip or "<auto-detect>"}
 
 Detected tools:
@@ -396,9 +377,5 @@ def _redacted_config(config: InstallConfig) -> InstallConfig:
         manager_auth_password="<redacted>" if config.manager_auth_password else None,
         api_auth_username=config.api_auth_username,
         api_auth_password="<redacted>" if config.api_auth_password else None,
-        grid_hub_url=config.grid_hub_url,
-        grid_publish_url=config.grid_publish_url,
-        grid_subscribe_url=config.grid_subscribe_url,
-        grid_node_port_start=config.grid_node_port_start,
         advertise_ip=config.advertise_ip,
     )

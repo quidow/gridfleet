@@ -36,7 +36,6 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         session_override=False,
         device_type="real_device",
         ip_address="10.0.0.1",
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         appium_platform_name=None,

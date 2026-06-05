@@ -37,7 +37,6 @@ async def test_stop_cancels_restart_task_from_natural_crash() -> None:
         session_override=False,
         device_type="real_device",
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )

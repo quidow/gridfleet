@@ -13,7 +13,6 @@ from agent_app.api_auth import BasicAuthMiddleware
 from agent_app.appium.router import router as appium_router
 from agent_app.config import agent_settings
 from agent_app.error_codes import AgentErrorCode
-from agent_app.grid_node.router import router as grid_node_router
 from agent_app.host.router import router as host_router
 from agent_app.lifespan import lifespan
 from agent_app.observability import REQUEST_ID_HEADER, RequestContextMiddleware, configure_logging
@@ -74,7 +73,6 @@ for _router in (
     host_router,
     appium_router,
     pack_router,
-    grid_node_router,
     plugins_router,
     tools_router,
 ):

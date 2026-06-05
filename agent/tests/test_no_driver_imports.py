@@ -11,6 +11,7 @@ AGENT_ROOT = Path(__file__).resolve().parents[1] / "agent_app"
 # ---------------------------------------------------------------------------
 
 DELETED_MODULES = {
+    "agent_app.grid_node",
     "agent_app.adb_monitor",
     "agent_app.device_health",
     "agent_app.device_reconnect",
