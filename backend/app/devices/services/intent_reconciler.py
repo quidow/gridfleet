@@ -34,8 +34,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.state_derivation import apply_derived_state
+from app.devices.services.state_derivation import apply_derived_state, device_in_service
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -360,11 +359,7 @@ async def reconcile_device(
         for intent in intents
         if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
     ]
-    if (
-        not active_node_intents
-        and device.verified_at is not None
-        and policy_state(device).get("maintenance_reason") is None
-    ):
+    if not active_node_intents and device_in_service(device):
         intents = [
             *intents,
             DeviceIntent(

@@ -61,6 +61,25 @@ async def test_baseline_eligible_device_derives_running(db_session: AsyncSession
     assert node.generation == 1
 
 
+async def test_review_required_device_gets_no_baseline_node(db_session: AsyncSession, db_host: Host) -> None:
+    """F-G1: a shelved device (review_required) must not be baseline-started.
+
+    Live finding 2026-06-05: after an update-mode verify failure shelved a
+    device, baseline:idle kept desired_state=running and the hub slot stayed
+    UP/free for >=180s (S10/G3).
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="shelved")
+    device.review_required = True
+    await db_session.commit()
+    node = await _seed_node(db_session, device.id)
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.stopped
+    assert node.accepting_new_sessions is False
+
+
 async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     db_session: AsyncSession,
     db_host: Host,
