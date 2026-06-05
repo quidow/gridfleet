@@ -17,7 +17,6 @@ from app.devices.services.intent import IntentService
 from app.grid.allocation import GRID_ALLOCATION_OUTCOME_TOTAL, GRID_QUEUE_DEPTH, AllocationService
 from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service
@@ -55,7 +54,6 @@ def reaper(db_session: AsyncSession, allocation_service: AllocationService) -> G
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     services = GridServices(
-        grid=GridService(settings=settings_service),
         settings=settings_service,
         session_factory=async_sessionmaker(db_session.bind),
         allocation=allocation_service,

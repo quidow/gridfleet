@@ -43,7 +43,6 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_port=None,
             pid=None,
             active_connection_target=None,
@@ -88,7 +87,6 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=1,
             active_connection_target="",
             desired_state=AppiumDesiredState.running,

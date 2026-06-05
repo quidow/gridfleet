@@ -43,7 +43,6 @@ async def test_delivery_forwards_agent_auth_pool(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=4,
@@ -77,7 +76,6 @@ async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=3,
@@ -111,7 +109,6 @@ async def test_outbox_row_sends_when_generation_matches(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=4,
@@ -162,7 +159,6 @@ async def test_outbox_row_sends_when_generation_behind_but_config_still_current(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             desired_grid_run_id=run_id,
@@ -212,7 +208,6 @@ async def test_outbox_delivery_failure_increments_attempts(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=1,
@@ -258,7 +253,6 @@ async def test_outbox_delivery_failure_raises_when_raise_on_failure_true(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=1,
@@ -307,7 +301,6 @@ async def test_outbox_delivery_failure_swallowed_by_default(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=1,
@@ -341,7 +334,6 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=7,
@@ -396,7 +388,6 @@ async def test_delivery_processes_at_most_one_batch_per_device(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=1,
@@ -451,7 +442,6 @@ async def test_delivery_abandons_row_after_max_attempts(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             generation=1,

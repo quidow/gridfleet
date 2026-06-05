@@ -22,7 +22,6 @@ def _build_read(**overrides: object) -> AppiumNodeRead:
     base: dict[str, object] = {
         "id": uuid.uuid4(),
         "port": 4723,
-        "grid_url": "http://hub:4444",
         "pid": None,
         "container_id": None,
         "active_connection_target": None,
@@ -148,7 +147,6 @@ async def test_effective_state_blocked_surfaces_through_router_serialization(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=None,

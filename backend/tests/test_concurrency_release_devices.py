@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import set_operational_state
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
@@ -19,7 +18,6 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,

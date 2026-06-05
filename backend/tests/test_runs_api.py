@@ -15,7 +15,6 @@ from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.packs.models import DriverPack
 from app.runs import service as run_service
@@ -98,7 +97,6 @@ async def _seed_running_node(db_session: AsyncSession, device_id: uuid.UUID) -> 
             AppiumNode(
                 device_id=device_id,
                 port=4723,
-                grid_url="http://grid",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=1,
@@ -1202,9 +1200,7 @@ async def test_sessions_straddle_active_signal_boundary(
         settings=_settings,
         deferred_stop=AsyncMock(),
     )
-    _lifecycle = RunLifecycleService(
-        publisher=event_bus, settings=_settings, grid=GridService(settings=_settings), release=_release
-    )
+    _lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release)
     await _lifecycle.signal_active(db_session, run.id)
     await db_session.refresh(run)
     assert run.state == RunState.active
@@ -1246,7 +1242,6 @@ async def test_create_run_excludes_device_mid_appium_restart(
                 AppiumNode(
                     device_id=restarting.id,
                     port=4723,
-                    grid_url="http://hub:4444",
                     desired_port=4723,
                     pid=0,
                     active_connection_target="",
@@ -1257,7 +1252,6 @@ async def test_create_run_excludes_device_mid_appium_restart(
                 AppiumNode(
                     device_id=available.id,
                     port=4724,
-                    grid_url="http://hub:4444",
                     desired_port=4724,
                     pid=0,
                     active_connection_target="",

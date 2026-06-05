@@ -195,7 +195,6 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_port=4723,
             pid=12345,
             active_connection_target="127.0.0.1:4723",

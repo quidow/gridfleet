@@ -75,7 +75,6 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -233,7 +232,6 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -315,7 +313,6 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -352,7 +349,6 @@ async def test_operator_stop_active_tracks_sticky_stop(
         node = AppiumNode(
             device_id=device.id,
             port=4726,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4726,
             pid=27800,
@@ -393,7 +389,6 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
         )
     db_session.add(node)

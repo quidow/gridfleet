@@ -70,7 +70,6 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://h",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,
@@ -173,7 +172,6 @@ async def test_last_checked_at_picks_max_of_signals_including_node(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://h",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,
@@ -254,7 +252,6 @@ async def test_apply_node_state_transition_mark_offline_false_preserves_hysteres
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://h",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,
@@ -296,7 +293,6 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://h",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,
@@ -324,7 +320,6 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://h",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,

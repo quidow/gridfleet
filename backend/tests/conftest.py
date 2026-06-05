@@ -55,7 +55,6 @@ from app.events.models import SystemEvent
 from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, pack_slot_stereotype
 from app.grid.dependencies import get_grid_services
-from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.dependencies import get_host_services
 from app.hosts.models import Host, HostStatus, OSType
@@ -278,12 +277,10 @@ async def reset_test_circuit_breaker(_test_circuit_breaker: AgentCircuitBreaker)
 async def reset_process_config() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
-    from app.grid import grid_settings
     from app.packs import packs_settings
 
     agent_snapshot = agent_settings.model_dump()
     auth_snapshot = auth_settings.model_dump()
-    grid_snapshot = grid_settings.model_dump()
     packs_snapshot = packs_settings.model_dump()
 
     await _shutdown_control_plane_services()
@@ -292,14 +289,12 @@ async def reset_process_config() -> AsyncGenerator[None]:
     await _shutdown_control_plane_services()
     shutdown_coordinator.reset()
     # Domain process settings are module-level singletons. Restore the
-    # snapshots taken before yield so auth, agent, pack, and grid state
+    # snapshots taken before yield so auth, agent, and pack state
     # does not leak between tests.
     for key, value in agent_snapshot.items():
         setattr(agent_settings, key, value)
     for key, value in auth_snapshot.items():
         setattr(auth_settings, key, value)
-    for key, value in grid_snapshot.items():
-        setattr(grid_settings, key, value)
     for key, value in packs_snapshot.items():
         setattr(packs_settings, key, value)
 
@@ -407,7 +402,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        _grid_svc = GridService(settings=settings_service)
         _maintenance_svc = MaintenanceService(
             review=build_review_service(), settings=settings_service, publisher=test_event_bus
         )
@@ -455,7 +449,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             publisher=test_event_bus,
             settings=settings_service,
-            grid=_grid_svc,
             session_factory=sf,
             circuit_breaker=test_circuit_breaker,
             health=DeviceHealthService(publisher=test_event_bus),
@@ -576,7 +569,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             viability=_viability_svc,
             settings=settings_service,
-            grid=GridService(settings=settings_service),
             session_factory=sf,
             publisher=test_event_bus,
         )
@@ -586,7 +578,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        grid = GridService(settings=settings_service)
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
             review=build_review_service(),
             publisher=test_event_bus,
@@ -605,9 +596,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             deferred_stop=_lifecycle_policy_svc_runs,
         )
-        run_lifecycle = RunLifecycleService(
-            publisher=test_event_bus, settings=settings_service, grid=grid, release=run_release
-        )
+        run_lifecycle = RunLifecycleService(publisher=test_event_bus, settings=settings_service, release=run_release)
         run_allocator = RunAllocatorService(
             publisher=test_event_bus,
             settings=settings_service,
@@ -647,7 +636,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         return GridServices(
-            grid=GridService(settings=settings_service),
             settings=settings_service,
             session_factory=sf,
             allocation=AllocationService(

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -18,11 +17,10 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 
 
 async def test_force_release_clears_stop_pending(
@@ -72,7 +70,6 @@ async def test_force_release_clears_stop_pending(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=1,
@@ -111,13 +108,12 @@ async def test_force_release_clears_stop_pending(
     )
     assert result == "deferred"
 
-    fake_grid = make_fake_grid()
     test_release = RunReleaseService(
         publisher=event_bus,
         settings=_settings,
         deferred_stop=real_deferred_stop,
     )
-    test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=test_release)
+    test_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=test_release)
     await test_lifecycle.force_release(db_session, run.id)
 
     reloaded = await db_session.get(Device, device.id)
@@ -200,13 +196,12 @@ async def test_release_devices_defers_lifecycle_cleanup_until_after_commit(
     spy_deferred_stop = AsyncMock()
     spy_deferred_stop.complete_deferred_stop_if_session_ended = _spy_deferred_stop
 
-    fake_grid_2 = make_fake_grid()
     spy_release = SpyReleaseService(
         publisher=event_bus,
         settings=_settings,
         deferred_stop=spy_deferred_stop,
     )
-    spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid_2, release=spy_release)
+    spy_lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=spy_release)
 
     await spy_lifecycle.force_release(db_session, run.id)
 

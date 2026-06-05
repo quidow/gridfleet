@@ -14,7 +14,6 @@ from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentUnreachableError
 from app.devices.services import state_write_guard
 from app.devices.services.maintenance import MaintenanceService
-from app.grid.service import GridService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.schemas import DeviceRequirement, RunCreate
@@ -29,14 +28,13 @@ from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,
@@ -96,7 +94,6 @@ async def _seed_schedulable_node(
             AppiumNode(
                 device_id=device.id,
                 port=port,
-                grid_url="http://grid.example",
                 pid=1000 + port,
                 active_connection_target=identity_value,
             )

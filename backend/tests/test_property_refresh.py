@@ -145,7 +145,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             yield None
 
     _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
-    _pr_grid = Mock()
     _pr_publisher = AsyncMock()
 
     mock_property_refresh_svc = Mock()
@@ -185,7 +184,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,
-            grid=_pr_grid,
             session_factory=AsyncMock(),
             circuit_breaker=Mock(),
             health=AsyncMock(),

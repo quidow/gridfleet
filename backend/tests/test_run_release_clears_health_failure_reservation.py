@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import RESERVATION, IntentRegistration
-from app.grid.service import GridService
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
@@ -16,13 +15,12 @@ from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

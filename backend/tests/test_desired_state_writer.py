@@ -33,7 +33,6 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -84,7 +83,6 @@ async def test_write_desired_state_stopped_clears_desired_port_and_token(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=0,
             active_connection_target="",
             desired_state=AppiumDesiredState.running,
@@ -119,7 +117,6 @@ async def test_write_desired_state_with_transition_token_increments_token_counte
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=0,
             active_connection_target="",
             desired_state=AppiumDesiredState.running,
@@ -160,7 +157,6 @@ async def test_write_desired_state_overrides_pending_token_increments_overridden
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=0,
             active_connection_target="",
             desired_state=AppiumDesiredState.running,

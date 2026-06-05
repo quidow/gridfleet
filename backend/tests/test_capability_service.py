@@ -136,7 +136,6 @@ def test_appium_udid_prefers_active_target_for_running_android_emulator() -> Non
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -154,7 +153,6 @@ async def test_active_target_from_host_snapshot_matches_port() -> None:
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -179,7 +177,6 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -193,7 +190,6 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -213,7 +209,6 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -229,7 +224,6 @@ async def test_get_live_active_connection_target_uses_node_value_or_snapshot() -
         locked_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -263,7 +257,6 @@ async def test_get_live_active_connection_target_skips_non_emulator() -> None:
         emulator.appium_node = AppiumNode(
             device_id=emulator.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -284,7 +277,6 @@ async def test_get_device_capabilities_fetches_driver_and_session_overrides() ->
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,

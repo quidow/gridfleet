@@ -130,7 +130,6 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
         node = AppiumNode(
             device_id=device.id,
             port=4729,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -176,7 +175,6 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -249,7 +247,6 @@ async def test_recovery_session_viability_probe_allows_offline_device(
         node = AppiumNode(
             device_id=device.id,
             port=4733,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4733,
             pid=0,
@@ -311,7 +308,6 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="emulator-5554",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -368,7 +364,6 @@ async def test_run_session_viability_probe_writes_probe_row_on_ack(
         node = AppiumNode(
             device_id=None,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="probe-row-ack",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -431,7 +426,6 @@ async def test_run_session_viability_probe_writes_probe_row_on_refusal(
         node = AppiumNode(
             device_id=None,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="probe-row-refuse",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -891,7 +885,6 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         node = AppiumNode(
             device_id=device.id,
             port=4780,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4780,
             pid=1234,
@@ -974,7 +967,6 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
         node = AppiumNode(
             device_id=device.id,
             port=4781,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4781,
             pid=1234,
@@ -1144,7 +1136,6 @@ def _make_viability_device(db_host: Host, suffix: str) -> tuple[Device, AppiumNo
         node = AppiumNode(
             device_id=device.id,
             port=4799,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4799,
             pid=999,
@@ -1368,7 +1359,6 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=12345,

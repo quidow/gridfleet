@@ -383,22 +383,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=300,
     ),
     SettingDefinition(
-        key="grid.event_bus_subscribe_url",
-        category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4442",
-        description="ZMQ URL the manager subscribes to for hub event-bus messages.",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL",
-    ),
-    SettingDefinition(
-        key="grid.event_bus_publish_url",
-        category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4443",
-        description="ZMQ URL the manager publishes to (handshake only; no events emitted).",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL",
-    ),
-    SettingDefinition(
         key="grid.queue_timeout_sec",
         category="grid",
         setting_type="int",

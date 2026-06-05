@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002
 
-from app.grid.service import GridService
 from app.runs.schemas import DeviceRequirement, RunCreate
 from app.runs.service_allocator import RunAllocatorService
 from app.runs.service_lifecycle import RunLifecycleService
@@ -24,13 +23,12 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 _allocator_svc = RunAllocatorService(
     publisher=event_bus,
     settings=_settings,

@@ -79,7 +79,6 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
         appium_node = AppiumNode(
             device_id=device.id,
             port=9999,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.running,
             desired_port=9999,
             pid=1234,
@@ -203,7 +202,6 @@ async def test_session_viability_restore_handles_external_reservation(
         appium_node = AppiumNode(
             device_id=device.id,
             port=9999,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.running,
             desired_port=9999,
             pid=0,

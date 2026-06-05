@@ -164,7 +164,6 @@ class OperatorNodeLifecycleService:
             node = AppiumNode(
                 device_id=device.id,
                 port=desired_port,
-                grid_url=self._settings.get("grid.hub_url"),
             )
             db.add(node)
             await db.flush()

@@ -103,7 +103,6 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
             transition_token=token,
@@ -476,7 +475,6 @@ async def test_clear_transition_token_and_touch_noop(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             transition_token=token,

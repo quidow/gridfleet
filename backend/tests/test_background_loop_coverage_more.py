@@ -65,7 +65,6 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     monkeypatch.setattr(intent_reconciler.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
-    _svc_grid_1 = Mock()
     _svc_pub_1 = AsyncMock()
     _svc_maint_1 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -103,7 +102,6 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
             ),
             publisher=_svc_pub_1,
             settings=_svc_settings_1,
-            grid=_svc_grid_1,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
@@ -127,7 +125,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     monkeypatch.setattr(intent_reconciler.asyncio, "sleep", sleep)
 
     _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
-    _svc_grid_2 = Mock()
     _svc_pub_2 = AsyncMock()
     _svc_maint_2 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -165,7 +162,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
             ),
             publisher=_svc_pub_2,
             settings=_svc_settings_2,
-            grid=_svc_grid_2,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
@@ -253,7 +249,6 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     monkeypatch.setattr(device_connectivity.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     _svc_settings_3 = FakeSettingsReader({})
-    _svc_grid_3 = Mock()
     _svc_pub_3 = AsyncMock()
     _svc_maint_3 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -291,7 +286,6 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
             ),
             publisher=_svc_pub_3,
             settings=_svc_settings_3,
-            grid=_svc_grid_3,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
@@ -361,7 +355,6 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
 
     _svc_settings_4 = FakeSettingsReader({})
-    _svc_grid_4 = Mock()
     _svc_pub_4 = AsyncMock()
     _svc_maint_4 = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -399,7 +392,6 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
             ),
             publisher=_svc_pub_4,
             settings=_svc_settings_4,
-            grid=_svc_grid_4,
             session_factory=_fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),

@@ -10,12 +10,10 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.grid.allocation import AllocationService
-    from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
 class GridServices:
-    grid: GridServiceProtocol
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
     # None only in event-bus-loop test harnesses; production composition always wires it.

@@ -2314,8 +2314,6 @@ export interface components {
              * @enum {string}
              */
             readonly effective_state: "starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error";
-            /** Grid Url */
-            grid_url: string;
             /** Health Running */
             health_running?: boolean | null;
             /** Health State */

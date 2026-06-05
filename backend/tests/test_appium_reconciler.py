@@ -46,7 +46,6 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             accepting_new_sessions=False,
             stop_pending=True,
             desired_grid_run_id=run_id,

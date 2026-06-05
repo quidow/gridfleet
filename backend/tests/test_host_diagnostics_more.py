@@ -58,7 +58,6 @@ async def test_get_host_diagnostics_matches_reported_processes_to_managed_nodes(
         node = AppiumNode(
             device_id=device.id,
             port=4731,
-            grid_url="http://grid.invalid:4444",
             pid=777,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,

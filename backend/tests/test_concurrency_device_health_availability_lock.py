@@ -82,7 +82,6 @@ async def test_health_recovery_available_write_serializes_with_maintenance(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=0,

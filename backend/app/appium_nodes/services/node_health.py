@@ -383,11 +383,10 @@ class NodeHealthLoop:
     async def run(self) -> None:
         """Background loop that checks Appium node health.
 
-        Wakes on either the doorbell (set by the hub event-bus subscriber
-        on ``node-added`` / ``node-removed``) or the registry-configured
-        timeout, whichever comes first. The poll continues to run as a
-        drift reconciler against any bus event that was missed (hub
-        restart, network partition, slow joiner).
+        Wakes on either the doorbell (``wake()`` — currently no production
+        caller since the hub event-bus subscriber was removed; kept for a
+        future direct-observation trigger) or the registry-configured
+        timeout, whichever comes first. The poll runs as a drift reconciler.
         """
         node_health = self._services.node_health
         while True:

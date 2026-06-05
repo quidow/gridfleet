@@ -142,14 +142,12 @@ def upsert_node(
     if device.appium_node:
         node = cast("AppiumNode", device.appium_node)
         node.port = port
-        node.grid_url = settings.get("grid.hub_url")
         node.pid = pid
         node.active_connection_target = active_connection_target
     else:
         node = AppiumNode(
             device_id=device.id,
             port=port,
-            grid_url=settings.get("grid.hub_url"),
             pid=pid,
             active_connection_target=active_connection_target,
         )

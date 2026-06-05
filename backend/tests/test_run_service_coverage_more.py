@@ -15,7 +15,6 @@ from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs import service as run_service
@@ -43,7 +42,6 @@ RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
 RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _release_svc = RunReleaseService(
@@ -51,7 +49,7 @@ _release_svc = RunReleaseService(
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
@@ -295,7 +293,7 @@ async def test_run_terminal_transition_paths(
     mock_release.release_devices = AsyncMock(return_value=[])
     mock_release.clear_desired_grid_run_id_for_run = AsyncMock()
     mock_release.complete_deferred_stops_post_commit = AsyncMock()
-    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=mock_release)
+    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=mock_release)
 
     active = TestRun(
         name="complete-me",
@@ -539,7 +537,6 @@ async def test_mark_running_sessions_released_success_path(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=1,

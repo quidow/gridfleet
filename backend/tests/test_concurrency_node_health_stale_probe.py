@@ -40,7 +40,6 @@ async def _seed_running_node_at_failure_threshold(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=pid,

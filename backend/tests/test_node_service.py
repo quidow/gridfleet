@@ -218,7 +218,6 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=9876,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -382,7 +381,6 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=9876,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,

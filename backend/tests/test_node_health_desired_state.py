@@ -34,7 +34,6 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,

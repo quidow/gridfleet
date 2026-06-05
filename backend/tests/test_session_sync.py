@@ -96,7 +96,6 @@ async def _seed_device_with_node(
         node = AppiumNode(
             device_id=device.id,
             port=port,
-            grid_url="http://hub:4444",
             desired_state=desired_state,
             desired_port=port if desired_state is AppiumDesiredState.running else None,
             pid=42,

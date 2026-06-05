@@ -67,7 +67,6 @@ async def device_with_active_run(db_session: AsyncSession, db_host: Host) -> tup
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid:4444",
                 pid=1234,
                 active_connection_target=device.connection_target,
                 desired_grid_run_id=run.id,

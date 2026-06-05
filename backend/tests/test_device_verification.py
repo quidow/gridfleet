@@ -914,7 +914,6 @@ async def test_existing_running_device_verification_can_enter_verifying(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1234,
@@ -1168,7 +1167,6 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,

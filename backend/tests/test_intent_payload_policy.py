@@ -85,7 +85,7 @@ async def test_health_failure_intent_payload_shape(
     )
     # Attach a stopped node so the crash path can acquire the appium node lock.
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444")
+        node = AppiumNode(device_id=device.id, port=4723)
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node

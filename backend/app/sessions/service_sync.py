@@ -273,9 +273,10 @@ class SessionSyncLoop:
     async def run(self) -> None:
         """Background loop that runs the session observation sweep.
 
-        Wakes on either the doorbell (set by the grid event-bus subscriber) or
-        the registry-configured timeout, whichever comes first. The poll
-        continues to run as a drift reconciler against any wake that was missed.
+        Wakes on either the doorbell (``wake()`` — currently no production
+        caller since the grid event-bus subscriber was removed; kept for a
+        future direct-observation trigger) or the registry-configured
+        timeout, whichever comes first. The poll runs as a drift reconciler.
         """
         sync = self._services.sync
         while True:

@@ -54,7 +54,6 @@ async def test_viability_probe_runs_on_maintenance_held_device(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://localhost:4444",
             pid=12345,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,

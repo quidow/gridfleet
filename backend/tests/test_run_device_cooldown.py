@@ -125,7 +125,6 @@ async def test_cooldown_device_returns_503_when_inline_delivery_fails(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=12345,
@@ -297,7 +296,6 @@ async def test_cooldown_preserves_desired_grid_run_id(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
@@ -343,7 +341,6 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=4321,
             active_connection_target=device.connection_target,
         )
@@ -390,7 +387,6 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=4321,
             active_connection_target=device.connection_target,
         )
@@ -496,7 +492,6 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
@@ -543,7 +538,6 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.stopped,
@@ -686,7 +680,6 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.stopped,

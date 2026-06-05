@@ -74,7 +74,6 @@ async def test_grid_status_with_running_node_and_session(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=9999,
                 active_connection_target="emulator-5554",
                 desired_state=AppiumDesiredState.running,

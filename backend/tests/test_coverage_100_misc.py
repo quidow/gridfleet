@@ -165,7 +165,6 @@ def test_device_readiness_effective_state_branches() -> None:
         AppiumNodeRead(
             id=uuid.uuid4(),
             port=4723,
-            grid_url="http://grid",
             pid=None,
             container_id=None,
             active_connection_target=None,
@@ -179,7 +178,6 @@ def test_device_readiness_effective_state_branches() -> None:
         AppiumNodeRead(
             id=uuid.uuid4(),
             port=4723,
-            grid_url="http://grid",
             pid=123,
             container_id=None,
             active_connection_target=None,

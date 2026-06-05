@@ -86,7 +86,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=123,

@@ -40,7 +40,6 @@ async def _seed_node(db_session: AsyncSession, device_id: object, *, generation:
         node = AppiumNode(
             device_id=device_id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.stopped,
             generation=generation,
         )

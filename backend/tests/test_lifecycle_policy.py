@@ -423,7 +423,7 @@ async def test_auto_recovery_revokes_stale_health_failure_intents(
     db_session.add(device)
     await db_session.flush()
     with state_write_guard.bypass():
-        db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+        db_session.add(AppiumNode(device_id=device.id, port=4723))
     service = IntentService(db_session)
     await service.register_intents(
         device_id=device.id,
@@ -502,7 +502,7 @@ async def test_auto_recovery_registers_node_running_precondition_on_intents(
     db_session.add(device)
     await db_session.flush()
     with state_write_guard.bypass():
-        db_session.add(AppiumNode(device_id=device.id, port=4723, grid_url="http://grid:4444"))
+        db_session.add(AppiumNode(device_id=device.id, port=4723))
     await db_session.commit()
 
     probe_mock = AsyncMock(
@@ -592,7 +592,6 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid:4444",
                 pid=99999,
                 active_connection_target="stale-observed-running",
             )
@@ -686,7 +685,6 @@ async def test_auto_recovery_start_intent_survives_sweep_when_observed_running_i
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid:4444",
                 pid=99999,
                 active_connection_target="stale-start-survives",
             )
@@ -757,7 +755,6 @@ async def test_recovery_reloads_device_before_starting_node(
                 AppiumNode(
                     device_id=device.id,
                     port=4724,
-                    grid_url="http://grid:4444",
                     pid=1234,
                     active_connection_target=device.connection_target,
                     desired_state=AppiumDesiredState.running,
@@ -1263,7 +1260,6 @@ async def test_handle_session_finished_drops_intent_when_healthy(
         node = AppiumNode(
             device_id=device.id,
             port=4781,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4781,
             pid=0,
@@ -1398,7 +1394,6 @@ async def test_handle_session_finished_executes_stop_when_node_not_running(
         node = AppiumNode(
             device_id=device.id,
             port=4783,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -1534,7 +1529,6 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
         node = AppiumNode(
             device_id=device.id,
             port=4796,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4796,
             pid=42,
@@ -1684,7 +1678,6 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         node = AppiumNode(
             device_id=device.id,
             port=4795,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4795,
             pid=0,

@@ -153,7 +153,6 @@ async def test_stop_node_node_manager_error_returns_400(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,

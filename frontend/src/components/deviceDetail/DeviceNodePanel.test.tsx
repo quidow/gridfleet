@@ -75,7 +75,6 @@ function makeDevice(): DeviceDetail {
     appium_node: {
       id: 'node-1',
       port: 4723,
-      grid_url: 'http://selenium-hub:4444',
       pid: 36492,
       container_id: null,
       active_connection_target: '192.168.1.254:5555',

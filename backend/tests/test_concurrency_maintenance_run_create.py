@@ -25,7 +25,6 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
@@ -81,7 +80,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
 
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
-            _grid_svc = GridService(settings=settings_service)
             _maintenance_svc = MaintenanceService(
                 review=build_review_service(), settings=settings_service, publisher=event_bus
             )
@@ -117,7 +115,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 ),
                 publisher=event_bus,
                 settings=settings_service,
-                grid=_grid_svc,
                 session_factory=sf,
                 circuit_breaker=test_circuit_breaker,
                 health=AsyncMock(),
@@ -151,15 +148,12 @@ async def test_run_create_and_maintenance_cannot_overlap(
             )
 
         def _override_run_services() -> RunServices:
-            grid = GridService(settings=settings_service)
             run_release = RunReleaseService(
                 publisher=event_bus,
                 settings=settings_service,
                 deferred_stop=AsyncMock(),
             )
-            run_lifecycle = RunLifecycleService(
-                publisher=event_bus, settings=settings_service, grid=grid, release=run_release
-            )
+            run_lifecycle = RunLifecycleService(publisher=event_bus, settings=settings_service, release=run_release)
             run_allocator = RunAllocatorService(
                 publisher=event_bus,
                 settings=settings_service,

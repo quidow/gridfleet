@@ -472,7 +472,6 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
         node = AppiumNode(
             device_id=device.id,
             port=4730,
-            grid_url="http://hub.invalid:4444",
             pid=12345,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,
@@ -545,7 +544,6 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
         node = AppiumNode(
             device_id=device.id,
             port=4731,
-            grid_url="http://hub.invalid:4444",
             pid=23456,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,

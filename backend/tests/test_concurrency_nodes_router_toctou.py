@@ -16,7 +16,6 @@ from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.maintenance import MaintenanceService
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
@@ -79,15 +78,12 @@ async def test_start_node_locks_device_before_reservation_check(
         )
 
     def _override_run_services() -> RunServices:
-        grid = GridService(settings=settings_service)
         run_release = RunReleaseService(
             publisher=event_bus,
             settings=settings_service,
             deferred_stop=AsyncMock(),
         )
-        run_lifecycle = RunLifecycleService(
-            publisher=event_bus, settings=settings_service, grid=grid, release=run_release
-        )
+        run_lifecycle = RunLifecycleService(publisher=event_bus, settings=settings_service, release=run_release)
         run_allocator = RunAllocatorService(
             publisher=event_bus,
             settings=settings_service,

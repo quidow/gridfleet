@@ -63,7 +63,6 @@ async def _add_running_node(db_session: AsyncSession, *, host: Host, port: int) 
             AppiumNode(
                 device_id=device.id,
                 port=port,
-                grid_url=settings_service.get("grid.hub_url"),
                 desired_state=AppiumDesiredState.running,
                 desired_port=port,
                 pid=0,
@@ -86,7 +85,6 @@ async def _add_stopped_node(db_session: AsyncSession, *, host: Host, port: int) 
             AppiumNode(
                 device_id=device.id,
                 port=port,
-                grid_url=settings_service.get("grid.hub_url"),
                 desired_state=AppiumDesiredState.stopped,
                 desired_port=None,
                 pid=None,
@@ -145,7 +143,6 @@ async def test_candidate_ports_excludes_desired_running_rows(db_session: AsyncSe
             AppiumNode(
                 device_id=device.id,
                 port=start,
-                grid_url=settings_service.get("grid.hub_url"),
                 pid=None,
                 active_connection_target=None,
                 desired_state=AppiumDesiredState.running,
@@ -227,9 +224,9 @@ async def test_reserve_appium_port_increments_collision_metric(db_session: Async
         name="dev-main-port-reserve-b",
     )
     with state_write_guard.bypass():
-        first_node = AppiumNode(device_id=first_device.id, port=4723, grid_url=settings_service.get("grid.hub_url"))
+        first_node = AppiumNode(device_id=first_device.id, port=4723)
     with state_write_guard.bypass():
-        second_node = AppiumNode(device_id=second_device.id, port=4724, grid_url=settings_service.get("grid.hub_url"))
+        second_node = AppiumNode(device_id=second_device.id, port=4724)
     db_session.add_all([first_node, second_node])
     await db_session.flush()
     start = settings_service.get("appium.port_range_start")
@@ -259,9 +256,9 @@ async def test_reserve_appium_port_conflict_preserves_other_node_claims(db_sessi
         name="dev-main-port-preserve-b",
     )
     with state_write_guard.bypass():
-        first_node = AppiumNode(device_id=first_device.id, port=4723, grid_url=settings_service.get("grid.hub_url"))
+        first_node = AppiumNode(device_id=first_device.id, port=4723)
     with state_write_guard.bypass():
-        second_node = AppiumNode(device_id=second_device.id, port=4724, grid_url=settings_service.get("grid.hub_url"))
+        second_node = AppiumNode(device_id=second_device.id, port=4724)
     db_session.add_all([first_node, second_node])
     await db_session.flush()
     start = settings_service.get("appium.port_range_start")
@@ -298,7 +295,7 @@ async def test_reserve_appium_port_replaces_same_node_main_port_claim(db_session
     )
     start = settings_service.get("appium.port_range_start")
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+        node = AppiumNode(device_id=device.id, port=start)
     db_session.add(node)
     await db_session.flush()
 
@@ -338,9 +335,9 @@ async def test_start_node_reserves_main_appium_port_and_retries_collision(
     )
     start = settings_service.get("appium.port_range_start")
     with state_write_guard.bypass():
-        other_node = AppiumNode(device_id=other_device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+        other_node = AppiumNode(device_id=other_device.id, port=start)
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=start, grid_url=settings_service.get("grid.hub_url"))
+        node = AppiumNode(device_id=device.id, port=start)
     db_session.add_all([other_node, node])
     await db_session.flush()
     before = APPIUM_RECONCILER_ALLOCATION_COLLISIONS._value.get()

@@ -288,7 +288,7 @@ class SessionViabilityService:
             # loop ignores the Grid slot the probe is about to create. Without this
             # the slot is persisted as a phantom Session row: Appium strips the
             # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
-            # markers from matched caps, so slot_parser cannot recognise it.
+            # markers from matched caps, so the probe filter cannot recognise it.
             probe_inflight.mark_probe_started(device_key)
             try:
                 ok, error = await self.probe_session_direct(capabilities, timeout_sec, target=node_target(device))
