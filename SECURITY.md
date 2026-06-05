@@ -1,6 +1,6 @@
 # Security Policy
 
-GridFleet controls Appium nodes, Selenium Grid routing, host agents, and driver-pack execution. Treat every deployment as infrastructure with privileged access to device hosts.
+GridFleet controls Appium nodes, the WebDriver router, host agents, and driver-pack execution. Treat every deployment as infrastructure with privileged access to device hosts.
 
 ## Supported Versions
 
@@ -25,23 +25,23 @@ The maintainer will acknowledge valid reports as soon as practical, coordinate a
 
 ## Security Boundaries
 
-GridFleet is designed for trusted lab and CI networks. Do not expose the backend, Selenium Grid, or agent ports directly to the public internet.
+GridFleet is designed for trusted lab and CI networks. Do not expose the backend, the WebDriver router, or agent ports directly to the public internet.
 
 Use the production auth gate, TLS, and network controls for shared or production-style deployments:
 
 - set `GRIDFLEET_AUTH_ENABLED=true`
 - configure operator and machine credentials
 - keep `GRIDFLEET_AUTH_COOKIE_SECURE=true` behind HTTPS
-- restrict direct access to backend, Grid, and agent ports with VPN, firewall, VPC, or equivalent controls
+- restrict direct access to backend, router, and agent ports with VPN, firewall, VPC, or equivalent controls
 - rotate secrets after suspected exposure
 
 ## High-Risk Features
 
 The following areas deserve special care in reports, reviews, and deployments:
 
-- Host agents can start Appium and Selenium Grid relay processes on device hosts.
+- Host agents can start Appium processes on device hosts.
 - Uploaded driver-pack adapter wheels execute Python code on agent hosts without a sandbox.
-- Selenium Grid is not an authentication boundary.
+- The WebDriver router is not an authentication boundary.
 - Device configuration can contain sensitive setup fields such as developer passwords.
 - Logs, event streams, screenshots, and database backups may contain device identifiers or lab topology details.
 

@@ -1,8 +1,8 @@
 """
-Manual baseline example: connect to a Fire TV device through Selenium Grid and take a screenshot.
+Manual baseline example: connect to a Fire TV device through the WebDriver router and take a screenshot.
 
 Requires:
-    - Selenium Grid hub running on localhost:4444
+    - WebDriver router running on localhost:4444
     - A Fire TV device registered and its Appium node running
     - The supported GridFleet testkit installed
     - Appium-Python-Client installed (`uv pip install -e ./testkit`)

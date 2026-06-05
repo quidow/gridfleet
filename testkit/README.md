@@ -36,7 +36,7 @@
 ## What It Does Not Own
 
 - Appium server installation or host-level driver setup
-- Selenium Grid lifecycle
+- WebDriver router lifecycle
 - Device registration, verification, or readiness setup
 - CI orchestration beyond the documented client helpers
 
@@ -75,7 +75,7 @@ The package supports Python 3.10 through 3.14.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `GRID_URL` | `http://localhost:4444` | Selenium Grid hub URL used by the pytest Appium fixture |
+| `GRID_URL` | `http://localhost:4444` | WebDriver router URL used by the pytest Appium fixture |
 | `GRIDFLEET_API_URL` | `http://localhost:8000/api` | GridFleet API base used for session reporting, config lookup, run helpers, and driver-pack catalog lookup |
 | `GRIDFLEET_TESTKIT_USERNAME` | unset | Machine-auth username sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_USERNAME`. |
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
@@ -83,7 +83,7 @@ The package supports Python 3.10 through 3.14.
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
 | `GRIDFLEET_RUN_ID` | `free` | Optional run id injected into Appium capabilities as `gridfleet:run_id`. The pytest plugin sets this automatically when sessions are created inside a reserved run. |
 
-The package assumes a running GridFleet API, a reachable Selenium Grid hub, and platform-specific Appium driver setup on the registered hosts. When auth is disabled on the manager, leave `GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` unset and the testkit will send no `Authorization` header.
+The package assumes a running GridFleet API, a reachable WebDriver router, and platform-specific Appium driver setup on the registered hosts. When auth is disabled on the manager, leave `GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` unset and the testkit will send no `Authorization` header.
 
 ## Pytest Plugin
 
@@ -186,7 +186,7 @@ finally:
 
 ### Targeting Devices by Tag
 
-GridFleet injects device tags into Grid node stereotypes as `appium:gridfleet:tag:<key>` capabilities, so Selenium Grid can route sessions to devices matching specific tags.
+GridFleet injects device tags into node stereotypes as `appium:gridfleet:tag:<key>` capabilities, so the router's backend allocation can route sessions to devices matching specific tags.
 
 ```python
 @pytest.mark.parametrize(
@@ -222,7 +222,7 @@ The `gridfleet_worker_id` fixture is informational only: it returns the pytest-x
 
 ### Reservation Flow
 
-GridFleet runs are grid-routed: once devices are reserved, the manager tags matching Grid nodes with the run id, and Selenium Grid routes new Appium sessions to those nodes automatically via the `gridfleet:run_id` capability. There are no per-worker claim or release calls.
+GridFleet runs are router-routed: once devices are reserved, the manager tags matching nodes with the run id, and the router's backend allocation routes new Appium sessions to those nodes automatically via the `gridfleet:run_id` capability. There are no per-worker claim or release calls.
 
 ```python
 from gridfleet_testkit import GridFleetClient, register_run_cleanup
@@ -386,7 +386,7 @@ Advanced example:
 
 The baseline examples share the same flow:
 
-1. Create a session through Selenium Grid
+1. Create a session through the WebDriver router
 2. Print the resolved connection context
 3. Save a screenshot
 4. Assert that the screenshot file exists and is non-empty

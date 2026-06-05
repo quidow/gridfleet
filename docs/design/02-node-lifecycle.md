@@ -13,7 +13,7 @@ This doc captures every transition, who triggers it, and the acknowledgement rul
 | `node_service` → `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | "Single-module node lifecycle service": module-level `mark_node_started`/`mark_node_stopped`/`start_remote_node`/`stop_remote_node`/`_start_for_node`, plus the `ReconcilerAgentService` class (`start_node`/`stop_node`/`restart_node`/`wait_for_node_running`) |
 | `node_health_loop` (`backend/app/appium_nodes/services/node_health.py`) | Periodic health probe, owns auto-restart |
 | `agent_operations` (`backend/app/agent_comm/operations.py`, imported aliased as `agent_operations`) | Typed wrapper around agent HTTP endpoints |
-| Host agent (`agent/agent_app/`) | Spawns Appium subprocesses and in-process Python Grid Node services |
+| Host agent (`agent/agent_app/`) | Spawns Appium subprocesses (the WebDriver router reaches them directly; the agent runs no Grid relay) |
 
 ## The DB↔agent contract in one sentence
 
@@ -146,7 +146,7 @@ sequenceDiagram
 
 The two clauses of the `alt` are the entire point of the recent fixes. **Do not collapse them.** Specifically:
 
-- If the agent does not ack, *do not* mark the node stopped (commit `4171847`). The manager would otherwise believe the orphan is gone while the orphan keeps serving traffic via the Selenium Grid registration.
+- If the agent does not ack, *do not* mark the node stopped (commit `4171847`). The manager would otherwise believe the orphan is gone while the orphan's Appium process keeps serving traffic on its allocated port (still reachable by the router).
 - If the agent does not ack, *do not* release the resource claim (commit `bdfae85`). Otherwise the allocator hands the same port to a new node and the next start collides with the still-alive orphan.
 
 Both rules collapse to the same primitive: `stop_remote_node` returns `bool` and the caller (the reconciler convergence path, not the operator path) gates state mutations on `True`.
@@ -177,7 +177,7 @@ sequenceDiagram
 
 Why convergence "does not retry on a different port" when the stop is unacknowledged:
 
-> Starting on the next free port while the agent has not confirmed the previous Appium process is dead causes the orphan and the new node to both register with the Selenium Grid hub. Sessions for the device may then be routed to either Relay node depending on the hub's selection logic — non-deterministic, hard to reproduce, painful to debug.
+> Starting on the next free port while the agent has not confirmed the previous Appium process is dead leaves two live Appium processes for the same device, each reachable on its own port. The backend may then allocate either one to a session — non-deterministic, hard to reproduce, painful to debug.
 
 So the convergence path **must** see a confirmed stop (`stop_remote_node` returns `True`) before it considers the start side. Same rule applies to the loop-driven auto-recovery path below.
 
@@ -222,7 +222,7 @@ Three things this flow gets right that earlier versions did not:
 
 1. **`indeterminate` is not `refused`.** A single agent transport blip used to drop the device offline; commit `a58c8e5` made indeterminate results short-circuit `_process_node_health` so transient blips no longer flap health or increment the failure counter.
 2. **Node state transitions go through `DeviceHealthService.apply_node_state_transition`.** The helper writes transient health detail, last-check timestamp, the dirty-and-reconcile (or dirty-only, below threshold) signal that drives derived operational state, and the derived `device.health_changed` event under the correct locks. It does not write a node `state` column (none exists).
-3. **Grid-registration grace.** A node that just started but has not yet appeared in Selenium Grid's `/status` is given a grace window equal to `appium.startup_timeout_sec`. Inside the grace window the loop holds the derived node health at running instead of penalising a still-warming relay.
+3. **The agent probe is the authoritative health signal.** Post-cutover there is no Grid `/status` to defer to: the direct `/agent/appium/{port}/status` probe is the source of truth for "is this Appium up". An acked probe persists `health_running=True` truthfully rather than relying on a registration grace window.
 
 At the failure threshold `_process_node_health` resets `consecutive_health_failures` and calls `_attempt_node_restart` (`node_health.py`), which registers a NODE_PROCESS `start` intent plus a RECOVERY auto-recovery intent (`IntentService.register_intents_and_reconcile`, `PRIORITY_AUTO_RECOVERY`, fresh `transition_token`/`transition_deadline`, `node_running` precondition). It does **not** call the agent or rewrite node fields itself. The reconciler convergence pass (`reconciler.py`) performs the agent `stop_remote_node`/`start_remote_node`, the `mark_node_*` flips, and — on exhaustion — records the recovery-failed/backoff terminal (`recovery_backoff_attempts`, `backoff_until`).
 
@@ -291,4 +291,4 @@ The recent fixes above each tightened one of these rules. The next class of bugs
 - Per-axis details of `Device` state — see Doc 1.
 - Loop cadences, leader pattern, and reconciliation rules — see Doc 3.
 - HTTP request/response shapes for agent endpoints — see Doc 4.
-- Owner-allocation implementation details, port-pool seeding, Grid session reaping — see Doc 5.
+- Owner-allocation implementation details, port-pool seeding, session reaping — see Doc 5.

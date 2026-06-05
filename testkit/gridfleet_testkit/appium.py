@@ -135,7 +135,7 @@ def create_appium_driver(
     grid_url: str | None = None,
     catalog_client: object | None = None,
 ) -> WebDriver:
-    """Create an Appium remote driver through Selenium Grid."""
+    """Create an Appium remote driver through the WebDriver router."""
     options = build_appium_options(
         pack_id=pack_id,
         platform_id=platform_id,

@@ -91,7 +91,7 @@ Use extra caution around:
 - host terminal access
 - driver-pack upload, storage, extraction, and adapter loading
 - subprocess execution on agent hosts
-- Appium/Selenium Grid routing
+- Appium and WebDriver router routing
 - backup, restore, logs, and telemetry
 
 If you believe you found a vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening a public issue or pull request.

@@ -72,7 +72,7 @@ def appium_driver(
     gridfleet_client: GridFleetClient,
 ) -> Generator[WebDriver, None, None]:
     """
-    Create an Appium Remote driver through the Selenium Grid.
+    Create an Appium Remote driver through the WebDriver router.
 
     Parametrize with a dict of pack/catalog selection plus capabilities:
         @pytest.mark.parametrize(
