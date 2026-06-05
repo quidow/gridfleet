@@ -667,6 +667,7 @@ async def pack_device_health(
     headless: bool | None = None,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
+    identity_value: str | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
@@ -679,6 +680,8 @@ async def pack_device_health(
         "device_type": device_type,
         "allow_boot": allow_boot,
     }
+    if identity_value:
+        params["identity_value"] = identity_value
     if connection_type is not None:
         params["connection_type"] = connection_type
     if ip_address is not None:

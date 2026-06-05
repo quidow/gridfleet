@@ -157,6 +157,10 @@ async def _get_device_health(
             ip_address=device.ip_address,
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
+            # Adapters that can read the device identity at the probed target
+            # verify it (WI-7) — a different device answering on a reused
+            # address fails the probe instead of reporting false-healthy.
+            identity_value=device.identity_value,
             http_client_factory=httpx.AsyncClient,
             settings=settings,
             circuit_breaker=circuit_breaker,

@@ -1601,3 +1601,26 @@ async def test_absent_device_hard_failure_does_not_touch_ip_ping_counter(db_sess
 
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dc-001")
     assert counter is None
+
+
+async def test_connectivity_probe_sends_expected_identity(db_session: AsyncSession) -> None:
+    """The connectivity probe passes the device identity so adapters that can
+    verify it detect a different device answering at the stored address."""
+    _host, _device, _ = await _setup_host_and_device(db_session)
+
+    probe = AsyncMock(return_value={"healthy": True})
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity.fetch_pack_device_health", probe),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    probe.assert_awaited_once()
+    assert probe.await_args is not None
+    assert probe.await_args.kwargs["identity_value"] == "dc-001"

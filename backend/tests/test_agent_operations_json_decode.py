@@ -393,3 +393,46 @@ async def test_get_pack_device_properties_omits_identity_value_when_absent() -> 
     )
     [(_, call)] = client.get_calls
     assert call["params"] == {"pack_id": "roku"}
+
+
+@pytest.mark.asyncio
+async def test_pack_device_health_sends_identity_value_param() -> None:
+    client = StrictAgentClient(
+        get_response=_json_response("GET", "http://example.test", payload={"healthy": True, "checks": []})
+    )
+    await agent_operations.pack_device_health(
+        "127.0.0.1",
+        5100,
+        "10.0.0.5",
+        pack_id="roku",
+        platform_id="roku_network",
+        identity_value="SER123",
+        http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
+    )
+    [(_, call)] = client.get_calls
+    params = call["params"]
+    assert isinstance(params, dict)
+    assert params["identity_value"] == "SER123"
+
+
+@pytest.mark.asyncio
+async def test_pack_device_health_omits_identity_value_when_absent() -> None:
+    client = StrictAgentClient(
+        get_response=_json_response("GET", "http://example.test", payload={"healthy": True, "checks": []})
+    )
+    await agent_operations.pack_device_health(
+        "127.0.0.1",
+        5100,
+        "10.0.0.5",
+        pack_id="roku",
+        platform_id="roku_network",
+        http_client_factory=_strict_client_factory(client),
+        settings=SETTINGS,
+        circuit_breaker=_noop_breaker(),
+    )
+    [(_, call)] = client.get_calls
+    params = call["params"]
+    assert isinstance(params, dict)
+    assert "identity_value" not in params
