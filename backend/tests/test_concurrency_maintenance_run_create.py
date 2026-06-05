@@ -89,7 +89,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
             )
             return DeviceServices(
-                fleet_capacity=FleetCapacityService(grid=_grid_svc),
+                fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
                 groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
@@ -155,7 +155,6 @@ async def test_run_create_and_maintenance_cannot_overlap(
             run_release = RunReleaseService(
                 publisher=event_bus,
                 settings=settings_service,
-                grid=grid,
                 deferred_stop=AsyncMock(),
             )
             run_lifecycle = RunLifecycleService(

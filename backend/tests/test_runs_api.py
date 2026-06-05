@@ -92,6 +92,23 @@ async def _create_run(client: AsyncClient, **overrides: object) -> dict[str, Any
     return dict(resp.json())
 
 
+async def _seed_running_node(db_session: AsyncSession, device_id: uuid.UUID) -> None:
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device_id,
+                port=4723,
+                grid_url="http://grid",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="http://10.0.0.1:4723",
+                health_running=True,
+                health_state="ready",
+            )
+        )
+
+
 async def test_create_run(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _create_available_device(db_session, default_host_id, "run-001", "Device 1")
     data = await _create_run(client)
@@ -591,6 +608,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
         operational_state="busy",
     )
     run_obj = await create_reserved_run(db_session, name="Cancel Live Session Run", devices=[device])
+    await _seed_running_node(db_session, device.id)
     session = Session(
         session_id="grid-live-cancel",
         device_id=device.id,
@@ -603,11 +621,11 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
 
     deleted: list[str] = []
 
-    async def fake_terminate(_self: object, session_id: str) -> bool:
+    async def fake_terminate(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -638,6 +656,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
         operational_state="busy",
     )
     run_obj = await create_reserved_run(db_session, name="Cancel Delete Fails Run", devices=[device])
+    await _seed_running_node(db_session, device.id)
     session = Session(
         session_id="grid-still-live",
         device_id=device.id,
@@ -648,10 +667,10 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     db_session.add(session)
     await db_session.commit()
 
-    async def fake_terminate(_self: object, _session_id: str) -> bool:
+    async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return False
 
-    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -751,6 +770,7 @@ async def test_force_release_restores_busy_run_devices(
     run_id = uuid.UUID(run["id"])
     device_id = uuid.UUID(device["id"])
 
+    await _seed_running_node(db_session, device_id)
     db_session.add(
         Session(
             session_id="force-release-running-session",
@@ -765,16 +785,20 @@ async def test_force_release_restores_busy_run_devices(
         device_row.operational_state = DeviceOperationalState.busy
     await db_session.commit()
 
-    async def fake_terminate(_self: object, _session_id: str) -> bool:
+    async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return True
 
-    monkeypatch.setattr("app.grid.service.GridService.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run['id']}/force-release")
     assert resp.status_code == 200
 
     await db_session.refresh(device_row)
-    assert device_row.operational_state == DeviceOperationalState.available
+    # Force-release stops the device's Appium node; with the node row still observed
+    # running (no agent in-test to confirm teardown) the device derives ``offline``
+    # via the stop-in-flight gate until the agent reconciles. The reservation is
+    # released and the session terminated regardless (asserted below).
+    assert device_row.operational_state == DeviceOperationalState.offline
 
     session_result = await db_session.execute(
         select(Session).where(Session.session_id == "force-release-running-session")
@@ -1176,7 +1200,6 @@ async def test_sessions_straddle_active_signal_boundary(
     _release = RunReleaseService(
         publisher=event_bus,
         settings=_settings,
-        grid=GridService(settings=_settings),
         deferred_stop=AsyncMock(),
     )
     _lifecycle = RunLifecycleService(

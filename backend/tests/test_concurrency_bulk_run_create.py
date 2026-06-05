@@ -94,7 +94,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
             )
             return DeviceServices(
-                fleet_capacity=FleetCapacityService(grid=_grid_svc),
+                fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
                 groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
@@ -160,7 +160,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             run_release = RunReleaseService(
                 publisher=event_bus,
                 settings=settings_service,
-                grid=grid,
                 deferred_stop=AsyncMock(),
             )
             run_lifecycle = RunLifecycleService(

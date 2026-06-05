@@ -75,7 +75,7 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     )
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_svc_grid_1),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_1, settings=_svc_settings_1),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_svc_pub_1, settings=_svc_settings_1, crud=_svc_crud_1),
@@ -137,7 +137,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     )
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_svc_grid_2),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_2, settings=_svc_settings_2),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_svc_pub_2, settings=_svc_settings_2, crud=_svc_crud_2),
@@ -268,7 +268,7 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
     )
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_svc_grid_3),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_3, settings=_svc_settings_3),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_svc_pub_3, settings=_svc_settings_3, crud=_svc_crud_3),
@@ -376,7 +376,7 @@ async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.Mo
     )
     loop = data_cleanup.DataCleanupLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_svc_grid_4),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_svc_pub_4, settings=_svc_settings_4),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_svc_pub_4, settings=_svc_settings_4, crud=_svc_crud_4),

@@ -415,7 +415,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service, identity=DeviceIdentityConflictService(), publisher=test_event_bus
         )
         return DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_grid_svc),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=test_event_bus, settings=settings_service),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=test_event_bus, settings=settings_service, crud=_crud_svc),
@@ -604,7 +604,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         run_release = RunReleaseService(
             publisher=test_event_bus,
             settings=settings_service,
-            grid=grid,
             deferred_stop=_lifecycle_policy_svc_runs,
         )
         run_lifecycle = RunLifecycleService(

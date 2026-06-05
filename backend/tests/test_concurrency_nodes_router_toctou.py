@@ -83,7 +83,6 @@ async def test_start_node_locks_device_before_reservation_check(
         run_release = RunReleaseService(
             publisher=event_bus,
             settings=settings_service,
-            grid=grid,
             deferred_stop=AsyncMock(),
         )
         run_lifecycle = RunLifecycleService(

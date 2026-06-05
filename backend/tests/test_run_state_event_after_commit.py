@@ -28,7 +28,6 @@ _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
-    grid=_grid,
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)

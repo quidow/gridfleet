@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
     from app.runs.models import TestRun
     from app.runs.protocols import DeviceDeferredStop
 
@@ -28,6 +27,8 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.reservation_query import device_is_reserved
 from app.devices.services.state import ready_operational_state, set_operational_state
+from app.grid import appium_direct
+from app.grid.allocation import node_target
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -39,12 +40,10 @@ class RunReleaseService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        grid: GridServiceProtocol,
         deferred_stop: DeviceDeferredStop,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._grid = grid
         self._deferred_stop = deferred_stop
 
     async def release_devices(
@@ -208,9 +207,20 @@ class RunReleaseService:
 
         error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
         for session in sessions:
-            if not await self._grid.terminate_session(session.session_id):
+            target = await self._session_node_target(db, session)
+            if target is None:
+                # Best-effort cleanup: with no reachable Appium node target we cannot
+                # delete the session. Mirror the old hub-unreachable behaviour and leave
+                # the running row untouched so it is not falsely marked ended.
                 logger.warning(
-                    "Leaving session %s running because Grid deletion failed during run %s release",
+                    "Leaving session %s running because no Appium node target was resolvable during run %s release",
+                    session.session_id,
+                    run.id,
+                )
+                continue
+            if not await appium_direct.terminate_session(target, session.session_id):
+                logger.warning(
+                    "Leaving session %s running because Appium deletion failed during run %s release",
                     session.session_id,
                     run.id,
                 )
@@ -220,6 +230,15 @@ class RunReleaseService:
             session.ended_at = released_at
             session.error_type = "run_released"
             session.error_message = error_message
+
+    async def _session_node_target(self, db: AsyncSession, session: Session) -> str | None:
+        if session.device_id is None:
+            return None
+        try:
+            device = await device_locking.lock_device(db, session.device_id, load_sessions=False)
+        except NoResultFound:
+            return None
+        return node_target(device)
 
     async def _device_has_running_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
         stmt = (

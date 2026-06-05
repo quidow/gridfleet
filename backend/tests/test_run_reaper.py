@@ -20,7 +20,6 @@ _grid = GridService(settings=_settings)
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
-    grid=_grid,
     deferred_stop=AsyncMock(),
 )
 _lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
@@ -195,6 +194,21 @@ async def test_expire_run_deletes_active_grid_session(
         devices=[device],
         state=RunState.active,
     )
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import state_write_guard
+
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                grid_url="http://grid",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="",
+            )
+        )
     db_session.add(
         Session(
             session_id="grid-live-expire",
@@ -208,20 +222,18 @@ async def test_expire_run_deletes_active_grid_session(
 
     deleted: list[str] = []
 
-    async def fake_terminate(session_id: str) -> bool:
+    async def fake_terminate(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
         deleted.append(session_id)
         return True
 
-    fake_grid = AsyncMock()
-    fake_grid.terminate_session = fake_terminate
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
 
     release = RunReleaseService(
         publisher=event_bus,
         settings=_settings,
-        grid=fake_grid,
         deferred_stop=AsyncMock(),
     )
-    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=fake_grid, release=release)
+    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=release)
     await lifecycle.expire_run(db_session, run, "Heartbeat timeout")
 
     assert deleted == ["grid-live-expire"]

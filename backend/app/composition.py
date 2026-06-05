@@ -207,7 +207,7 @@ def compose_app(
         review=review_svc,
     )
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
-    fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
+    fleet_capacity_svc = FleetCapacityService()
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
@@ -234,7 +234,6 @@ def compose_app(
     run_release = RunReleaseService(
         publisher=bus,
         settings=settings_svc,
-        grid=grid_svc,
         deferred_stop=lifecycle_policy_svc,
     )
     run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
