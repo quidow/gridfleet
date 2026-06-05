@@ -1,0 +1,23 @@
+[package]
+name = "gridfleet-router"
+version = "0.1.0"
+edition = "2021"
+description = "GridFleet WebDriver router: W3C endpoint that allocates devices via the backend and proxies commands directly to Appium"
+license = "Apache-2.0"
+
+[dependencies]
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+pingora = { version = "0.8", default-features = false, features = ["proxy", "rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+prometheus = { version = "0.14", default-features = false }
+log = "0.4"
+env_logger = "0.11"
+
+[dev-dependencies]
+ureq = "2"
+tiny_http = "0.12"
