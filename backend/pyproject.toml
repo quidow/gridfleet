@@ -19,7 +19,7 @@ dependencies = [
     "structlog==25.5.0",
     "pyyaml==6.0.3",
     "packaging>=26.2",
-    "python-multipart>=0.0.30",
+    "python-multipart>=0.0.32",
     "tenacity>=9.0,<10",
     "PyJWT>=2.10,<3",
     "pyzmq>=26",
@@ -39,8 +39,8 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
-    "ruff>=0.15.15",
-    "datamodel-code-generator==0.59.1",
+    "ruff>=0.15.16",
+    "datamodel-code-generator==0.60.0",
 ]
 
 [tool.pytest.ini_options]
