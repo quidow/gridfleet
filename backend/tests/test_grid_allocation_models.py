@@ -106,3 +106,10 @@ async def test_grid_session_queue_table_exists(alembic_session: AsyncSession) ->
     )
     cols = {row[0] for row in res.fetchall()}
     assert {"id", "requested_body", "status", "session_row_id", "created_at", "updated_at"} <= cols
+
+
+def test_grid_allocation_settings_registered() -> None:
+    from app.settings.registry import _DEFINITIONS
+
+    keys = {d.key for d in _DEFINITIONS}
+    assert {"grid.queue_timeout_sec", "grid.claim_window_sec"} <= keys
