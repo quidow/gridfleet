@@ -12,8 +12,8 @@ This glossary defines the product terms that show up across the API, UI, and ope
 | Connection target | The current transport target the manager and Appium use to reach the device; this can differ from the persisted identity |
 | Readiness state | The high-level testability state computed from setup requirements and verification status: `setup_required`, `verification_required`, or `verified` |
 | Verification job | The staged async workflow that validates a new or edited device before it is considered ready for use |
-| Appium node | The managed Appium process registered to Selenium Grid for a specific device |
-| Session | A recorded Appium/Grid session linked to one device and its final test outcome |
+| Appium node | The managed Appium process the manager runs for a specific device; the router proxies sessions to it |
+| Session | A recorded Appium/WebDriver session linked to one device and its final test outcome |
 | Run | A reservation record that locks one or more matching devices for an external test workflow |
 | Reservation | The period where a run owns devices and prevents other runs from matching them |
 | Lifecycle incident | A recent persisted device-event record used to explain deferred stops, backoff, exclusions, and recoveries |

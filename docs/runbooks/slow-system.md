@@ -9,7 +9,7 @@ export GRIDFLEET_TESTKIT_USERNAME="$GRIDFLEET_MACHINE_AUTH_USERNAME"
 export GRIDFLEET_TESTKIT_PASSWORD="$GRIDFLEET_MACHINE_AUTH_PASSWORD"
 ```
 
-`/health/live`, `/health/ready`, `/api/health`, and the Selenium Grid `/status` endpoint stay open and do not need `-u`.
+`/health/live`, `/health/ready`, `/api/health`, and the router's `/healthz` / `/status` endpoints stay open and do not need `-u`.
 
 ## 1. Confirm the backend is actually ready
 
@@ -41,7 +41,7 @@ Prioritize these patterns:
 ```bash
 cd docker
 docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 backend
-docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 selenium-hub
+docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 router
 ```
 
 Look for:
@@ -49,7 +49,7 @@ Look for:
 - repeated background-loop exceptions
 - repeated agent timeouts or `AGENT_UNREACHABLE`
 - repeated webhook delivery failures
-- long stretches of Grid startup or node-registration churn
+- long stretches of router or Appium-node startup churn
 
 ## 4. Check Postgres saturation
 
@@ -81,7 +81,7 @@ Interpretation:
 - many offline devices or hosts:
   - connectivity/agent incident, not just slowness
 - healthy fleet + rising queue:
-  - focus on Grid, node startup, or backend loop failures
+  - focus on router, Appium-node startup, or backend loop failures
 
 ## 6. Next actions
 

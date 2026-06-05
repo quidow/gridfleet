@@ -1,6 +1,6 @@
 # GridFleet Agent
 
-`gridfleet-agent` is the host-side service that registers a device host with a GridFleet manager, spawns Appium per device, and runs a Selenium Grid relay node so the hub can route WebDriver requests directly to the device.
+`gridfleet-agent` is the host-side service that registers a device host with a GridFleet manager and spawns Appium per device. WebDriver sessions are routed to the device's Appium process by the GridFleet router (on the manager side); the agent itself runs no Grid relay node.
 
 The agent installs entirely under the operator's home directory — no `sudo` is required to install, start, update, or uninstall.
 
@@ -132,10 +132,6 @@ All flags below belong to `install`. `status`, `update`, and `uninstall` accept 
 | `--manager-auth-password` | none | `AGENT_MANAGER_AUTH_PASSWORD` | Required pair with `--manager-auth-username`. |
 | `--api-auth-username` | none | `AGENT_API_AUTH_USERNAME` | Required pair with `--api-auth-password`. |
 | `--api-auth-password` | none | `AGENT_API_AUTH_PASSWORD` | Required pair with `--api-auth-username`. |
-| `--grid-hub-url` | `http://localhost:4444` | `AGENT_GRID_HUB_URL` | Selenium Grid hub. |
-| `--grid-publish-url` | `tcp://localhost:4442` | `AGENT_GRID_PUBLISH_URL` | Grid event bus publish. |
-| `--grid-subscribe-url` | `tcp://localhost:4443` | `AGENT_GRID_SUBSCRIBE_URL` | Grid event bus subscribe. |
-| `--grid-node-port-start` | `5555` | `AGENT_GRID_NODE_PORT_START` | First port allocated to relay nodes. |
 
 Install paths (defaults; override with `--agent-dir`, `--config-dir`):
 
@@ -171,7 +167,7 @@ launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"
 | `WARNING: user-instance linger is off` | Linux headless host without lingering enabled | `sudo loginctl enable-linger "$USER"`. |
 | `systemctl --user start gridfleet-agent` says `Failed to connect to bus` | No `$XDG_RUNTIME_DIR`; SSH session has no D-Bus user session | Log in via console or `loginctl enable-linger` so a user systemd instance always runs. |
 | `/agent/health` returns 401 | `--api-auth-*` mismatch between agent and operator's curl | Recheck flags; `gridfleet-agent status` shows the configured username. |
-| Port `5100` / `5555+` / `4444` already in use | Another service bound the port | Pick free ports via `--port` / `--grid-node-port-start`. |
+| Port `5100` already in use | Another service bound the agent port | Pick a free port via `--port`. |
 
 ## Security note
 

@@ -7,7 +7,7 @@ This guide details the security topology, credentials management, and network ex
 The production setup (`docker-compose.prod.yml`) isolates services logically:
 
 - **Database**: The PostgreSQL container runs *only* on the Docker `internal` network. It does not publish port `5432` to the host machine. The backend reaches it internally.
-- **Backend & Selenium Hub**: Both the Backend API and Selenium Hub reside on the `internal` network (to reach the DB or each other) but also publish ports (`8000`, `4444`, `4442`, `4443`) to the host interfaces. These must be reachable by downstream Host Agents and CI runners.
+- **Backend & WebDriver Router**: Both the Backend API and the Rust WebDriver router reside on the `internal` network (the router reaches the backend over it) but also publish ports (`8000`, `4444`) to the host interfaces. The backend must be reachable by downstream Host Agents; the router (`4444`) must be reachable by CI runners that open WebDriver sessions. The router in turn reaches each host's Appium server directly, so **device-host Appium ports must be reachable from the router host — keep them on the lab network and firewalled from the public internet.**
 - **Frontend**: The Frontend is served via Nginx and is typically exposed on port `3000`. In a production setting, this is the main Operator entry point and is often placed behind a company-wide reverse proxy or SSO layer.
 
 ## Authentication & Authorization
@@ -21,12 +21,12 @@ GridFleet supports a login gate for production-style deployments:
   - machine clients such as host agents, CI helpers, and metrics scrapers use `Authorization: Basic ...` with the dedicated machine credential pair
 - Mutating browser requests must include `X-CSRF-Token`. The frontend injects this automatically after session bootstrap.
 - Health probes stay open on `/health/live`, `/health/ready`, and `/api/health`.
-- Protection is applied per-router via the `require_any_auth` dependency, not a global middleware. When auth is enabled, all `/api/*` paths are protected except the auth endpoints themselves (`/api/auth/login`, `/api/auth/session`, `/api/auth/logout`), which must stay reachable to authenticate, and the open health probe `/api/health`. The `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are likewise protected. CI/testkit clients must send machine Basic auth (`GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` matching the manager's `GRIDFLEET_MACHINE_AUTH_*` pair) to call reservation, session, or driver-pack catalog endpoints. The Selenium Grid Hub itself remains unauthenticated and lives behind the same network boundary.
+- Protection is applied per-router via the `require_any_auth` dependency, not a global middleware. When auth is enabled, all `/api/*` paths are protected except the auth endpoints themselves (`/api/auth/login`, `/api/auth/session`, `/api/auth/logout`), which must stay reachable to authenticate, and the open health probe `/api/health`. The `/agent/*`, `/metrics`, `/docs`, `/redoc`, and `/openapi.json` paths are likewise protected. CI/testkit clients must send machine Basic auth (`GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` matching the manager's `GRIDFLEET_MACHINE_AUTH_*` pair) to call reservation, session, or driver-pack catalog endpoints. The WebDriver router's `:4444` listener does not enforce operator auth on WebDriver traffic and lives behind the same network boundary; the router authenticates its own backend allocation calls with `GRIDFLEET_ROUTER_BACKEND_AUTH`.
 
 Network boundaries still matter even with the auth gate enabled:
 
 - Put the frontend and backend behind TLS. `GRIDFLEET_AUTH_COOKIE_SECURE` should remain `true` in real deployments.
-- Restrict direct reachability of the backend and Grid ports with VPN, firewalls, or VPC controls.
+- Restrict direct reachability of the backend, router, and device-host Appium ports with VPN, firewalls, or VPC controls.
 - Use a separate machine credential pair for automation and agents; do not reuse the operator username/password.
 - Keep host auto-accept disabled in production-style deployments unless every registering host is already controlled and authenticated by the surrounding network.
 

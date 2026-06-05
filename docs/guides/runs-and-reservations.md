@@ -16,9 +16,9 @@ The manager uses it to:
 
 The manager does not run your test suite itself. It protects and tracks the reserved fleet slice while CI or operators do the preparation and execution work.
 
-## Grid-Routed Device Assignment
+## Router-Routed Device Assignment
 
-Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit injects `gridfleet:run_id` into Appium capabilities, and Selenium Grid routes each new session to a node currently reserved for that run.
+Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit injects `gridfleet:run_id` into Appium capabilities, and the router routes each new session to a device currently reserved for that run.
 
 The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can resolve the assigned manager device row from the runtime connection target:
 

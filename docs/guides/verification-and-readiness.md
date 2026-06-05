@@ -47,7 +47,7 @@ Every verification job uses the same six-stage progress model:
 | `Validate Input` | Normalizes the payload, resolves host/diagnostics-derived values, and blocks missing setup |
 | `Check Device Health` | Asks the selected host agent whether the device target is actually reachable and healthy |
 | `Start Appium Node` | Starts a temporary Appium node for probing |
-| `Probe Appium Session` | Creates and tears down a real Grid-routed Appium session |
+| `Probe Appium Session` | Creates and tears down a real Appium session directly against the device's Appium server |
 | `Clean Up Probe` | Stops the temporary node, or retains it as the managed node when allowed |
 | `Save Device` | Persists the verified create or verified update |
 
@@ -157,7 +157,7 @@ The host can see the device record, but the device target is not healthy enough 
 
 ### Session probe fails
 
-The device passed health but could not sustain a real Grid-routed Appium session. Use the stage detail and Device Health panel together.
+The device passed health but could not sustain a real direct-to-Appium session. Use the stage detail and Device Health panel together.
 
 ### Verification succeeded, but there is no running node
 

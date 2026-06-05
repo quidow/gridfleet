@@ -72,8 +72,7 @@ plutil -p ~/Library/LaunchAgents/com.gridfleet.agent.plist
 Check that:
 
 - `AGENT_MANAGER_URL` points at the backend port
-- `AGENT_GRID_HUB_URL` points at the Grid hub port
-- `AGENT_GRID_PUBLISH_URL` and `AGENT_GRID_SUBSCRIBE_URL` point at the Selenium Grid hub's ZMQ event bus — the same host as `AGENT_GRID_HUB_URL`, on ports 4442/4443 (not the manager host)
+- `AGENT_ADVERTISE_IP` (if set) is an address the backend and the WebDriver router can reach, since the router connects directly to this host's Appium ports
 
 ## 6. Recover the host in the manager
 

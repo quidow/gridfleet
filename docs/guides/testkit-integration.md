@@ -30,7 +30,7 @@ def allocated_device(gridfleet_client: GridFleetClient, request: pytest.FixtureR
     yield hydrate_allocated_device(device_handle, run_id=run_id, client=gridfleet_client)
 ```
 
-The plugin owns local fixture naming and worker policy. GridFleet testkit owns API calls, Grid-routed capability injection, session reporting helpers, and allocated-device hydration.
+The plugin owns local fixture naming and worker policy. GridFleet testkit owns API calls, router capability injection, session reporting helpers, and allocated-device hydration.
 
 ## Device Listing
 
