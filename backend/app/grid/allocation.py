@@ -9,11 +9,14 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
+from sqlalchemy.orm import selectinload
 
+from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
@@ -22,9 +25,19 @@ from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matche
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs import service as run_service
 from app.runs.models import RunState
+from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
+
+
+class AllocationNotPendingError(Exception):
+    """The allocation id does not reference a pending session row."""
+
+    def __init__(self, allocation_id: uuid.UUID) -> None:
+        super().__init__(f"allocation {allocation_id} is not pending")
+        self.allocation_id = allocation_id
+
 
 IntentFactory = Callable[[DbSession], IntentService]
 StereotypeProvider = Callable[[DbSession, Device], Awaitable[dict[str, Any]]]
@@ -43,10 +56,92 @@ class AllocationService:
         intent_factory: IntentFactory,
         publisher: EventPublisher,
         stereotype_provider: StereotypeProvider,
+        settings: SettingsReader | None = None,
     ) -> None:
         self._intent_factory = intent_factory
         self._publisher = publisher
         self._stereotype_provider = stereotype_provider
+        self._settings = settings
+
+    async def confirm(self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str) -> None:
+        """Swap the placeholder session id for the Appium id and promote to ``running``."""
+        row = await db.get(Session, allocation_id)
+        if row is None or row.status != SessionStatus.pending:
+            raise AllocationNotPendingError(allocation_id)
+        row.session_id = appium_session_id
+        row.status = SessionStatus.running
+        await db.flush()
+
+    async def fail(self, db: DbSession, *, allocation_id: uuid.UUID, message: str) -> None:
+        row = await db.get(Session, allocation_id)
+        if row is None or row.status != SessionStatus.pending:
+            return  # idempotent: already confirmed/reaped
+        device_id = row.device_id
+        if device_id is not None:
+            await device_locking.lock_device(db, device_id)
+        row.status = SessionStatus.error
+        row.error_type = "allocation_failed"
+        row.error_message = message
+        row.ended_at = datetime.now(UTC)
+        await db.flush()
+        if device_id is not None:
+            intent = self._intent_factory(db)
+            await intent.mark_dirty_and_reconcile(device_id, reason="grid_allocation_failed", publisher=self._publisher)
+
+    async def mark_ended(self, db: DbSession, *, appium_session_id: str) -> None:
+        """Close a running session the same way session_sync closes vanished sessions."""
+        stmt = (
+            select(Session)
+            .options(selectinload(Session.device))
+            .where(
+                Session.session_id == appium_session_id,
+                Session.status == SessionStatus.running,
+                Session.ended_at.is_(None),
+            )
+        )
+        row = (await db.execute(stmt)).scalars().first()
+        if row is None:
+            return
+        row.ended_at = datetime.now(UTC)
+        row.status = SessionStatus.passed  # default; pytest helper can override
+        session_service.queue_session_ended_event(db, row, device=row.device, publisher=self._publisher)
+        await db.flush()
+        if row.device_id is not None:
+            intent = self._intent_factory(db)
+            await intent.revoke_intents_and_reconcile(
+                device_id=row.device_id,
+                sources=[f"active_session:{appium_session_id}"],
+                reason=f"Session {appium_session_id} ended",
+                publisher=self._publisher,
+            )
+
+    async def reap_expired(self, db: DbSession) -> dict[str, int]:
+        if self._settings is None:
+            raise RuntimeError("AllocationService.reap_expired requires a settings reader")
+        claim_window = int(cast("int", self._settings.get("grid.claim_window_sec")))
+        queue_timeout = int(cast("int", self._settings.get("grid.queue_timeout_sec")))
+        now = datetime.now(UTC)
+
+        pending_stmt = select(Session.id).where(
+            Session.status == SessionStatus.pending,
+            Session.ended_at.is_(None),
+            Session.started_at < now - timedelta(seconds=claim_window),
+        )
+        pending_failed = 0
+        for (session_pk,) in (await db.execute(pending_stmt)).all():
+            await self.fail(db, allocation_id=session_pk, message="allocation claim window expired")
+            pending_failed += 1
+
+        tickets_stmt = select(GridSessionQueueTicket).where(
+            GridSessionQueueTicket.status == GridQueueStatus.waiting,
+            GridSessionQueueTicket.created_at < now - timedelta(seconds=queue_timeout),
+        )
+        tickets_expired = 0
+        for stale in (await db.execute(tickets_stmt)).scalars():
+            stale.status = GridQueueStatus.expired
+            tickets_expired += 1
+        await db.flush()
+        return {"pending_failed": pending_failed, "tickets_expired": tickets_expired}
 
     async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
         try:
