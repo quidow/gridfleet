@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.1
+release: 2026.06.2
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
