@@ -21,7 +21,6 @@ from app.core.leader.models import ControlPlaneStateEntry
 from app.core.shutdown import ShutdownCoordinator
 from app.core.type_defs import AsyncSessionContextManager, SessionFactory
 from app.devices.services import identity as device_identity
-from app.grid.service import GridService as _GridService
 from app.runs import service_reaper as run_reaper
 from tests.fakes import FakeSettingsReader
 
@@ -249,56 +248,6 @@ def test_error_detail_and_transport_helpers() -> None:
     assert agent_client.classify_httpx_transport(httpx.ConnectError("Name resolution failed"))[0] == "dns_error"
     assert agent_client.classify_httpx_transport(httpx.ConnectError("refused"))[0] == "connect_error"
     assert agent_client.classify_httpx_transport(RuntimeError("boom"))[0] == "unexpected_error"
-
-
-def test_grid_status_device_ids_ignore_malformed_nodes() -> None:
-    assert _GridService.available_node_device_ids({"value": None}) is None
-    assert _GridService.available_node_device_ids({"value": {"nodes": None}}) is None
-    assert _GridService.available_node_device_ids(
-        {
-            "value": {
-                "nodes": [
-                    "bad-node",
-                    {"availability": "DOWN", "slots": [{"stereotype": {"gridfleet:DeviceId": "ignored"}}]},
-                    {"slots": "bad-slots"},
-                    {"slots": ["bad-slot", {"stereotype": "bad-stereotype"}]},
-                    {"slots": [{"stereotype": {"gridfleet:deviceId": "device-1"}}]},
-                    {"slots": [{"stereotype": {"appium:gridfleet:deviceId": "device-2"}}]},
-                ]
-            }
-        }
-    ) == {"device-1", "device-2"}
-
-
-async def test_grid_service_reuses_and_closes_shared_client(monkeypatch: MonkeyPatch) -> None:
-    class FakeClient:
-        def __init__(self) -> None:
-            self.is_closed = False
-            self.closed = False
-
-        async def aclose(self) -> None:
-            self.closed = True
-            self.is_closed = True
-
-    created: list[FakeClient] = []
-
-    def fake_client_factory() -> FakeClient:
-        client = FakeClient()
-        created.append(client)
-        return client
-
-    from tests.fakes import FakeSettingsReader
-
-    grid_svc = _GridService(settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444"}))
-    await grid_svc.close()
-    monkeypatch.setattr("app.grid.service.httpx.AsyncClient", fake_client_factory)
-
-    first = grid_svc._get_client()
-    second = grid_svc._get_client()
-    assert first is second
-    await grid_svc.close()
-    assert created == [first]
-    assert first.closed is True
 
 
 async def test_shutdown_coordinator_idempotent_paths() -> None:

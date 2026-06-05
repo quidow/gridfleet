@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import json
-import signal
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, BinaryIO, cast
@@ -31,8 +30,6 @@ from agent_app.appium.process import (
     _has_lifecycle_action,
     sanitize_appium_driver_capabilities,
 )
-from agent_app.grid_node.config import GridNodeConfig
-from agent_app.grid_node.hub_registration import EventPublisher
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
@@ -57,7 +54,6 @@ def stub_port_probe() -> object:
             "agent_app.appium.process.AppiumProcessManager._is_appium_port_bindable",
             return_value=True,
         ),
-        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=RecordingGridNodeHandle()),
         patch("agent_app.registration.get_local_ip", return_value="127.0.0.1"),
     ):
         yield
@@ -121,81 +117,6 @@ class FakeProcess:
             if self.returncode is not None:
                 self._wait_future.set_result(self.returncode)
         return asyncio.shield(self._wait_future)
-
-
-class RecordingGridNodeHandle:
-    def __init__(self) -> None:
-        self.start_called = False
-        self.stop_called = False
-        self.wait_until_running_called = False
-        self.snapshot_payload = {"status": "up"}
-        self.errored = False
-        # ``_start_grid_node_service`` accesses ``handle.service`` after the
-        # supervisor reports running so it can drain a relay launched with
-        # ``accepting_new_sessions=False``. The bare recording handle does
-        # not run a real service, so leave it as None and let the drain
-        # path no-op.
-        self.service: object | None = None
-        # ``reconfigure`` rejects calls into a supervisor that hasn't reached
-        # the running state — preventing the dead-handle bug where the agent
-        # would invoke ``GridNodeService.reregister_with_caps_update`` on a
-        # stopped instance and raise ``called before start()``. Stub handles
-        # plug straight into a manager without going through ``start()``, so
-        # default to "running" and let individual tests flip it to exercise
-        # the mid-restart guard.
-        self._is_running_override = True
-
-    async def start(self) -> None:
-        self.start_called = True
-
-    async def wait_until_running(self) -> None:
-        self.wait_until_running_called = True
-
-    async def stop(self) -> None:
-        self.stop_called = True
-
-    def is_running(self) -> bool:
-        return self._is_running_override and not self.stop_called
-
-    def snapshot(self) -> dict[str, object]:
-        return dict(self.snapshot_payload)
-
-
-class FailingGridNodeHandle(RecordingGridNodeHandle):
-    async def wait_until_running(self) -> None:
-        self.wait_until_running_called = True
-        raise RuntimeError("grid node failed")
-
-
-class ReconfigurableGridNodeService:
-    def __init__(self, *, busy: bool = False) -> None:
-        self.calls: list[dict[str, object]] = []
-        self.drain_only_calls: int = 0
-        self.busy = busy
-
-    def has_active_session(self) -> bool:
-        return self.busy
-
-    async def reregister_with_caps_update(
-        self, *, updates: dict[str, object], drain_grace_sec: float | None = None
-    ) -> None:
-        self.calls.append(dict(updates))
-
-    async def drain_to_block_new_sessions(self) -> None:
-        self.drain_only_calls += 1
-
-    def bus_for_sweep(self) -> EventPublisher:
-        class _NullBus:
-            async def publish(self, event: dict[str, object]) -> None:
-                pass
-
-        return _NullBus()
-
-
-class ReconfigurableGridNodeHandle(RecordingGridNodeHandle):
-    def __init__(self, service: ReconfigurableGridNodeService) -> None:
-        super().__init__()
-        self.service = service
 
 
 def test_parse_node_version_prefers_version_tuple() -> None:
@@ -301,7 +222,6 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         info = await manager.start(
             connection_target="device-001",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             plugins=["images", "execute-driver"],
             extra_caps={"appium:platform": "phone"},
@@ -329,93 +249,8 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
     await manager.shutdown()
 
 
-async def test_start_spawns_grid_node_supervisor() -> None:
+def test_process_snapshot_reports_running_node_fields() -> None:
     manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5001)
-    handles: list[RecordingGridNodeHandle] = []
-    configs: list[GridNodeConfig] = []
-
-    def start_supervisor(*, factory: object, config: GridNodeConfig) -> RecordingGridNodeHandle:
-        del factory
-        configs.append(config)
-        handle = RecordingGridNodeHandle()
-        handles.append(handle)
-        return handle
-
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc) as create_proc,
-        patch("agent_app.appium.process.start_grid_node_supervisor", side_effect=start_supervisor),
-    ):
-        await manager.start(
-            connection_target="device-1",
-            port=4723,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-            stereotype_caps={"appium:platform": "android_mobile"},
-        )
-
-    assert create_proc.await_count == 1
-    assert handles[0].start_called is True
-    assert handles[0].wait_until_running_called is True
-    assert configs[0].appium_upstream == "http://127.0.0.1:4723"
-    assert configs[0].slots[0].stereotype.caps["appium:platform"] == "android_mobile"
-    await manager.shutdown()
-
-
-async def test_start_rolls_back_appium_when_grid_node_start_fails() -> None:
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5004)
-    handle = FailingGridNodeHandle()
-
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
-        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
-        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
-        # patching it here keeps these start tests off the network (shared httpx
-        # client must not bind to this test's event loop).
-        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
-        pytest.raises(RuntimeError, match="grid node failed"),
-    ):
-        await manager.start(
-            connection_target="device-1",
-            port=4723,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-        )
-
-    assert handle.stop_called is True
-    assert appium_proc.sent_signals
-    assert 4723 not in manager._grid_supervisors
-    assert 4723 not in manager._appium_procs
-    assert 4723 not in manager._launch_specs
-
-
-async def test_stop_calls_grid_node_supervisor_stop() -> None:
-    manager = AppiumProcessManager()
-    handle = RecordingGridNodeHandle()
-    appium_proc = FakeProcess(pid=5002)
-    manager._grid_supervisors[4723] = handle
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723, pid=5002, connection_target="device-1", platform_id="android_mobile"
-    )
-
-    await manager.stop(4723)
-
-    assert handle.stop_called is True
-    assert 4723 not in manager._grid_supervisors
-
-
-def test_process_snapshot_includes_grid_node_status() -> None:
-    manager = AppiumProcessManager()
-    handle = RecordingGridNodeHandle()
-    manager._grid_supervisors[4723] = handle
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
@@ -423,36 +258,12 @@ def test_process_snapshot_includes_grid_node_status() -> None:
 
     snapshot = manager.process_snapshot()
 
-    assert snapshot["running_nodes"][0]["grid_node_status"] == "up"
-
-
-@pytest.mark.parametrize("busy", [True, False])
-def test_process_snapshot_reports_session_activity_from_grid_node_service(busy: bool) -> None:
-    manager = AppiumProcessManager()
-    handle = ReconfigurableGridNodeHandle(ReconfigurableGridNodeService(busy=busy))
-    manager._grid_supervisors[4723] = handle
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
-    )
-
-    snapshot = manager.process_snapshot()
-
-    assert snapshot["running_nodes"][0]["has_active_session"] is busy
-
-
-def test_process_snapshot_omits_session_activity_when_service_unavailable() -> None:
-    manager = AppiumProcessManager()
-    handle = RecordingGridNodeHandle()  # service stays None
-    manager._grid_supervisors[4723] = handle
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
-    )
-
-    snapshot = manager.process_snapshot()
-
-    assert "has_active_session" not in snapshot["running_nodes"][0]
+    assert snapshot["running_nodes"][0] == {
+        "port": 4723,
+        "pid": 5003,
+        "connection_target": "device-1",
+        "platform_id": "android_mobile",
+    }
 
 
 async def test_start_requires_pack_metadata() -> None:
@@ -462,27 +273,22 @@ async def test_start_requires_pack_metadata() -> None:
         await manager.start(
             connection_target="Pixel_8",
             port=4723,
-            grid_url="http://localhost:4444",
             pack_id=None,
             platform_id="android_mobile",
-            manage_grid_node=False,
         )
 
     with pytest.raises(RuntimeError, match="requires pack_id and platform_id"):
         await manager.start(
             connection_target="Pixel_8",
             port=4723,
-            grid_url="http://localhost:4444",
             pack_id="appium-uiautomator2",
             platform_id=None,
-            manage_grid_node=False,
         )
 
 
-async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
+async def test_start_passes_only_driver_caps_to_appium_server() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=1234)
-    configs: list[GridNodeConfig] = []
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
@@ -492,15 +298,10 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
             "agent_app.appium.process.asyncio.create_subprocess_exec",
             return_value=appium_proc,
         ) as create_proc,
-        patch(
-            "agent_app.appium.process.start_grid_node_supervisor",
-            side_effect=lambda *, factory, config: configs.append(config) or RecordingGridNodeHandle(),
-        ),
     ):
         await manager.start(
             connection_target="device-002",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             extra_caps={
                 "appium:udid": "device-002",
@@ -508,212 +309,17 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
                 "appium:gridfleet:deviceId": "device-id",
                 "appium:platform": "android_mobile",
             },
-            stereotype_caps={"appium:udid": "device-002", "appium:platform": "android_mobile"},
         )
 
-    # Appium server receives only driver-owned caps.
+    # Appium server receives only driver-owned caps; gridfleet routing metadata
+    # is stripped by sanitize_appium_driver_capabilities.
     default_caps = json.loads(create_proc.await_args_list[0].args[5])
     assert default_caps == {
         "appium:udid": "device-002",
         "platformName": "android_mobile",
         "appium:automationName": "UiAutomator2",
     }
-    assert configs[0].slots[0].stereotype.caps == {
-        "appium:udid": "device-002",
-        "platformName": "android_mobile",
-        "appium:platform": "android_mobile",
-        "gridfleet:run_id": "free",
-    }
     await manager.shutdown()
-
-
-async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() -> None:
-    """accepting_new_sessions=False no longer surfaces in stereotype.
-
-    The gridfleet:available sentinel was an opt-in routing filter — clients
-    would have to request gridfleet:available=true in caps for the hub to skip
-    unavailable slots. No client (testkit, frontend, docs) ever did. Removing
-    the key has no behaviour change for routing because the filter was inert.
-    The agent still accepts accepting_new_sessions from the backend; hard
-    routing-suppression goes through Selenium NodeStatus.availability=DRAINING
-    (mark_drain in node_state) or via stopping the node entirely.
-    """
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5678)
-    configs: list[GridNodeConfig] = []
-    run_id = uuid4()
-
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
-        patch(
-            "agent_app.appium.process.start_grid_node_supervisor",
-            side_effect=lambda *, factory, config: configs.append(config) or RecordingGridNodeHandle(),
-        ),
-    ):
-        await manager.start(
-            connection_target="device-unavailable",
-            port=4728,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-            accepting_new_sessions=False,
-            grid_run_id=run_id,
-        )
-
-    caps = configs[0].slots[0].stereotype.caps
-    assert "gridfleet:available" not in caps
-    assert caps["gridfleet:run_id"] == str(run_id)
-    await manager.shutdown()
-
-
-async def test_start_with_accepting_false_drains_fresh_relay() -> None:
-    """Regression: a freshly constructed ``NodeState`` always starts with
-    ``_drain=False``. When the backend restarts an Appium relay that should
-    still be cooled down (``accepting_new_sessions=False`` carried forward
-    on the launch spec), the agent must drain the relay before any
-    hub-routed reservation can sneak in. Without this, a cooldowned device
-    that the backend reconciles back to ``desired_state=running`` would
-    silently accept new sessions until the next reconfigure tick lands.
-    """
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5678)
-    service = ReconfigurableGridNodeService()
-    handle = ReconfigurableGridNodeHandle(service)
-
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
-        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
-        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
-        # patching it here keeps these start tests off the network (shared httpx
-        # client must not bind to this test's event loop).
-        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
-    ):
-        await manager.start(
-            connection_target="device-cooldowned",
-            port=4729,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-            accepting_new_sessions=False,
-        )
-
-    assert service.drain_only_calls == 1, "fresh relay launched with accepting=False must be drained immediately"
-    assert service.calls == [], "drain branch must not republish the relay"
-    await manager.shutdown()
-
-
-async def test_start_with_accepting_true_does_not_drain() -> None:
-    """The drain-on-start branch is gated on ``accepting_new_sessions=False``
-    — a normal start path must leave the relay accepting sessions.
-    """
-    manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5679)
-    service = ReconfigurableGridNodeService()
-    handle = ReconfigurableGridNodeHandle(service)
-
-    with (
-        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
-        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
-        patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
-        patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
-        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
-        # patching it here keeps these start tests off the network (shared httpx
-        # client must not bind to this test's event loop).
-        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
-    ):
-        await manager.start(
-            connection_target="device-ready",
-            port=4730,
-            grid_url="http://grid:4444",
-            **PACK_START_KWARGS,
-            accepting_new_sessions=True,
-        )
-
-    assert service.drain_only_calls == 0
-    await manager.shutdown()
-
-
-async def test_reconfigure_accepting_true_updates_grid_stereotype() -> None:
-    """Run-id rotation path keeps the relay registered with the hub — DRAIN +
-    REMOVED + ADDED republishes the node with new run-id caps."""
-    manager = AppiumProcessManager()
-    run_id = uuid4()
-    service = ReconfigurableGridNodeService()
-    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723,
-        pid=123,
-        connection_target="device-1",
-        platform_id="android_mobile",
-    )
-
-    await manager.reconfigure(
-        4723,
-        accepting_new_sessions=True,
-        stop_pending=False,
-        grid_run_id=run_id,
-    )
-
-    assert service.calls == [{"gridfleet:run_id": str(run_id)}]
-    assert service.drain_only_calls == 0
-
-
-async def test_reconfigure_accepting_false_ignores_grid_run_id() -> None:
-    """A caller passing ``accepting_new_sessions=False`` with a non-None
-    ``grid_run_id`` must not stamp a run-id update onto the relay — the
-    drain branch deliberately drops it because run-id rotation belongs to
-    the ``accepting=True`` re-register path.
-    """
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService()
-    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723,
-        pid=123,
-        connection_target="device-1",
-        platform_id="android_mobile",
-    )
-
-    await manager.reconfigure(
-        4723,
-        accepting_new_sessions=False,
-        stop_pending=False,
-        grid_run_id=uuid4(),
-    )
-
-    assert service.drain_only_calls == 1
-    assert service.calls == []
-
-
-async def test_reconfigure_accepting_false_routes_through_drain_only() -> None:
-    """Cooldown / maintenance path must NOT re-`NODE_ADDED` the relay — that
-    cancels the DRAINING state and the hub starts routing again. Use a
-    drain-only path that publishes NODE_DRAIN and leaves the node draining
-    until process teardown removes it."""
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService()
-    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723,
-        pid=123,
-        connection_target="device-1",
-        platform_id="android_mobile",
-    )
-
-    await manager.reconfigure(
-        4723,
-        accepting_new_sessions=False,
-        stop_pending=False,
-        grid_run_id=None,
-    )
-
-    assert service.drain_only_calls == 1
-    assert service.calls == []
 
 
 async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
@@ -728,83 +334,14 @@ async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
         )
 
 
-async def test_reconfigure_errored_supervisor_raises_device_not_found() -> None:
-    """When the supervisor has exhausted its restart budget the handle still
-    holds a reference to the stopped ``GridNodeService``; invoking
-    ``reregister_with_caps_update`` on it would raise ``called before
-    start()`` and surface as an unhandled 500 to the backend, which triggers
-    a port-bumping forced restart. The reconfigure guard converts the
-    terminal-error case to ``DeviceNotFoundError`` so the backend treats it
-    as a missing relay and schedules a clean fresh start.
-    """
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService()
-    handle = ReconfigurableGridNodeHandle(service)
-    handle.errored = True
-    manager._grid_supervisors[4723] = cast("Any", handle)
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723,
-        pid=123,
-        connection_target="device-1",
-        platform_id="android_mobile",
-    )
-
-    with pytest.raises(DeviceNotFoundError, match="errored"):
-        await manager.reconfigure(
-            4723,
-            accepting_new_sessions=True,
-            stop_pending=False,
-            grid_run_id=uuid4(),
-        )
-    assert service.calls == [], "reconfigure must not touch the dead service"
-
-
-async def test_reconfigure_during_restart_raises_device_not_found() -> None:
-    """Mid-restart window between supervisor heartbeat failure and the next
-    ``service.start()`` completing: ``handle.service`` is non-None but the
-    underlying service has ``_started=False``. ``reregister_with_caps_update``
-    would raise ``called before start()``; the guard short-circuits with a
-    404 so the backend retries without forcing a relay restart.
-    """
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService()
-    handle = ReconfigurableGridNodeHandle(service)
-    handle._is_running_override = False
-    manager._grid_supervisors[4723] = cast("Any", handle)
-    manager._info[4723] = AppiumProcessInfo(
-        port=4723,
-        pid=123,
-        connection_target="device-1",
-        platform_id="android_mobile",
-    )
-
-    with pytest.raises(DeviceNotFoundError, match="restarting"):
-        await manager.reconfigure(
-            4723,
-            accepting_new_sessions=True,
-            stop_pending=False,
-            grid_run_id=uuid4(),
-        )
-    assert service.calls == []
-
-
-async def test_stop_pending_drains_relay_and_blocks_auto_restart() -> None:
-    """Cooldown / maintenance reconfigure with ``stop_pending=True`` must NOT
-    tear the relay down on the agent side. The backend's appium reconciler
-    owns stop decisions via ``AppiumNode.desired_state``; if the agent stops
-    here while no session is active, the backend then observes ``pid=None``,
-    restarts Appium on a fresh port, and the new ``NodeState`` comes up with
-    ``_drain=False`` — silently undoing the cooldown. The agent's
-    responsibilities for a ``stop_pending`` reconfigure are limited to:
-    draining the relay so the hub stops routing, and tracking the port in
+async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
+    """A ``stop_pending=True`` reconfigure must track the port in
     ``_stop_pending_ports`` so the auto-restart loop refuses to resurrect a
-    crashed Appium under a pending stop.
+    crashed Appium under a pending stop. Stop decisions are owned by the
+    backend's appium reconciler via ``AppiumNode.desired_state``.
     """
     manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService(busy=False)
-    handle = ReconfigurableGridNodeHandle(service)
     appium_proc = FakeProcess(pid=5002)
-    manager._grid_supervisors[4723] = cast("Any", handle)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
     manager._info[4723] = AppiumProcessInfo(
         port=4723,
@@ -815,12 +352,6 @@ async def test_stop_pending_drains_relay_and_blocks_auto_restart() -> None:
 
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
 
-    # Relay drained but NOT stopped — it must stay registered so the hub
-    # keeps seeing it DRAINING (and the local ``_drain`` guard keeps
-    # rejecting reservations) instead of disappearing and reappearing fresh.
-    assert service.drain_only_calls == 1
-    assert handle.stop_called is False
-    assert 4723 in manager._grid_supervisors
     assert 4723 in manager._stop_pending_ports
 
     # Auto-restart must refuse to resurrect because a stop is pending.
@@ -842,7 +373,6 @@ async def test_start_can_disable_session_override() -> None:
         await manager.start(
             connection_target="device-override-off",
             port=4726,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             session_override=False,
         )
@@ -868,7 +398,6 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
         await manager.start(
             connection_target="device-002",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -931,9 +460,7 @@ async def test_stop_deletes_log_file() -> None:
 async def test_stop_escalates_to_kill_after_timeout() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=8765, returncode=None)
-    handle = RecordingGridNodeHandle()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
-    manager._grid_supervisors[4723] = handle
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=8765, connection_target="device-001", platform_id="android_mobile"
     )
@@ -945,7 +472,6 @@ async def test_stop_escalates_to_kill_after_timeout() -> None:
     with patch("agent_app.appium.process.asyncio.wait_for", side_effect=wait_for_side_effect):
         await manager.stop(4723)
 
-    assert handle.stop_called is True
     assert appium_proc.killed is True
     assert manager.list_running() == []
 
@@ -988,7 +514,6 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
         await manager.start(
             connection_target="device-port-conflict",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1029,7 +554,6 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
             await manager.start(
                 connection_target="device-non-appium-squatter",
                 port=held_port,
-                grid_url="http://grid:4444",
                 **PACK_START_KWARGS,
             )
         create_proc.assert_not_awaited()
@@ -1076,7 +600,6 @@ async def test_start_rejects_port_outside_configured_range_before_localhost_prob
         await manager.start(
             connection_target="device-out-of-range-port",
             port=6553,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1109,7 +632,6 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
         await manager.start(
             connection_target="device-100",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
         first_proc.set_exit(1)
@@ -1136,11 +658,9 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=True,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1166,19 +686,15 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
 async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_listener() -> None:
     manager = AppiumProcessManager()
     old_appium_proc = FakeProcess(pid=1111, returncode=1)
-    handle = RecordingGridNodeHandle()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", old_appium_proc)
-    manager._grid_supervisors[4723] = handle
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-conflict",
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=True,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1207,8 +723,6 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert manager.list_running() == []
     assert 4723 not in manager._launch_specs
     assert 4723 not in manager._info
-    assert 4723 not in manager._grid_supervisors
-    assert handle.stop_called is True
     snapshot = manager.process_snapshot()
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
@@ -1231,17 +745,14 @@ async def test_auto_restart_aborts_when_target_already_served_by_another_node() 
     # Crashed node on 4723 for the shared target.
     crashed = FakeProcess(pid=1111, returncode=1)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", crashed)
-    manager._grid_supervisors[4723] = RecordingGridNodeHandle()
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="device-dup",
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=True,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1304,7 +815,6 @@ async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
         await manager.start(
             connection_target="device-backoff",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1344,7 +854,6 @@ async def test_appium_restart_does_not_create_duplicate_recovery_loop() -> None:
         await manager.start(
             connection_target="device-shared-crash",
             port=4729,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
         first_appium_proc.set_exit(1)
@@ -1388,7 +897,6 @@ async def test_start_appium_server_does_not_synthesize_wda_url_inline() -> None:
         await manager.start(
             connection_target="00008301-ABCDEF",
             port=4731,
-            grid_url="http://grid:4444",
             pack_id="appium-xcuitest",
             platform_id="tvos",
             device_type="real_device",
@@ -1421,17 +929,13 @@ async def test_start_rejects_duplicate_connection_target_on_different_port() -> 
         await manager.start(
             connection_target="192.168.1.254:5555",
             port=4732,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
-            manage_grid_node=False,
         )
         with pytest.raises(RuntimeError, match="already running for target"):
             await manager.start(
                 connection_target="192.168.1.254:5555",
                 port=4733,
-                grid_url="http://grid:4444",
                 **PACK_START_KWARGS,
-                manage_grid_node=False,
             )
 
     assert create_proc.await_count == 1
@@ -1458,9 +962,7 @@ async def test_start_passes_insecure_features_to_appium_command() -> None:
         await manager.start(
             connection_target="device-insecure",
             port=4740,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
-            manage_grid_node=False,
             insecure_features=["uiautomator2:chromedriver_autodownload"],
         )
 
@@ -1519,7 +1021,6 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
         info = await manager.start(
             connection_target="Pixel_8_API_35",
             port=4750,
-            grid_url="http://grid:4444",
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1557,7 +1058,6 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
         info = await manager.start(
             connection_target="SIM-UUID",
             port=4751,
-            grid_url="http://grid:4444",
             device_type="simulator",
             pack_id="appium-xcuitest",
             platform_id="ios",
@@ -1594,7 +1094,6 @@ async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
         info = await manager.start(
             connection_target="MyAVD",
             port=4760,
-            grid_url="http://grid:4444",
             device_type="real_device",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1621,7 +1120,6 @@ async def test_start_raises_when_adapter_boot_fails() -> None:
         await manager.start(
             connection_target="Bad_AVD",
             port=4752,
-            grid_url="http://grid:4444",
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1648,9 +1146,7 @@ async def test_start_omits_allow_insecure_when_insecure_features_empty() -> None
         await manager.start(
             connection_target="device-no-insecure",
             port=4741,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
-            manage_grid_node=False,
             insecure_features=[],
         )
 
@@ -1840,11 +1336,9 @@ async def test_auto_restart_returns_when_intentional_stop_during_sleep() -> None
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1875,11 +1369,9 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1906,11 +1398,9 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1959,11 +1449,9 @@ async def test_start_appium_server_raises_runtime_missing_when_binary_not_found(
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -1988,11 +1476,9 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
@@ -2014,175 +1500,48 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
     assert not appium_log_path(4723).exists()
 
 
-async def test_reconfigure_unknown_grid_supervisor_raises() -> None:
+async def test_reconfigure_known_port_is_noop_when_accepting() -> None:
     manager = AppiumProcessManager()
     manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    with pytest.raises(DeviceNotFoundError, match="No running grid node for Appium port 4723"):
-        await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
-
-
-async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -> None:
-    """Regression: the agent must NOT spawn an idle-stop watcher when a
-    ``stop_pending=True`` reconfigure arrives while a session is active.
-
-    The previous design (agent-side idle-stop watcher) tore the relay down
-    the moment the session ended. The backend then observed ``pid=None``,
-    restarted Appium on a fresh port, and the new ``NodeState`` came up
-    with ``_drain=False`` — silently undoing the cooldown. Stop decisions
-    are now owned exclusively by the backend's appium reconciler via
-    ``AppiumNode.desired_state``; the agent's only responsibilities are to
-    drain the relay (so the hub stops routing) and remember the port in
-    ``_stop_pending_ports`` (so ``_auto_restart_appium`` refuses to
-    resurrect a crashed Appium).
-    """
-    manager = AppiumProcessManager()
-    service = ReconfigurableGridNodeService(busy=True)
-    handle = ReconfigurableGridNodeHandle(service)
-    manager._grid_supervisors[4723] = cast("Any", handle)
-    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=False,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-
-    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
-    assert service.drain_only_calls == 1
-    assert 4723 in manager._stop_pending_ports
-
-
-async def test_reconfigure_records_spec_before_service_call() -> None:
-    """D4: a reconfigure whose service call raises must still persist the new
-    accepting_new_sessions/stop_pending/grid_run_id into the launch spec —
-    otherwise a fresh relay start re-drains itself off the stale spec and the
-    wedge self-sustains (TR10)."""
-
-    class RaisingService(ReconfigurableGridNodeService):
-        async def reregister_with_caps_update(
-            self, *, updates: dict[str, object], drain_grace_sec: float | None = None
-        ) -> None:
-            raise RuntimeError("event bus is not started")
-
-    manager = AppiumProcessManager()
-    service = RaisingService()
-    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
-    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        accepting_new_sessions=False,  # stale cooldown spec
-        stop_pending=True,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=False,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
     manager._stop_pending_ports.add(4723)
 
-    with pytest.raises(RuntimeError, match="event bus is not started"):
-        await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
+    await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
 
-    assert manager._launch_specs[4723].accepting_new_sessions is True
-    assert manager._launch_specs[4723].stop_pending is False
     assert 4723 not in manager._stop_pending_ports
 
 
-async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() -> None:
+async def test_reconfigure_persists_state_into_launch_spec() -> None:
     manager = AppiumProcessManager()
-    proc = FakeProcess(pid=1)
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
+    run_id = uuid4()
     manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
     manager._launch_specs[4723] = AppiumLaunchSpec(
         connection_target="dev",
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )
 
-    with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("grid boom")):
-        await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
+    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=run_id)
 
-    assert 4723 not in manager._appium_procs
-    assert 4723 in manager._intentional_stop_ports  # stays set per comment in source
+    spec = manager._launch_specs[4723]
+    assert spec.accepting_new_sessions is False
+    assert spec.stop_pending is True
+    assert spec.grid_run_id == run_id
+    assert 4723 in manager._stop_pending_ports
 
 
-async def test_cleanup_started_appium_kills_when_proc_still_running() -> None:
+async def test_drop_failed_managed_port_releases_metadata() -> None:
     manager = AppiumProcessManager()
-    proc = FakeProcess(pid=1, returncode=None)
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
     manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=False,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-
-    await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
-    assert proc.sent_signals == [signal.SIGTERM]
-
-
-async def test_cleanup_started_appium_escalates_kill_after_timeout() -> None:
-    manager = AppiumProcessManager()
-    proc = FakeProcess(pid=1, returncode=None)
-    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", proc)
-    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
-    manager._launch_specs[4723] = AppiumLaunchSpec(
-        connection_target="dev",
-        port=4723,
-        plugins=None,
-        extra_caps=None,
-        stereotype_caps=None,
-        session_override=True,
-        device_type=None,
-        ip_address=None,
-        manage_grid_node=False,
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-    )
-
-    async def wait_always_timeout(awaitable: object, *, timeout: float) -> object:
-        del awaitable, timeout
-        raise TimeoutError
-
-    with patch("agent_app.appium.process.asyncio.wait_for", side_effect=wait_always_timeout):
-        await manager._cleanup_started_appium_after_grid_node_failure(4723, cast("asyncio.subprocess.Process", proc))
-
-    assert proc.killed is True
-
-
-async def test_drop_failed_managed_port_suppresses_grid_stop_exception() -> None:
-    manager = AppiumProcessManager()
-    with patch.object(manager, "_stop_grid_node_service", side_effect=RuntimeError("boom")):
-        await manager._drop_failed_managed_port(4723)
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=1))
+    await manager._drop_failed_managed_port(4723)
     assert 4723 not in manager._info
+    assert 4723 not in manager._appium_procs
 
 
 async def test_fetch_appium_status_http_error_returns_none() -> None:
@@ -2228,11 +1587,9 @@ async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type=None,
         ip_address=None,
-        manage_grid_node=False,
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
     )

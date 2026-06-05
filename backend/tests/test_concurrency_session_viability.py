@@ -79,7 +79,6 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
         appium_node = AppiumNode(
             device_id=device.id,
             port=9999,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.running,
             desired_port=9999,
             pid=1234,
@@ -97,7 +96,7 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
     device_id = device.id
 
     async def fake_probe(
-        capabilities: dict[str, Any], timeout_sec: int, *, grid_url: str | None = None
+        capabilities: dict[str, Any], timeout_sec: int, *, target: str | None = None
     ) -> tuple[bool, str | None]:
         return True, None
 
@@ -114,7 +113,7 @@ async def test_run_session_viability_probe_reclaims_stale_lock(
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
-    monkeypatch.setattr(svc, "probe_session_via_grid", fake_probe)
+    monkeypatch.setattr(svc, "probe_session_direct", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", fake_get_caps)
 
@@ -203,7 +202,6 @@ async def test_session_viability_restore_handles_external_reservation(
         appium_node = AppiumNode(
             device_id=device.id,
             port=9999,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.running,
             desired_port=9999,
             pid=0,
@@ -215,16 +213,16 @@ async def test_session_viability_restore_handles_external_reservation(
 
     probe_started = asyncio.Event()
     external_done = asyncio.Event()
-    observed_grid_url: str | None = None
+    observed_target: str | None = None
 
     async def fake_probe(
         capabilities: dict[str, Any],
         timeout_sec: int,
         *,
-        grid_url: str | None = None,
+        target: str | None = None,
     ) -> tuple[bool, str | None]:
-        nonlocal observed_grid_url
-        observed_grid_url = grid_url
+        nonlocal observed_target
+        observed_target = target
         probe_started.set()
         await external_done.wait()
         return True, None
@@ -242,7 +240,7 @@ async def test_session_viability_restore_handles_external_reservation(
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
-    monkeypatch.setattr(svc, "probe_session_via_grid", fake_probe)
+    monkeypatch.setattr(svc, "probe_session_direct", fake_probe)
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", always_ready)
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", fake_get_caps)
 
@@ -265,13 +263,13 @@ async def test_session_viability_restore_handles_external_reservation(
         external_done.set()
 
     await asyncio.gather(run_probe(), reserve_externally())
-    assert observed_grid_url == "http://node-grid:4444/wd/hub"
+    assert observed_target == f"http://{db_host.ip}:9999"
 
     async with db_session_maker() as verify:
         device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     # The key invariant is that the probe completed without raising errors under
-    # concurrent lock contention (observed_grid_url is correct).
+    # concurrent lock contention (observed_target is correct).
     assert device_row.operational_state in (
         DeviceOperationalState.available,
         DeviceOperationalState.offline,

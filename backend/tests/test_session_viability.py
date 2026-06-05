@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import httpx
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,9 +20,7 @@ from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
     _PROBE_ALWAYS_MATCH_KEYS,
     SessionViabilityService,
-    _extract_session_error,
     _filter_probe_always_match,
-    _format_http_error,
     _parse_timestamp,
     _should_run_scheduled_probe,
     get_session_viability,
@@ -42,7 +39,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 # Module-level service instance used by local wrappers.
 # Tests that need to intercept method calls should patch via
-# ``monkeypatch.setattr(_svc, 'probe_session_via_grid', ...)`` or
+# ``monkeypatch.setattr(_svc, 'probe_session_direct', ...)`` or
 # ``patch.object(SessionViabilityService, 'method', ...)``.
 _svc = SessionViabilityService(
     publisher=_test_event_bus,
@@ -57,7 +54,7 @@ _svc = SessionViabilityService(
 def _isolate_module_svc() -> Iterator[None]:
     """Restore the shared module-level ``_svc`` state after every test.
 
-    Several tests do ``monkeypatch.setattr(_svc, "probe_session_via_grid", ...)``.
+    Several tests do ``monkeypatch.setattr(_svc, "probe_session_direct", ...)``.
     Because that method lives on the class, monkeypatch's undo restores it as an
     *instance* attribute on ``_svc`` — a residual that shadows a later test's
     ``patch.object(SessionViabilityService, ...)``, so the real probe runs and a
@@ -83,11 +80,11 @@ async def run_session_viability_probe(
     return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
 
 
-async def probe_session_via_grid(
+async def probe_session_direct(
     capabilities: dict[str, Any],
     timeout_sec: int,
     *,
-    grid_url: str | None = None,
+    target: str | None = None,
     settings: FakeSettingsReader | None = None,
 ) -> tuple[bool, str | None]:
     svc = SessionViabilityService(
@@ -97,7 +94,7 @@ async def probe_session_via_grid(
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
-    return await svc.probe_session_via_grid(capabilities, timeout_sec, grid_url=grid_url)
+    return await svc.probe_session_direct(capabilities, timeout_sec, target=target)
 
 
 async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader | None = None) -> None:
@@ -133,7 +130,6 @@ async def test_session_viability_state_is_not_persisted_in_device_config(
         node = AppiumNode(
             device_id=device.id,
             port=4729,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -179,7 +175,6 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -202,7 +197,7 @@ async def test_run_session_viability_probe_records_success(db_session: AsyncSess
         ),
         patch.object(
             SessionViabilityService,
-            "probe_session_via_grid",
+            "probe_session_direct",
             new_callable=AsyncMock,
             return_value=(True, None),
         ) as probe_mock,
@@ -252,7 +247,6 @@ async def test_recovery_session_viability_probe_allows_offline_device(
         node = AppiumNode(
             device_id=device.id,
             port=4733,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4733,
             pid=0,
@@ -275,7 +269,7 @@ async def test_recovery_session_viability_probe_allows_offline_device(
         ),
         patch.object(
             SessionViabilityService,
-            "probe_session_via_grid",
+            "probe_session_direct",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),
@@ -314,7 +308,6 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="emulator-5554",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -328,10 +321,11 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     loaded_node = await db_session.get(AppiumNode, node.id)
     assert loaded_node is not None
     loaded_device.appium_node = loaded_node
+    loaded_device.host = db_host
 
     with patch.object(
         SessionViabilityService,
-        "probe_session_via_grid",
+        "probe_session_direct",
         new_callable=AsyncMock,
         return_value=(True, None),
     ) as probe_mock:
@@ -343,7 +337,7 @@ async def test_run_session_viability_probe_uses_running_avd_active_target(
     assert capabilities["appium:udid"] == "emulator-5554"
     assert capabilities["appium:gridfleet:deviceId"] == str(device.id)
     assert capabilities["gridfleet:probeSession"] is True
-    assert probe_mock.await_args.kwargs["grid_url"] == "http://node-grid:4444/wd/hub"
+    assert probe_mock.await_args.kwargs["target"] == f"http://{db_host.ip}:{loaded_node.port}"
 
 
 async def test_run_session_viability_probe_writes_probe_row_on_ack(
@@ -370,7 +364,6 @@ async def test_run_session_viability_probe_writes_probe_row_on_ack(
         node = AppiumNode(
             device_id=None,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="probe-row-ack",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -382,7 +375,7 @@ async def test_run_session_viability_probe_writes_probe_row_on_ack(
 
     with patch.object(
         SessionViabilityService,
-        "probe_session_via_grid",
+        "probe_session_direct",
         new_callable=AsyncMock,
         return_value=(True, None),
     ):
@@ -433,7 +426,6 @@ async def test_run_session_viability_probe_writes_probe_row_on_refusal(
         node = AppiumNode(
             device_id=None,
             port=4723,
-            grid_url="http://node-grid:4444/wd/hub",
             active_connection_target="probe-row-refuse",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -445,7 +437,7 @@ async def test_run_session_viability_probe_writes_probe_row_on_refusal(
 
     with patch.object(
         SessionViabilityService,
-        "probe_session_via_grid",
+        "probe_session_direct",
         new_callable=AsyncMock,
         return_value=(False, "Session probe failed"),
     ):
@@ -590,67 +582,50 @@ async def test_check_due_devices_excludes_reserved_device(db_session: AsyncSessi
     assert mock_probe.await_count == 0
 
 
-async def test_probe_session_via_grid_includes_exception_type_for_blank_http_error() -> None:
-    request = httpx.Request("POST", "http://hub:4444/session")
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("", request=request))
+async def test_probe_session_direct_passes_through_transport_error_as_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_viability.appium_direct,
+        "create_session",
+        AsyncMock(return_value=(None, "ConnectError while calling http://node:4723/session", True)),
+    )
 
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid({"platformName": "iOS"}, timeout_sec=5)
+    ok, error = await probe_session_direct({"platformName": "iOS"}, timeout_sec=5, target="http://node:4723")
 
     assert ok is False
-    assert error == "Session create request failed: ReadTimeout while calling http://hub:4444/session"
+    assert error == "Session create request failed: ConnectError while calling http://node:4723/session"
 
 
-async def test_probe_session_via_grid_preserves_configured_base_path() -> None:
-    create_response = MagicMock(spec=httpx.Response, status_code=200)
-    create_response.json.return_value = {"value": {"sessionId": "session-1"}}
-    delete_response = MagicMock(spec=httpx.Response, status_code=200)
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=create_response)
-    mock_client.delete = AsyncMock(return_value=delete_response)
+async def test_probe_session_direct_none_target_is_indeterminate() -> None:
+    ok, error = await probe_session_direct({"platformName": "iOS"}, timeout_sec=5, target=None)
 
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid(
-            {"platformName": "iOS"},
-            timeout_sec=5,
-            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444/wd/hub"}),
-        )
+    assert ok is False
+    assert error is not None and error.startswith("Session create request failed:")
+
+
+async def test_probe_session_direct_creates_and_terminates_against_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    create_mock = AsyncMock(return_value=("session-1", None, False))
+    terminate_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(session_viability.appium_direct, "create_session", create_mock)
+    monkeypatch.setattr(session_viability.appium_direct, "terminate_session", terminate_mock)
+
+    ok, error = await probe_session_direct(
+        {"platformName": "iOS"},
+        timeout_sec=5,
+        target="http://node:4723/",
+    )
 
     assert ok is True
     assert error is None
-    mock_client.post.assert_awaited_once_with(
-        "http://hub:4444/wd/hub/session",
-        json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}},
+    create_mock.assert_awaited_once_with(
+        "http://node:4723",
+        {"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}},
         timeout=5,
     )
-    mock_client.delete.assert_awaited_once_with("http://hub:4444/wd/hub/session/session-1", timeout=5)
-
-
-async def test_probe_session_via_grid_uses_explicit_node_grid_url() -> None:
-    create_response = MagicMock(spec=httpx.Response, status_code=200)
-    create_response.json.return_value = {"value": {"sessionId": "session-1"}}
-    delete_response = MagicMock(spec=httpx.Response, status_code=200)
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=create_response)
-    mock_client.delete = AsyncMock(return_value=delete_response)
-
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid(
-            {"platformName": "iOS"},
-            timeout_sec=5,
-            settings=FakeSettingsReader({"grid.hub_url": "http://global-hub:4444"}),
-            grid_url="http://node-hub:4444/wd/hub",
-        )
-
-    assert ok is True
-    assert error is None
-    mock_client.post.assert_awaited_once_with(
-        "http://node-hub:4444/wd/hub/session",
-        json={"capabilities": {"alwaysMatch": {"platformName": "iOS"}, "firstMatch": [{}]}},
-        timeout=5,
-    )
-    mock_client.delete.assert_awaited_once_with("http://node-hub:4444/wd/hub/session/session-1", timeout=5)
+    terminate_mock.assert_awaited_once_with("http://node:4723", "session-1", timeout=5)
 
 
 def test_grid_probe_response_to_result_maps_all_shapes() -> None:
@@ -671,35 +646,6 @@ def test_session_viability_small_helpers_cover_error_shapes() -> None:
     assert _parse_timestamp("") is None
     assert _parse_timestamp("not-a-date") is None
     assert _parse_timestamp("2026-01-02T03:04:05Z") is not None
-
-    assert _extract_session_error({"value": {"message": "bad caps"}}) == "bad caps"
-    assert _extract_session_error({"value": {"error": "invalid argument"}}) == "invalid argument"
-    assert _extract_session_error({"message": "plain failure"}) == "plain failure"
-    assert _extract_session_error([]) == "Session probe failed"
-
-    response = httpx.Response(503, request=httpx.Request("GET", "http://hub/status"))
-    assert _format_http_error(httpx.HTTPStatusError("", request=response.request, response=response)) == (
-        "HTTPStatusError (HTTP 503)"
-    )
-    assert _format_http_error(httpx.ConnectError("", request=httpx.Request("GET", "http://hub/status"))) == (
-        "ConnectError while calling http://hub/status"
-    )
-
-
-async def test_grid_probe_client_is_reused_and_close_resets_it() -> None:
-    svc = SessionViabilityService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
-        capability=DeviceCapabilityService(),
-        health=AsyncMock(),
-    )
-    client = svc._get_grid_probe_client()
-    assert svc._get_grid_probe_client() is client
-
-    await svc.close()
-
-    assert svc._grid_probe_client is None
 
 
 async def test_record_session_viability_result_preserves_previous_success_and_clears_config(
@@ -799,60 +745,37 @@ async def test_should_run_scheduled_probe_covers_skip_and_due_paths(
 
 
 @pytest.mark.parametrize(
-    ("create_response", "expected_error"),
+    ("create_return", "expected_error"),
     [
-        (MagicMock(status_code=400, json=MagicMock(return_value={"value": {"message": "bad caps"}})), "bad caps"),
-        (MagicMock(status_code=400, json=MagicMock(side_effect=ValueError), text="plain body"), "plain body"),
-        (MagicMock(status_code=200, json=MagicMock(side_effect=ValueError)), "Session create returned invalid JSON"),
-        (
-            MagicMock(status_code=200, json=MagicMock(return_value={"value": {}})),
-            "Session create did not return a session id",
-        ),
+        # HTTP refusal: the node answered, session refused — surface the raw message.
+        ((None, "bad caps", False), "bad caps"),
+        # Non-JSON refusal body falls back to raw text in appium_direct.
+        ((None, "plain body", False), "plain body"),
+        # Empty error string still produces a deterministic refusal message.
+        ((None, "", False), "Session create failed"),
     ],
 )
-async def test_probe_session_via_grid_create_failure_paths(create_response: MagicMock, expected_error: str) -> None:
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=create_response)
+async def test_probe_session_direct_create_failure_paths(
+    create_return: tuple[None, str, bool], expected_error: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(session_viability.appium_direct, "create_session", AsyncMock(return_value=create_return))
 
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid(
-            {"platformName": "Android"},
-            timeout_sec=3,
-            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
-        )
+    ok, error = await probe_session_direct({"platformName": "Android"}, timeout_sec=3, target="http://node:4723")
 
     assert ok is False
     assert error == expected_error
 
 
-async def test_probe_session_via_grid_cleanup_failure_paths() -> None:
-    create_response = MagicMock(status_code=200)
-    create_response.json.return_value = {"sessionId": "session-1"}
-    delete_response = MagicMock(status_code=500)
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=create_response)
-    mock_client.delete = AsyncMock(return_value=delete_response)
+async def test_probe_session_direct_cleanup_failure_is_indeterminate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        session_viability.appium_direct, "create_session", AsyncMock(return_value=("session-1", None, False))
+    )
+    monkeypatch.setattr(session_viability.appium_direct, "terminate_session", AsyncMock(return_value=False))
 
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid(
-            {"platformName": "Android"},
-            timeout_sec=3,
-            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
-        )
+    ok, error = await probe_session_direct({"platformName": "Android"}, timeout_sec=3, target="http://node:4723")
 
     assert ok is False
-    assert error == "Session created but cleanup failed (500)"
-
-    mock_client.delete = AsyncMock(side_effect=httpx.ConnectError("down"))
-    with patch.object(SessionViabilityService, "_get_grid_probe_client", return_value=mock_client):
-        ok, error = await probe_session_via_grid(
-            {"platformName": "Android"},
-            timeout_sec=3,
-            settings=FakeSettingsReader({"grid.hub_url": "http://hub:4444"}),
-        )
-
-    assert ok is False
-    assert error == "Session created but cleanup failed: down"
+    assert error == "Session created but cleanup failed"
 
 
 async def test_run_session_viability_probe_rejects_missing_running_node(
@@ -962,7 +885,6 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         node = AppiumNode(
             device_id=device.id,
             port=4780,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4780,
             pid=1234,
@@ -991,7 +913,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         ),
     )
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
-    monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, None)))
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(
         session_viability,
         "_write_session_viability",
@@ -1045,7 +967,6 @@ async def test_run_session_viability_probe_restores_previous_state_on_exception(
         node = AppiumNode(
             device_id=device.id,
             port=4781,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4781,
             pid=1234,
@@ -1177,7 +1098,7 @@ async def _run_failing_probe(
             return threshold
         return 5
 
-    monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, error)))
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, error)))
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     if handler is not None:
         _svc.configure_health_failure_handler(handler)
@@ -1215,7 +1136,6 @@ def _make_viability_device(db_host: Host, suffix: str) -> tuple[Device, AppiumNo
         node = AppiumNode(
             device_id=device.id,
             port=4799,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4799,
             pid=999,
@@ -1293,7 +1213,7 @@ async def test_passing_probe_resets_viability_failure_counter(
     _svc.configure_health_failure_handler(handler)
     try:
         # Two consecutive failures get to count=2.
-        monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, "transient")))
+        monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient")))
         for _ in range(2):
             with state_write_guard.bypass():
                 device.operational_state = DeviceOperationalState.available
@@ -1312,7 +1232,7 @@ async def test_passing_probe_resets_viability_failure_counter(
             )
 
         # A passing probe must reset the counter back to 0.
-        monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(True, None)))
+        monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
         with state_write_guard.bypass():
             device.operational_state = DeviceOperationalState.available
         await run_session_viability_probe(
@@ -1322,7 +1242,7 @@ async def test_passing_probe_resets_viability_failure_counter(
         assert mid is not None and mid["consecutive_failures"] == 0
 
         # One more failure must start the count over, not jump straight to threshold.
-        monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, "transient again")))
+        monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, "transient again")))
         with state_write_guard.bypass():
             device.operational_state = DeviceOperationalState.available
         await run_session_viability_probe(
@@ -1359,7 +1279,7 @@ async def test_write_session_viability_persists_error_category(
         return 5
 
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
-    monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(False, grid_error)))
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, grid_error)))
 
     await run_session_viability_probe(
         db_session,
@@ -1380,7 +1300,7 @@ async def test_write_session_viability_persists_error_category(
 
     # A passing probe must clear ``error_category`` so a recovered device does
     # not keep an old infra tag attached.
-    monkeypatch.setattr(_svc, "probe_session_via_grid", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
     with state_write_guard.bypass():
         device.operational_state = DeviceOperationalState.available
     await run_session_viability_probe(
@@ -1439,7 +1359,6 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=12345,
@@ -1464,7 +1383,7 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
         ),
         patch.object(
             SessionViabilityService,
-            "probe_session_via_grid",
+            "probe_session_direct",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),

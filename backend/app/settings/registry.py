@@ -363,40 +363,15 @@ _DEFINITIONS: list[SettingDefinition] = [
     ),
     # ── Appium & Grid ──
     SettingDefinition(
-        key="grid.hub_url",
-        category="grid",
-        setting_type="string",
-        default="http://selenium-hub:4444",
-        description="Selenium Grid hub URL",
-        env_var="GRIDFLEET_GRID_HUB_URL",
-    ),
-    SettingDefinition(
         key="grid.session_poll_interval_sec",
         category="grid",
         setting_type="int",
         default=30,
         description=(
-            "Drift-reconciler interval. The leader-owned bus subscriber drives "
-            "real-time session sync; this poll only fixes any state the bus missed."
+            "Interval of the direct-to-Appium session observation sweep (liveness probes and orphan-session cleanup)."
         ),
         min_value=1,
         max_value=300,
-    ),
-    SettingDefinition(
-        key="grid.event_bus_subscribe_url",
-        category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4442",
-        description="ZMQ URL the manager subscribes to for hub event-bus messages.",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL",
-    ),
-    SettingDefinition(
-        key="grid.event_bus_publish_url",
-        category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4443",
-        description="ZMQ URL the manager publishes to (handshake only; no events emitted).",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL",
     ),
     SettingDefinition(
         key="grid.queue_timeout_sec",

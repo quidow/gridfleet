@@ -184,7 +184,6 @@ async def test_ready_operational_state_returns_offline_when_node_stop_pending(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=42,
@@ -215,7 +214,6 @@ async def test_ready_operational_state_returns_offline_when_desired_state_stoppe
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
             pid=42,
             active_connection_target=device.connection_target,
@@ -249,7 +247,6 @@ async def test_appium_node_stop_in_flight_returns_false_when_unloaded(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
             stop_pending=True,
         )
@@ -284,7 +281,6 @@ def test_appium_node_stop_in_flight_predicate() -> None:
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             stop_pending=False,
         )
@@ -294,7 +290,6 @@ def test_appium_node_stop_in_flight_predicate() -> None:
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             stop_pending=True,
         )
@@ -304,7 +299,6 @@ def test_appium_node_stop_in_flight_predicate() -> None:
         device.appium_node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
             stop_pending=False,
         )

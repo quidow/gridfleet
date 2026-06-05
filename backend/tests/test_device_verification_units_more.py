@@ -171,9 +171,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
         operational_state=DeviceOperationalState.available,
     )
     with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=existing.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="live"
-        )
+        node = AppiumNode(device_id=existing.id, port=4723, pid=1, active_connection_target="live")
     existing.appium_node = node
     context = PreparedVerificationContext(
         mode="update",
@@ -227,7 +225,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     assert error == "no node"
 
     with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm_timeout = AsyncMock()
     nm_timeout.start_node = AsyncMock(return_value=fake_node)
     nm_timeout.wait_for_node_running = AsyncMock(return_value=None)
@@ -257,7 +255,6 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
             id=__import__("uuid").uuid4(),
             device_id=existing.id,
             port=4723,
-            grid_url="http://grid",
             pid=1,
             active_connection_target="live",
         )
@@ -292,7 +289,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     probe_session.assert_awaited_once_with(
         {"platformName": "Android"},
         120,
-        grid_url="http://grid",
+        target=f"http://{db_host.ip}:4723",
     )
 
     from sqlalchemy import select
@@ -336,7 +333,7 @@ async def test_run_probe_drives_immediate_convergence_after_start_node(
         operational_state=DeviceOperationalState.available,
     )
     with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm_converge = AsyncMock()
     nm_converge.start_node = AsyncMock(return_value=fake_node)
     nm_converge.wait_for_node_running = AsyncMock(return_value=None)
@@ -385,7 +382,7 @@ async def test_run_probe_swallows_transient_converge_kick_failure(
         operational_state=DeviceOperationalState.available,
     )
     with state_write_guard.bypass():
-        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723, grid_url="http://grid")
+        fake_node = AppiumNode(id=__import__("uuid").uuid4(), device_id=existing.id, port=4723)
     nm = AsyncMock()
     nm.start_node = AsyncMock(return_value=fake_node)
     nm.wait_for_node_running = AsyncMock(return_value=None)
@@ -441,7 +438,6 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
             id=__import__("uuid").uuid4(),
             device_id=existing.id,
             port=4723,
-            grid_url="http://grid",
             pid=1,
             active_connection_target="live",
         )
@@ -456,7 +452,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
     device_key = str(existing.id)
     seen_inflight: list[bool] = []
 
-    async def fake_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, None]:
+    async def fake_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, None]:
         seen_inflight.append(probe_inflight.is_probe_inflight(device_key))
         return True, None
 
@@ -505,7 +501,6 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
             id=__import__("uuid").uuid4(),
             device_id=existing.id,
             port=4723,
-            grid_url="http://grid",
             pid=1,
             active_connection_target="live",
         )
@@ -519,7 +514,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
 
     device_key = str(existing.id)
 
-    async def failing_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, str | None]:
+    async def failing_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, str | None]:
         raise RuntimeError("probe blew up")
 
     with pytest.raises(RuntimeError, match="probe blew up"):
@@ -559,7 +554,7 @@ async def test_stop_verification_node_cleanup_error_path(
     )
 
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
+        node = AppiumNode(device_id=device.id, port=4723)
     nm_stop_boom = AsyncMock()
     nm_stop_boom.stop_node = AsyncMock(side_effect=RuntimeError("boom"))
     cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, device, node, nm_stop_boom)
@@ -589,9 +584,7 @@ async def test_verification_execution_remaining_error_branches(
         )
 
     with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id, port=4723, grid_url="http://grid", pid=123, active_connection_target="live"
-        )
+        node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
     fake_device = SimpleNamespace(id=device.id, appium_node=node)
     monkeypatch.setattr("app.verification.services.execution.write_desired_state", AsyncMock())
     stopped = await execution._stop_managed_node_for_verification(fake_db, fake_device)

@@ -13,19 +13,23 @@ use gridfleet_router::tasks::{spawn_activity_flush, spawn_route_reconcile};
 #[command(name = "gridfleet-router")]
 struct Args {
     /// host:port to listen on for WebDriver traffic, e.g. 0.0.0.0:4444
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_LISTEN")]
     listen: String,
     /// Backend base URL, e.g. http://backend:8000
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_BACKEND")]
     backend: String,
     /// Optional HTTP Basic machine credentials for backend calls: user:pass
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_BACKEND_AUTH")]
     backend_auth: Option<String>,
     /// Per-command upstream timeout in seconds (covers slow Appium commands)
-    #[arg(long, default_value_t = 300.0)]
+    #[arg(long, default_value_t = 300.0, env = "GRIDFLEET_ROUTER_PROXY_TIMEOUT")]
     proxy_timeout: f64,
     /// Overall cap on a new-session request incl. queueing, seconds
-    #[arg(long, default_value_t = 330.0)]
+    #[arg(
+        long,
+        default_value_t = 330.0,
+        env = "GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT"
+    )]
     new_session_timeout: f64,
 }
 
@@ -38,11 +42,22 @@ fn parse_auth(value: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("--backend-auth must be user:pass, got {value}"))
 }
 
+/// Normalize the raw `--backend-auth` value into an effective credential
+/// string. Prod compose injects `GRIDFLEET_ROUTER_BACKEND_AUTH: ${...:-}`, an
+/// empty-but-present env var that clap turns into `Some("")`. Treat
+/// empty/whitespace-only as absent so the documented "no auth" default does
+/// not crash-loop the process at `parse_auth`.
+fn normalize_backend_auth(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn main() {
     env_logger::init();
     let args = Args::parse();
 
-    let auth = match args.backend_auth.as_deref().map(parse_auth) {
+    let backend_auth = normalize_backend_auth(args.backend_auth.as_deref());
+
+    let auth = match backend_auth.map(parse_auth) {
         Some(Ok(a)) => Some(a),
         Some(Err(e)) => {
             eprintln!("{e}");
@@ -102,7 +117,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_auth;
+    use super::{normalize_backend_auth, parse_auth, Args};
+    use clap::Parser;
 
     #[test]
     fn parses_user_pass() {
@@ -120,5 +136,50 @@ mod tests {
     #[test]
     fn rejects_missing_colon() {
         assert!(parse_auth("nopass").is_err());
+    }
+
+    /// Prod compose injects an empty-but-present `GRIDFLEET_ROUTER_BACKEND_AUTH`
+    /// (`${...:-}`), which clap surfaces as `Some("")`. It must be treated as
+    /// absent so the process does not crash-loop at `parse_auth`.
+    #[test]
+    fn empty_backend_auth_is_treated_as_absent() {
+        assert_eq!(normalize_backend_auth(Some("")), None);
+        assert_eq!(normalize_backend_auth(Some("   ")), None);
+        assert_eq!(normalize_backend_auth(None), None);
+        assert_eq!(
+            normalize_backend_auth(Some(" alice:s3cr3t ")),
+            Some("alice:s3cr3t")
+        );
+    }
+
+    /// Env vars supply flag values when the corresponding flag is absent from
+    /// argv. Run serially (single thread) to avoid racing other env mutators.
+    #[test]
+    fn env_vars_are_honored() {
+        let vars = [
+            ("GRIDFLEET_ROUTER_LISTEN", "0.0.0.0:4444"),
+            ("GRIDFLEET_ROUTER_BACKEND", "http://backend:8000"),
+            ("GRIDFLEET_ROUTER_BACKEND_AUTH", "alice:s3cr3t"),
+            ("GRIDFLEET_ROUTER_PROXY_TIMEOUT", "120.5"),
+            ("GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT", "200"),
+        ];
+        for (k, v) in vars {
+            // SAFETY: tests in this module run single-threaded relative to
+            // these unique GRIDFLEET_ROUTER_* vars (no other test touches them).
+            unsafe { std::env::set_var(k, v) };
+        }
+
+        let args = Args::try_parse_from(["gridfleet-router"]).expect("parse from env");
+
+        assert_eq!(args.listen, "0.0.0.0:4444");
+        assert_eq!(args.backend, "http://backend:8000");
+        assert_eq!(args.backend_auth.as_deref(), Some("alice:s3cr3t"));
+        assert_eq!(args.proxy_timeout, 120.5);
+        assert_eq!(args.new_session_timeout, 200.0);
+
+        for (k, _) in vars {
+            // SAFETY: same as above.
+            unsafe { std::env::remove_var(k) };
+        }
     }
 }

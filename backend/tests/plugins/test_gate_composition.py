@@ -104,5 +104,4 @@ async def test_a2_gate_composition_end_to_end(db_session: AsyncSession) -> None:
     assert payload is not None
     assert payload["pack_id"] == "appium-uiautomator2"
     assert payload["platform_id"] == "android_mobile"
-    assert payload["stereotype_caps"]["platformName"] == "Android"
-    assert payload["stereotype_caps"]["appium:automationName"] == "UiAutomator2"
+    assert payload["appium_platform_name"] == "Android"

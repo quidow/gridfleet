@@ -78,10 +78,12 @@ The `Appium & Grid` tab controls the shared node process contract.
 
 Most important settings:
 
-- `grid.hub_url`
-  - the Grid endpoint the manager uses for node registration, session sync, and probe work
 - `grid.session_poll_interval_sec`
-  - how frequently Grid session state is polled
+  - how frequently the direct-to-Appium session observation sweep reconciles `Session` rows
+- `grid.queue_timeout_sec`
+  - how long a queued new-session request waits for a device before failing
+- `grid.claim_window_sec`
+  - how long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it
 - `appium.port_range_start` and `appium.port_range_end`
   - the host-local Appium port pool used when starting nodes
 - `appium.default_plugins`

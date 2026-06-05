@@ -52,7 +52,6 @@ from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import router as grid
 from app.grid import router_internal as grid_router_internal
 from app.grid.allocation_reaper import GridAllocationReaperLoop
-from app.grid.event_bus_loop import GridEventBusSubscriberLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
@@ -214,11 +213,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         run_reaper = RunReaperLoop(services=app_services.runs)
         allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
-        grid_event_bus = GridEventBusSubscriberLoop(
-            services=app_services.grid,
-            session_sync_waker=app_services.sessions.sync,
-            node_health_waker=app_services.appium_nodes.node_health,
-        )
         pack_drain = PackDrainLoop(services=app_services.packs)
         job_worker = app_services.jobs
         webhook_delivery = WebhookDeliveryLoop(services=app_services.webhooks)
@@ -228,7 +222,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (app_services.leader_keepalive.run(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
             (session_sync.run(), "session_sync_loop"),
-            (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
             (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
             (property_refresh.run(), "property_refresh_loop"),
@@ -271,8 +264,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await control_plane_leader.release()
         await bus.shutdown()
         await pool.close()
-        await app_services.grid.grid.close()
-        await app_services.sessions.viability.close()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)
         await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")

@@ -22,7 +22,8 @@ class GridRegistryRead(BaseModel):
 
 
 class GridStatusRead(BaseModel):
-    # Selenium Grid status is an external payload; keep it flexible inside a typed envelope.
+    # Hub-shaped envelope synthesized from DB state; kept flexible so the frontend's
+    # existing grid.value.{ready,message,nodes} readers keep working post-hub-removal.
     grid: dict[str, Any]
     registry: GridRegistryRead
     active_sessions: int

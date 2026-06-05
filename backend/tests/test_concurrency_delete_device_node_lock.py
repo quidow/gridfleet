@@ -38,7 +38,6 @@ async def test_delete_device_locks_row_before_reading_node_state(
         node = AppiumNode(
             device_id=device.id,
             port=4724,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
             pid=None,
@@ -164,7 +163,6 @@ async def test_delete_device_rechecks_node_state_after_stop_commit(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=0,

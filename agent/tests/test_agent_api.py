@@ -343,7 +343,6 @@ async def test_start_appium(client: AsyncClient) -> None:
             json={
                 "connection_target": "abc-123",
                 "port": 4723,
-                "grid_url": "http://grid:4444",
                 "pack_id": "appium-uiautomator2",
                 "platform_id": "android_mobile",
                 "session_override": False,
@@ -369,7 +368,6 @@ async def test_start_appium_requires_pack_identity(client: AsyncClient) -> None:
         json={
             "connection_target": "abc-123",
             "port": 4723,
-            "grid_url": "http://grid:4444",
             "platform_id": "android_mobile",
         },
     )
@@ -387,7 +385,6 @@ async def test_start_appium_failure(client: AsyncClient) -> None:
             json={
                 "connection_target": "abc-123",
                 "port": 4723,
-                "grid_url": "http://grid:4444",
                 "pack_id": "appium-uiautomator2",
                 "platform_id": "android_mobile",
             },

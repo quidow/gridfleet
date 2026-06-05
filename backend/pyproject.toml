@@ -22,7 +22,6 @@ dependencies = [
     "python-multipart>=0.0.32",
     "tenacity>=9.0,<10",
     "PyJWT>=2.10,<3",
-    "pyzmq>=26",
 ]
 
 [project.urls]

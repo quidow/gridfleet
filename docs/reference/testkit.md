@@ -120,13 +120,13 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `GRID_URL` | `http://localhost:4444` | Selenium Grid hub URL used by the Appium fixture |
+| `GRID_URL` | `http://localhost:4444` | WebDriver router URL used by the Appium fixture |
 | `GRIDFLEET_API_URL` | `http://localhost:8000/api` | GridFleet API base used for session reporting, config lookup, run helpers, and driver-pack catalog lookup |
 | `GRIDFLEET_TESTKIT_USERNAME` | unset | Machine-auth username sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_USERNAME`. |
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
-| `GRIDFLEET_RUN_ID` | `free` | Sets the injected `gridfleet:run_id` capability that Selenium Grid uses to route sessions to nodes reserved for a run (`free` when unset) |
+| `GRIDFLEET_RUN_ID` | `free` | Sets the injected `gridfleet:run_id` capability the router uses to route sessions to devices reserved for a run (`free` when unset) |
 
 ## Client Surface
 
@@ -167,7 +167,7 @@ Public Appium helpers:
 | Helper | Purpose |
 | --- | --- |
 | `build_appium_options(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, catalog_client=None)` | Build an Appium options object for an explicit driver-pack platform |
-| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None)` | Create an Appium remote driver through Selenium Grid for an explicit driver-pack platform |
+| `create_appium_driver(*, pack_id=None, platform_id=None, capabilities=None, test_name=None, grid_url=None, catalog_client=None)` | Create an Appium remote driver through the WebDriver router for an explicit driver-pack platform |
 | `get_connection_target_from_driver(driver)` | Read the active connection target from a live Appium session |
 | `get_device_config_for_driver(driver, gridfleet_client=None)` | Fetch device config for a live Appium session using its active connection target |
 | `get_device_test_data_for_driver(driver, gridfleet_client=None)` | Fetch test_data for a live Appium driver |
@@ -280,7 +280,7 @@ The manager enforces a maximum TTL via `general.device_cooldown_max_sec` (defaul
 
 ## Device Handles
 
-Grid-routed runs no longer use per-worker claim/release calls. The pytest plugin injects `gridfleet:run_id` into Appium capabilities, so Selenium Grid routes new sessions to nodes reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
+Router-routed runs no longer use per-worker claim/release calls. The pytest plugin injects `gridfleet:run_id` into Appium capabilities, so the router routes new sessions to devices reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
 
 ```python
 from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver

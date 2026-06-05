@@ -127,7 +127,6 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch) 
             id=uuid.uuid4(),
             device_id=uuid.uuid4(),
             port=4723,
-            grid_url="http://grid",
             desired_state=AppiumDesiredState.running,
         )
     device = SimpleNamespace(

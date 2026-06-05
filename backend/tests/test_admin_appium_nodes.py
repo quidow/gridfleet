@@ -34,7 +34,6 @@ async def test_admin_clear_transition_clears_token_and_records_event(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=0,
             active_connection_target="",
             desired_state=AppiumDesiredState.running,

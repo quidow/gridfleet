@@ -57,7 +57,6 @@ BACKGROUND_LOOP_NAMES = (
     "data_cleanup",
     "session_viability",
     "fleet_capacity_collector",
-    "grid_event_bus_subscriber",
     "pack_drain",
     "appium_reconciler",
     "device_intent_reconciler",

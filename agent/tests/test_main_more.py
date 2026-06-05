@@ -3,33 +3,12 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agent_app.appium import appium_mgr
 from agent_app.host.capabilities import CapabilitiesCache
-from agent_app.lifespan import _stop_grid_node_supervisors_for_shutdown, lifespan
+from agent_app.lifespan import lifespan
 from agent_app.main import app
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.dependencies import _latest_desired
 from agent_app.registration import RegistrationService
-
-
-async def test_stop_grid_node_supervisors_for_shutdown_timeout_cancels_tasks() -> None:
-
-    class SlowSupervisor:
-        async def stop(self) -> None:
-            await asyncio.sleep(10)  # simulate hung supervisor
-
-    slow = SlowSupervisor()
-    fast = MagicMock()
-    manager = MagicMock()
-    manager._grid_supervisors = {4723: slow, 4724: fast}
-    manager.iter_grid_supervisors.return_value = list(manager._grid_supervisors.items())
-
-    await _stop_grid_node_supervisors_for_shutdown(manager, timeout_sec=0.01)
-
-    assert fast.stop.called
-    # Both remain because timeout path does not pop entries
-    assert 4723 in manager._grid_supervisors
-    assert 4724 in manager._grid_supervisors
 
 
 async def test_latest_desired_returns_empty_when_no_loop() -> None:
@@ -82,18 +61,6 @@ async def test_lifespan_no_backend_url_skips_pack_loop() -> None:
             stop_event.set()
 
 
-async def test_reregister_grid_node_not_found() -> None:
-    appium_mgr._grid_supervisors.clear()
-    from httpx import ASGITransport, AsyncClient
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
-    ) as client:
-        resp = await client.post("/grid/node/missing/reregister", json={})
-    assert resp.status_code == 404
-    assert "No running grid node" in resp.json()["detail"]["message"]
-
-
 async def test_start_appium_invalid_payload_error() -> None:
     from httpx import ASGITransport, AsyncClient
 
@@ -111,7 +78,6 @@ async def test_start_appium_invalid_payload_error() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },
@@ -133,7 +99,6 @@ async def test_start_appium_generic_runtime_error() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },
@@ -158,7 +123,6 @@ async def test_start_appium_unexpected_exception() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },

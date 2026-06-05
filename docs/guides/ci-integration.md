@@ -4,7 +4,7 @@ This guide shows how to integrate GridFleet's device reservation system with you
 
 1. **Reserve** specific devices for a test run
 2. **Prepare** devices (install apps, sideload builds) using your existing scripts
-3. **Run tests** against the reserved devices through Selenium Grid
+3. **Run tests** against the reserved devices through the WebDriver router
 4. **Release** devices automatically when done (or on failure/timeout)
 
 ## Authentication
@@ -89,7 +89,6 @@ Roku is not installed by default; import the curated Roku driver or upload a Rok
   "devices": [
     {"device_id": "uuid", "identity_value": "G0...", "connection_target": "192.168.1.60:5555", "pack_id": "appium-uiautomator2", "platform_id": "firetv_real", "os_version": "8", "host_ip": "192.168.1.50"}
   ],
-  "grid_url": "http://gridfleet:4444",
   "ttl_minutes": 60,
   "heartbeat_timeout_sec": 120,
   "created_at": "2026-03-27T10:00:00Z"
@@ -98,7 +97,7 @@ Roku is not installed by default; import the curated Roku driver or upload a Rok
 
 ## pytest-xdist Routing
 
-When a run reserves multiple devices, pytest-xdist workers create normal Appium sessions through Selenium Grid. The testkit injects `gridfleet:run_id` into the requested capabilities, and Grid routes each worker to a node reserved for that run.
+When a run reserves multiple devices, pytest-xdist workers create normal Appium sessions through the WebDriver router. The testkit injects `gridfleet:run_id` into the requested capabilities, and the router (via the backend allocation API) routes each worker to a device reserved for that run.
 
 Practical notes:
 
@@ -222,7 +221,7 @@ jobs:
 
       - name: Run tests
         env:
-          GRID_URL: ${{ env.GRID_URL }}          # hub URL, no /api suffix
+          GRID_URL: ${{ env.GRID_URL }}          # router URL, no /api suffix
           GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
           GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
         run: |
@@ -335,7 +334,7 @@ jobs:
 
       - name: Run ${{ matrix.platform }} tests
         env:
-          GRID_URL: ${{ env.GRID_URL }}          # hub URL, no /api suffix
+          GRID_URL: ${{ env.GRID_URL }}          # router URL, no /api suffix
           GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
           GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
         run: |

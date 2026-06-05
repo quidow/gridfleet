@@ -188,7 +188,6 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
     return {
         "id": node.id,
         "port": node.port,
-        "grid_url": node.grid_url,
         "pid": node.pid,
         "container_id": node.container_id,
         "active_connection_target": node.active_connection_target,

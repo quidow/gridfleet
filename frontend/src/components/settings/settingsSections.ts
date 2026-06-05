@@ -56,8 +56,8 @@ const SECTION_DEFINITIONS: Record<string, SettingsSectionConfig[]> = {
     {
       id: 'grid-routing',
       title: 'Grid Routing',
-      description: 'Core Selenium Grid endpoint and polling cadence.',
-      settingKeys: ['grid.hub_url', 'grid.session_poll_interval_sec'],
+      description: 'Session observation sweep cadence.',
+      settingKeys: ['grid.session_poll_interval_sec'],
     },
     {
       id: 'appium-nodes',

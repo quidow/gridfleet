@@ -110,79 +110,6 @@ async def test_uiautomator2_stereotype_uses_device_template(
 
 
 @pytest.mark.asyncio
-async def test_temporary_start_merges_pack_stereotype_over_legacy_caps(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-    _patched_remote_start: dict[str, Any],
-    _android_real_device: MagicMock,
-) -> None:
-    """Pack-backed start payload must carry BOTH legacy routing caps
-    (appium:gridfleet:deviceId, appium:platform, appium:device_type)
-    AND manifest caps (platformName, appium:automationName) simultaneously.
-    Fails if pack_overrides replaces instead of merges.
-    """
-    await seed_test_packs(db_session)
-    await db_session.commit()
-
-    # Stub management host lookup and legacy stereotype so the assertions are deterministic.
-    monkeypatch.setattr(appium_reconciler_agent, "require_management_host", lambda device, action: _FakeHost())
-
-    legacy_caps = {
-        "appium:gridfleet:deviceId": str(_android_real_device.id),
-        "appium:gridfleet:deviceName": _android_real_device.name,
-        "appium:platform": "android_mobile",
-        "appium:device_type": "real_device",
-        "appium:os_version": "14",
-        "appium:manufacturer": "Google",
-        "appium:model": "Pixel 6",
-    }
-    monkeypatch.setattr(
-        appium_reconciler_agent,
-        "build_agent_start_payload",
-        lambda device, port, **kwargs: {
-            "connection_target": "ABCD1234",
-            "platform_id": "android_mobile",
-            "port": port,
-            "grid_url": None,
-            "plugins": None,
-            "extra_caps": None,
-            "stereotype_caps": legacy_caps,
-            "device_type": "real_device",
-            "ip_address": None,
-            "allocated_caps": None,
-            "session_override": None,
-            "headless": True,
-        },
-    )
-
-    await appium_reconciler_agent.start_remote_node(
-        db_session,
-        _android_real_device,
-        port=4723,
-        allocated_caps=None,
-        agent_base="http://starts.local:5100",
-        http_client_factory=AsyncMock(),
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-    )
-
-    payload = _patched_remote_start["payload"]
-    assert payload["pack_id"] == "appium-uiautomator2"
-    assert payload["platform_id"] == "android_mobile"
-    assert payload["insecure_features"] == ["uiautomator2:chromedriver_autodownload"]
-
-    stereotype = payload["stereotype_caps"]
-    # Legacy routing caps must survive the merge.
-    assert stereotype["appium:gridfleet:deviceId"] == str(_android_real_device.id)
-    assert stereotype["appium:platform"] == "android_mobile"
-    assert stereotype["appium:device_type"] == "real_device"
-    assert stereotype["appium:os_version"] == "14"
-    # Manifest caps must be present.
-    assert stereotype["platformName"] == "Android"
-    assert stereotype["appium:automationName"] == "UiAutomator2"
-
-
-@pytest.mark.asyncio
 async def test_temporary_start_forwards_pack_workaround_env(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -216,10 +143,8 @@ async def test_temporary_start_forwards_pack_workaround_env(
             "connection_target": device.connection_target,
             "platform_id": device.platform_id,
             "port": port,
-            "grid_url": None,
             "plugins": None,
             "extra_caps": None,
-            "stereotype_caps": {},
             "device_type": device.device_type.value,
             "ip_address": device.ip_address,
             "allocated_caps": None,
@@ -298,7 +223,7 @@ async def test_temporary_start_sends_device_field_caps_only_to_appium_defaults(
     payload = captured["payload"]
     assert payload["extra_caps"]["appium:password"] == "dev-password"
     assert payload["extra_caps"]["appium:ip"] == "192.168.1.2"
-    assert "appium:password" not in payload["stereotype_caps"]
+    assert "stereotype_caps" not in payload
 
 
 async def test_start_payload_sends_manifest_appium_platform_name(db_session: AsyncSession) -> None:

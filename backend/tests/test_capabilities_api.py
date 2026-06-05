@@ -67,7 +67,6 @@ async def test_capabilities_endpoint_returns_live_android_allocations_for_runnin
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -128,7 +127,6 @@ async def test_capabilities_endpoint_uses_active_target_for_running_avd(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 active_connection_target="emulator-5554",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
@@ -172,7 +170,6 @@ async def test_capabilities_endpoint_returns_live_xcuitest_allocations_for_runni
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=0,

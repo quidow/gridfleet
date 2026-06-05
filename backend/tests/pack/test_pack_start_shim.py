@@ -51,8 +51,7 @@ async def test_build_pack_start_payload_includes_rendered_stereotype(db_session:
     assert payload is not None
     assert payload["pack_id"] == "appium-uiautomator2"
     assert payload["platform_id"] == "android_mobile"
-    assert payload["stereotype_caps"]["platformName"] == "Android"
-    assert payload["stereotype_caps"]["appium:automationName"] == "UiAutomator2"
+    assert payload["appium_platform_name"] == "Android"
 
 
 @pytest.mark.asyncio

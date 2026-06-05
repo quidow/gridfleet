@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -25,7 +25,7 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -84,7 +84,6 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1,
@@ -111,7 +110,6 @@ async def test_healthy_node_clears_failure_count(db_session: AsyncSession, db_ho
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -146,7 +144,6 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
         node = AppiumNode(
             device_id=device.id,
             port=4724,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
             pid=1,
@@ -170,7 +167,6 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -183,203 +179,6 @@ async def test_unhealthy_node_increments_failure_count(db_session: AsyncSession,
     assert node.health_state == "error"
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
-
-
-async def test_node_missing_from_grid_increments_failure_count(db_session: AsyncSession, db_host: Host) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="nh-grid-missing",
-            connection_target="nh-grid-missing",
-            name="Missing Grid Relay Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4740,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4740,
-            pid=1,
-            active_connection_target="target",
-            started_at=datetime.now(UTC) - timedelta(seconds=31),
-        )
-    db_session.add(node)
-    await db_session.commit()
-
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="ack")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await NodeHealthService(
-            publisher=event_bus,
-            settings=FakeSettingsReader(
-                {
-                    "general.node_max_failures": 3,
-                    "appium_reconciler.restart_window_sec": 300,
-                    "appium.startup_timeout_sec": 30,
-                }
-            ),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
-            recovery_control=AsyncMock(),
-            health=DeviceHealthService(publisher=event_bus),
-            incidents=AsyncMock(),
-        ).check_nodes(db_session)
-
-    assert (await get_node_health_control_plane_state(db_session))[str(node.id)] == 1
-    await db_session.refresh(node)
-    assert node.observed_running is True
-    assert node.health_state == "error"
-
-
-async def test_fresh_node_missing_from_grid_waits_for_registration_grace(
-    db_session: AsyncSession,
-    db_host: Host,
-) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="nh-grid-fresh",
-            connection_target="nh-grid-fresh",
-            name="Fresh Grid Relay Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4742,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4742,
-            pid=1,
-            active_connection_target="target",
-            started_at=datetime.now(UTC),
-        )
-    db_session.add(node)
-    await db_session.commit()
-
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="ack")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await NodeHealthService(
-            publisher=event_bus,
-            settings=FakeSettingsReader(
-                {
-                    "general.node_max_failures": 3,
-                    "appium_reconciler.restart_window_sec": 300,
-                    "appium.startup_timeout_sec": 30,
-                }
-            ),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            grid=make_fake_grid({"value": {"ready": False, "message": "Selenium Grid not ready.", "nodes": []}}),
-            recovery_control=AsyncMock(),
-            health=DeviceHealthService(publisher=event_bus),
-            incidents=AsyncMock(),
-        ).check_nodes(db_session)
-
-    assert str(node.id) not in await get_node_health_control_plane_state(db_session)
-    await db_session.refresh(node)
-    assert node.observed_running
-
-
-async def test_node_registered_in_grid_clears_failure_count(db_session: AsyncSession, db_host: Host) -> None:
-    with state_write_guard.bypass():
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value="nh-grid-present",
-            connection_target="nh-grid-present",
-            name="Registered Grid Relay Phone",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4741,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4741,
-            pid=1,
-            active_connection_target="target",
-        )
-    db_session.add(node)
-    await db_session.commit()
-    await set_node_health_failure_count(db_session, str(node.id), 1)
-
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="ack")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await NodeHealthService(
-            publisher=event_bus,
-            settings=FakeSettingsReader(
-                {
-                    "general.node_max_failures": 3,
-                    "appium_reconciler.restart_window_sec": 300,
-                    "appium.startup_timeout_sec": 30,
-                }
-            ),
-            pool=Mock(),
-            circuit_breaker=Mock(),
-            recovery_control=AsyncMock(),
-            health=DeviceHealthService(publisher=event_bus),
-            grid=make_fake_grid(
-                {
-                    "value": {
-                        "ready": True,
-                        "nodes": [
-                            {
-                                "availability": "UP",
-                                "slots": [
-                                    {
-                                        "stereotype": {
-                                            "appium:gridfleet:deviceId": str(device.id),
-                                        }
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                }
-            ),
-            incidents=AsyncMock(),
-        ).check_nodes(db_session)
-
-    assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
 
 async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) -> None:
@@ -410,7 +209,6 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
         node = AppiumNode(
             device_id=device.id,
             port=4726,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4726,
             pid=1,
@@ -436,7 +234,6 @@ async def test_node_restart_via_agent_on_max_failures(db_session: AsyncSession) 
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -478,7 +275,6 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
         node = AppiumNode(
             device_id=device.id,
             port=4727,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4727,
             pid=1,
@@ -504,7 +300,6 @@ async def test_node_restart_intent_marks_device_offline_until_reconciler_recover
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -542,7 +337,6 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
         node = AppiumNode(
             device_id=device.id,
             port=4728,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4728,
             pid=1,
@@ -572,7 +366,6 @@ async def test_missing_runtime_host_invariant_marks_node_offline(db_session: Asy
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -611,7 +404,6 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
         node = AppiumNode(
             device_id=device.id,
             port=4729,
-            grid_url="http://node-grid:4444/wd/hub",
             desired_state=AppiumDesiredState.running,
             desired_port=4729,
             pid=1,
@@ -639,7 +431,6 @@ async def test_available_verified_node_uses_status_check(db_session: AsyncSessio
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -672,7 +463,6 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
         node = AppiumNode(
             device_id=device.id,
             port=4734,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4734,
             pid=1,
@@ -700,7 +490,6 @@ async def test_real_ios_node_uses_status_fallback(db_session: AsyncSession, db_h
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -733,7 +522,6 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
         node = AppiumNode(
             device_id=device.id,
             port=4730,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4730,
             pid=1,
@@ -761,7 +549,6 @@ async def test_busy_node_uses_status_fallback(db_session: AsyncSession, db_host:
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -794,7 +581,6 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
         node = AppiumNode(
             device_id=device.id,
             port=4733,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4733,
             pid=1,
@@ -822,7 +608,6 @@ async def test_virtual_node_uses_status_fallback(db_session: AsyncSession, db_ho
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -871,7 +656,6 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         first_node = AppiumNode(
             device_id=first_device.id,
             port=4731,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4731,
             pid=1,
@@ -881,7 +665,6 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
         second_node = AppiumNode(
             device_id=second_device.id,
             port=4732,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4732,
             pid=1,
@@ -919,7 +702,6 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                 ),
                 pool=Mock(),
                 circuit_breaker=Mock(),
-                grid=make_fake_grid(),
                 recovery_control=AsyncMock(),
                 health=DeviceHealthService(publisher=event_bus),
                 incidents=AsyncMock(),
@@ -960,7 +742,6 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
         node = AppiumNode(
             device_id=device.id,
             port=4730,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4730,
             pid=1,
@@ -976,7 +757,6 @@ async def test_check_node_health_returns_none_on_agent_unreachable(db_session: A
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -993,7 +773,6 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4731,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4731,
             pid=1,
@@ -1009,7 +788,6 @@ async def test_check_node_health_returns_none_on_response_error(db_session: Asyn
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1026,7 +804,6 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
         node = AppiumNode(
             device_id=device.id,
             port=4732,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4732,
             pid=1,
@@ -1042,7 +819,6 @@ async def test_check_node_health_returns_none_on_circuit_open(db_session: AsyncS
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1061,7 +837,6 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
         node = AppiumNode(
             device_id=None,
             port=4733,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4733,
             pid=1,
@@ -1073,7 +848,6 @@ async def test_check_node_health_returns_false_when_device_has_no_host(db_sessio
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
@@ -1089,7 +863,6 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4734,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4734,
             pid=1,
@@ -1105,7 +878,6 @@ async def test_check_node_health_returns_true_on_running_status(db_session: Asyn
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1126,7 +898,6 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
         node = AppiumNode(
             device_id=device.id,
             port=4735,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4735,
             pid=1,
@@ -1142,7 +913,6 @@ async def test_check_node_health_status_path_returns_none_on_http_error(
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=Mock(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1175,7 +945,6 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
         node = AppiumNode(
             device_id=device.id,
             port=4750,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4750,
             pid=1,
@@ -1209,7 +978,6 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1228,159 +996,6 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     # Device still available
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
-
-
-def _make_indeterminate_grid_device(identity: str, db_host: Host) -> Device:
-    with state_write_guard.bypass():
-        return Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
-            identity_value=identity,
-            connection_target=identity,
-            name=f"Indeterminate Phone {identity}",
-            os_version="14",
-            host_id=db_host.id,
-            operational_state=DeviceOperationalState.available,
-            verified_at=datetime.now(UTC),
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-        )
-
-
-def _indeterminate_grid_service(grid_data: dict[str, object]) -> NodeHealthService:
-    return NodeHealthService(
-        publisher=event_bus,
-        settings=FakeSettingsReader(
-            {
-                "general.node_max_failures": 3,
-                "appium_reconciler.restart_window_sec": 300,
-                "appium.startup_timeout_sec": 30,
-            }
-        ),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        grid=make_fake_grid(grid_data),
-        recovery_control=AsyncMock(),
-        health=DeviceHealthService(publisher=event_bus),
-        incidents=AsyncMock(),
-    )
-
-
-async def test_indeterminate_probe_with_grid_absence_counts_as_failure(db_session: AsyncSession, db_host: Host) -> None:
-    """The hub answered and no longer lists the device: grid absence is primary
-    evidence of a dead node even when the agent probe is inconclusive (the agent
-    host may be down — exactly when the hub's word is the only one left)."""
-    device = _make_indeterminate_grid_device("nh-indet-grid-1", db_host)
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4751,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4751,
-            pid=1,
-            active_connection_target="target",
-            # Past the startup grace window (started_at server-defaults to now).
-            started_at=datetime.now(UTC) - timedelta(minutes=5),
-        )
-    db_session.add(node)
-    await db_session.commit()
-
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await _indeterminate_grid_service({"value": {"ready": True, "nodes": []}}).check_nodes(db_session)
-
-    await db_session.refresh(device, attribute_names=["appium_node"])
-    assert device.appium_node is not None
-    assert device.appium_node.health_running is False
-    assert device.appium_node.health_state == "error"
-    assert device.appium_node.consecutive_health_failures == 1
-    assert device_health.build_public_summary(device)["healthy"] is False
-
-
-async def test_indeterminate_probe_skipped_when_device_still_in_grid(db_session: AsyncSession, db_host: Host) -> None:
-    device = _make_indeterminate_grid_device("nh-indet-grid-2", db_host)
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4752,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4752,
-            pid=1,
-            active_connection_target="target",
-            # Past the startup grace window so the skip is pinned to the
-            # device-still-in-grid branch, not grace.
-            started_at=datetime.now(UTC) - timedelta(minutes=5),
-        )
-    db_session.add(node)
-    await db_session.commit()
-
-    grid_data = {
-        "value": {
-            "ready": True,
-            "nodes": [
-                {
-                    "availability": "UP",
-                    "slots": [{"stereotype": {"appium:gridfleet:deviceId": str(device.id)}}],
-                }
-            ],
-        }
-    }
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await _indeterminate_grid_service(grid_data).check_nodes(db_session)
-
-    await db_session.refresh(device, attribute_names=["appium_node"])
-    assert device.appium_node is not None
-    assert device.appium_node.health_running is None
-    assert device.appium_node.health_state is None
-    assert device.appium_node.consecutive_health_failures == 0
-
-
-async def test_indeterminate_probe_with_grid_absence_respects_startup_grace(
-    db_session: AsyncSession, db_host: Host
-) -> None:
-    device = _make_indeterminate_grid_device("nh-indet-grid-3", db_host)
-    db_session.add(device)
-    await db_session.flush()
-
-    with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id,
-            port=4753,
-            grid_url="http://hub:4444",
-            desired_state=AppiumDesiredState.running,
-            desired_port=4753,
-            pid=1,
-            active_connection_target="target",
-            started_at=datetime.now(UTC),
-        )
-    db_session.add(node)
-    await db_session.commit()
-
-    with (
-        patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="indeterminate")),
-        patch("app.appium_nodes.services.node_health.assert_current_leader"),
-    ):
-        await _indeterminate_grid_service({"value": {"ready": True, "nodes": []}}).check_nodes(db_session)
-
-    await db_session.refresh(device, attribute_names=["appium_node"])
-    assert device.appium_node is not None
-    assert device.appium_node.health_state is None
-    assert device.appium_node.consecutive_health_failures == 0
 
 
 async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_host: Host) -> None:
@@ -1408,7 +1023,6 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             node = AppiumNode(
                 device_id=device.id,
                 port=4760 + index,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4760,
                 pid=1,
@@ -1447,7 +1061,6 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1485,7 +1098,6 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
         node = AppiumNode(
             device_id=device.id,
             port=4799,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4799,
             pid=1,
@@ -1522,7 +1134,6 @@ async def test_node_health_aborts_after_probe_when_leadership_lost(
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=AsyncMock(),
@@ -1569,7 +1180,6 @@ async def test_node_health_recovery_clears_pending_stop(
         node = AppiumNode(
             device_id=device.id,
             port=4780,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4780,
             pid=1,
@@ -1604,7 +1214,6 @@ async def test_node_health_recovery_clears_pending_stop(
             ),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=make_fake_grid(),
             recovery_control=_make_real_recovery_control(),
             health=DeviceHealthService(publisher=event_bus),
             incidents=LifecycleIncidentService(),
@@ -1656,7 +1265,6 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         settings=FakeSettingsReader({"general.node_max_failures": 3, "appium.startup_timeout_sec": 30}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
@@ -1664,20 +1272,18 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
     with state_write_guard.bypass():
-        _node_null = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
+        _node_null = AppiumNode(device_id=device.id, port=4723)
     await svc._process_node_health(
         db,
         _node_null,
         device,
         result=ProbeResult(status="ack"),
-        grid_device_ids=None,
     )
 
     with state_write_guard.bypass():
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid",
             pid=1,
             active_connection_target="old",
         )
@@ -1687,7 +1293,6 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         node,
         device,
         result=ProbeResult(status="ack"),
-        grid_device_ids=None,
         observed_port=4724,
         observed_pid=1,
         observed_active_connection_target="old",
@@ -1700,7 +1305,6 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         node,
         device,
         result=ProbeResult(status="ack"),
-        grid_device_ids=None,
     )
 
     with state_write_guard.bypass():
@@ -1710,7 +1314,6 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
         node,
         device,
         result=ProbeResult(status="indeterminate"),
-        grid_device_ids=None,
     )
 
 
@@ -1738,7 +1341,6 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
         settings=settings,
         pool=MagicMock(),
         circuit_breaker=MagicMock(),
-        grid=MagicMock(),
         recovery_control=AsyncMock(),
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),

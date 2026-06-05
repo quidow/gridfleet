@@ -4,7 +4,6 @@ import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +16,8 @@ from app.devices.services import readiness as device_readiness
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import verification_intent_source
 from app.devices.services.reservation_query import active_reservation_exists, device_is_reserved
+from app.grid import appium_direct
+from app.grid.allocation import node_target
 from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import ProbeSource, record_probe_session
@@ -107,20 +108,9 @@ class SessionViabilityService:
         self._capability = capability
         self._health = health
         self._health_failure_handler: HealthFailureHandler | None = None
-        self._grid_probe_client: httpx.AsyncClient | None = None
 
     def configure_health_failure_handler(self, handler: HealthFailureHandler | None) -> None:
         self._health_failure_handler = handler
-
-    def _get_grid_probe_client(self) -> httpx.AsyncClient:
-        if self._grid_probe_client is None or self._grid_probe_client.is_closed:
-            self._grid_probe_client = httpx.AsyncClient()
-        return self._grid_probe_client
-
-    async def close(self) -> None:
-        if self._grid_probe_client is not None and not self._grid_probe_client.is_closed:
-            await self._grid_probe_client.aclose()
-        self._grid_probe_client = None
 
     async def get_session_viability(self, db: AsyncSession, device: Device) -> dict[str, Any] | None:
         state = await control_plane_state_store.get_value(db, SESSION_VIABILITY_STATE_NAMESPACE, str(device.id))
@@ -160,45 +150,38 @@ class SessionViabilityService:
             await db.flush()
         return state
 
-    async def probe_session_via_grid(
+    async def probe_session_direct(
         self,
         capabilities: dict[str, Any],
         timeout_sec: int,
         *,
-        grid_url: str | None = None,
+        target: str | None = None,
     ) -> tuple[bool, str | None]:
-        base = (grid_url or self._settings.get("grid.hub_url")).rstrip("/")
-        client = self._get_grid_probe_client()
-        try:
-            create_resp = await client.post(
-                f"{base}/session", json=_build_session_payload(capabilities), timeout=timeout_sec
-            )
-        except httpx.HTTPError as exc:
-            return False, f"Session create request failed: {_format_http_error(exc)}"
+        """Create-then-terminate a session directly against the device's Appium node.
 
-        if create_resp.status_code >= 400:
-            try:
-                return False, _extract_session_error(create_resp.json())
-            except ValueError:
-                return False, create_resp.text or "Session create failed"
+        ``target`` is the node's direct base URL (``http://host:port``). It is
+        required in practice; a ``None`` target maps to the unreachable-node bucket
+        (``"Session create request failed: …"`` → indeterminate), mirroring how an
+        unreachable hub was treated before the grid-router cutover.
 
-        try:
-            data = create_resp.json()
-        except ValueError:
-            return False, "Session create returned invalid JSON"
+        Error buckets (consumed by ``grid_probe_response_to_result``):
+        - transport failure → ``"Session create request failed: …"`` → indeterminate
+        - HTTP >=400 refusal → raw server message → refused
+        - cleanup (terminate) failure → ``"Session created but cleanup failed…"`` → indeterminate
+        """
+        if target is None:
+            return False, "Session create request failed: no Appium node target"
+        base = target.rstrip("/")
+        session_id, error, transport_error = await appium_direct.create_session(
+            base, _build_session_payload(capabilities), timeout=timeout_sec
+        )
+        if session_id is None:
+            if transport_error:
+                return False, f"Session create request failed: {error}"
+            return False, error or "Session create failed"
 
-        session_id = data.get("sessionId")
-        if not session_id and isinstance(data.get("value"), dict):
-            session_id = data["value"].get("sessionId")
-        if not isinstance(session_id, str) or not session_id:
-            return False, "Session create did not return a session id"
-
-        try:
-            delete_resp = await client.delete(f"{base}/session/{session_id}", timeout=timeout_sec)
-            if delete_resp.status_code >= 400:
-                return False, f"Session created but cleanup failed ({delete_resp.status_code})"
-        except httpx.HTTPError as exc:
-            return False, f"Session created but cleanup failed: {_format_http_error(exc)}"
+        if not await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
+            return False, "Session created but cleanup failed"
 
         return True, None
 
@@ -305,10 +288,10 @@ class SessionViabilityService:
             # loop ignores the Grid slot the probe is about to create. Without this
             # the slot is persisted as a phantom Session row: Appium strips the
             # client-supplied ``gridfleet:testName`` / ``gridfleet:probeSession``
-            # markers from matched caps, so slot_parser cannot recognise it.
+            # markers from matched caps, so the probe filter cannot recognise it.
             probe_inflight.mark_probe_started(device_key)
             try:
-                ok, error = await self.probe_session_via_grid(capabilities, timeout_sec, grid_url=node.grid_url)
+                ok, error = await self.probe_session_direct(capabilities, timeout_sec, target=node_target(device))
             finally:
                 probe_inflight.mark_probe_finished(device_key)
             await record_probe_session(
@@ -572,35 +555,6 @@ def _build_session_payload(capabilities: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _extract_session_error(data: object) -> str:
-    if isinstance(data, dict):
-        value = data.get("value")
-        if isinstance(value, dict):
-            message = value.get("message")
-            if isinstance(message, str) and message:
-                return message
-            error = value.get("error")
-            if isinstance(error, str) and error:
-                return error
-        message = data.get("message")
-        if isinstance(message, str) and message:
-            return message
-    return "Session probe failed"
-
-
-def _format_http_error(exc: httpx.HTTPError) -> str:
-    message = str(exc).strip()
-    if message:
-        return message
-    response = getattr(exc, "response", None)
-    if response is not None and getattr(response, "status_code", None) is not None:
-        return f"{exc.__class__.__name__} (HTTP {response.status_code})"
-    request = getattr(exc, "request", None)
-    if request is not None and getattr(request, "url", None) is not None:
-        return f"{exc.__class__.__name__} while calling {request.url}"
-    return exc.__class__.__name__
-
-
 def build_probe_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
     return {
         **capabilities,
@@ -617,8 +571,7 @@ def grid_probe_response_to_result(result: tuple[bool, str | None]) -> ProbeResul
         return ProbeResult(status="refused")
     infrastructure_markers = (
         "Session create request failed:",
-        "Session created but cleanup failed:",
-        "Session created but cleanup failed (",
+        "Session created but cleanup failed",
     )
     if detail.startswith(infrastructure_markers):
         return ProbeResult(status="indeterminate", detail=detail)

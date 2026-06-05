@@ -137,7 +137,7 @@ async def _wait_for_job(
             capability=DeviceCapabilityService(),
             health=AsyncMock(),
         )
-        _viability.probe_session_via_grid = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
+        _viability.probe_session_direct = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
         await DurableJobService(
             session_factory=session_factory,
             publisher=AsyncMock(),
@@ -914,7 +914,6 @@ async def test_existing_running_device_verification_can_enter_verifying(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=1234,
@@ -1168,7 +1167,6 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
@@ -1457,7 +1455,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             capability=DeviceCapabilityService(),
             health=AsyncMock(),
         )
-        _viability2.probe_session_via_grid = AsyncMock(return_value=(True, None))  # type: ignore[method-assign]
+        _viability2.probe_session_direct = AsyncMock(return_value=(True, None))  # type: ignore[method-assign]
         recovered = await DurableJobService(
             session_factory=session_factory,
             publisher=AsyncMock(),

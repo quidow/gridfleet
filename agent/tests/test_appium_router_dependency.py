@@ -77,7 +77,6 @@ async def test_start_unexpected_runtime_error_becomes_envelope_500(client: Async
             json={
                 "connection_target": "abc",
                 "port": 4723,
-                "grid_url": "http://hub:4444",
                 "pack_id": "pack",
                 "platform_id": "android",
             },
@@ -105,7 +104,6 @@ async def test_runtime_missing_sets_retry_after(client: AsyncClient) -> None:
             json={
                 "connection_target": "abc",
                 "port": 4723,
-                "grid_url": "http://hub:4444",
                 "pack_id": "pack",
                 "platform_id": "android",
             },
@@ -131,7 +129,6 @@ async def test_startup_timeout_sets_retry_after(client: AsyncClient) -> None:
             json={
                 "connection_target": "abc",
                 "port": 4723,
-                "grid_url": "http://hub:4444",
                 "pack_id": "pack",
                 "platform_id": "android",
             },

@@ -47,7 +47,6 @@ async def test_bulk_restart_persists_transition_token_when_auto_recovery_intent_
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             active_connection_target="device-1",
         )
@@ -150,7 +149,6 @@ async def test_operator_restart_intent_carries_node_running_precondition(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             active_connection_target="device-1",
             desired_state=AppiumDesiredState.running,
@@ -203,7 +201,6 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
             _bypass_tmp = AppiumNode(
                 device_id=dev.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=0,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -245,7 +242,6 @@ async def test_bulk_start_nodes_accepts_group_caller(
             _bypass_tmp = AppiumNode(
                 device_id=dev.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=0,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,

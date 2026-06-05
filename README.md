@@ -3,13 +3,14 @@
 [![CI](https://github.com/quidow/gridfleet/actions/workflows/ci.yml/badge.svg)](https://github.com/quidow/gridfleet/actions/workflows/ci.yml)
 [![Security](https://github.com/quidow/gridfleet/actions/workflows/security.yml/badge.svg)](https://github.com/quidow/gridfleet/actions/workflows/security.yml)
 
-GridFleet is an Appium + Selenium Grid control plane for device labs and CI
+GridFleet is an Appium control plane for device labs and CI
 fleets. It gives operators one place to register hosts, discover devices, start
-Appium nodes, route Selenium Grid sessions, reserve capacity for test runs, and
-inspect fleet health.
+Appium nodes, route WebDriver sessions, reserve capacity for test runs, and
+inspect fleet health. A built-in Rust WebDriver router on `:4444` allocates a
+device and proxies each session directly to Appium on the host.
 
 Driver-specific behavior lives in driver packs. The core manager owns Appium
-process lifecycle, Selenium Grid relay registration, scheduling, reservations,
+process lifecycle, session allocation and routing, scheduling, reservations,
 health monitoring, and the dashboard; packs provide discovery rules, platform
 metadata, readiness fields, lifecycle actions, capability defaults, and optional
 adapter code.
@@ -21,7 +22,9 @@ adapter code.
 - FastAPI backend with PostgreSQL, async SQLAlchemy, Alembic migrations, and
   leader-owned background workers.
 - Host agent that runs on each device host and manages discovery, Appium
-  processes, Selenium Grid relay nodes, tools, and telemetry.
+  processes, tools, and telemetry.
+- Rust WebDriver router that allocates a device via the backend and proxies
+  W3C sessions directly to Appium.
 - React operator dashboard for devices, hosts, sessions, runs, analytics,
   driver packs, settings, notifications, and bulk operations.
 - Python testkit for pytest/Appium suites that need run registration,
@@ -56,7 +59,7 @@ Local endpoints:
 
 - Dashboard: `http://localhost:3000`
 - Backend API: `http://localhost:8000`
-- Selenium Grid: `http://localhost:4444`
+- WebDriver router: `http://localhost:4444`
 
 To stop the stack:
 
@@ -193,7 +196,7 @@ public internet services.
 
 Start with [SECURITY.md](SECURITY.md) and
 [docs/guides/security.md](docs/guides/security.md). Do not expose backend,
-agent, Selenium Grid, or host-terminal ports directly to the public internet.
+agent, WebDriver router, device-host Appium, or host-terminal ports directly to the public internet.
 
 ## Project Status
 

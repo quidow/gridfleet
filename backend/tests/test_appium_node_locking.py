@@ -35,7 +35,6 @@ async def test_lock_appium_node_for_device_returns_locked_row(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=0,
@@ -60,7 +59,6 @@ async def test_lock_appium_node_for_device_blocks_concurrent_writer(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,

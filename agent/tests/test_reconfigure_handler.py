@@ -19,7 +19,6 @@ def test_appium_start_request_accepts_orchestration_metadata() -> None:
     request = AppiumStartRequest(
         connection_target="device-1",
         port=4723,
-        grid_url="http://grid:4444",
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         accepting_new_sessions=False,

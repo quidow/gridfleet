@@ -19,7 +19,7 @@ def test_settings_service_validation_and_normalization_edges() -> None:
     assert service._normalize_value("notifications.toast_events", ["unknown.event"]) == ["host.status_changed"]
 
     assert "Expected boolean" in (service._validate_value("general.leader_keepalive_enabled", "true") or "")
-    assert "Expected string" in (service._validate_value("grid.hub_url", 123) or "")
+    assert "Expected string" in (service._validate_value("appium.default_plugins", 123) or "")
     assert "not in allowed values" in (
         service._validate_value("notifications.toast_severity_threshold", "verbose") or ""
     )

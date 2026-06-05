@@ -116,7 +116,6 @@ class AppiumNodeRead(BaseModel):
 
     id: uuid.UUID
     port: int
-    grid_url: str
     pid: int | None
     container_id: str | None
     active_connection_target: str | None

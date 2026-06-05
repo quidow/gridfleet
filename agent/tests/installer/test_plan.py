@@ -54,10 +54,6 @@ def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None
             [
                 "AGENT_MANAGER_URL=https://manager.example.com",
                 "AGENT_AGENT_PORT=5300",
-                "AGENT_GRID_HUB_URL=http://grid:4444",
-                "AGENT_GRID_PUBLISH_URL=tcp://grid:4442",
-                "AGENT_GRID_SUBSCRIBE_URL=tcp://grid:4443",
-                "AGENT_GRID_NODE_PORT_START=6100",
                 "AGENT_MANAGER_AUTH_USERNAME=machine",
                 "AGENT_MANAGER_AUTH_PASSWORD=secret",
                 "",
@@ -69,10 +65,6 @@ def test_load_installed_config_reads_persisted_agent_env(tmp_path: Path) -> None
 
     assert config.manager_url == "https://manager.example.com"
     assert config.port == 5300
-    assert config.grid_hub_url == "http://grid:4444"
-    assert config.grid_publish_url == "tcp://grid:4442"
-    assert config.grid_subscribe_url == "tcp://grid:4443"
-    assert config.grid_node_port_start == 6100
     assert config.manager_auth_username == "machine"
     assert config.manager_auth_password == "secret"
 
@@ -99,7 +91,7 @@ def test_render_launchd_plist_uses_console_entry_point() -> None:
     assert "<string>serve</string>" in rendered
     assert "<string>5200</string>" in rendered
     assert "<key>PATH</key>" in rendered
-    assert "<key>AGENT_GRID_HUB_URL</key>" in rendered
+    assert "<key>AGENT_GRID_HUB_URL</key>" not in rendered
     assert "<key>AGENT_SELENIUM_SERVER_JAR</key>" not in rendered
     assert "<key>ANDROID_HOME</key>" not in rendered
     assert "<key>AGENT_MANAGER_AUTH_USERNAME</key>" in rendered

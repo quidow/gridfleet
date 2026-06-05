@@ -24,7 +24,7 @@ async def test_appium_node_desired_state_defaults_to_stopped(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="default-desired", verified=True)
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://hub:4444")
+        node = AppiumNode(device_id=device.id, port=4723)
     db_session.add(node)
     await db_session.commit()
     await db_session.refresh(node)

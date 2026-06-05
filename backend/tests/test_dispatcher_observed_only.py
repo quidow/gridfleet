@@ -31,7 +31,6 @@ async def test_dispatcher_does_not_pick_device_with_only_desired_running(
             AppiumNode(
                 device_id=device.id,
                 port=0,
-                grid_url="http://hub:4444",
                 pid=None,
                 active_connection_target=None,
                 desired_state=AppiumDesiredState.running,
@@ -60,7 +59,6 @@ async def test_dispatcher_picks_device_when_pid_and_active_target_set_without_st
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=12345,
@@ -89,7 +87,6 @@ async def test_dispatcher_does_not_pick_device_when_pid_null(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=None,

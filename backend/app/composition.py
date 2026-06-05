@@ -48,7 +48,6 @@ from app.diagnostics.services.export import DiagnosticExportService
 from app.diagnostics.services_container import DiagnosticsServices
 from app.events.services_container import EventServices
 from app.grid.allocation import AllocationService, pack_slot_stereotype
-from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
 from app.hosts.service_agent_logs import AgentLogsService
@@ -154,8 +153,6 @@ def compose_app(
         circuit_breaker=circuit_breaker,
     )
 
-    grid_svc = GridService(settings=settings_svc)
-
     presenter_svc = DevicePresenterService(settings=settings_svc)
     test_data_svc = TestDataService(publisher=bus)
     portability_export_svc = PortabilityExportService()
@@ -207,7 +204,7 @@ def compose_app(
         review=review_svc,
     )
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
-    fleet_capacity_svc = FleetCapacityService(grid=grid_svc)
+    fleet_capacity_svc = FleetCapacityService()
     data_cleanup_svc = DataCleanupService(publisher=bus, settings=settings_svc)
     property_refresh_svc = PropertyRefreshService(discovery=pack_discovery_svc)
     maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
@@ -234,10 +231,9 @@ def compose_app(
     run_release = RunReleaseService(
         publisher=bus,
         settings=settings_svc,
-        grid=grid_svc,
         deferred_stop=lifecycle_policy_svc,
     )
-    run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, grid=grid_svc, release=run_release)
+    run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, release=run_release)
     run_allocator = RunAllocatorService(
         publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
     )
@@ -334,7 +330,6 @@ def compose_app(
             health=device_health_svc,
             publisher=bus,
             settings=settings_svc,
-            grid=grid_svc,
             session_factory=session_factory,
             circuit_breaker=circuit_breaker,
             pool=http_pool,
@@ -362,12 +357,9 @@ def compose_app(
         ),
         sessions=SessionServices(
             crud=SessionCrudService(publisher=bus, lifecycle=lifecycle_policy_svc),
-            sync=SessionSyncService(
-                publisher=bus, settings=settings_svc, grid=grid_svc, lifecycle=lifecycle_policy_svc
-            ),
+            sync=SessionSyncService(publisher=bus, settings=settings_svc, lifecycle=lifecycle_policy_svc),
             viability=viability_svc,
             settings=settings_svc,
-            grid=grid_svc,
             session_factory=session_factory,
             publisher=bus,
         ),
@@ -382,7 +374,6 @@ def compose_app(
             session_factory=session_factory,
         ),
         grid=GridServices(
-            grid=grid_svc,
             settings=settings_svc,
             session_factory=session_factory,
             allocation=AllocationService(
@@ -416,7 +407,6 @@ def compose_app(
                 settings=settings_svc,
                 pool=http_pool,
                 circuit_breaker=circuit_breaker,
-                grid=grid_svc,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
                 incidents=incidents_svc,

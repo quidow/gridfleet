@@ -36,13 +36,6 @@ from agent_app.appium.log_files import (
     truncate_oversized_logs,
 )
 from agent_app.config import agent_settings
-from agent_app.grid_node.config import GridNodeConfig
-from agent_app.grid_node.event_bus import EventBus
-from agent_app.grid_node.protocol import build_slots
-from agent_app.grid_node.service import GridNodeService
-from agent_app.grid_node.stray_sweep import sweep_stray_registrations
-from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
-from agent_app.grid_url import get_local_ip
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import SubprocessEnvContribution
@@ -252,11 +245,9 @@ class AppiumLaunchSpec:
     port: int
     plugins: list[str] | None
     extra_caps: dict[str, Any] | None
-    stereotype_caps: dict[str, Any] | None
     session_override: bool
     device_type: str | None
     ip_address: str | None
-    manage_grid_node: bool
     pack_id: str
     platform_id: str
     accepting_new_sessions: bool = True
@@ -304,11 +295,10 @@ class AppiumRestartEvent:
 
 
 class AppiumProcessManager:
-    """Manages Appium server processes and in-process Grid node services on this host."""
+    """Manages Appium server processes on this host."""
 
     def __init__(self) -> None:
         self._appium_procs: dict[int, asyncio.subprocess.Process] = {}  # appium_port -> process
-        self._grid_supervisors: dict[int, GridNodeSupervisorHandle] = {}
         self._info: dict[int, AppiumProcessInfo] = {}
         self._launch_specs: dict[int, AppiumLaunchSpec] = {}
         self._log_maintenance_task: asyncio.Task[None] | None = None
@@ -322,11 +312,9 @@ class AppiumProcessManager:
         )
         self._restart_sequence = 0
         self._intentional_stop_ports: set[int] = set()
-        self._next_node_port = agent_settings.grid_node.grid_node_port_start
         self._runtime_registry: RuntimeRegistry | None = None
         self._adapter_registry: AdapterRegistry | None = None
         self._start_lock = asyncio.Lock()
-        self._grid_advertise_ip: str | None = None
 
     def set_runtime_registry(self, registry: RuntimeRegistry) -> None:
         self._runtime_registry = registry
@@ -348,35 +336,6 @@ class AppiumProcessManager:
                 truncate_oversized_logs()
             except Exception as exc:  # maintenance must never kill the loop
                 logger.warning("appium log maintenance pass failed: %s", sanitize_log_value(exc))
-
-    def iter_grid_supervisors(self) -> list[tuple[int, GridNodeSupervisorHandle]]:
-        """Snapshot of (port, supervisor) pairs; safe to iterate while mutating."""
-
-        return list(self._grid_supervisors.items())
-
-    def pop_grid_supervisor(self, port: int) -> None:
-        """Remove a supervisor entry by port. No-op if absent."""
-
-        self._grid_supervisors.pop(port, None)
-
-    def _allocate_node_port(self) -> int:
-        # Skip ports already bound by another listener so the grid node HTTP
-        # server does not race a third-party process on a stale port. Probe
-        # the same interface uvicorn will bind (`grid_node_bind_host`,
-        # default `0.0.0.0`) — NOT the advertised hostname, which can be a
-        # docker-only DNS name like `host.docker.internal` that does not
-        # resolve on the agent host and would fail probe + bind alike.
-        probe_host = agent_settings.grid_node.grid_node_bind_host
-        while True:
-            port = self._next_node_port
-            self._next_node_port += 1
-            with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
-                try:
-                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    probe.bind((probe_host, port))
-                except OSError:
-                    continue
-            return port
 
     def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> None:
         task = tasks.pop(port, None)
@@ -417,11 +376,6 @@ class AppiumProcessManager:
             if info.connection_target == connection_target and info.platform_id == platform_id:
                 return info
         return None
-
-    def _grid_external_url(self, node_port: int) -> str:
-        if self._grid_advertise_ip is None:
-            self._grid_advertise_ip = get_local_ip()
-        return f"http://{self._grid_advertise_ip}:{node_port}"
 
     def _trim_restart_attempts(
         self,
@@ -639,17 +593,14 @@ class AppiumProcessManager:
             connection_target=spec.connection_target,
             platform_id=spec.platform_id,
             port=spec.port,
-            grid_url=agent_settings.grid_node.grid_hub_url,
             plugins=spec.plugins,
             extra_caps=spec.extra_caps,
-            stereotype_caps=spec.stereotype_caps,
             accepting_new_sessions=spec.accepting_new_sessions,
             stop_pending=spec.stop_pending,
             grid_run_id=spec.grid_run_id,
             session_override=spec.session_override,
             device_type=spec.device_type,
             ip_address=spec.ip_address,
-            manage_grid_node=spec.manage_grid_node,
             pack_id=spec.pack_id,
             appium_platform_name=spec.appium_platform_name,
             workaround_env=spec.workaround_env,
@@ -762,19 +713,16 @@ class AppiumProcessManager:
         connection_target: str,
         platform_id: str,
         port: int,
-        grid_url: str,
         *,
         pack_id: str,
         plugins: list[str] | None = None,
         extra_caps: dict[str, Any] | None = None,
-        stereotype_caps: dict[str, Any] | None = None,
         accepting_new_sessions: bool = True,
         stop_pending: bool = False,
         grid_run_id: uuid.UUID | None = None,
         session_override: bool = True,
         device_type: str | None = None,
         ip_address: str | None = None,
-        manage_grid_node: bool = True,
         headless: bool = True,
         appium_platform_name: str | None = None,
         workaround_env: dict[str, str] | None = None,
@@ -825,14 +773,12 @@ class AppiumProcessManager:
             port=port,
             plugins=list(plugins) if plugins else None,
             extra_caps=merged_extra_caps if merged_extra_caps else None,
-            stereotype_caps=dict(stereotype_caps) if stereotype_caps else None,
             accepting_new_sessions=accepting_new_sessions,
             stop_pending=stop_pending,
             grid_run_id=grid_run_id,
             session_override=session_override,
             device_type=device_type,
             ip_address=ip_address,
-            manage_grid_node=manage_grid_node,
             pack_id=pack_id,
             platform_id=platform_id,
             appium_platform_name=appium_platform_name,
@@ -861,22 +807,14 @@ class AppiumProcessManager:
             # Honor the operator's stop_pending intent across restarts: when
             # the caller asks for a stop-pending lifecycle (e.g. auto-restart
             # carrying spec.stop_pending forward, or a fresh start that should
-            # drain after the next session), keep the port in
-            # `_stop_pending_ports` and arm the idle-stop task once the grid
-            # node is up. Otherwise clear any stale intent left by a prior
-            # lifecycle.
+            # stop after the next session), keep the port in
+            # `_stop_pending_ports`. Otherwise clear any stale intent left by a
+            # prior lifecycle.
             if spec.stop_pending:
                 self._stop_pending_ports.add(port)
             else:
                 self._stop_pending_ports.discard(port)
             appium_proc = await self._start_appium_server(spec, clear_logs_on_failure=port not in self._info)
-
-            if manage_grid_node:
-                try:
-                    await self._start_grid_node_service(spec)
-                except Exception:
-                    await self._cleanup_started_appium_after_grid_node_failure(spec.port, appium_proc)
-                    raise
 
             info = self._info.get(port)
             if info is None:
@@ -895,103 +833,9 @@ class AppiumProcessManager:
                 # Carry the stop-pending flag so ``_auto_restart_appium``
                 # refuses to resurrect this Appium process if it exits. The
                 # actual stop is owned by the backend's appium reconciler
-                # via ``AppiumNode.desired_state``; the agent must not
-                # tear the relay down on its own (doing so would lose the
-                # cooldown's ``_drain`` flag when the backend later restarts
-                # the relay on a fresh port).
+                # via ``AppiumNode.desired_state``.
                 self._stop_pending_ports.add(port)
             return info
-
-    async def _start_grid_node_service(self, spec: AppiumLaunchSpec) -> GridNodeSupervisorHandle:
-        existing = self._grid_supervisors.get(spec.port)
-        if existing is not None and existing.is_running():
-            return existing
-
-        appium_platform = spec.appium_platform_name or spec.platform_id
-        caps: dict[str, Any] = {"platformName": appium_platform}
-        if spec.stereotype_caps:
-            caps.update(spec.stereotype_caps)
-        elif spec.extra_caps:
-            caps.update(spec.extra_caps)
-        caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
-
-        node_port = self._allocate_node_port()
-        # Selenium hub deserializes nodeId via UUID.fromString — derive a stable UUID
-        # from the device target so identity survives agent restarts.
-        node_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gridfleet-node:{spec.connection_target}:{spec.port}"))
-        config = GridNodeConfig(
-            node_id=node_uuid,
-            node_uri=self._grid_external_url(node_port),
-            appium_upstream=f"http://127.0.0.1:{spec.port}",
-            slots=build_slots(base_caps=caps, grid_slots=spec.grid_slots),
-            hub_publish_url=agent_settings.grid_node.grid_publish_url,
-            hub_subscribe_url=agent_settings.grid_node.grid_subscribe_url,
-            hub_status_url=agent_settings.grid_node.grid_hub_url,
-            heartbeat_sec=agent_settings.grid_node.grid_node_heartbeat_sec,
-            session_timeout_sec=agent_settings.grid_node.grid_node_session_timeout_sec,
-            proxy_timeout_sec=agent_settings.grid_node.grid_node_proxy_timeout_sec,
-            bind_host=agent_settings.grid_node.grid_node_bind_host,
-        )
-
-        def factory() -> GridNodeService:
-            # `hub_publish_url` / `hub_subscribe_url` are bus-centric (Selenium
-            # `--publish-events` / `--subscribe-events` semantics). The node's PUB socket
-            # must connect to the bus's XSUB endpoint, and the node's SUB to the bus's
-            # XPUB endpoint, so the URLs are swapped at the EventBus boundary.
-            bus = EventBus(
-                publish_url=config.hub_subscribe_url,
-                subscribe_url=config.hub_publish_url,
-                heartbeat_sec=config.heartbeat_sec,
-            )
-            return GridNodeService(config=config, bus=bus)
-
-        handle = start_grid_node_supervisor(factory=factory, config=config)
-        try:
-            await handle.start()
-            await handle.wait_until_running()
-            if handle.service is not None:
-                # Best-effort cleanup of hub registrations pointing at this
-                # host with no live relay (husks from crashes or the pre-fix
-                # F-G2 wedge); see ``stray_sweep`` module docstring.
-                live_ids = {
-                    h.service.node_id
-                    for h in self._grid_supervisors.values()
-                    if h.service is not None and h.is_running()
-                } | {config.node_id}
-                own_prefix = self._grid_external_url(0).rsplit(":", 1)[0] + ":"
-                await sweep_stray_registrations(
-                    hub_status_url=agent_settings.grid_node.grid_hub_url,
-                    bus=handle.service.bus_for_sweep(),
-                    own_uri=lambda uri: uri.startswith(own_prefix),
-                    live_node_ids=live_ids,
-                )
-            # Defense in depth: a freshly constructed ``NodeState`` always
-            # initializes ``_drain=False``. If the backend asked us to start
-            # this relay with sessions blocked (cooldown / maintenance carried
-            # forward across a restart), drain it before any hub-routed
-            # ``/se/grid/node/session`` reservation can land — otherwise the
-            # relay would silently accept new sessions until a later
-            # reconfigure pushes the drain.
-            if not spec.accepting_new_sessions:
-                if handle.service is not None:
-                    await handle.service.drain_to_block_new_sessions()
-                else:
-                    # In production the supervisor always exposes the service
-                    # after ``wait_until_running``. A None here means the
-                    # supervisor protocol diverged from expectations — the
-                    # relay would silently accept hub-routed sessions despite
-                    # the cooldown spec. Log loudly so the misconfiguration
-                    # is visible instead of failing closed.
-                    logger.warning(
-                        "grid_node_drain_skipped_missing_service",
-                        extra={"port": spec.port, "connection_target": spec.connection_target},
-                    )
-        except Exception:
-            with contextlib.suppress(Exception):
-                await handle.stop()
-            raise
-        self._grid_supervisors[spec.port] = handle
-        return handle
 
     async def reconfigure(
         self,
@@ -1001,26 +845,6 @@ class AppiumProcessManager:
         stop_pending: bool,
         grid_run_id: uuid.UUID | None,
     ) -> None:
-        handle = self._grid_supervisors.get(port)
-        if handle is None or handle.service is None:
-            raise DeviceNotFoundError(f"No running grid node for Appium port {port}")
-        if handle.errored:
-            # Supervisor has exhausted its restart budget — the service the
-            # handle still references has been stopped and any call into it
-            # would raise ``GridNodeService.<method> called before start()``.
-            # Surface as ``DeviceNotFoundError`` (HTTP 404) so the backend
-            # treats this as a missing relay and schedules a fresh start
-            # instead of a port-bumping forced restart triggered by an
-            # unhandled 500.
-            raise DeviceNotFoundError(f"Grid node supervisor for Appium port {port} is errored")
-        if not handle.is_running():
-            # Mid-restart window between supervisor heartbeat failure and the
-            # next ``service.start()`` completing. Calling into the service
-            # right now would raise the same ``called before start()`` error
-            # and trip the backend's inline-delivery-failure path. The relay
-            # will re-register shortly; let the backend retry without forcing
-            # a relay restart.
-            raise DeviceNotFoundError(f"Grid node for Appium port {port} is restarting")
         if port not in self._info:
             raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
@@ -1031,14 +855,12 @@ class AppiumProcessManager:
                 port=spec.port,
                 plugins=spec.plugins,
                 extra_caps=spec.extra_caps,
-                stereotype_caps=spec.stereotype_caps,
                 accepting_new_sessions=accepting_new_sessions,
                 stop_pending=stop_pending,
                 grid_run_id=grid_run_id,
                 session_override=spec.session_override,
                 device_type=spec.device_type,
                 ip_address=spec.ip_address,
-                manage_grid_node=spec.manage_grid_node,
                 pack_id=spec.pack_id,
                 platform_id=spec.platform_id,
                 appium_platform_name=spec.appium_platform_name,
@@ -1054,85 +876,19 @@ class AppiumProcessManager:
             # Track the port so ``_auto_restart_appium`` skips resurrection if
             # the Appium process exits while a stop is pending. The actual
             # stop is owned by the backend's appium reconciler, which
-            # converges based on ``AppiumNode.desired_state``. Stopping here
-            # used to tear down the relay whenever cooldown landed on an idle
-            # node — backend then observed pid=None, restarted Appium on a
-            # fresh port, and the new ``NodeState`` came up with ``_drain=False``,
-            # silently undoing the cooldown. See ``_start_grid_node_service``
-            # for the defense-in-depth that re-drains a fresh relay when the
-            # launch spec carries ``accepting_new_sessions=False``.
-            # Recording spec + bookkeeping BEFORE applying to the live service
-            # is deliberate (D4): a failed apply self-heals via the next
-            # converge/reconfigure instead of wedging on a stale spec.
+            # converges based on ``AppiumNode.desired_state``.
             self._stop_pending_ports.add(port)
         else:
             self._stop_pending_ports.discard(port)
 
-        service = handle.service
-        if accepting_new_sessions:
-            run_id_value = str(grid_run_id) if grid_run_id is not None else "free"
-            await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
-        else:
-            # Cooldown / maintenance: block new sessions at the hub without
-            # republishing the node. The full DRAIN → REMOVED → ADDED cycle in
-            # ``reregister_with_caps_update`` would re-`NODE_ADDED` the relay
-            # and the hub would resume routing immediately. ``grid_run_id`` is
-            # intentionally not applied here — run-id rotation only happens on
-            # the ``accepting_new_sessions=True`` path; a draining node is on
-            # its way to stop or recovery and re-registers fresh on the next
-            # start.
-            await service.drain_to_block_new_sessions()
-
-    async def _cleanup_started_appium_after_grid_node_failure(
-        self, port: int, appium_proc: asyncio.subprocess.Process
-    ) -> None:
-        self._intentional_stop_ports.add(port)
-        self._cancel_task(self._appium_restart_tasks, port)
-        self._cancel_task(self._appium_watch_tasks, port)
-        self._grid_supervisors.pop(port, None)
-        self._appium_procs.pop(port, None)
-        self._info.pop(port, None)
-        self._launch_specs.pop(port, None)
-        self._appium_restart_attempts.pop(port, None)
-        self._appium_restart_backoff_steps.pop(port, None)
-        self._stop_pending_ports.discard(port)
-        if appium_proc.returncode is None:
-            appium_proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(appium_proc.wait(), timeout=STOP_GRACE_PERIOD)
-            except TimeoutError:
-                appium_proc.kill()
-                await appium_proc.wait()
-        # The log file is intentionally kept: permanent grid-node startup
-        # failure is exactly when an operator wants the Appium output.
-        # Intentionally do NOT discard `_intentional_stop_ports` here. Cleanup
-        # represents permanent grid-node startup failure: any straggler exit
-        # handler must NOT trigger an auto-restart against the now-cleared
-        # launch_spec. The next explicit `start()` for this port resets the
-        # flag at line 838.
-
-    async def _stop_grid_node_service(self, port: int) -> None:
-        handle = self._grid_supervisors.pop(port, None)
-        if handle is not None:
-            await handle.stop()
-
     async def _drop_failed_managed_port(self, port: int) -> None:
-        """Forget stale ownership for a crashed Appium process without touching an unmanaged listener.
+        """Forget stale ownership for a crashed Appium process.
 
-        A grid-node stop failure must not abort cleanup — the Appium process and
-        port metadata still need to be released so the host can recover the
-        port. Suppress and log instead.
+        Release the Appium process and port metadata so the host can recover
+        the port.
         """
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._appium_watch_tasks, port)
-        try:
-            await self._stop_grid_node_service(port)
-        except Exception as exc:
-            logger.warning(
-                "grid node stop failed during managed-port cleanup on port %s: %s",
-                sanitize_log_value(port),
-                sanitize_log_value(exc),
-            )
         self._appium_procs.pop(port, None)
         self._info.pop(port, None)
         self._launch_specs.pop(port, None)
@@ -1144,18 +900,6 @@ class AppiumProcessManager:
             self._intentional_stop_ports.add(port)
             self._cancel_task(self._appium_restart_tasks, port)
             self._cancel_task(self._appium_watch_tasks, port)
-
-            # Stop Grid Node first. A grid-node failure must not leak the
-            # Appium process; suppress and log so we always reach the Appium
-            # teardown below.
-            try:
-                await self._stop_grid_node_service(port)
-            except Exception as exc:
-                logger.warning(
-                    "grid node stop failed for port %s: %s",
-                    sanitize_log_value(port),
-                    sanitize_log_value(exc),
-                )
 
             # Stop Appium
             appium_proc = self._appium_procs.pop(port, None)
@@ -1203,25 +947,15 @@ class AppiumProcessManager:
         }
 
     def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+        return {
             "port": info.port,
             "pid": info.pid,
             "connection_target": info.connection_target,
             "platform_id": info.platform_id,
         }
-        supervisor = self._grid_supervisors.get(info.port)
-        if supervisor is not None:
-            supervisor_snapshot = supervisor.snapshot()
-            status = supervisor_snapshot.get("status")
-            if status is not None:
-                payload["grid_node_status"] = status
-            service = supervisor.service
-            if service is not None:
-                payload["has_active_session"] = service.has_active_session()
-        return payload
 
     async def shutdown(self) -> None:
-        ports = sorted(set(self._appium_procs) | set(self._grid_supervisors) | set(self._launch_specs))
+        ports = sorted(set(self._appium_procs) | set(self._launch_specs))
         for port in ports:
             with contextlib.suppress(Exception):
                 await self.stop(port)

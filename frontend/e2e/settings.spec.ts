@@ -41,13 +41,13 @@ function createSettingsState(): MockSetting[] {
       validation: { min: 5, max: 120 },
     },
     {
-      key: 'grid.hub_url',
+      key: 'grid.session_poll_interval_sec',
       category: 'grid',
-      type: 'string',
-      description: 'Base Selenium Grid hub URL.',
-      default_value: 'http://selenium-hub:4444',
-      value: 'http://selenium-hub:4444',
-      validation: null,
+      type: 'int',
+      description: 'Interval of the direct-to-Appium session observation sweep.',
+      default_value: 30,
+      value: 30,
+      validation: { min: 1, max: 300 },
     },
     {
       key: 'notifications.toast_events',
@@ -448,7 +448,7 @@ test.describe('Settings Page', () => {
     await expect(page.locator('input[name="general.heartbeat_interval_sec"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Appium & Grid' }).click();
-    await expect(page.locator('input[name="grid.hub_url"]')).toBeVisible();
+    await expect(page.locator('input[name="grid.session_poll_interval_sec"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Notifications' }).click();
     await expect(page.locator('input[name="notifications.toast_auto_dismiss_sec"]')).toBeVisible();

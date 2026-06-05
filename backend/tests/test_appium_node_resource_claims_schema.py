@@ -61,7 +61,6 @@ async def test_managed_claim_cascades_when_node_deleted(db_session: AsyncSession
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,

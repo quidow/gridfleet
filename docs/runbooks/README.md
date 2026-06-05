@@ -25,7 +25,7 @@ Use `docs/runbooks/` when the system is already misbehaving and the operator nee
 - `device-ip-ping-recovery.md`
   - IP connectivity recovery for unreachable devices.
 - `grid-version.md`
-  - Checking and upgrading the Selenium Grid version.
+  - Rebuilding and rolling out the WebDriver router service.
 - `heartbeat-flapping.md`
   - Diagnosis and resolution of flapping agent heartbeats.
 - `lifecycle-stuck-deferred-stop.md`

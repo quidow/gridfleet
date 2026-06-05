@@ -1,4 +1,3 @@
-import math
 from typing import Literal
 
 from pydantic import SecretStr, model_validator
@@ -58,47 +57,6 @@ class ApiAuthSettings(BaseSettings):
         return self
 
 
-class GridNodeSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
-
-    # Host-run agent: default to the loopback hub like the sibling event-bus URLs
-    # below (and like cli.py / installer plan.py, both of which default to
-    # localhost:4444). Docker/networked deployments override via AGENT_GRID_HUB_URL.
-    # NOTE: this is the first setting actually used for an HTTP call to the hub
-    # (the relay registers over ZMQ); a docker-internal default here is unreachable
-    # from the host the agent runs on.
-    grid_hub_url: str = "http://localhost:4444"
-    grid_publish_url: str = "tcp://localhost:4442"
-    grid_subscribe_url: str = "tcp://localhost:4443"
-    grid_node_heartbeat_sec: float = 5.0
-    # Selenium Grid session inactivity timeout. The agent's `expire_idle` will
-    # close any active session that has not seen a WebDriver call within this
-    # window. The previous 300s default was tight for workflows that quietly
-    # block on external-login or post-test artifact collection between
-    # WebDriver calls — those legitimate idle gaps would trigger spurious
-    # `session timed out due to inactivity` removals. 1800s (30min) is the
-    # new floor; override via `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC`.
-    grid_node_session_timeout_sec: float = 1800.0
-    grid_node_proxy_timeout_sec: float = 60.0
-    grid_node_bind_host: str = "0.0.0.0"
-    grid_node_port_start: int = 5555
-
-    @model_validator(mode="after")
-    def validate_intervals_finite_positive(self) -> "GridNodeSettings":
-        # Non-positive (or non-finite) heartbeat would crash the supervisor's
-        # `_clock.sleep` loop and silently break drain semantics; non-positive
-        # timeouts would force-close every session on the first tick. NaN /
-        # +inf must also be rejected at startup instead of after process start.
-        for name, value in (
-            ("AGENT_GRID_NODE_HEARTBEAT_SEC", self.grid_node_heartbeat_sec),
-            ("AGENT_GRID_NODE_SESSION_TIMEOUT_SEC", self.grid_node_session_timeout_sec),
-            ("AGENT_GRID_NODE_PROXY_TIMEOUT_SEC", self.grid_node_proxy_timeout_sec),
-        ):
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be a positive finite number")
-        return self
-
-
 class RuntimeSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_", extra="ignore")
 
@@ -114,7 +72,6 @@ class AgentSettings:
         self.core = CoreSettings()
         self.manager = ManagerSettings()
         self.api_auth = ApiAuthSettings()
-        self.grid_node = GridNodeSettings()
         self.runtime = RuntimeSettings()
 
 

@@ -113,7 +113,6 @@ async def build_pack_start_payload(
         "pack_id": pack_id,
         "platform_id": platform_id,
         "appium_platform_name": appium_platform_name,
-        "stereotype_caps": stereotype,
         "workaround_env": workaround_env,
         "insecure_features": insecure_features,
         "grid_slots": resolved_platform.grid_slots,

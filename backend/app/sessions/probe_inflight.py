@@ -5,8 +5,7 @@ then deletes it. While that session exists, the ``session_sync`` loop also
 polls Grid ``/status`` and would persist the slot as an ordinary Session row:
 the Appium driver does not echo the client-side ``gridfleet:testName`` /
 ``gridfleet:probeSession`` markers back in matched capabilities, so the probe
-filter in ``app.grid.slot_parser`` cannot identify the slot as a probe from
-caps alone.
+filter cannot identify the slot as a probe from caps alone.
 
 Both the probe runner and the session_sync loop are leader-owned and share
 one process, so an in-memory set keyed by device id is sufficient. The set

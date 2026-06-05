@@ -30,20 +30,27 @@ services:
         max-size: 10m
         max-file: "3"
 
-  selenium-hub:
-    image: selenium/hub:4.43.0-20260404
+  router:
+    build:
+      context: ..
+      dockerfile: router/Dockerfile
     restart: unless-stopped
     ports:
-      - "${GRID_PUBLISH_PORT:-4442}:4442"
-      - "${GRID_SUBSCRIBE_PORT:-4443}:4443"
       - "${GRID_HUB_PORT:-4444}:4444"
+    environment:
+      GRIDFLEET_ROUTER_LISTEN: 0.0.0.0:4444
+      GRIDFLEET_ROUTER_BACKEND: http://backend:8000
+      GRIDFLEET_ROUTER_BACKEND_AUTH: ${GRIDFLEET_ROUTER_BACKEND_AUTH:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
       - internal
       - public
+    depends_on:
+      backend:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
+      test: ["CMD", "curl", "-f", "http://localhost:4444/healthz"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -78,7 +85,6 @@ services:
       GRIDFLEET_MACHINE_AUTH_PASSWORD: ${GRIDFLEET_MACHINE_AUTH_PASSWORD:-}
       GRIDFLEET_AGENT_AUTH_USERNAME: ${GRIDFLEET_AGENT_AUTH_USERNAME:-}
       GRIDFLEET_AGENT_AUTH_PASSWORD: ${GRIDFLEET_AGENT_AUTH_PASSWORD:-}
-      GRIDFLEET_GRID_HUB_URL: ${GRIDFLEET_GRID_HUB_URL:-http://selenium-hub:4444}
       GRIDFLEET_HEARTBEAT_INTERVAL_SEC: ${GRIDFLEET_HEARTBEAT_INTERVAL_SEC:-15}
       GRIDFLEET_MAX_MISSED_HEARTBEATS: ${GRIDFLEET_MAX_MISSED_HEARTBEATS:-3}
       GRIDFLEET_NODE_CHECK_INTERVAL_SEC: ${GRIDFLEET_NODE_CHECK_INTERVAL_SEC:-30}
@@ -95,8 +101,6 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      selenium-hub:
         condition: service_healthy
     volumes:
       - driver-pack-storage-prod:/var/lib/gridfleet/driver-packs

@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-GridFleet is a control plane for Appium + Selenium Grid device labs. It is a multi-component monorepo, **not** a single application. Each component has its own toolchain and dependency manifest:
+GridFleet is a control plane for Appium device labs. It is a multi-component monorepo, **not** a single application. Each component has its own toolchain and dependency manifest:
 
 - `backend/` — FastAPI manager, async SQLAlchemy + Postgres, Alembic migrations, leader-owned background loops. Python 3.12, managed by `uv`.
-- `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes and Selenium Grid relay nodes. Python 3.12, managed by `uv`.
+- `agent/` — FastAPI host agent that runs on each device host. Spawns Appium processes per device. Python 3.12, managed by `uv`.
+- `router/` — Pingora-based Rust W3C WebDriver router that listens on `:4444`, allocates a device via the backend internal grid API, and proxies session commands directly to Appium on the allocated host. Replaces the Selenium Grid hub.
 - `frontend/` — React 19 + TypeScript + Vite + Tailwind v4 operator dashboard. Node 24, managed by `npm`.
 - `testkit/` — supported Python pytest/Appium helper package (`gridfleet_testkit`). Python 3.12, managed by `uv`.
 - `driver-packs/` — curated manifests + adapter source. Tarballs are NOT checked in; build with `scripts/build_driver_tarballs.py`.
@@ -79,20 +80,20 @@ Adapter builds require `uv` on `PATH`. Uploaded adapter wheels execute on agent 
 ## Architecture: What Spans Multiple Files
 
 ### Backend control plane and the leader-loop pattern
-The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, grid_event_bus, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher. The grid_event_bus loop runs under the task name `grid_event_bus_subscriber_loop`.
+The backend is a **stateless multi-worker FastAPI app**; all state is in Postgres. `app/main.py` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, hardware_telemetry, host_resource_telemetry, durable_job_worker, webhook_dispatcher, run_reaper, grid_allocation_reaper, data_cleanup, session_viability, fleet_capacity, pack_drain, appium_reconciler, device_intent_reconciler, background_loop_flush), plus a keepalive and a non-leader watcher. The `grid_allocation_reaper_loop` expires stale router allocation tickets (devices allocated but never confirmed by the router). `session_sync` is now a direct-to-Appium observation sweep (liveness probes + orphan-session kill via Appium's `/appium/sessions`), not a Grid-hub `/status` poll.
 
 Leader election uses **PostgreSQL advisory locks** via `app/core/leader/` (`advisory.py`, `keepalive.py`, `watcher.py`). When adding a new periodic task, follow the existing pattern (lease through the leader, write heartbeats, expose Prometheus gauges) rather than spawning bare `asyncio.create_task` loops. Domain-specific loops live under their owning `app/<domain>/services/` package.
 
 ### Settings: env vars vs DB registry
 There are two distinct config surfaces. Do not conflate them:
 - **Process env vars** (`backend/app/core/config.py`, domain config modules such as `backend/app/auth/config.py`, and `agent/agent_app/config.py`) — read once at startup. `GRIDFLEET_DATABASE_URL`, `GRIDFLEET_AUTH_*`, `AGENT_*`, etc.
-- **Settings registry** (`app/settings/registry.py`, `app/settings/service.py`) — DB-backed runtime settings editable via the Settings UI. A handful of `GRIDFLEET_*` env vars only seed the *initial* registry default for fresh installs (e.g. `GRIDFLEET_HEARTBEAT_INTERVAL_SEC`, `GRIDFLEET_GRID_HUB_URL`). After the first boot the DB row wins.
+- **Settings registry** (`app/settings/registry.py`, `app/settings/service.py`) — DB-backed runtime settings editable via the Settings UI. A handful of `GRIDFLEET_*` env vars only seed the *initial* registry default for fresh installs (e.g. `GRIDFLEET_HEARTBEAT_INTERVAL_SEC`). After the first boot the DB row wins.
 
 See `docs/reference/environment.md` and `docs/reference/settings.md` before adding a new knob.
 
 **Per-domain `BaseSettings` pattern.** Each domain config (`app/<domain>/config.py`) uses `model_config = SettingsConfigDict(env_prefix="", populate_by_name=True, extra="ignore")` with per-field `Field(alias="GRIDFLEET_…")` to preserve ops-facing env-var names. `populate_by_name=True` is **mandatory** — tests construct via field-name kwargs (`AuthConfig(auth_enabled=True)`); without it Pydantic silently drops the kwarg and the test gets the default value.
 
-**Domain config singletons must be reset between tests.** `tests/conftest.py:reset_process_config` snapshots `agent_settings`, `auth_settings`, `grid_settings`, `packs_settings` and restores at teardown. Adding a new per-domain singleton means extending that fixture; otherwise test mutations leak across the xdist suite (typical symptom: routes return 401 instead of 404 because a stale `auth_enabled=True` persists).
+**Domain config singletons must be reset between tests.** `tests/conftest.py:reset_process_config` snapshots `agent_settings`, `auth_settings`, `packs_settings` and restores at teardown. Adding a new per-domain singleton means extending that fixture; otherwise test mutations leak across the xdist suite (typical symptom: routes return 401 instead of 404 because a stale `auth_enabled=True` persists).
 
 ### Driver-pack model (the most important architectural rule)
 **Core orchestration must stay driver-agnostic.** Platform-specific behavior — discovery probes, readiness fields, lifecycle actions, capability defaults, health labels — lives in driver-pack manifests under `driver-packs/curated/` and adapter wheels under `driver-packs/adapters/`.
@@ -103,12 +104,12 @@ If you find yourself adding `if pack_id == "appium-uiautomator2"` in core code, 
 
 ### Host agent lifecycle
 1. Agent registers with manager (`AGENT_MANAGER_URL`) on a periodic refresh.
-2. Backend signals "start node" → agent allocates an Appium port (`AGENT_APPIUM_PORT_RANGE_*`) and a Grid relay port (`AGENT_GRID_NODE_PORT_START`).
-3. Agent spawns `appium` from the runtime venv and a Python Grid relay node pointed at `AGENT_GRID_HUB_URL`.
+2. Backend signals "start node" → agent allocates an Appium port (`AGENT_APPIUM_PORT_RANGE_*`).
+3. Agent spawns `appium` from the runtime venv. There is no Grid relay node; the agent only manages the per-device Appium process.
 4. Health checks watch ADB / driver viability and gracefully terminate the Appium process when the device disappears.
-5. Backend `node_health_loop` and `device_connectivity_loop` reconcile what the agent reports against DB state.
+5. Backend `node_health_loop` and `device_connectivity_loop` reconcile what the agent reports against DB state, using direct-to-Appium probes.
 
-Sessions go **directly to the Grid hub** (`:4444`); the manager does not proxy WebDriver traffic. The manager owns reservations, run lifecycle, and capability matching; the hub owns request routing.
+Sessions go client → **Rust router on `:4444`** → directly to Appium on the device host; the manager does not proxy WebDriver traffic. The router calls the backend's internal grid API (`/internal/grid/*` in `app/grid/router_internal.py`) to allocate a device, then proxies W3C WebDriver commands straight to the allocated Appium. The manager owns reservations, run lifecycle, allocation/queueing, and capability matching.
 
 ### Device row locking
 Any code that writes `Device.operational_state` or `Device.lifecycle_policy_state` MUST acquire the row lock first via `app.devices.locking.lock_device` (or `lock_devices` for batch) inside the same transaction. Routers should use `get_device_for_update_or_404` for state-mutating endpoints. Background loops (`device_connectivity`, `node_health`, `session_sync`, `session_viability`) commit per device after the locked write window. The leader advisory lock alone is NOT sufficient — API mutators run on every worker and bypass it.

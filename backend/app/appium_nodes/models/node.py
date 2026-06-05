@@ -32,7 +32,6 @@ class AppiumNode(Base):
         UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     port: Mapped[int] = mapped_column(Integer, nullable=False)
-    grid_url: Mapped[str] = mapped_column(String, nullable=False)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     container_id: Mapped[str | None] = mapped_column(String, nullable=True)
     active_connection_target: Mapped[str | None] = mapped_column(String, nullable=True)

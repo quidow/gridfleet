@@ -172,7 +172,6 @@ async def test_start_node_already_running(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="emulator-5554",
                 desired_state=AppiumDesiredState.running,
@@ -207,7 +206,6 @@ async def test_start_node_recovers_down_but_desired_running_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=None,
                 active_connection_target=None,
                 desired_state=AppiumDesiredState.running,
@@ -244,7 +242,6 @@ async def test_stop_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
@@ -287,7 +284,6 @@ async def test_restart_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -322,7 +318,6 @@ async def test_restart_node_converges_immediately(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target=connection_target,
                 desired_state=AppiumDesiredState.running,
@@ -414,7 +409,6 @@ async def test_restart_node_clears_stale_recovery_suppression(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -570,7 +564,6 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
             AppiumNode(
                 device_id=uuid.UUID(device["id"]),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -627,7 +620,6 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,

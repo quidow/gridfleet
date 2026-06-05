@@ -31,7 +31,6 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,

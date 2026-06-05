@@ -24,6 +24,7 @@ appium_driver:
   known_bad: []
 insecure_features:
   - uiautomator2:chromedriver_autodownload
+  - session_discovery
 platforms:
   - id: android_tv
     display_name: "Android TV"

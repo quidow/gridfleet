@@ -46,7 +46,6 @@ if TYPE_CHECKING:
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
@@ -68,16 +67,6 @@ class NodeHealthCheckRequest:
     observed_active_connection_target: str | None
 
 
-def _grid_registration_grace_active(node: AppiumNode, *, settings: SettingsReader) -> bool:
-    started_at = node.started_at
-    if started_at is None:
-        return False
-    if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=UTC)
-    age_seconds = (datetime.now(UTC) - started_at).total_seconds()
-    return 0 <= age_seconds < int(settings.get("appium.startup_timeout_sec"))
-
-
 class NodeHealthService:
     def __init__(
         self,
@@ -86,7 +75,6 @@ class NodeHealthService:
         settings: SettingsReader,
         pool: AgentHttpPool,
         circuit_breaker: CircuitBreakerProtocol,
-        grid: GridServiceProtocol,
         recovery_control: DeviceRecoveryControl,
         health: DeviceNodeHealthWriter,
         incidents: LifecycleIncidentRecorder,
@@ -95,7 +83,6 @@ class NodeHealthService:
         self._settings = settings
         self._pool = pool
         self._circuit_breaker = circuit_breaker
-        self._grid = grid
         self._recovery_control = recovery_control
         self._health = health
         self._incidents = incidents
@@ -159,11 +146,10 @@ class NodeHealthService:
                 for request in requests
             ]
         )
-        grid_device_ids = self._grid.available_node_device_ids(await self._grid.get_status())
 
-        # Fence: probes (asyncio.gather above) and Grid /status are slow external
-        # calls. If another backend took leadership while we awaited them, drop
-        # all writes from this cycle.
+        # Fence: probes (asyncio.gather above) are slow external calls. If
+        # another backend took leadership while we awaited them, drop all
+        # writes from this cycle.
         await assert_current_leader(db, settings=self._settings)
 
         for request, result in zip(requests, results, strict=True):
@@ -182,7 +168,6 @@ class NodeHealthService:
                 request.node,
                 locked_device,
                 result=result,
-                grid_device_ids=grid_device_ids,
                 observed_port=request.observed_port,
                 observed_pid=request.observed_pid,
                 observed_active_connection_target=request.observed_active_connection_target,
@@ -266,7 +251,6 @@ class NodeHealthService:
         device: Device,
         *,
         result: ProbeResult,
-        grid_device_ids: set[str] | None,
         observed_port: int | None = None,
         observed_pid: int | None = None,
         observed_active_connection_target: str | None = None,
@@ -294,44 +278,13 @@ class NodeHealthService:
             return
 
         if result.status == "indeterminate":
-            if grid_device_ids is None or str(device.id) in grid_device_ids:
-                return
-            if _grid_registration_grace_active(node, settings=self._settings):
-                return
-            # The hub answered and no longer lists this device: grid absence
-            # is primary evidence of a dead node even though the agent probe
-            # is inconclusive (the agent host may be down — exactly when the
-            # hub's word is the only one left to go on).
-            healthy = False
-            logger.warning(
-                "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",
-                device.name,
-                node.port,
-            )
-        else:
-            healthy = result.status == "ack"
+            # Indeterminate-probe veto: a network error against the agent is
+            # inconclusive evidence. Never count it as a failure and never
+            # drive recovery from it — only positive probe evidence
+            # (``ack``/``refused``) moves the node's health state.
+            return
 
-        if healthy and grid_device_ids is not None and str(device.id) not in grid_device_ids:
-            if _grid_registration_grace_active(node, settings=self._settings):
-                logger.info(
-                    "Node health check for device %s (port %d) is waiting for Selenium Grid registration",
-                    device.name,
-                    node.port,
-                )
-                await self._health.apply_node_state_transition(
-                    db,
-                    device,
-                    health_running=None,
-                    health_state=None,
-                    mark_offline=False,
-                )
-                return
-            healthy = False
-            logger.warning(
-                "Node health check failed for device %s (port %d): relay is not registered in Selenium Grid",
-                device.name,
-                node.port,
-            )
+        healthy = result.status == "ack"
 
         if healthy:
             if locked_node.consecutive_health_failures > 0:
@@ -430,11 +383,10 @@ class NodeHealthLoop:
     async def run(self) -> None:
         """Background loop that checks Appium node health.
 
-        Wakes on either the doorbell (set by the hub event-bus subscriber
-        on ``node-added`` / ``node-removed``) or the registry-configured
-        timeout, whichever comes first. The poll continues to run as a
-        drift reconciler against any bus event that was missed (hub
-        restart, network partition, slow joiner).
+        Wakes on either the doorbell (``wake()`` — currently no production
+        caller since the hub event-bus subscriber was removed; kept for a
+        future direct-observation trigger) or the registry-configured
+        timeout, whichever comes first. The poll runs as a drift reconciler.
         """
         node_health = self._services.node_health
         while True:

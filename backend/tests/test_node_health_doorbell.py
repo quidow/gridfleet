@@ -9,7 +9,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 from app.appium_nodes.services.node_health import NodeHealthService
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -19,7 +19,6 @@ def _make_service() -> NodeHealthService:
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=make_fake_grid(),
         recovery_control=Mock(),
         health=Mock(),
         incidents=Mock(),

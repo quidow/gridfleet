@@ -30,7 +30,6 @@ async def test_reconciler_does_not_stop_node_during_verification(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,
@@ -89,7 +88,6 @@ async def test_reconciler_does_not_stop_emulator_node_reporting_live_serial(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             active_connection_target="emulator-5554",
             desired_state=AppiumDesiredState.running,

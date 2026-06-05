@@ -50,7 +50,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     appium_node: {
       id: 'node-1',
       port: 4723,
-      grid_url: 'http://hub:4444',
       pid: 100,
       container_id: null,
       active_connection_target: 'device-1',

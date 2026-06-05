@@ -10,7 +10,7 @@ See ``.superpowers/specs/2026-05-20-agent-bug-audit.md`` (Bug 10).
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from agent_app.appium.process import AppiumProcessManager
 from agent_app.pack.runtime_registry import RuntimeRegistry
@@ -32,13 +32,11 @@ async def test_start_with_stop_pending_preserves_stop_intent(monkeypatch: pytest
         return fake_proc
 
     monkeypatch.setattr(manager, "_start_appium_server", fake_start_appium_server)
-    monkeypatch.setattr(manager, "_start_grid_node_service", AsyncMock())
 
     await manager.start(
         connection_target="dev-1",
         platform_id="android_mobile",
         port=4723,
-        grid_url="http://hub:4444",
         pack_id="pack-1",
         stop_pending=True,
     )

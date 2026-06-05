@@ -8,12 +8,13 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
 from app.devices.models import DeviceOperationalState
+from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
-from app.grid.service import GridService
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs import service as run_service
@@ -32,7 +33,7 @@ from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service, make_fake_grid
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -41,16 +42,14 @@ RUN_RELEASE_MODULE = "app.runs.service_lifecycle_release"
 RUN_LOOKUP_MODULE = "app.runs.service_reservation"
 
 _settings = FakeSettingsReader({})
-_grid = GridService(settings=_settings)
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus, settings=_settings)
 _query_svc = RunQueryService(capability=DeviceCapabilityService())
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
-    grid=_grid,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=_release_svc)
+_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 _failure_svc = RunFailureService(
     publisher=event_bus,
     settings=_settings,
@@ -294,7 +293,7 @@ async def test_run_terminal_transition_paths(
     mock_release.release_devices = AsyncMock(return_value=[])
     mock_release.clear_desired_grid_run_id_for_run = AsyncMock()
     mock_release.complete_deferred_stops_post_commit = AsyncMock()
-    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, grid=_grid, release=mock_release)
+    lifecycle = RunLifecycleService(publisher=event_bus, settings=_settings, release=mock_release)
 
     active = TestRun(
         name="complete-me",
@@ -533,15 +532,28 @@ async def test_mark_running_sessions_released_success_path(
         operational_state=DeviceOperationalState.busy,
     )
     run = await create_reserved_run(db_session, name="release-session-run", devices=[device], state=RunState.cancelled)
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="",
+            )
+        )
     session = Session(session_id="release-success", device_id=device.id, run_id=run.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
 
-    # Use a fake grid that successfully terminates sessions.
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session",
+        AsyncMock(return_value=True),
+    )
     release_with_fake_grid = RunReleaseService(
         publisher=event_bus,
         settings=_settings,
-        grid=make_fake_grid(),
         deferred_stop=AsyncMock(),
     )
     await release_with_fake_grid._mark_running_sessions_released(

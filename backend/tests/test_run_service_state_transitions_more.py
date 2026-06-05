@@ -38,13 +38,11 @@ def _mock_release() -> AsyncMock:
 
 
 def _make_lifecycle(release: AsyncMock | None = None) -> RunLifecycleService:
-    from app.grid.service import GridService
     from app.settings.service import SettingsService
 
     settings = SettingsService()
-    grid = GridService(settings=settings)
     rel = release if release is not None else _mock_release()
-    return RunLifecycleService(publisher=event_bus, settings=settings, grid=grid, release=rel)
+    return RunLifecycleService(publisher=event_bus, settings=settings, release=rel)
 
 
 async def test_signal_active_and_device_session_state_branches(monkeypatch: pytest.MonkeyPatch) -> None:
