@@ -53,6 +53,7 @@ export const SESSION_STATUS_LABELS: Record<SessionStatus, string> = {
   passed: 'Passed',
   failed: 'Failed',
   error: 'Error',
+  pending: 'Pending',
 };
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
