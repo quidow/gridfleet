@@ -368,8 +368,7 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=30,
         description=(
-            "Drift-reconciler interval. The leader-owned bus subscriber drives "
-            "real-time session sync; this poll only fixes any state the bus missed."
+            "Interval of the direct-to-Appium session observation sweep (liveness probes and orphan-session cleanup)."
         ),
         min_value=1,
         max_value=300,

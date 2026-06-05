@@ -1,4 +1,4 @@
-"""Registry entries covering the grid event-bus subscriber."""
+"""Registry entries covering the grid allocation/session-sync knobs."""
 
 from __future__ import annotations
 
