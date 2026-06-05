@@ -86,3 +86,23 @@ async def test_event_bus_receive_loop_continues_after_handler_error() -> None:
     with pytest.raises(asyncio.CancelledError):
         await bus._receive_loop()
     assert received == [event]
+
+
+@pytest.mark.asyncio
+async def test_stop_closes_publish_socket_with_nonzero_linger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D2: a terminal NODE_REMOVED published microseconds before stop() was
+    silently discarded by linger=0, leaving a permanent DRAINING husk on the
+    hub (F-G2). The publish socket must flush with a bounded linger."""
+    bus = EventBus(publish_url="inproc://linger-test", subscribe_url="inproc://linger-test", heartbeat_sec=5.0)
+    await bus.start()
+    assert bus.publish_socket is not None
+    closed_with: list[int] = []
+    real_close = bus.publish_socket.close
+
+    def record_close(linger: int = -1) -> None:
+        closed_with.append(linger)
+        real_close(linger=0)  # don't actually wait in tests
+
+    monkeypatch.setattr(bus.publish_socket, "close", record_close)
+    await bus.stop()
+    assert closed_with == [1000]
