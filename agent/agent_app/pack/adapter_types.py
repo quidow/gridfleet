@@ -87,6 +87,11 @@ class DiscoveryContext(Protocol):
 class HealthContext(Protocol):
     device_identity_value: str
     allow_boot: bool
+    # Expected device identity (serial) for adapters that can verify it at the
+    # probed target; ``None`` when the caller has no confirmed identity.
+    # Adapters must read it via ``getattr(ctx, "expected_identity_value", None)``
+    # so old/new agent-adapter combinations degrade to no verification.
+    expected_identity_value: str | None
     platform_id: str | None
     device_type: str | None
     connection_type: str | None

@@ -53,8 +53,10 @@ class _HealthCtx:
         ip_address: str | None = None,
         ip_ping_timeout_sec: float | None = None,
         ip_ping_count: int | None = None,
+        expected_identity_value: str | None = None,
     ) -> None:
         self.device_identity_value = identity_value
+        self.expected_identity_value = expected_identity_value
         self.allow_boot = allow_boot
         self.platform_id = platform_id
         self.device_type = device_type
@@ -110,6 +112,7 @@ async def adapter_health_check(
     ip_address: str | None = None,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
+    expected_identity_value: str | None = None,
 ) -> dict[str, Any] | None:
     """Dispatch through the loaded adapter; return ``None`` if not available."""
 
@@ -125,6 +128,7 @@ async def adapter_health_check(
         ip_address=ip_address,
         ip_ping_timeout_sec=ip_ping_timeout_sec,
         ip_ping_count=ip_ping_count,
+        expected_identity_value=expected_identity_value,
     )
     results = await _dispatch_health(adapter, ctx)
     return _adapter_health_payload(results)

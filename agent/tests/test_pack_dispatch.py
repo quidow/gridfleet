@@ -52,3 +52,32 @@ async def test_adapter_health_check_threads_ip_ping_fields() -> None:
     assert adapter.last_ctx.ip_address == "10.0.0.7"
     assert adapter.last_ctx.ip_ping_timeout_sec == 1.5
     assert adapter.last_ctx.ip_ping_count == 2
+
+
+@pytest.mark.asyncio
+async def test_adapter_health_check_threads_expected_identity() -> None:
+    adapter = _StubAdapter()
+    registry = _StubRegistry(adapter)
+    await adapter_health_check(
+        adapter_registry=registry,  # type: ignore[arg-type]
+        pack_id="pkg",
+        pack_release="1.0.0",
+        identity_value="10.0.0.5",
+        allow_boot=False,
+        expected_identity_value="SER123",
+    )
+    assert getattr(adapter.last_ctx, "expected_identity_value", None) == "SER123"
+
+
+@pytest.mark.asyncio
+async def test_adapter_health_check_expected_identity_defaults_to_none() -> None:
+    adapter = _StubAdapter()
+    registry = _StubRegistry(adapter)
+    await adapter_health_check(
+        adapter_registry=registry,  # type: ignore[arg-type]
+        pack_id="pkg",
+        pack_release="1.0.0",
+        identity_value="10.0.0.5",
+        allow_boot=False,
+    )
+    assert getattr(adapter.last_ctx, "expected_identity_value", "missing") is None

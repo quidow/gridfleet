@@ -121,6 +121,7 @@ async def pack_device_health_route(
     headless: Annotated[bool, Query()] = True,
     ip_ping_timeout_sec: Annotated[float | None, Query(gt=0)] = None,
     ip_ping_count: Annotated[int | None, Query(ge=1)] = None,
+    identity_value: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
     if adapter_registry is not None:
@@ -136,6 +137,7 @@ async def pack_device_health_route(
             ip_address=ip_address,
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
+            expected_identity_value=identity_value,
         )
         if payload is not None:
             return payload
