@@ -117,7 +117,10 @@ class AllocationService:
         if row is None:
             return
         row.ended_at = datetime.now(UTC)
-        row.status = SessionStatus.passed  # default; pytest helper can override
+        # The router's ended notification carries no outcome (a W3C DELETE has none);
+        # `passed` mirrors the legacy session_sync default. Real outcomes are owned by
+        # run/test reporting, not by session teardown.
+        row.status = SessionStatus.passed
         session_service.queue_session_ended_event(db, row, device=row.device, publisher=self._publisher)
         await db.flush()
         if row.device_id is not None:
@@ -130,6 +133,9 @@ class AllocationService:
             )
 
     async def reap_expired(self, db: DbSession) -> dict[str, int]:
+        # Fails expired claims one by one (each `fail` reconciles + flushes). Batch
+        # size is naturally bounded by the reaper's 5s interval; don't batch unless
+        # that interval grows.
         if self._settings is None:
             raise RuntimeError("AllocationService.reap_expired requires a settings reader")
         claim_window = int(cast("int", self._settings.get("grid.claim_window_sec")))
@@ -222,6 +228,11 @@ class AllocationService:
     async def _older_waiter_matches(
         self, db: DbSession, ticket: GridSessionQueueTicket, stereotype: dict[str, Any]
     ) -> bool:
+        # O(older waiting tickets x their firstMatch count) per allocation attempt.
+        # Deliberately unbounded: any LIMIT would let a younger ticket jump tickets
+        # beyond the cap, breaking the FIFO invariant. Queue depth is naturally
+        # bounded by grid.queue_timeout_sec reaping; revisit only if queue depth
+        # metrics ever show this dominating allocation latency.
         stmt = (
             select(GridSessionQueueTicket)
             .where(
@@ -263,6 +274,15 @@ class AllocationService:
             return None
         target = node_target(locked)
         if target is None:
+            # An `available` device with no node/host association is broken host/agent
+            # state: the ticket keeps waiting while the device looks claimable.
+            logger.warning(
+                "grid_allocation_no_node_target device=%s ticket=%s (appium_node=%s host=%s)",
+                locked.id,
+                ticket.id,
+                locked.appium_node is not None,
+                locked.host is not None,
+            )
             return None
         row = Session(
             id=uuid.uuid4(),
@@ -307,7 +327,10 @@ async def pack_slot_stereotype(db: DbSession, device: Device) -> dict[str, Any]:
 
 
 def node_target(device: Device) -> str | None:
-    """Direct Appium-node base URL: host address + relay node port.
+    """Direct Appium base URL: host address + the Appium process port.
+
+    ``AppiumNode.port`` is the agent-reported Appium server port (the agent's
+    ``running_nodes[*].port``), NOT the grid relay's node port.
 
     ``lock_device`` eager-loads ``appium_node`` and ``host``. Host address uses
     ``host.ip`` — the same expression node registration uses (reconciler_agent).

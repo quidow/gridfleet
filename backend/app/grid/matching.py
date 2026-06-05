@@ -1,8 +1,10 @@
 """W3C new-session capability merge and slot matching.
 
 The router forwards the raw new-session body; this module is the only place that
-reads it. Matching is identity-only: Appium remains the W3C authority for
-everything else (spec §2).
+reads it. Matching is identity-only — with one deliberate exception: ``platformName``
+is matched as a case-insensitive constraint (W3C clients send "Android"/"android"/
+"iOS" interchangeably). Appium remains the W3C authority for everything else
+(spec §2).
 """
 
 from typing import Any
