@@ -98,7 +98,11 @@ class EventBus:
                 self._subscriber_task = None
         finally:
             if self._publish_socket is not None:
-                self._publish_socket.close(linger=0)
+                # ms; D2: NODE_REMOVED published microseconds before close was
+                # discarded by linger=0, leaving permanent DRAINING husks on
+                # the hub (F-G2). Subscribe socket keeps linger=0 — nothing
+                # outbound is queued on it.
+                self._publish_socket.close(linger=1000)
                 self._publish_socket = None
             if self._subscribe_socket is not None:
                 self._subscribe_socket.close(linger=0)
@@ -180,5 +184,7 @@ class EventBus:
 
     def _recreate_publish_socket(self) -> None:
         if self._publish_socket is not None:
-            self._publish_socket.close(linger=0)
+            # Publish-socket retry path: same D2 rationale as stop() — don't
+            # drop events queued microseconds before the close.
+            self._publish_socket.close(linger=1000)
         self._open_publish_socket()

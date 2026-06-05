@@ -40,6 +40,7 @@ from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.event_bus import EventBus
 from agent_app.grid_node.protocol import build_slots
 from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.stray_sweep import sweep_stray_registrations
 from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
 from agent_app.grid_url import get_local_ip
 from agent_app.observability import sanitize_log_value
@@ -948,6 +949,22 @@ class AppiumProcessManager:
         try:
             await handle.start()
             await handle.wait_until_running()
+            if handle.service is not None:
+                # Best-effort cleanup of hub registrations pointing at this
+                # host with no live relay (husks from crashes or the pre-fix
+                # F-G2 wedge); see ``stray_sweep`` module docstring.
+                live_ids = {
+                    h.service.node_id
+                    for h in self._grid_supervisors.values()
+                    if h.service is not None and h.is_running()
+                } | {config.node_id}
+                own_prefix = self._grid_external_url(0).rsplit(":", 1)[0] + ":"
+                await sweep_stray_registrations(
+                    hub_status_url=agent_settings.grid_node.grid_hub_url,
+                    bus=handle.service.bus_for_sweep(),
+                    own_uri=lambda uri: uri.startswith(own_prefix),
+                    live_node_ids=live_ids,
+                )
             # Defense in depth: a freshly constructed ``NodeState`` always
             # initializes ``_drain=False``. If the backend asked us to start
             # this relay with sessions blocked (cooldown / maintenance carried
@@ -1007,21 +1024,6 @@ class AppiumProcessManager:
         if port not in self._info:
             raise DeviceNotFoundError(f"No managed Appium process is running on port {port}")
 
-        service = handle.service
-        if accepting_new_sessions:
-            run_id_value = str(grid_run_id) if grid_run_id is not None else "free"
-            await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
-        else:
-            # Cooldown / maintenance: block new sessions at the hub without
-            # republishing the node. The full DRAIN → REMOVED → ADDED cycle in
-            # ``reregister_with_caps_update`` would re-`NODE_ADDED` the relay
-            # and the hub would resume routing immediately. ``grid_run_id`` is
-            # intentionally not applied here — run-id rotation only happens on
-            # the ``accepting_new_sessions=True`` path; a draining node is on
-            # its way to stop or recovery and re-registers fresh on the next
-            # start.
-            await service.drain_to_block_new_sessions()
-
         spec = self._launch_specs.get(port)
         if spec is not None:
             self._launch_specs[port] = AppiumLaunchSpec(
@@ -1059,9 +1061,27 @@ class AppiumProcessManager:
             # silently undoing the cooldown. See ``_start_grid_node_service``
             # for the defense-in-depth that re-drains a fresh relay when the
             # launch spec carries ``accepting_new_sessions=False``.
+            # Recording spec + bookkeeping BEFORE applying to the live service
+            # is deliberate (D4): a failed apply self-heals via the next
+            # converge/reconfigure instead of wedging on a stale spec.
             self._stop_pending_ports.add(port)
-            return
-        self._stop_pending_ports.discard(port)
+        else:
+            self._stop_pending_ports.discard(port)
+
+        service = handle.service
+        if accepting_new_sessions:
+            run_id_value = str(grid_run_id) if grid_run_id is not None else "free"
+            await service.reregister_with_caps_update(updates={"gridfleet:run_id": run_id_value})
+        else:
+            # Cooldown / maintenance: block new sessions at the hub without
+            # republishing the node. The full DRAIN → REMOVED → ADDED cycle in
+            # ``reregister_with_caps_update`` would re-`NODE_ADDED` the relay
+            # and the hub would resume routing immediately. ``grid_run_id`` is
+            # intentionally not applied here — run-id rotation only happens on
+            # the ``accepting_new_sessions=True`` path; a draining node is on
+            # its way to stop or recovery and re-registers fresh on the next
+            # start.
+            await service.drain_to_block_new_sessions()
 
     async def _cleanup_started_appium_after_grid_node_failure(
         self, port: int, appium_proc: asyncio.subprocess.Process

@@ -9,6 +9,8 @@ from agent_app._supervision import ExponentialBackoff
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agent_app.grid_node.hub_registration import EventPublisher
+
 
 class GridNodeServiceProtocol(Protocol):
     @property
@@ -36,6 +38,9 @@ class GridNodeServiceProtocol(Protocol):
         raise NotImplementedError
 
     async def drain_to_block_new_sessions(self) -> None:
+        raise NotImplementedError
+
+    def bus_for_sweep(self) -> EventPublisher:
         raise NotImplementedError
 
 
@@ -167,19 +172,12 @@ class GridNodeSupervisorHandle:
                 await self._clock.sleep(backoff.next_delay())
                 continue
             self._running.set()
-            if service.snapshot().get("requested_stop") is True:
-                await service.stop()
-                self._running.clear()
-                self._stopped.set()
-                return
             try:
                 while not self._stop_requested.is_set():
                     await self._clock.sleep(self._heartbeat_sec)
                     if self._stop_requested.is_set():
                         break
                     await service.run_heartbeat_once()
-                    if service.snapshot().get("requested_stop") is True:
-                        break
             except Exception:
                 # A heartbeat-time failure (zmq disconnect, hub flap, transient
                 # network blip) used to terminate the supervisor and leave the
@@ -200,9 +198,8 @@ class GridNodeSupervisorHandle:
                     return
                 await self._clock.sleep(backoff.next_delay())
                 continue
-            await service.stop()
-            self._running.clear()
-            self._stopped.set()
+            # The inner loop exits only on _stop_requested; stop() owns the
+            # service teardown (the relay never self-stops on drain anymore).
             return
 
 

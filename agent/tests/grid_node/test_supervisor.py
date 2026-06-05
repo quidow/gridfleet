@@ -114,7 +114,11 @@ async def test_supervisor_reports_errored_when_factory_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_supervisor_calls_stop_when_service_requests_stop() -> None:
+async def test_supervisor_ignores_legacy_requested_stop_snapshot() -> None:
+    """F-G2/D1: the supervisor used to stop the service when its snapshot
+    reported requested_stop=True (the heartbeat drain self-stop). The relay
+    now stays up — only a backend-driven handle.stop() or the error budget
+    may stop it."""
     services: list[RecordingService] = []
 
     def factory() -> RecordingService:
@@ -124,7 +128,12 @@ async def test_supervisor_calls_stop_when_service_requests_stop() -> None:
 
     handle = start_grid_node_supervisor(factory=factory, clock=FakeClock())
     await handle.start()
-    await handle.wait_until_stopped()
+    await handle.wait_until_running()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert handle.is_running() is True
+    assert services[0].stop_called is False
+    await handle.stop()
     assert services[0].stop_called is True
 
 

@@ -32,6 +32,7 @@ from agent_app.appium.process import (
     sanitize_appium_driver_capabilities,
 )
 from agent_app.grid_node.config import GridNodeConfig
+from agent_app.grid_node.hub_registration import EventPublisher
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.adapter_types import LifecycleActionResult, SubprocessEnvContribution
 from agent_app.tools.paths import _parse_node_version
@@ -182,6 +183,13 @@ class ReconfigurableGridNodeService:
 
     async def drain_to_block_new_sessions(self) -> None:
         self.drain_only_calls += 1
+
+    def bus_for_sweep(self) -> EventPublisher:
+        class _NullBus:
+            async def publish(self, event: dict[str, object]) -> None:
+                pass
+
+        return _NullBus()
 
 
 class ReconfigurableGridNodeHandle(RecordingGridNodeHandle):
@@ -368,6 +376,10 @@ async def test_start_rolls_back_appium_when_grid_node_start_fails() -> None:
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
         patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
+        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
+        # patching it here keeps these start tests off the network (shared httpx
+        # client must not bind to this test's event loop).
+        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
         pytest.raises(RuntimeError, match="grid node failed"),
     ):
         await manager.start(
@@ -576,6 +588,10 @@ async def test_start_with_accepting_false_drains_fresh_relay() -> None:
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
         patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
+        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
+        # patching it here keeps these start tests off the network (shared httpx
+        # client must not bind to this test's event loop).
+        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
     ):
         await manager.start(
             connection_target="device-cooldowned",
@@ -605,6 +621,10 @@ async def test_start_with_accepting_true_does_not_drain() -> None:
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc),
         patch("agent_app.appium.process.start_grid_node_supervisor", return_value=handle),
+        # The stray-registration sweep is unit-tested in grid_node/test_stray_sweep.py;
+        # patching it here keeps these start tests off the network (shared httpx
+        # client must not bind to this test's event loop).
+        patch("agent_app.appium.process.sweep_stray_registrations", new_callable=AsyncMock, return_value=0),
     ):
         await manager.start(
             connection_target="device-ready",
@@ -2037,6 +2057,47 @@ async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -
     await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
     assert service.drain_only_calls == 1
     assert 4723 in manager._stop_pending_ports
+
+
+async def test_reconfigure_records_spec_before_service_call() -> None:
+    """D4: a reconfigure whose service call raises must still persist the new
+    accepting_new_sessions/stop_pending/grid_run_id into the launch spec —
+    otherwise a fresh relay start re-drains itself off the stale spec and the
+    wedge self-sustains (TR10)."""
+
+    class RaisingService(ReconfigurableGridNodeService):
+        async def reregister_with_caps_update(
+            self, *, updates: dict[str, object], drain_grace_sec: float | None = None
+        ) -> None:
+            raise RuntimeError("event bus is not started")
+
+    manager = AppiumProcessManager()
+    service = RaisingService()
+    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        accepting_new_sessions=False,  # stale cooldown spec
+        stop_pending=True,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._stop_pending_ports.add(4723)
+
+    with pytest.raises(RuntimeError, match="event bus is not started"):
+        await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
+
+    assert manager._launch_specs[4723].accepting_new_sessions is True
+    assert manager._launch_specs[4723].stop_pending is False
+    assert 4723 not in manager._stop_pending_ports
 
 
 async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() -> None:
