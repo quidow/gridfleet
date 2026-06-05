@@ -47,7 +47,23 @@ impl ProxyHttp for GridRouter {
     async fn request_filter(&self, session: &mut Session, ctx: &mut RouterCtx) -> Result<bool> {
         let method = session.req_header().method.as_str().to_string();
         let path = session.req_header().uri.path().to_string();
-        match classify(&method, &path) {
+        let class = classify(&method, &path);
+        let label = match &class {
+            RouteClass::NewSession => "new_session",
+            RouteClass::SessionCommand { .. } => "command",
+            RouteClass::DeleteSession { .. } => "delete",
+            // Plan classes are (new_session|command|delete|local); healthz/status/
+            // metrics/unknown are all local-terminated, so map them to "local".
+            RouteClass::Healthz
+            | RouteClass::Status
+            | RouteClass::Metrics
+            | RouteClass::Unknown => "local",
+        };
+        crate::metrics::metrics()
+            .commands_total
+            .with_label_values(&[label])
+            .inc();
+        match class {
             RouteClass::Healthz => respond(session, 200, b"ok".to_vec(), "text/plain").await,
             RouteClass::Status => {
                 respond(session, 200, w3c::status_body(), "application/json").await
@@ -103,6 +119,9 @@ impl ProxyHttp for GridRouter {
             if (200..300).contains(&status) || status == 404 {
                 if let Some(session_id) = ctx.session_id.clone() {
                     self.routes.remove(&session_id);
+                    crate::metrics::metrics()
+                        .active_routes
+                        .set(self.routes.len() as i64);
                     let backend = self.backend.clone();
                     tokio::spawn(async move {
                         if let Err(e) = backend.session_ended(&session_id).await {
@@ -114,6 +133,20 @@ impl ProxyHttp for GridRouter {
         }
         Ok(())
     }
+
+    async fn logging(&self, _session: &mut Session, _e: Option<&Error>, ctx: &mut RouterCtx) {
+        crate::metrics::metrics()
+            .request_duration
+            .observe(ctx.started.elapsed().as_secs_f64());
+    }
+}
+
+/// Increment the allocate-outcome counter (allocated|queued|invalid|timeout|error).
+fn alloc_outcome(outcome: &str) {
+    crate::metrics::metrics()
+        .allocate_outcomes
+        .with_label_values(&[outcome])
+        .inc();
 }
 
 impl GridRouter {
@@ -165,6 +198,9 @@ impl GridRouter {
                     .filter_map(|(s, t)| Some((s.clone(), Upstream::parse(t)?)))
                     .collect(),
             );
+            crate::metrics::metrics()
+                .active_routes
+                .set(self.routes.len() as i64);
         }
         self.routes.get(session_id)
     }
@@ -207,9 +243,16 @@ impl GridRouter {
                 Ok(crate::backend::AllocateOutcome::Allocated {
                     allocation_id,
                     target,
-                }) => break (allocation_id, target),
-                Ok(crate::backend::AllocateOutcome::Queued { ticket: t }) => ticket = Some(t),
+                }) => {
+                    alloc_outcome("allocated");
+                    break (allocation_id, target);
+                }
+                Ok(crate::backend::AllocateOutcome::Queued { ticket: t }) => {
+                    alloc_outcome("queued");
+                    ticket = Some(t);
+                }
                 Ok(crate::backend::AllocateOutcome::Invalid { message }) => {
+                    alloc_outcome("invalid");
                     return respond(
                         session,
                         400,
@@ -219,6 +262,7 @@ impl GridRouter {
                     .await;
                 }
                 Ok(crate::backend::AllocateOutcome::QueueTimeout) => {
+                    alloc_outcome("timeout");
                     return respond(
                         session,
                         500,
@@ -231,11 +275,13 @@ impl GridRouter {
                     .await;
                 }
                 Err(e) => {
+                    alloc_outcome("error");
                     log::warn!("allocate call failed, retrying: {e}");
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
             if Instant::now() >= deadline {
+                alloc_outcome("timeout");
                 if let Some(t) = &ticket {
                     let _ = self.backend.cancel_ticket(t).await;
                 }
@@ -280,6 +326,9 @@ impl GridRouter {
                 }
                 if let Some(upstream) = Upstream::parse(&target) {
                     self.routes.insert(&session_id, upstream);
+                    crate::metrics::metrics()
+                        .active_routes
+                        .set(self.routes.len() as i64);
                 } else {
                     log::warn!(
                         "confirmed session {session_id} has unparseable target {target:?}; \

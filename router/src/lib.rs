@@ -4,4 +4,5 @@ pub mod classify;
 pub mod metrics;
 pub mod proxy;
 pub mod routes;
+pub mod tasks;
 pub mod w3c;
