@@ -21,6 +21,7 @@ class AllocateResponse(BaseModel):
     allocation_id: uuid.UUID | None = None
     target: str | None = None
     ticket: uuid.UUID | None = None
+    claim_window_sec: int | None = None
 
 
 class ConfirmRequest(BaseModel):

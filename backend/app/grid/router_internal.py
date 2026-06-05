@@ -94,7 +94,13 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
         if cancelled:
             return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
         if result is not None:
-            return AllocateResponse(status="allocated", allocation_id=result.allocation_id, target=result.target)
+            claim_window_sec = int(cast("int", services.settings.get("grid.claim_window_sec")))
+            return AllocateResponse(
+                status="allocated",
+                allocation_id=result.allocation_id,
+                target=result.target,
+                claim_window_sec=claim_window_sec,
+            )
         if time.monotonic() >= deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             return AllocateResponse(status="queued", ticket=ticket_id)

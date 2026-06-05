@@ -412,11 +412,14 @@ _DEFINITIONS: list[SettingDefinition] = [
         key="grid.claim_window_sec",
         category="grid",
         setting_type="int",
-        default=30,
-        description="How long an allocated (pending) session may remain unconfirmed before it is failed",
+        default=120,
+        description=(
+            "How long an allocated (pending) session may remain unconfirmed before it is failed. "
+            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create."
+        ),
         env_var="GRIDFLEET_GRID_CLAIM_WINDOW_SEC",
         min_value=5,
-        max_value=300,
+        max_value=600,
     ),
     SettingDefinition(
         key="appium.port_range_start",

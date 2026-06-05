@@ -47,6 +47,7 @@ async def test_allocate_immediate_match(client: AsyncClient, seeded_available_de
     assert data["status"] == "allocated"
     assert data["allocation_id"]
     assert data["target"].startswith("http://")
+    assert data["claim_window_sec"] == 120
 
 
 @pytest.mark.db
@@ -62,7 +63,13 @@ async def test_allocate_no_match_queues_and_ticket_is_reusable(
     # pass the ticket back -> still queued, same ticket
     resp2 = await client.post("/internal/grid/allocate", json={"body": _body(platformName="iOS"), "ticket": ticket})
     assert resp2.status_code == 200
-    assert resp2.json() == {"status": "queued", "allocation_id": None, "target": None, "ticket": ticket}
+    assert resp2.json() == {
+        "status": "queued",
+        "allocation_id": None,
+        "target": None,
+        "ticket": ticket,
+        "claim_window_sec": None,
+    }
 
 
 @pytest.mark.db
