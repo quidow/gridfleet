@@ -34,8 +34,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.lifecycle_policy_state import state as policy_state
-from app.devices.services.state_derivation import apply_derived_state
+from app.devices.services.state_derivation import apply_derived_state, device_in_service
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -360,11 +359,7 @@ async def reconcile_device(
         for intent in intents
         if intent.axis == NODE_PROCESS and (intent.expires_at is None or intent.expires_at > now)
     ]
-    if (
-        not active_node_intents
-        and device.verified_at is not None
-        and policy_state(device).get("maintenance_reason") is None
-    ):
+    if not active_node_intents and device_in_service(device):
         intents = [
             *intents,
             DeviceIntent(
@@ -380,18 +375,16 @@ async def reconcile_device(
     reservation_decision = evaluate_reservation([intent for intent in intents if intent.axis == RESERVATION], now)
     recovery_decision = evaluate_recovery([intent for intent in intents if intent.axis == RECOVERY], now)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
-    # Universal session-safety invariant: a graceful-stop intent must never
-    # flip ``desired_state=stopped`` while a client session is active. The
-    # convergence layer's ``stop_pending`` no-op is one safety net; this
-    # downgrade is the second — any future caller that registers a soft stop
-    # (``stop_mode == "graceful"``) is automatically session-safe without
-    # having to repeat the deferred-stop pattern from
-    # ``lifecycle_policy.handle_health_failure``. Hard stops (``stop_mode ==
-    # "hard"``) — operator force-release, bulk operator stop — still execute
-    # immediately; the operator owns that override.
+    # Universal session-safety invariant: only an explicit hard stop
+    # (``stop_mode == "hard"`` — operator force-release, bulk operator stop,
+    # same-priority conflict) may flip ``desired_state=stopped`` while a
+    # client session is active. Graceful stops AND the no-intent stop (a
+    # withdrawn device whose baseline was suppressed, F-G1) defer: the node
+    # keeps running with ``accepting_new_sessions=False`` until the session
+    # ends, then the next reconcile executes the stop.
     if (
         target_state == AppiumDesiredState.stopped
-        and node_decision.stop_mode == "graceful"
+        and node_decision.stop_mode in (None, "graceful")
         and await _device_has_active_client_session(db, device_id)
     ):
         target_state = AppiumDesiredState.running
