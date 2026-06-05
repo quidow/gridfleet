@@ -93,3 +93,16 @@ async def test_sessions_have_last_activity_at(alembic_session: AsyncSession) -> 
         )
     )
     assert "last_activity_at" in {row[0] for row in res.fetchall()}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_grid_session_queue_table_exists(alembic_session: AsyncSession) -> None:
+    res = await alembic_session.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'grid_session_queue' AND table_schema = current_schema()"
+        )
+    )
+    cols = {row[0] for row in res.fetchall()}
+    assert {"id", "requested_body", "status", "session_row_id", "created_at", "updated_at"} <= cols
