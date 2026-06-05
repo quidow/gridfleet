@@ -14,6 +14,8 @@ Accepts WebDriver `POST /session` requests, allocates a device via the backend i
 | `--proxy-timeout` | `300` | Per-command upstream timeout in seconds |
 | `--new-session-timeout` | `330` | Overall cap on a new-session request including queueing, in seconds |
 
+`--backend-auth` is visible in process listings; prefer injecting credentials via container secret mounts / env-based wrappers at deployment time (deployment wiring arrives with the compose integration).
+
 ## Getting started
 
 ```bash

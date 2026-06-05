@@ -1,4 +1,11 @@
 //! In-memory session_id -> Appium target map. The router's entire state (spec §2).
+//!
+//! `std::sync::RwLock` is deliberate: guards are held only for non-awaiting map
+//! operations (microseconds), so the executor is never blocked across awaits.
+//! (`tokio::sync::RwLock` is for guards held across await points, which never
+//! happens here.) `.expect("poisoned")` is deliberate too — a poisoned lock
+//! means a panic mid-write, and the correct recovery is a process restart by the
+//! container supervisor, not limping on with possibly-inconsistent routes.
 
 use std::collections::HashMap;
 use std::sync::RwLock;

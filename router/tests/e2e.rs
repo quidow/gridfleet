@@ -1,10 +1,5 @@
 //! Black-box test: launches the compiled router binary against stub Appium and
 //! stub backend upstreams and asserts the command-path routing contract.
-//!
-//! NOTE: these tests require the server bootstrap added in Task 7. Until then
-//! the binary does not serve, so `spawn_router` times out waiting for /healthz
-//! and the tests fail with "router did not become healthy". That failure mode
-//! is expected mid-stack; the tests go green in Task 7.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -119,7 +114,7 @@ fn spawn_router(backend_addr: &str) -> Router {
         }
         assert!(
             Instant::now() < deadline,
-            "router did not become healthy (expected until Task 7 bootstrap lands)"
+            "router did not become healthy within the startup window"
         );
         thread::sleep(Duration::from_millis(50));
     }
@@ -179,6 +174,22 @@ fn proxies_session_commands_via_rebuilt_routes() {
         }
         other => panic!("expected 404, got {other:?}"),
     }
+}
+
+#[test]
+fn serves_metrics() {
+    let appium_addr = spawn_appium();
+    let (backend_addr, _hits) = spawn_backend(appium_addr);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    let resp = ureq::get(&format!("{base}/metrics")).call().unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.into_string().unwrap();
+    assert!(
+        body.contains("gridfleet_router"),
+        "metrics body missing prefix: {body}"
+    );
 }
 
 #[test]
@@ -571,9 +582,13 @@ fn ws_echo_conn(mut stream: TcpStream) {
         }
     }
     let Some(key) = ws_key else { return };
-    let accept = base64(&sha1(
-        format!("{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes(),
-    ));
+    let accept = base64(
+        ring::digest::digest(
+            &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
+            format!("{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes(),
+        )
+        .as_ref(),
+    );
     let response = format!(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
     );
@@ -595,57 +610,6 @@ fn ws_echo_conn(mut stream: TcpStream) {
     let mut frame = vec![0x81u8, reply.len() as u8];
     frame.extend_from_slice(reply.as_bytes());
     stream.write_all(&frame).unwrap();
-}
-
-fn sha1(data: &[u8]) -> [u8; 20] {
-    // Minimal SHA-1 (test-only; not security-sensitive here).
-    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
-    let ml = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-    msg.push(0x80);
-    while msg.len() % 64 != 56 {
-        msg.push(0);
-    }
-    msg.extend_from_slice(&ml.to_be_bytes());
-    for chunk in msg.chunks(64) {
-        let mut w = [0u32; 80];
-        for (i, word) in chunk.chunks(4).enumerate() {
-            w[i] = u32::from_be_bytes(word.try_into().unwrap());
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e) = (h[0], h[1], h[2], h[3], h[4]);
-        for (i, wi) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
-                20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
-                _ => (b ^ c ^ d, 0xCA62C1D6),
-            };
-            let temp = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*wi);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = temp;
-        }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-    }
-    let mut out = [0u8; 20];
-    for (i, word) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
-    }
-    out
 }
 
 fn base64(data: &[u8]) -> String {

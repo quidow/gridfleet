@@ -134,10 +134,15 @@ impl ProxyHttp for GridRouter {
         Ok(())
     }
 
-    async fn logging(&self, _session: &mut Session, _e: Option<&Error>, ctx: &mut RouterCtx) {
+    async fn logging(&self, _session: &mut Session, e: Option<&Error>, ctx: &mut RouterCtx) {
         crate::metrics::metrics()
             .request_duration
             .observe(ctx.started.elapsed().as_secs_f64());
+        // A DELETE that errored before a response means response_filter never
+        // ran, so the route was NOT pruned (it lingers until the next reconcile).
+        if ctx.is_delete && e.is_some() {
+            crate::metrics::metrics().delete_orphaned_total.inc();
+        }
     }
 }
 

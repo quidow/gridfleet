@@ -230,6 +230,20 @@ mod tests {
     }
 
     #[test]
+    fn rfc3339_leap_day() {
+        // date -u -r 1709207696 +%Y-%m-%dT%H:%M:%SZ => 2024-02-29T11:54:56Z
+        let t = UNIX_EPOCH + Duration::from_secs(1_709_207_696);
+        assert_eq!(rfc3339_utc(t), "2024-02-29T11:54:56Z");
+    }
+
+    #[test]
+    fn rfc3339_day_after_leap_day() {
+        // date -u -r 1709251200 +%Y-%m-%dT%H:%M:%SZ => 2024-03-01T00:00:00Z
+        let t = UNIX_EPOCH + Duration::from_secs(1_709_251_200);
+        assert_eq!(rfc3339_utc(t), "2024-03-01T00:00:00Z");
+    }
+
+    #[test]
     fn rfc3339_before_epoch_clamps() {
         let t = UNIX_EPOCH - Duration::from_secs(10);
         assert_eq!(rfc3339_utc(t), "1970-01-01T00:00:00Z");
