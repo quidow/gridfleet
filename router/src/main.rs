@@ -13,19 +13,23 @@ use gridfleet_router::tasks::{spawn_activity_flush, spawn_route_reconcile};
 #[command(name = "gridfleet-router")]
 struct Args {
     /// host:port to listen on for WebDriver traffic, e.g. 0.0.0.0:4444
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_LISTEN")]
     listen: String,
     /// Backend base URL, e.g. http://backend:8000
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_BACKEND")]
     backend: String,
     /// Optional HTTP Basic machine credentials for backend calls: user:pass
-    #[arg(long)]
+    #[arg(long, env = "GRIDFLEET_ROUTER_BACKEND_AUTH")]
     backend_auth: Option<String>,
     /// Per-command upstream timeout in seconds (covers slow Appium commands)
-    #[arg(long, default_value_t = 300.0)]
+    #[arg(long, default_value_t = 300.0, env = "GRIDFLEET_ROUTER_PROXY_TIMEOUT")]
     proxy_timeout: f64,
     /// Overall cap on a new-session request incl. queueing, seconds
-    #[arg(long, default_value_t = 330.0)]
+    #[arg(
+        long,
+        default_value_t = 330.0,
+        env = "GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT"
+    )]
     new_session_timeout: f64,
 }
 
@@ -102,7 +106,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_auth;
+    use super::{parse_auth, Args};
+    use clap::Parser;
 
     #[test]
     fn parses_user_pass() {
@@ -120,5 +125,36 @@ mod tests {
     #[test]
     fn rejects_missing_colon() {
         assert!(parse_auth("nopass").is_err());
+    }
+
+    /// Env vars supply flag values when the corresponding flag is absent from
+    /// argv. Run serially (single thread) to avoid racing other env mutators.
+    #[test]
+    fn env_vars_are_honored() {
+        let vars = [
+            ("GRIDFLEET_ROUTER_LISTEN", "0.0.0.0:4444"),
+            ("GRIDFLEET_ROUTER_BACKEND", "http://backend:8000"),
+            ("GRIDFLEET_ROUTER_BACKEND_AUTH", "alice:s3cr3t"),
+            ("GRIDFLEET_ROUTER_PROXY_TIMEOUT", "120.5"),
+            ("GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT", "200"),
+        ];
+        for (k, v) in vars {
+            // SAFETY: tests in this module run single-threaded relative to
+            // these unique GRIDFLEET_ROUTER_* vars (no other test touches them).
+            unsafe { std::env::set_var(k, v) };
+        }
+
+        let args = Args::try_parse_from(["gridfleet-router"]).expect("parse from env");
+
+        assert_eq!(args.listen, "0.0.0.0:4444");
+        assert_eq!(args.backend, "http://backend:8000");
+        assert_eq!(args.backend_auth.as_deref(), Some("alice:s3cr3t"));
+        assert_eq!(args.proxy_timeout, 120.5);
+        assert_eq!(args.new_session_timeout, 200.0);
+
+        for (k, _) in vars {
+            // SAFETY: same as above.
+            unsafe { std::env::remove_var(k) };
+        }
     }
 }

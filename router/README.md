@@ -14,7 +14,19 @@ Accepts WebDriver `POST /session` requests, allocates a device via the backend i
 | `--proxy-timeout` | `300` | Per-command upstream timeout in seconds |
 | `--new-session-timeout` | `330` | Overall cap on a new-session request including queueing, in seconds |
 
-`--backend-auth` is visible in process listings; prefer injecting credentials via container secret mounts / env-based wrappers at deployment time (deployment wiring arrives with the compose integration).
+## Environment variables
+
+Every flag has an equivalent environment variable, so values never need to appear in the process argv (which is visible to `ps` / `docker inspect`):
+
+| Flag | Environment variable |
+|------|----------------------|
+| `--listen` | `GRIDFLEET_ROUTER_LISTEN` |
+| `--backend` | `GRIDFLEET_ROUTER_BACKEND` |
+| `--backend-auth` | `GRIDFLEET_ROUTER_BACKEND_AUTH` |
+| `--proxy-timeout` | `GRIDFLEET_ROUTER_PROXY_TIMEOUT` |
+| `--new-session-timeout` | `GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT` |
+
+Always pass `--backend-auth` credentials via `GRIDFLEET_ROUTER_BACKEND_AUTH` rather than the command line — env-based credentials stay out of `ps` / `docker inspect`-visible argv.
 
 ## Getting started
 

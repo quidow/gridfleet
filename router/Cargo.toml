@@ -7,7 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 pingora = { version = "0.8", default-features = false, features = ["proxy", "rustls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
