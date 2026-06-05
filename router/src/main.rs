@@ -1,3 +1,6 @@
+#[allow(dead_code)] // wired in Task 5/7
+mod classify;
+
 use clap::Parser;
 
 #[derive(Parser, Debug)]
