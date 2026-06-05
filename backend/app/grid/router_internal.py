@@ -23,7 +23,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbDep
 from app.devices.models import Device
-from app.grid.allocation import AllocationNotPendingError, AllocationResult, AllocationService, node_target
+from app.grid.allocation import (
+    GRID_ALLOCATION_OUTCOME_TOTAL,
+    AllocationNotPendingError,
+    AllocationResult,
+    AllocationService,
+    node_target,
+)
 from app.grid.dependencies import GridServicesDep
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import (
@@ -90,6 +96,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
         if result is not None:
             return AllocateResponse(status="allocated", allocation_id=result.allocation_id, target=result.target)
         if time.monotonic() >= deadline:
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             return AllocateResponse(status="queued", ticket=ticket_id)
         await asyncio.sleep(RETRY_INTERVAL_SEC)
 

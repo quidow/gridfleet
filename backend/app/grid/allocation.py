@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+from prometheus_client import Counter, Gauge
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -32,6 +33,16 @@ from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
+
+GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
+    "gridfleet_grid_allocation_outcome",
+    "Allocation attempt outcomes for new-session requests.",
+    labelnames=("outcome",),  # allocated | queued | invalid | expired | claim_expired
+)
+GRID_QUEUE_DEPTH = Gauge(
+    "gridfleet_grid_queue_depth",
+    "Waiting tickets in grid_session_queue.",
+)
 
 
 class AllocationNotPendingError(Exception):
@@ -133,6 +144,7 @@ class AllocationService:
         pending_failed = 0
         for (session_pk,) in (await db.execute(pending_stmt)).all():
             await self.fail(db, allocation_id=session_pk, message="allocation claim window expired")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="claim_expired").inc()
             pending_failed += 1
 
         tickets_stmt = select(GridSessionQueueTicket).where(
@@ -142,6 +154,7 @@ class AllocationService:
         tickets_expired = 0
         for stale in (await db.execute(tickets_stmt)).scalars():
             stale.status = GridQueueStatus.expired
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired").inc()
             tickets_expired += 1
         await db.flush()
         return {"pending_failed": pending_failed, "tickets_expired": tickets_expired}
@@ -152,6 +165,7 @@ class AllocationService:
         except CapabilityMergeError:
             logger.warning("grid_allocation_invalid_body ticket=%s", ticket.id)
             ticket.status = GridQueueStatus.cancelled
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
             return None
         eligible = await self._eligible_devices(db)
         for device in eligible:
@@ -166,6 +180,7 @@ class AllocationService:
                     continue
                 result = await self._claim(db, ticket=ticket, device=device, candidate=candidate, run_id=run_id)
                 if result is not None:
+                    GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
                     return result
         return None
 
