@@ -2039,6 +2039,47 @@ async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -
     assert 4723 in manager._stop_pending_ports
 
 
+async def test_reconfigure_records_spec_before_service_call() -> None:
+    """D4: a reconfigure whose service call raises must still persist the new
+    accepting_new_sessions/stop_pending/grid_run_id into the launch spec —
+    otherwise a fresh relay start re-drains itself off the stale spec and the
+    wedge self-sustains (TR10)."""
+
+    class RaisingService(ReconfigurableGridNodeService):
+        async def reregister_with_caps_update(
+            self, *, updates: dict[str, object], drain_grace_sec: float | None = None
+        ) -> None:
+            raise RuntimeError("event bus is not started")
+
+    manager = AppiumProcessManager()
+    service = RaisingService()
+    manager._grid_supervisors[4723] = cast("Any", ReconfigurableGridNodeHandle(service))
+    manager._info[4723] = AppiumProcessInfo(port=4723, pid=1, connection_target="dev", platform_id="android")
+    manager._launch_specs[4723] = AppiumLaunchSpec(
+        connection_target="dev",
+        port=4723,
+        plugins=None,
+        extra_caps=None,
+        stereotype_caps=None,
+        accepting_new_sessions=False,  # stale cooldown spec
+        stop_pending=True,
+        session_override=True,
+        device_type=None,
+        ip_address=None,
+        manage_grid_node=False,
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+    )
+    manager._stop_pending_ports.add(4723)
+
+    with pytest.raises(RuntimeError, match="event bus is not started"):
+        await manager.reconfigure(4723, accepting_new_sessions=True, stop_pending=False, grid_run_id=None)
+
+    assert manager._launch_specs[4723].accepting_new_sessions is True
+    assert manager._launch_specs[4723].stop_pending is False
+    assert 4723 not in manager._stop_pending_ports
+
+
 async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() -> None:
     manager = AppiumProcessManager()
     proc = FakeProcess(pid=1)
