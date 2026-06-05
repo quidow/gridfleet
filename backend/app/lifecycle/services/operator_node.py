@@ -29,6 +29,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
+from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -193,6 +194,12 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
+            # An explicit operator start overrides any prior recovery suppression.
+            # request_start already revoked the operator:stop deny intents above;
+            # clear the matching JSON residue so the device stops deriving
+            # recovery_state="suppressed" (presenter "blocked" / "Recovery Paused")
+            # while it is actually running and available.
+            clear_operator_start_suppression(device)
             await self._review.clear_review_required(
                 db, device, reason="Operator started Appium node", source="start_node"
             )

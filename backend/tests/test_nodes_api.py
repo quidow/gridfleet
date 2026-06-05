@@ -15,6 +15,8 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
+    clear_operator_start_suppression,
     set_maintenance_reason,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -441,6 +443,94 @@ async def test_restart_node_clears_stale_recovery_suppression(
 
     await db_session.refresh(locked)
     assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Node restart failed"
+
+
+async def test_start_node_clears_operator_stop_suppression(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    """An explicit operator start must clear the ``recovery_suppressed_reason``
+    residue left behind by a prior operator stop.
+
+    Operator stop registers a sticky RECOVERY-axis deny intent; the recovery
+    loop then records ``recovery_suppressed_reason="Operator stopped the node"``
+    onto ``lifecycle_policy_state``. The start path revokes the deny intent but
+    must also clear the JSON residue, otherwise the device keeps deriving
+    ``lifecycle_policy_summary.state == "suppressed"`` (and ``needs_attention``)
+    while it is actually running and available.
+    """
+    device = await _create_device(db_session, default_host_id, operational_state="available")
+    device_id = device["id"]
+    remote_manager_client.post.return_value = _mock_agent_response(
+        {"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}
+    )
+
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Node health checks recovered",
+            "last_action": "recovery_suppressed",
+            "last_action_at": "2026-05-10T18:00:00+00:00",
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "recovery_suppressed_reason": "Operator stopped the node",
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        },
+    )
+    await db_session.commit()
+
+    # Sanity: the residue derives a suppressed summary before the start.
+    before = await client.get(f"/api/devices/{device_id}")
+    assert before.json()["lifecycle_policy_summary"]["state"] == "suppressed"
+    assert before.json()["needs_attention"] is True
+
+    resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert resp.status_code == 200
+
+    await db_session.refresh(locked)
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "operator_started"
+
+    after = await client.get(f"/api/devices/{device_id}")
+    # Lifecycle no longer derives "suppressed", so it no longer drives
+    # needs_attention. (Any residual attention here is the transient
+    # node-still-starting health signal — pid is not yet observed in this
+    # harness — not the suppression residue this fix targets.)
+    assert after.json()["lifecycle_policy_summary"]["state"] != "suppressed"
+
+
+async def test_clear_operator_start_suppression_preserves_maintenance_tautology(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """The maintenance-hold suppression is governed by the maintenance-exit path,
+    not by node start (start is blocked in maintenance), so it must survive."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
+    )
+    clear_operator_start_suppression(locked)
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
+
+
+async def test_clear_operator_start_suppression_noop_on_clean_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with no suppression/backoff/failure residue emits no action churn."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
+    clear_operator_start_suppression(locked)
+    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
 
 
 async def test_port_allocation_increments(
