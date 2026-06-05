@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
 
+from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -23,6 +24,8 @@ from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.packs.services.capability import render_stereotype
+from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs import service as run_service
 from app.runs.models import RunState
 from app.sessions import service as session_service
@@ -243,7 +246,7 @@ class AllocationService:
         )
         if recheck.first() is not None:
             return None
-        target = _node_target(locked)
+        target = node_target(locked)
         if target is None:
             return None
         row = Session(
@@ -267,7 +270,28 @@ class AllocationService:
         return AllocationResult(allocation_id=row.id, target=target)
 
 
-def _node_target(device: Device) -> str | None:
+async def pack_slot_stereotype(db: DbSession, device: Device) -> dict[str, Any]:
+    """Compose the slot stereotype the relay advertises for *device*.
+
+    Mirrors what ``start_remote_node`` sends to the agent: pack-rendered
+    stereotype (platformName, automationName, manifest filters, ``appium:udid``
+    via device context) merged with the manager-owned routing surface
+    (deviceId + tag fanout) from ``build_grid_stereotype_caps``.
+    """
+    stereotype: dict[str, Any] = {}
+    resolved = resolve_pack_for_device(device)
+    if resolved is not None:
+        try:
+            stereotype = await render_stereotype(
+                db, pack_id=resolved[0], platform_id=resolved[1], device_context=build_device_context(device)
+            )
+        except LookupError:
+            stereotype = {}
+    stereotype.update(build_grid_stereotype_caps(device, pack_stereotype=None))
+    return stereotype
+
+
+def node_target(device: Device) -> str | None:
     """Direct Appium-node base URL: host address + relay node port.
 
     ``lock_device`` eager-loads ``appium_node`` and ``host``. Host address uses

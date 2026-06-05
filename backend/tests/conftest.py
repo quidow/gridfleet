@@ -40,6 +40,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -52,6 +53,7 @@ from app.events.dependencies import get_event_services
 from app.events.event_bus import EventBus
 from app.events.models import SystemEvent
 from app.events.services_container import EventServices
+from app.grid.allocation import AllocationService, pack_slot_stereotype
 from app.grid.dependencies import get_grid_services
 from app.grid.service import GridService
 from app.grid.services_container import GridServices
@@ -646,7 +648,17 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        return GridServices(grid=GridService(settings=settings_service), settings=settings_service, session_factory=sf)
+        return GridServices(
+            grid=GridService(settings=settings_service),
+            settings=settings_service,
+            session_factory=sf,
+            allocation=AllocationService(
+                intent_factory=IntentService,
+                publisher=test_event_bus,
+                stereotype_provider=pack_slot_stereotype,
+                settings=settings_service,
+            ),
+        )
 
     def override_get_pack_services() -> PackServices:
         assert db_session.bind is not None
