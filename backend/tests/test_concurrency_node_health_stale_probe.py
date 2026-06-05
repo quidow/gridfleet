@@ -66,10 +66,6 @@ async def _run_node_health_with_gate(
         await asyncio.wait_for(allow_processing.wait(), timeout=2.0)
         return ProbeResult(status="refused")
 
-    fake_grid = AsyncMock()
-    fake_grid.get_status = AsyncMock(return_value={})
-    fake_grid.available_node_device_ids = Mock(return_value=set())
-
     with (
         patch.object(node_health.NodeHealthService, "_check_node_health", side_effect=unhealthy_probe),
         patch("app.appium_nodes.services.node_health.assert_current_leader"),
@@ -80,7 +76,6 @@ async def _run_node_health_with_gate(
                 settings=FakeSettingsReader({}),
                 pool=Mock(),
                 circuit_breaker=Mock(),
-                grid=fake_grid,
                 recovery_control=AsyncMock(),
                 health=AsyncMock(),
                 incidents=AsyncMock(),

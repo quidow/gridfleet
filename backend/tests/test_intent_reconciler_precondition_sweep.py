@@ -404,7 +404,6 @@ async def test_node_health_registers_node_running_precondition(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),

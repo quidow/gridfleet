@@ -699,7 +699,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
-        _grid_svc = GridService(settings=settings_service)
         return AppiumNodeServices(
             reconciler=ReconcilerService(
                 publisher=test_event_bus,
@@ -719,7 +718,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 settings=settings_service,
                 pool=test_http_pool,
                 circuit_breaker=test_circuit_breaker,
-                grid=_grid_svc,
                 recovery_control=Mock(),
                 health=DeviceHealthService(publisher=test_event_bus),
                 incidents=LifecycleIncidentService(),

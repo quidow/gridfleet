@@ -413,7 +413,6 @@ def compose_app(
                 settings=settings_svc,
                 pool=http_pool,
                 circuit_breaker=circuit_breaker,
-                grid=grid_svc,
                 recovery_control=lifecycle_policy_svc,
                 health=device_health_svc,
                 incidents=incidents_svc,

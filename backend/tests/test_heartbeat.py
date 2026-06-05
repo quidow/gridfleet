@@ -594,18 +594,12 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     ]
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    from unittest.mock import AsyncMock as _AsyncMock
-
-    fake_grid = _AsyncMock()
-    fake_grid.get_status = _AsyncMock(return_value={})
-    fake_grid.available_node_device_ids = Mock(return_value=None)
     with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
         await NodeHealthService(
             publisher=Mock(),
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=fake_grid,
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=Mock()),
             incidents=AsyncMock(),

@@ -189,7 +189,6 @@ async def test_node_health_loop_exits_on_leadership_loss(monkeypatch: pytest.Mon
         settings=settings,
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
@@ -230,15 +229,11 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
     from tests.fakes import FakeSettingsReader
 
-    fake_grid = AsyncMock()
-    fake_grid.get_status = AsyncMock(return_value={})
-    fake_grid.available_node_device_ids = Mock(return_value=set())
     await NodeHealthService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=fake_grid,
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),

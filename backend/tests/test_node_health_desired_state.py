@@ -55,7 +55,6 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
@@ -65,7 +64,6 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         node,
         device,
         result=ProbeResult(status="refused", detail="test"),
-        grid_device_ids={str(device.id)},
     )
     await db_session.commit()
 
