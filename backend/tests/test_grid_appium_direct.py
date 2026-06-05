@@ -76,36 +76,40 @@ async def test_list_sessions_parses_value_array_and_none_on_404(monkeypatch: pyt
 
 async def test_create_session_returns_session_id_or_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_transport(monkeypatch, lambda req: httpx.Response(200, json={"value": {"sessionId": "sid-1"}}))
-    assert await appium_direct.create_session(TARGET, {}, timeout=5.0) == ("sid-1", None)
+    assert await appium_direct.create_session(TARGET, {}, timeout=5.0) == ("sid-1", None, False)
 
     _patch_transport(
         monkeypatch,
         lambda req: httpx.Response(500, json={"value": {"message": "session not created"}}),
     )
-    sid, err = await appium_direct.create_session(TARGET, {}, timeout=5.0)
+    sid, err, transport_error = await appium_direct.create_session(TARGET, {}, timeout=5.0)
     assert sid is None
     assert err == "session not created"
+    assert transport_error is False
 
     def boom(req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
     _patch_transport(monkeypatch, boom)
-    sid, err = await appium_direct.create_session(TARGET, {}, timeout=5.0)
+    sid, err, transport_error = await appium_direct.create_session(TARGET, {}, timeout=5.0)
     assert sid is None
     assert err is not None and err != ""
+    assert transport_error is True
 
     # Non-JSON error body (e.g. HTML 502 / plain-text crash dump) must not escape
-    # as a JSONDecodeError — fall back to the raw text.
+    # as a JSONDecodeError — fall back to the raw text. An HTTP response, not transport.
     _patch_transport(
         monkeypatch,
         lambda req: httpx.Response(500, text="upstream crashed", headers={"content-type": "text/plain"}),
     )
-    sid, err = await appium_direct.create_session(TARGET, {}, timeout=5.0)
+    sid, err, transport_error = await appium_direct.create_session(TARGET, {}, timeout=5.0)
     assert sid is None
     assert err == "upstream crashed"
+    assert transport_error is False
 
     # A null/non-dict "value" must not raise AttributeError.
     _patch_transport(monkeypatch, lambda req: httpx.Response(500, json={"value": None}))
-    sid, err = await appium_direct.create_session(TARGET, {}, timeout=5.0)
+    sid, err, transport_error = await appium_direct.create_session(TARGET, {}, timeout=5.0)
     assert sid is None
     assert err == "status 500"
+    assert transport_error is False

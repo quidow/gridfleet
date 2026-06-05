@@ -95,7 +95,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     # It only re-checks reservation state under the lock and raises ValueError if changed.
     with (
         patch.object(device_locking, "lock_device", side_effect=_reserve_then_lock),
-        patch.object(svc, "probe_session_via_grid", probe_mock),
+        patch.object(svc, "probe_session_direct", probe_mock),
         pytest.raises(ValueError, match="state changed concurrently"),
     ):
         await svc.run_session_viability_probe(

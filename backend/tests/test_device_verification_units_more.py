@@ -292,7 +292,7 @@ async def test_stop_existing_node_and_run_probe_failure_paths(
     probe_session.assert_awaited_once_with(
         {"platformName": "Android"},
         120,
-        grid_url="http://grid",
+        target=f"http://{db_host.ip}:4723",
     )
 
     from sqlalchemy import select
@@ -456,7 +456,7 @@ async def test_run_probe_marks_device_inflight_during_probe_session(
     device_key = str(existing.id)
     seen_inflight: list[bool] = []
 
-    async def fake_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, None]:
+    async def fake_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, None]:
         seen_inflight.append(probe_inflight.is_probe_inflight(device_key))
         return True, None
 
@@ -519,7 +519,7 @@ async def test_run_probe_clears_inflight_when_probe_session_raises(
 
     device_key = str(existing.id)
 
-    async def failing_probe_session(_caps: object, _timeout: int, *, grid_url: str | None) -> tuple[bool, str | None]:
+    async def failing_probe_session(_caps: object, _timeout: int, *, target: str | None) -> tuple[bool, str | None]:
         raise RuntimeError("probe blew up")
 
     with pytest.raises(RuntimeError, match="probe blew up"):

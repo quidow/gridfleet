@@ -52,8 +52,15 @@ async def list_sessions(target: str, *, timeout: float = 10.0) -> list[str] | No
     return [s["id"] for s in value if isinstance(s, dict) and isinstance(s.get("id"), str)]
 
 
-async def create_session(target: str, capabilities: dict[str, Any], *, timeout: float) -> tuple[str | None, str | None]:
-    """POST /session for viability probes. Returns (session_id, error).
+async def create_session(
+    target: str, capabilities: dict[str, Any], *, timeout: float
+) -> tuple[str | None, str | None, bool]:
+    """POST /session for viability probes. Returns (session_id, error, transport_error).
+
+    ``transport_error`` is True only when the request never reached an HTTP response
+    (``httpx.HTTPError`` — connect/read failure). HTTP refusals (status >=400) and
+    non-JSON bodies return False: the node answered, the session was just refused.
+    Callers map ``transport_error`` to an indeterminate probe verdict.
 
     ``timeout`` is keyword-required on purpose: the probe timeout is caller-driven.
     """
@@ -61,16 +68,16 @@ async def create_session(target: str, capabilities: dict[str, Any], *, timeout: 
         async with httpx.AsyncClient() as client:
             resp = await client.post(f"{target}/session", json=capabilities, timeout=timeout)
     except httpx.HTTPError as exc:
-        return None, str(exc)
+        return None, str(exc), True
     # A non-JSON error body (HTML 502, plain-text crash dump) must not escape as a
     # JSONDecodeError — fall back to the raw text/status. Mirrors service_viability.
     try:
         body = resp.json()
     except ValueError:
-        return None, resp.text or f"status {resp.status_code}"
+        return None, resp.text or f"status {resp.status_code}", False
     value = body.get("value")
     value = value if isinstance(value, dict) else {}
     sid = value.get("sessionId")
     if resp.is_success and isinstance(sid, str):
-        return sid, None
-    return None, str(value.get("message", f"status {resp.status_code}"))
+        return sid, None, False
+    return None, str(value.get("message", f"status {resp.status_code}")), False

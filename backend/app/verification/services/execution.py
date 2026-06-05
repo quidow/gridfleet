@@ -23,6 +23,7 @@ from app.devices.services.intent_types import (
     verification_intent_source,
 )
 from app.devices.services.state import set_operational_state
+from app.grid.allocation import node_target
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.sessions import probe_inflight
 from app.sessions.service_probes import ProbeSource, record_probe_session
@@ -231,7 +232,7 @@ class VerificationExecutionService:
             device_key = str(device.id)
             probe_inflight.mark_probe_started(device_key)
             try:
-                ok, error = await probe_session_fn(capabilities, timeout_sec, grid_url=started_node.grid_url)
+                ok, error = await probe_session_fn(capabilities, timeout_sec, target=node_target(device))
             finally:
                 probe_inflight.mark_probe_finished(device_key)
             await record_probe_session(

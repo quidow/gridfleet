@@ -114,7 +114,7 @@ async def test_recovery_probe_admits_verifying_and_clears_lease(
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.sessions.service_viability.SessionViabilityService.probe_session_via_grid",
+            "app.sessions.service_viability.SessionViabilityService.probe_session_direct",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),
