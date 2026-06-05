@@ -2,7 +2,7 @@
 //! rebuild, activity touch, and DELETE-driven pruning. Command bodies stream
 //! through pingora — nothing is buffered in full.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -169,21 +169,174 @@ impl GridRouter {
         self.routes.get(session_id)
     }
 
-    /// New-session handler. Implemented in Task 6; for now answers a defined
-    /// W3C error rather than panicking.
+    /// New-session handler: buffer the raw body, long-poll the backend's
+    /// allocate endpoint (backend owns queueing/fairness/matching), create the
+    /// session on the allocated Appium target with the SAME raw bytes, confirm
+    /// with the backend, insert the route, and relay Appium's response
+    /// byte-identical.
     async fn handle_new_session(
         &self,
         session: &mut Session,
         _ctx: &mut RouterCtx,
     ) -> Result<bool> {
-        respond(
-            session,
-            500,
-            w3c::error_body("session not created", "not implemented yet"),
-            "application/json",
-        )
-        .await
+        // 1. Buffer the raw body (new-session bodies are small; cap at 1 MiB).
+        let mut raw = Vec::new();
+        while let Some(chunk) = session.read_request_body().await? {
+            raw.extend_from_slice(&chunk);
+            if raw.len() > 1_048_576 {
+                return respond(
+                    session,
+                    413,
+                    w3c::error_body("session not created", "request body too large"),
+                    "application/json",
+                )
+                .await;
+            }
+        }
+        // 2. Allocate (long-poll loop; backend owns queueing/fairness).
+        // `new_session_timeout` caps this entire allocate phase only. The Appium
+        // create call in step 3 is separately bounded by `proxy_timeout`
+        // (deliberate — cold-device session creation can take minutes).
+        // Note: a client disconnect during this long-poll is NOT detected; if the
+        // client departs while we hold a ticket the session may still be created
+        // on its behalf and is subsequently reconciled by the backend idle sweep.
+        let deadline = Instant::now() + self.new_session_timeout;
+        let mut ticket: Option<String> = None;
+        let allocation = loop {
+            match self.backend.allocate(&raw, ticket.as_deref()).await {
+                Ok(crate::backend::AllocateOutcome::Allocated {
+                    allocation_id,
+                    target,
+                }) => break (allocation_id, target),
+                Ok(crate::backend::AllocateOutcome::Queued { ticket: t }) => ticket = Some(t),
+                Ok(crate::backend::AllocateOutcome::Invalid { message }) => {
+                    return respond(
+                        session,
+                        400,
+                        w3c::error_body("session not created", &message),
+                        "application/json",
+                    )
+                    .await;
+                }
+                Ok(crate::backend::AllocateOutcome::QueueTimeout) => {
+                    return respond(
+                        session,
+                        500,
+                        w3c::error_body(
+                            "session not created",
+                            "no matching device became available",
+                        ),
+                        "application/json",
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    log::warn!("allocate call failed, retrying: {e}");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+            if Instant::now() >= deadline {
+                if let Some(t) = &ticket {
+                    let _ = self.backend.cancel_ticket(t).await;
+                }
+                return respond(
+                    session,
+                    500,
+                    w3c::error_body("session not created", "timed out waiting for a device"),
+                    "application/json",
+                )
+                .await;
+            }
+        };
+        let (allocation_id, target) = allocation;
+        // 3. Create the session on Appium with the SAME raw body (byte-identical).
+        let resp = appium_client()
+            .post(format!("{target}/session"))
+            .header("Content-Type", "application/json")
+            .body(raw.clone())
+            .timeout(self.proxy_timeout)
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let status = r.status().as_u16();
+                let body = r.bytes().await.unwrap_or_default().to_vec();
+                let session_id = extract_session_id(&body).unwrap_or_default();
+                if session_id.is_empty() {
+                    let _ = self
+                        .backend
+                        .fail(&allocation_id, "appium response missing sessionId")
+                        .await;
+                    return respond(
+                        session,
+                        500,
+                        w3c::error_body(
+                            "session not created",
+                            "upstream response missing sessionId",
+                        ),
+                        "application/json",
+                    )
+                    .await;
+                }
+                if let Some(upstream) = Upstream::parse(&target) {
+                    self.routes.insert(&session_id, upstream);
+                } else {
+                    log::warn!(
+                        "confirmed session {session_id} has unparseable target {target:?}; \
+                         no local route inserted — route will appear on next rebuild"
+                    );
+                }
+                if let Err(e) = self.backend.confirm(&allocation_id, &session_id).await {
+                    log::warn!("confirm failed for {allocation_id}: {e}"); // sweep will reconcile
+                }
+                respond(session, status, body, "application/json").await
+            }
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let body = r.bytes().await.unwrap_or_default().to_vec();
+                let _ = self
+                    .backend
+                    .fail(&allocation_id, &format!("appium returned {status}"))
+                    .await;
+                respond(session, status, body, "application/json").await
+            }
+            Err(e) => {
+                let _ = self
+                    .backend
+                    .fail(&allocation_id, &format!("appium unreachable: {e}"))
+                    .await;
+                respond(
+                    session,
+                    500,
+                    w3c::error_body("session not created", &format!("upstream unreachable: {e}")),
+                    "application/json",
+                )
+                .await
+            }
+        }
     }
+}
+
+/// Shared plain reqwest client for creating Appium sessions (no auth, no base).
+/// connect_timeout is set here so unboundedness isn't load-bearing on
+/// per-call-site `.timeout()`.
+fn appium_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("client")
+    })
+}
+
+/// value.sessionId per W3C; tolerate legacy top-level sessionId.
+fn extract_session_id(body: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    v["value"]["sessionId"]
+        .as_str()
+        .or_else(|| v["sessionId"].as_str())
+        .map(str::to_string)
 }
 
 async fn respond(
@@ -200,4 +353,27 @@ async fn respond(
         .await?;
     session.write_response_body(Some(body.into()), true).await?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_session_id;
+
+    #[test]
+    fn extract_session_id_w3c_shape() {
+        let body = br#"{"value":{"sessionId":"app-1","capabilities":{}}}"#;
+        assert_eq!(extract_session_id(body).as_deref(), Some("app-1"));
+    }
+
+    #[test]
+    fn extract_session_id_legacy_top_level() {
+        let body = br#"{"sessionId":"legacy-9","status":0}"#;
+        assert_eq!(extract_session_id(body).as_deref(), Some("legacy-9"));
+    }
+
+    #[test]
+    fn extract_session_id_garbage_is_none() {
+        assert!(extract_session_id(b"not json").is_none());
+        assert!(extract_session_id(br#"{"value":{}}"#).is_none());
+    }
 }
