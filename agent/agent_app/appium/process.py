@@ -252,7 +252,6 @@ class AppiumLaunchSpec:
     port: int
     plugins: list[str] | None
     extra_caps: dict[str, Any] | None
-    stereotype_caps: dict[str, Any] | None
     session_override: bool
     device_type: str | None
     ip_address: str | None
@@ -639,10 +638,8 @@ class AppiumProcessManager:
             connection_target=spec.connection_target,
             platform_id=spec.platform_id,
             port=spec.port,
-            grid_url=agent_settings.grid_node.grid_hub_url,
             plugins=spec.plugins,
             extra_caps=spec.extra_caps,
-            stereotype_caps=spec.stereotype_caps,
             accepting_new_sessions=spec.accepting_new_sessions,
             stop_pending=spec.stop_pending,
             grid_run_id=spec.grid_run_id,
@@ -762,12 +759,10 @@ class AppiumProcessManager:
         connection_target: str,
         platform_id: str,
         port: int,
-        grid_url: str,
         *,
         pack_id: str,
         plugins: list[str] | None = None,
         extra_caps: dict[str, Any] | None = None,
-        stereotype_caps: dict[str, Any] | None = None,
         accepting_new_sessions: bool = True,
         stop_pending: bool = False,
         grid_run_id: uuid.UUID | None = None,
@@ -825,7 +820,6 @@ class AppiumProcessManager:
             port=port,
             plugins=list(plugins) if plugins else None,
             extra_caps=merged_extra_caps if merged_extra_caps else None,
-            stereotype_caps=dict(stereotype_caps) if stereotype_caps else None,
             accepting_new_sessions=accepting_new_sessions,
             stop_pending=stop_pending,
             grid_run_id=grid_run_id,
@@ -909,9 +903,7 @@ class AppiumProcessManager:
 
         appium_platform = spec.appium_platform_name or spec.platform_id
         caps: dict[str, Any] = {"platformName": appium_platform}
-        if spec.stereotype_caps:
-            caps.update(spec.stereotype_caps)
-        elif spec.extra_caps:
+        if spec.extra_caps:
             caps.update(spec.extra_caps)
         caps["gridfleet:run_id"] = str(spec.grid_run_id) if spec.grid_run_id is not None else "free"
 
@@ -1031,7 +1023,6 @@ class AppiumProcessManager:
                 port=spec.port,
                 plugins=spec.plugins,
                 extra_caps=spec.extra_caps,
-                stereotype_caps=spec.stereotype_caps,
                 accepting_new_sessions=accepting_new_sessions,
                 stop_pending=stop_pending,
                 grid_run_id=grid_run_id,

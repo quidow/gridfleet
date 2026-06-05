@@ -40,7 +40,6 @@ from app.appium_nodes.services import (
 )
 from app.appium_nodes.services.common import (
     build_appium_driver_caps,
-    build_grid_stereotype_caps,
     get_default_plugins,
     node_state_severity,
 )
@@ -303,17 +302,10 @@ def build_agent_start_payload(
     accepting_new_sessions = node.accepting_new_sessions if node is not None else True
     stop_pending = node.stop_pending if node is not None else False
     grid_run_id = node.desired_grid_run_id if node is not None else None
-    # The minimal stereotype emitted here is the manager-owned routing surface
-    # (deviceId + tag fanout + run_id). Pack-rendered stereotype (platformName,
-    # automationName, manifest-declared filters) is merged in by start_remote_node
-    # via build_pack_start_payload — see below.
-    stereotype_caps = build_grid_stereotype_caps(device, pack_stereotype=None)
-    stereotype_caps["gridfleet:run_id"] = str(grid_run_id) if grid_run_id else "free"
     return {
         "connection_target": appium_connection_target(device),
         "platform_id": device.platform_id,
         "port": port,
-        "grid_url": settings.get("grid.hub_url"),
         "plugins": get_default_plugins(settings=settings) or None,
         "extra_caps": extra_caps
         if extra_caps is not None
@@ -325,7 +317,6 @@ def build_agent_start_payload(
             )
             or None
         ),
-        "stereotype_caps": stereotype_caps or None,
         "accepting_new_sessions": accepting_new_sessions,
         "stop_pending": stop_pending,
         "grid_run_id": str(grid_run_id) if grid_run_id else None,
@@ -427,10 +418,6 @@ async def start_remote_node(
         payload["pack_id"] = pack_overrides["pack_id"]
         payload["platform_id"] = pack_overrides["platform_id"]
         payload["appium_platform_name"] = pack_overrides["appium_platform_name"]
-        payload["stereotype_caps"] = {
-            **(payload.get("stereotype_caps") or {}),
-            **pack_overrides["stereotype_caps"],
-        }
         if "grid_slots" in pack_overrides:
             payload["grid_slots"] = pack_overrides["grid_slots"]
         for key in ("lifecycle_actions", "connection_behavior", "insecure_features"):

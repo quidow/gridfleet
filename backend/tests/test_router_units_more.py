@@ -350,7 +350,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android"}]),
         include="config",
         db=db,
-        settings_services=_mock_settings_svc(mock_svc),
         run_services=mock_rs_create,
     )
     assert created["id"] == run.id
@@ -669,10 +668,6 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
         heartbeat_timeout_sec=120,
         created_at=datetime.now(UTC),
     )
-    grid_svc = Mock()
-    grid_svc.get = Mock(return_value="http://grid")
-    grid_ss = _mock_settings_svc(grid_svc)
-
     mock_rs = SimpleNamespace(
         allocator=AsyncMock(),
         lifecycle=AsyncMock(),
@@ -692,7 +687,6 @@ async def test_runs_router_missing_device_and_cooldown_branches() -> None:
             RunCreate(name="r", requirements=[]),
             include="config",
             db=db,
-            settings_services=grid_ss,
             run_services=mock_rs,
         )
     assert response["id"] == run.id
@@ -2483,7 +2477,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     assert runs._parse_run_filter_datetime("2026-05-01T12:00:00") == datetime(2026, 5, 1, 12, tzinfo=UTC)
 
     payload = RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android", "count": 1}])
-    dummy_ss = _mock_settings_svc(Mock())
 
     mock_rs = SimpleNamespace(
         allocator=AsyncMock(),
@@ -2497,7 +2490,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
             payload,
             include="capabilities",
             db=object(),
-            settings_services=dummy_ss,
             run_services=mock_rs,
         )
     assert exc.value.status_code == 422
@@ -2513,7 +2505,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
                 payload,
                 include=None,
                 db=object(),
-                settings_services=dummy_ss,
                 run_services=mock_rs,
             )
         assert exc.value.status_code == status_code
@@ -2526,19 +2517,14 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         platform_id="android",
         os_version="14",
     )
-    run_grid_svc = Mock()
-    run_grid_svc.get = Mock(return_value="http://grid:4444")
-    run_grid_ss = _mock_settings_svc(run_grid_svc)
     mock_rs.allocator.create_run = AsyncMock(return_value=(run, [device_info]))
     created = await runs.create_run(
         payload,
         include=None,
         db=object(),
-        settings_services=run_grid_ss,
         run_services=mock_rs,
     )
     assert created["id"] == run.id
-    assert created["grid_url"] == "http://grid:4444"
 
     request = SimpleNamespace(query_params={})
     mock_rs_list = SimpleNamespace(

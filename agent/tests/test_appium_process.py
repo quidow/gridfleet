@@ -301,7 +301,6 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
         info = await manager.start(
             connection_target="device-001",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             plugins=["images", "execute-driver"],
             extra_caps={"appium:platform": "phone"},
@@ -352,16 +351,14 @@ async def test_start_spawns_grid_node_supervisor() -> None:
         await manager.start(
             connection_target="device-1",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
-            stereotype_caps={"appium:platform": "android_mobile"},
         )
 
     assert create_proc.await_count == 1
     assert handles[0].start_called is True
     assert handles[0].wait_until_running_called is True
     assert configs[0].appium_upstream == "http://127.0.0.1:4723"
-    assert configs[0].slots[0].stereotype.caps["appium:platform"] == "android_mobile"
+    assert configs[0].slots[0].stereotype.caps["platformName"] == "android_mobile"
     await manager.shutdown()
 
 
@@ -385,7 +382,6 @@ async def test_start_rolls_back_appium_when_grid_node_start_fails() -> None:
         await manager.start(
             connection_target="device-1",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -462,7 +458,6 @@ async def test_start_requires_pack_metadata() -> None:
         await manager.start(
             connection_target="Pixel_8",
             port=4723,
-            grid_url="http://localhost:4444",
             pack_id=None,
             platform_id="android_mobile",
             manage_grid_node=False,
@@ -472,14 +467,13 @@ async def test_start_requires_pack_metadata() -> None:
         await manager.start(
             connection_target="Pixel_8",
             port=4723,
-            grid_url="http://localhost:4444",
             pack_id="appium-uiautomator2",
             platform_id=None,
             manage_grid_node=False,
         )
 
 
-async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
+async def test_start_uses_extra_caps_for_grid_matching() -> None:
     manager = AppiumProcessManager()
     appium_proc = FakeProcess(pid=1234)
     configs: list[GridNodeConfig] = []
@@ -500,7 +494,6 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
         await manager.start(
             connection_target="device-002",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             extra_caps={
                 "appium:udid": "device-002",
@@ -508,7 +501,6 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
                 "appium:gridfleet:deviceId": "device-id",
                 "appium:platform": "android_mobile",
             },
-            stereotype_caps={"appium:udid": "device-002", "appium:platform": "android_mobile"},
         )
 
     # Appium server receives only driver-owned caps.
@@ -521,6 +513,8 @@ async def test_start_uses_stereotype_caps_only_for_grid_matching() -> None:
     assert configs[0].slots[0].stereotype.caps == {
         "appium:udid": "device-002",
         "platformName": "android_mobile",
+        "appium:automationName": "UiAutomator2",
+        "appium:gridfleet:deviceId": "device-id",
         "appium:platform": "android_mobile",
         "gridfleet:run_id": "free",
     }
@@ -556,7 +550,6 @@ async def test_start_with_accepting_new_sessions_false_propagates_run_id_only() 
         await manager.start(
             connection_target="device-unavailable",
             port=4728,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             accepting_new_sessions=False,
             grid_run_id=run_id,
@@ -596,7 +589,6 @@ async def test_start_with_accepting_false_drains_fresh_relay() -> None:
         await manager.start(
             connection_target="device-cooldowned",
             port=4729,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             accepting_new_sessions=False,
         )
@@ -629,7 +621,6 @@ async def test_start_with_accepting_true_does_not_drain() -> None:
         await manager.start(
             connection_target="device-ready",
             port=4730,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             accepting_new_sessions=True,
         )
@@ -842,7 +833,6 @@ async def test_start_can_disable_session_override() -> None:
         await manager.start(
             connection_target="device-override-off",
             port=4726,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             session_override=False,
         )
@@ -868,7 +858,6 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
         await manager.start(
             connection_target="device-002",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -988,7 +977,6 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
         await manager.start(
             connection_target="device-port-conflict",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1029,7 +1017,6 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
             await manager.start(
                 connection_target="device-non-appium-squatter",
                 port=held_port,
-                grid_url="http://grid:4444",
                 **PACK_START_KWARGS,
             )
         create_proc.assert_not_awaited()
@@ -1076,7 +1063,6 @@ async def test_start_rejects_port_outside_configured_range_before_localhost_prob
         await manager.start(
             connection_target="device-out-of-range-port",
             port=6553,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1109,7 +1095,6 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
         await manager.start(
             connection_target="device-100",
             port=4723,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
         first_proc.set_exit(1)
@@ -1136,7 +1121,6 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1174,7 +1158,6 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1237,7 +1220,6 @@ async def test_auto_restart_aborts_when_target_already_served_by_another_node() 
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1304,7 +1286,6 @@ async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
         await manager.start(
             connection_target="device-backoff",
             port=4724,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
 
@@ -1344,7 +1325,6 @@ async def test_appium_restart_does_not_create_duplicate_recovery_loop() -> None:
         await manager.start(
             connection_target="device-shared-crash",
             port=4729,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
         )
         first_appium_proc.set_exit(1)
@@ -1388,7 +1368,6 @@ async def test_start_appium_server_does_not_synthesize_wda_url_inline() -> None:
         await manager.start(
             connection_target="00008301-ABCDEF",
             port=4731,
-            grid_url="http://grid:4444",
             pack_id="appium-xcuitest",
             platform_id="tvos",
             device_type="real_device",
@@ -1421,7 +1400,6 @@ async def test_start_rejects_duplicate_connection_target_on_different_port() -> 
         await manager.start(
             connection_target="192.168.1.254:5555",
             port=4732,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             manage_grid_node=False,
         )
@@ -1429,7 +1407,6 @@ async def test_start_rejects_duplicate_connection_target_on_different_port() -> 
             await manager.start(
                 connection_target="192.168.1.254:5555",
                 port=4733,
-                grid_url="http://grid:4444",
                 **PACK_START_KWARGS,
                 manage_grid_node=False,
             )
@@ -1458,7 +1435,6 @@ async def test_start_passes_insecure_features_to_appium_command() -> None:
         await manager.start(
             connection_target="device-insecure",
             port=4740,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             manage_grid_node=False,
             insecure_features=["uiautomator2:chromedriver_autodownload"],
@@ -1519,7 +1495,6 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
         info = await manager.start(
             connection_target="Pixel_8_API_35",
             port=4750,
-            grid_url="http://grid:4444",
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1557,7 +1532,6 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
         info = await manager.start(
             connection_target="SIM-UUID",
             port=4751,
-            grid_url="http://grid:4444",
             device_type="simulator",
             pack_id="appium-xcuitest",
             platform_id="ios",
@@ -1594,7 +1568,6 @@ async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
         info = await manager.start(
             connection_target="MyAVD",
             port=4760,
-            grid_url="http://grid:4444",
             device_type="real_device",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1621,7 +1594,6 @@ async def test_start_raises_when_adapter_boot_fails() -> None:
         await manager.start(
             connection_target="Bad_AVD",
             port=4752,
-            grid_url="http://grid:4444",
             device_type="emulator",
             pack_id="appium-uiautomator2",
             platform_id="android_mobile",
@@ -1648,7 +1620,6 @@ async def test_start_omits_allow_insecure_when_insecure_features_empty() -> None
         await manager.start(
             connection_target="device-no-insecure",
             port=4741,
-            grid_url="http://grid:4444",
             **PACK_START_KWARGS,
             manage_grid_node=False,
             insecure_features=[],
@@ -1840,7 +1811,6 @@ async def test_auto_restart_returns_when_intentional_stop_during_sleep() -> None
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1875,7 +1845,6 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1906,7 +1875,6 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1959,7 +1927,6 @@ async def test_start_appium_server_raises_runtime_missing_when_binary_not_found(
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -1988,7 +1955,6 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -2045,7 +2011,6 @@ async def test_reconfigure_stop_pending_with_active_session_only_tracks_port() -
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -2080,7 +2045,6 @@ async def test_reconfigure_records_spec_before_service_call() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         accepting_new_sessions=False,  # stale cooldown spec
         stop_pending=True,
         session_override=True,
@@ -2110,7 +2074,6 @@ async def test_cleanup_started_appium_logs_and_suppresses_grid_stop_failure() ->
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -2136,7 +2099,6 @@ async def test_cleanup_started_appium_kills_when_proc_still_running() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -2159,7 +2121,6 @@ async def test_cleanup_started_appium_escalates_kill_after_timeout() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=True,
         device_type=None,
         ip_address=None,
@@ -2228,7 +2189,6 @@ async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type=None,
         ip_address=None,

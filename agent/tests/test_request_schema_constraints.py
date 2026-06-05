@@ -14,7 +14,6 @@ def _valid_start_payload() -> dict[str, object]:
     return {
         "connection_target": "device-123",
         "port": 4723,
-        "grid_url": "http://hub:4444",
         "pack_id": "appium-uiautomator2",
         "platform_id": "android",
     }

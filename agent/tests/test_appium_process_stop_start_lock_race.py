@@ -34,7 +34,6 @@ async def test_stop_holds_start_lock_during_process_teardown() -> None:
         port=5555,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type="real_device",
         ip_address=None,

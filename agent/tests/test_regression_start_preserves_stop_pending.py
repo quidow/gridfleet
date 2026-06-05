@@ -38,7 +38,6 @@ async def test_start_with_stop_pending_preserves_stop_intent(monkeypatch: pytest
         connection_target="dev-1",
         platform_id="android_mobile",
         port=4723,
-        grid_url="http://hub:4444",
         pack_id="pack-1",
         stop_pending=True,
     )

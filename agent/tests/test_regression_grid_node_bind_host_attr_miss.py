@@ -44,7 +44,6 @@ async def test_grid_node_bind_host_env_value_propagates_to_config(
         port=4723,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type=None,
         ip_address=None,

@@ -111,7 +111,6 @@ async def test_start_appium_invalid_payload_error() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },
@@ -133,7 +132,6 @@ async def test_start_appium_generic_runtime_error() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },
@@ -158,7 +156,6 @@ async def test_start_appium_unexpected_exception() -> None:
                 json={
                     "connection_target": "foo",
                     "port": 4723,
-                    "grid_url": "http://localhost:4444",
                     "pack_id": "p",
                     "platform_id": "x",
                 },

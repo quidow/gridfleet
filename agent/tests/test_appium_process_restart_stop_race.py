@@ -26,7 +26,6 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
         port=port,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type="real_device",
         ip_address="10.0.0.1",

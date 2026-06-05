@@ -117,7 +117,6 @@ async def test_create_run(client: AsyncClient, db_session: AsyncSession, default
     assert data["devices"][0]["pack_id"] == "appium-uiautomator2"
     assert data["devices"][0]["platform_id"] == "android_mobile"
     assert data["devices"][0]["platform_label"] == "Android"
-    assert "grid_url" in data
 
 
 async def test_find_matching_devices_filters_tags_before_readiness(

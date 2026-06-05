@@ -4919,8 +4919,6 @@ export interface components {
             created_at: string;
             /** Devices */
             devices: components["schemas"]["ReservedDeviceInfo"][];
-            /** Grid Url */
-            grid_url: string;
             /** Heartbeat Timeout Sec */
             heartbeat_timeout_sec: number;
             /**

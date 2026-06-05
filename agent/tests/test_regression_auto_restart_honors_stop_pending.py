@@ -33,7 +33,6 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         port=port,
         plugins=None,
         extra_caps=None,
-        stereotype_caps=None,
         session_override=False,
         device_type="real_device",
         ip_address="10.0.0.1",

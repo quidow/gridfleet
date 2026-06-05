@@ -363,14 +363,6 @@ _DEFINITIONS: list[SettingDefinition] = [
     ),
     # ── Appium & Grid ──
     SettingDefinition(
-        key="grid.hub_url",
-        category="grid",
-        setting_type="string",
-        default="http://selenium-hub:4444",
-        description="Selenium Grid hub URL",
-        env_var="GRIDFLEET_GRID_HUB_URL",
-    ),
-    SettingDefinition(
         key="grid.session_poll_interval_sec",
         category="grid",
         setting_type="int",

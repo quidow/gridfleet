@@ -18,7 +18,6 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
-from app.settings.services_container import SettingsServices
 from app.verification import router as devices_verification
 
 
@@ -60,8 +59,6 @@ def _run_read(run: SimpleNamespace, counts: SessionCounts | None = None) -> RunR
 
 async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
-    mock_svc = MagicMock()
-    mock_ss = SettingsServices(service=mock_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
 
     mock_rs = SimpleNamespace(
         allocator=AsyncMock(),
@@ -78,7 +75,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
             RunCreate(name="r", requirements=[]),
             include="capabilities",
             db=db,
-            settings_services=mock_ss,
             run_services=mock_rs,
         )
     assert unsupported.value.status_code == 422
@@ -86,9 +82,7 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: set())
     mock_rs.allocator.create_run = AsyncMock(side_effect=PackUnavailableError("pack"))
     with pytest.raises(HTTPException) as pack_error:
-        await runs.create_run(
-            RunCreate(name="r", requirements=[]), db=db, settings_services=mock_ss, run_services=mock_rs
-        )
+        await runs.create_run(RunCreate(name="r", requirements=[]), db=db, run_services=mock_rs)
     assert pack_error.value.status_code == 422
 
     run = _run()
@@ -274,9 +268,6 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
         platform_id="platform",
         os_version="14",
     )
-    grid_svc = MagicMock()
-    grid_svc.get = MagicMock(return_value="http://grid")
-    grid_ss = SettingsServices(service=grid_svc, config=MagicMock(), session_factory=MagicMock())  # type: ignore[arg-type]
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
 
     mock_rs = SimpleNamespace(
@@ -287,9 +278,7 @@ async def test_runs_router_create_include_and_success_lifecycle_paths(monkeypatc
     )
     monkeypatch.setattr(runs.run_service, "parse_includes", lambda include, allowed: {"config"})
     mock_rs.allocator.create_run = AsyncMock(return_value=(run, [info]))
-    created = await runs.create_run(
-        RunCreate(name="r", requirements=[]), include="config", db=db, settings_services=grid_ss, run_services=mock_rs
-    )
+    created = await runs.create_run(RunCreate(name="r", requirements=[]), include="config", db=db, run_services=mock_rs)
     assert created["devices"][0].unavailable_includes[0].reason == "device_not_found"
 
     active = _run(RunState.active)

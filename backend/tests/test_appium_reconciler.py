@@ -67,11 +67,10 @@ def test_build_agent_start_payload_includes_orchestration_metadata(monkeypatch: 
     assert payload["accepting_new_sessions"] is False
     assert payload["stop_pending"] is True
     assert payload["grid_run_id"] == str(run_id)
-    # accepting_new_sessions is no longer surfaced as a stereotype cap — the
-    # dead gridfleet:available sentinel was never read by any client. Hard
-    # routing-suppression now goes through Selenium NodeStatus.availability.
-    assert "gridfleet:available" not in payload["stereotype_caps"]
-    assert payload["stereotype_caps"]["gridfleet:run_id"] == str(run_id)
+    # The node-start contract no longer carries stereotype_caps; the relay
+    # builds its hub slots from extra_caps. Routing-suppression goes through
+    # Selenium NodeStatus.availability.
+    assert "stereotype_caps" not in payload
 
 
 def test_detect_orphans_returns_empty_when_every_running_node_has_matching_db_row() -> None:
