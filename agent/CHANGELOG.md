@@ -2,6 +2,28 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.23.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.3...gridfleet-agent-v0.23.0) (2026-06-05)
+
+
+### Features
+
+* **agent:** add keep-alive upstream micro-pool for the grid relay ([ca60260](https://github.com/quidow/gridfleet/commit/ca60260e2e7ccb82281dfe51d81171e02265bb0c))
+* **agent:** add single-flight async ttl cache utility ([d9999d1](https://github.com/quidow/gridfleet/commit/d9999d195af945efae7ae769e976bd1444d4e20f))
+* **agent:** collapse concurrent discovery sweep fallbacks with a ttl cache ([cfffc83](https://github.com/quidow/gridfleet/commit/cfffc83c3d108f642f3f7f295aca013a310c4d2f))
+* **agent:** enforce per-request deadline and error mapping in upstream pool ([c55fbfc](https://github.com/quidow/gridfleet/commit/c55fbfce87e4b669b7de982befd7908b60fa0d4b))
+* **agent:** flatten per-node background costs and make device queries direct-first ([8b93025](https://github.com/quidow/gridfleet/commit/8b930259c56b4d825ad103de6f344f74e9e46db6))
+* **agent:** pass expected device identity through pack health checks ([e5f5be4](https://github.com/quidow/gridfleet/commit/e5f5be4a2482282c356daa1f4d2505a495f3015d))
+* **agent:** replace httpx with a keep-alive upstream micro-pool on the relay hot path ([7079860](https://github.com/quidow/gridfleet/commit/70798600d0effd881d3e63984b3b6d5f4e2a55c3))
+* **agent:** replace httpx with upstream micro-pool on relay hot path ([8537679](https://github.com/quidow/gridfleet/commit/85376797e93b728732c4aeec196607ed2d0847c4))
+* **agent:** resolve pack device properties via direct adapter query before sweep ([eae7cab](https://github.com/quidow/gridfleet/commit/eae7cabf1ed401687ccbc5a8714e13877d921863))
+* **agent:** retry stale reused upstream connections once ([9b1754e](https://github.com/quidow/gridfleet/commit/9b1754ea203a477b1b499e82c471cd6814c1cd96))
+* **agent:** share one hub status fetch across node registration probes ([27dc652](https://github.com/quidow/gridfleet/commit/27dc65252070719952d9c5065336c8e5c43a575a))
+
+
+### Bug Fixes
+
+* **agent:** confirm node absence with a fresh hub status fetch before re-registering ([135925e](https://github.com/quidow/gridfleet/commit/135925e79d887e7b4934a3a99b47a58e39322944))
+
 ## [0.22.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.2...gridfleet-agent-v0.22.3) (2026-06-04)
 
 
