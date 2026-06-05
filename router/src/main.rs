@@ -1,5 +1,11 @@
 #[allow(dead_code)] // wired in Task 5/7
+mod activity;
+#[allow(dead_code)] // wired in Task 5/7
 mod classify;
+#[allow(dead_code)] // wired in Task 5/7
+mod routes;
+#[allow(dead_code)] // wired in Task 5/7
+mod w3c;
 
 use clap::Parser;
 
