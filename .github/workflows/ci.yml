@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    # feat/grid-router is the integration branch for the grid-router migration;
-    # drop it from this list when that branch merges to main.
-    branches: [main, feat/grid-router]
+    branches: [main]
 
 permissions:
   contents: read
