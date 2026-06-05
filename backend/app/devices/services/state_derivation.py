@@ -93,7 +93,7 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
             select(Session.id)
             .where(
                 Session.device_id == device.id,
-                Session.status == SessionStatus.running,
+                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
                 Session.ended_at.is_(None),
             )
             .limit(1)
