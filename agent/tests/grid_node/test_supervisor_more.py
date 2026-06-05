@@ -105,19 +105,36 @@ async def test_supervisor_stop_before_running_sets_stopped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_supervisor_service_stop_requested_mid_heartbeat() -> None:
+async def test_supervisor_keeps_running_when_service_flags_stop_mid_heartbeat() -> None:
+    """F-G2/D1: a heartbeat that flips requested_stop (the old drain
+    self-stop latch) must no longer stop the relay — drain-complete means
+    "no new sessions", not "leave the hub"."""
+
     class StopAfterOne(RecordingService):
         async def run_heartbeat_once(self) -> None:
             self.heartbeat_calls += 1
             self.request_stop = True
 
+    services: list[RecordingService] = []
+
+    def factory() -> StopAfterOne:
+        service = StopAfterOne()
+        services.append(service)
+        return service
+
     handle = start_grid_node_supervisor(
-        factory=StopAfterOne,
+        factory=factory,
         clock=FakeClock(),
         config=FakeConfig(heartbeat_sec=0.1),
     )
     await handle.start()
-    await handle.wait_until_stopped()
+    await handle.wait_until_running()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert services[0].heartbeat_calls >= 1
+    assert handle.is_running() is True
+    assert services[0].stop_called is False
+    await handle.stop()
     assert handle.snapshot()["status"] == "stopped"
 
 
