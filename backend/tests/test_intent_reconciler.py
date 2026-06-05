@@ -784,3 +784,24 @@ async def test_recovery_promoted_review_device_gets_no_baseline_node(db_session:
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
+
+
+async def test_no_intent_stop_holds_node_running_while_session_active(db_session: AsyncSession, db_host: Host) -> None:
+    """Only an explicit stop_mode='hard' may flip desired_state=stopped while
+    a client session is active. The no-intent stop (withdrawn device, F-G1
+    gate) must defer like a graceful stop."""
+    device = await create_device(db_session, host_id=db_host.id, name="busy-shelved")
+    device.review_required = True
+    await db_session.commit()
+    node = await _seed_node(db_session, device.id)
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+    db_session.add(Session(session_id="s-1", device_id=device.id, status=SessionStatus.running))
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.accepting_new_sessions is False
+    assert node.stop_pending is True
