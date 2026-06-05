@@ -1834,11 +1834,12 @@ async def test_analytics_router_uses_defaults_csv_and_capacity_errors() -> None:
 
 
 async def test_grid_router_summarizes_registry_and_queue() -> None:
+    device_one_id = uuid.uuid4()
     running_node = SimpleNamespace(port=4731, observed_running=True)
     stopped_node = SimpleNamespace(port=4732, observed_running=False)
     devices = [
         SimpleNamespace(
-            id=uuid.uuid4(),
+            id=device_one_id,
             identity_value="serial-1",
             connection_target="serial-1",
             name="Pixel",
@@ -1856,40 +1857,31 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             appium_node=stopped_node,
         ),
     ]
-    grid_data = {
-        "value": {
-            "nodes": [
-                {
-                    "slots": [
-                        {
-                            "session": {
-                                "sessionId": "s1",
-                                "capabilities": {"platformName": "android"},
-                                "stereotype": {"appium:udid": "serial-1"},
-                            },
-                        },
-                        {"session": None},
-                    ],
-                }
-            ],
-            "sessionQueueRequests": [{"requestId": "queued"}],
-        }
-    }
+    ticket = SimpleNamespace(
+        id="queued",
+        requested_body={"capabilities": {"alwaysMatch": {"platformName": "android"}}},
+        created_at=datetime(2026, 6, 5, tzinfo=UTC),
+    )
 
-    fake_grid_svc = AsyncMock()
-    fake_grid_svc.get_status = AsyncMock(return_value=grid_data)
-    fake_grid_services = SimpleNamespace(grid=fake_grid_svc)
     fake_device_services = SimpleNamespace(crud=SimpleNamespace(list_devices=AsyncMock(return_value=devices)))
-    status = await grid.grid_status(db=object(), grid_services=fake_grid_services, device_services=fake_device_services)
-    queue = await grid.grid_queue(grid_services=fake_grid_services)
+    db = object()
+    with (
+        patch.object(grid, "_running_sessions_by_device", AsyncMock(return_value={device_one_id: ["s1"]})),
+        patch.object(grid, "_waiting_tickets", AsyncMock(return_value=[ticket])),
+    ):
+        status = await grid.grid_status(db=db, device_services=fake_device_services)
+        queue = await grid.grid_queue(db=db)
 
     assert status["registry"]["device_count"] == 2
     assert status["registry"]["devices"][0]["node_state"] == "running"
     assert "hold" not in status["registry"]["devices"][1]
     assert status["registry"]["devices"][1]["operational_state"] == "offline"
+    assert status["grid"]["value"]["nodes"] == [{"slots": [{"session": "s1"}]}]
     assert status["active_sessions"] == 1
     assert status["queue_size"] == 1
-    assert queue == {"queue_size": 1, "requests": [{"requestId": "queued"}]}
+    assert queue["queue_size"] == 1
+    assert queue["requests"][0]["requestId"] == "queued"
+    assert queue["requests"][0]["capabilities"] == {"platformName": "android"}
 
 
 async def test_nodes_router_validation_branches() -> None:

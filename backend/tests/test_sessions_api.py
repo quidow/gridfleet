@@ -1,6 +1,5 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -8,6 +7,7 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.devices.services import state_write_guard
+from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
@@ -729,23 +729,21 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert events[0]["data"]["status"] == "failed"
 
 
-async def test_grid_queue(client: AsyncClient) -> None:
-    mock_data = {
-        "value": {
-            "ready": True,
-            "nodes": [],
-            "sessionQueueRequests": [
-                {"capabilities": {"platformName": "android"}},
-            ],
-        }
-    }
+async def test_grid_queue(client: AsyncClient, db_session: AsyncSession) -> None:
+    db_session.add(
+        GridSessionQueueTicket(
+            requested_body={"capabilities": {"alwaysMatch": {"platformName": "android"}}},
+            status=GridQueueStatus.waiting,
+        )
+    )
+    await db_session.commit()
 
-    with patch("app.grid.service.GridService.get_status", new_callable=AsyncMock, return_value=mock_data):
-        resp = await client.get("/api/grid/queue")
+    resp = await client.get("/api/grid/queue")
 
     assert resp.status_code == 200
     data = resp.json()
     assert data["queue_size"] == 1
+    assert data["requests"][0]["capabilities"]["platformName"] == "android"
 
 
 # ---------------------------------------------------------------------------
