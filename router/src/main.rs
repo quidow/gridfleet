@@ -42,11 +42,22 @@ fn parse_auth(value: &str) -> Result<(String, String), String> {
         .ok_or_else(|| format!("--backend-auth must be user:pass, got {value}"))
 }
 
+/// Normalize the raw `--backend-auth` value into an effective credential
+/// string. Prod compose injects `GRIDFLEET_ROUTER_BACKEND_AUTH: ${...:-}`, an
+/// empty-but-present env var that clap turns into `Some("")`. Treat
+/// empty/whitespace-only as absent so the documented "no auth" default does
+/// not crash-loop the process at `parse_auth`.
+fn normalize_backend_auth(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn main() {
     env_logger::init();
     let args = Args::parse();
 
-    let auth = match args.backend_auth.as_deref().map(parse_auth) {
+    let backend_auth = normalize_backend_auth(args.backend_auth.as_deref());
+
+    let auth = match backend_auth.map(parse_auth) {
         Some(Ok(a)) => Some(a),
         Some(Err(e)) => {
             eprintln!("{e}");
@@ -106,7 +117,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_auth, Args};
+    use super::{normalize_backend_auth, parse_auth, Args};
     use clap::Parser;
 
     #[test]
@@ -125,6 +136,20 @@ mod tests {
     #[test]
     fn rejects_missing_colon() {
         assert!(parse_auth("nopass").is_err());
+    }
+
+    /// Prod compose injects an empty-but-present `GRIDFLEET_ROUTER_BACKEND_AUTH`
+    /// (`${...:-}`), which clap surfaces as `Some("")`. It must be treated as
+    /// absent so the process does not crash-loop at `parse_auth`.
+    #[test]
+    fn empty_backend_auth_is_treated_as_absent() {
+        assert_eq!(normalize_backend_auth(Some("")), None);
+        assert_eq!(normalize_backend_auth(Some("   ")), None);
+        assert_eq!(normalize_backend_auth(None), None);
+        assert_eq!(
+            normalize_backend_auth(Some(" alice:s3cr3t ")),
+            Some("alice:s3cr3t")
+        );
     }
 
     /// Env vars supply flag values when the corresponding flag is absent from
