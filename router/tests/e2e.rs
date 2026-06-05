@@ -316,7 +316,7 @@ fn new_session_allocates_creates_and_confirms() {
     let appium_addr =
         spawn_appium_new_session(200, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
     let allocate_body =
-        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr})
+        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr,"claim_window_sec":120})
             .to_string();
     let (backend_addr, counts) = spawn_backend_new_session(200, allocate_body, false);
     let router = spawn_router(&backend_addr);
@@ -352,7 +352,7 @@ fn new_session_queue_then_allocated() {
     let appium_addr =
         spawn_appium_new_session(200, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
     let allocate_body =
-        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr})
+        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr,"claim_window_sec":120})
             .to_string();
     let (backend_addr, counts) = spawn_backend_new_session(200, allocate_body, true);
     let router = spawn_router(&backend_addr);
@@ -395,7 +395,7 @@ fn new_session_appium_failure_reports_fail() {
         r#"{"value":{"error":"session not created","message":"boom","stacktrace":""}}"#,
     );
     let allocate_body =
-        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr})
+        serde_json::json!({"status":"allocated","allocation_id":"A1","target":appium_addr,"claim_window_sec":120})
             .to_string();
     let (backend_addr, counts) = spawn_backend_new_session(200, allocate_body, false);
     let router = spawn_router(&backend_addr);
@@ -415,6 +415,122 @@ fn new_session_appium_failure_reports_fail() {
         other => panic!("expected 500, got {other:?}"),
     }
     assert_eq!(counts.fails.load(Ordering::SeqCst), 1, "must report fail");
+}
+
+/// Appium stub for the confirm-rollback flow: POST /session returns
+/// `{value:{sessionId:"app-1"}}`; records whether `DELETE /session/app-1` was
+/// received (the router's rollback path must issue it). Other paths echo.
+fn spawn_appium_rollback() -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let d = deletes.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let method = req.method().as_str().to_string();
+            let path = req.url().to_string();
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body).unwrap();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if method == "POST" && path == "/session" {
+                let resp = tiny_http::Response::from_string(
+                    r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#,
+                )
+                .with_status_code(200)
+                .with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if method == "DELETE" && path == "/session/app-1" {
+                d.fetch_add(1, Ordering::SeqCst);
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else {
+                let payload = serde_json::json!({
+                    "upstream": "appium",
+                    "method": method,
+                    "path": path,
+                    "body": body,
+                });
+                let resp =
+                    tiny_http::Response::from_string(payload.to_string()).with_header(json_header);
+                req.respond(resp).unwrap();
+            }
+        }
+    });
+    (addr, deletes)
+}
+
+/// Backend stub for the confirm-rollback flow: allocate -> allocated(A1),
+/// confirm -> 409 (allocation already reaped), routes -> empty.
+fn spawn_backend_confirm_409(appium_addr: String) -> String {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/allocate" {
+                let body = serde_json::json!({
+                    "status": "allocated",
+                    "allocation_id": "A1",
+                    "target": appium_addr,
+                    "claim_window_sec": 120,
+                })
+                .to_string();
+                let resp = tiny_http::Response::from_string(body).with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if url == "/internal/grid/sessions/A1/confirm" {
+                let resp = tiny_http::Response::from_string("{}").with_status_code(409);
+                req.respond(resp).unwrap();
+            } else if url == "/internal/grid/routes" {
+                req.respond(tiny_http::Response::from_string(r#"{"routes":[]}"#))
+                    .unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    addr
+}
+
+#[test]
+fn new_session_confirm_failure_rolls_back() {
+    let (appium_addr, deletes) = spawn_appium_rollback();
+    let backend_addr = spawn_backend_confirm_409(appium_addr);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // Confirm 409 -> client gets 500 "session not created"; no route inserted.
+    let err = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
+    match err {
+        Err(ureq::Error::Status(500, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
+        }
+        other => panic!("expected 500, got {other:?}"),
+    }
+
+    // The router must have rolled the Appium session back via DELETE.
+    assert_eq!(
+        deletes.load(Ordering::SeqCst),
+        1,
+        "router must DELETE the unconfirmed Appium session"
+    );
+
+    // No route was inserted: a follow-up command 404s (backend /routes empty).
+    let err = ureq::get(&format!("{base}/session/app-1/url")).call();
+    match err {
+        Err(ureq::Error::Status(404, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
+        }
+        other => panic!("expected 404, got {other:?}"),
+    }
 }
 
 /// Raw-TCP WebSocket echo stub (tiny_http cannot perform the HTTP 101 upgrade).

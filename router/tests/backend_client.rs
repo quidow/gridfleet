@@ -25,7 +25,7 @@ async fn allocate_allocated_roundtrip() {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(v["body"]["capabilities"].is_object());
         assert!(v["ticket"].is_null());
-        let resp = r#"{"status":"allocated","allocation_id":"00000000-0000-0000-0000-000000000001","target":"http://10.0.0.5:4723"}"#;
+        let resp = r#"{"status":"allocated","allocation_id":"00000000-0000-0000-0000-000000000001","target":"http://10.0.0.5:4723","claim_window_sec":120}"#;
         req.respond(json_response(resp)).unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
@@ -34,9 +34,33 @@ async fn allocate_allocated_roundtrip() {
         gridfleet_router::backend::AllocateOutcome::Allocated {
             allocation_id,
             target,
+            claim_window_sec,
         } => {
             assert_eq!(allocation_id, "00000000-0000-0000-0000-000000000001");
             assert_eq!(target, "http://10.0.0.5:4723");
+            assert_eq!(claim_window_sec, Some(120));
+        }
+        other => panic!("expected Allocated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn allocate_allocated_without_claim_window_is_none() {
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let req = server.recv().unwrap();
+        assert_eq!(req.url(), "/internal/grid/allocate");
+        // Older backend omits claim_window_sec entirely.
+        let resp = r#"{"status":"allocated","allocation_id":"A","target":"http://10.0.0.5:4723"}"#;
+        req.respond(json_response(resp)).unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+    let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
+    match client.allocate(raw, None).await.unwrap() {
+        gridfleet_router::backend::AllocateOutcome::Allocated {
+            claim_window_sec, ..
+        } => {
+            assert_eq!(claim_window_sec, None);
         }
         other => panic!("expected Allocated, got {other:?}"),
     }

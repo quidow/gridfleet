@@ -141,6 +141,18 @@ impl ProxyHttp for GridRouter {
     }
 }
 
+/// Bound the Appium create call so we never wait past the backend's claim
+/// window (the reaper would release the allocation under us). When the backend
+/// reports a `claim_window_sec` large enough to honor (> 10s), cap the create
+/// at `claim_window_sec - 5s`, but never above the configured `proxy_timeout`.
+/// A missing or too-small window falls back to `proxy_timeout` unchanged.
+fn create_timeout(proxy_timeout: Duration, claim_window_sec: Option<u64>) -> Duration {
+    match claim_window_sec {
+        Some(w) if w > 10 => proxy_timeout.min(Duration::from_secs(w - 5)),
+        _ => proxy_timeout,
+    }
+}
+
 /// Increment the allocate-outcome counter (allocated|queued|invalid|timeout|error).
 fn alloc_outcome(outcome: &str) {
     crate::metrics::metrics()
@@ -205,6 +217,45 @@ impl GridRouter {
         self.routes.get(session_id)
     }
 
+    /// Confirm an allocation, retrying transport failures (no HTTP status —
+    /// e.g. the backend is mid-deploy) up to 3 total attempts, 2s apart. An
+    /// HTTP error status (e.g. 409 = allocation already reaped) is permanent
+    /// and returned immediately without retry.
+    async fn confirm_with_retry(
+        &self,
+        allocation_id: &str,
+        session_id: &str,
+    ) -> reqwest::Result<()> {
+        for attempt in 1..=3 {
+            match self.backend.confirm(allocation_id, session_id).await {
+                Ok(()) => return Ok(()),
+                Err(e) if e.status().is_some() => return Err(e), // HTTP error: permanent
+                Err(e) if attempt == 3 => return Err(e),
+                Err(e) => {
+                    log::warn!(
+                        "confirm transport error for {allocation_id} (attempt {attempt}/3): {e}"
+                    );
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+        unreachable!("loop returns on the third attempt")
+    }
+
+    /// Best-effort DELETE of an Appium session created during a new-session flow
+    /// that we are rolling back. Errors are logged and ignored — the agent's
+    /// health checks reclaim a stranded session if this fails.
+    async fn delete_appium_session(&self, target: &str, session_id: &str) {
+        if let Err(e) = appium_client()
+            .delete(format!("{target}/session/{session_id}"))
+            .timeout(self.proxy_timeout)
+            .send()
+            .await
+        {
+            log::warn!("rollback DELETE of session {session_id} on {target} failed: {e}");
+        }
+    }
+
     /// New-session handler: buffer the raw body, long-poll the backend's
     /// allocate endpoint (backend owns queueing/fairness/matching), create the
     /// session on the allocated Appium target with the SAME raw bytes, confirm
@@ -243,9 +294,10 @@ impl GridRouter {
                 Ok(crate::backend::AllocateOutcome::Allocated {
                     allocation_id,
                     target,
+                    claim_window_sec,
                 }) => {
                     alloc_outcome("allocated");
-                    break (allocation_id, target);
+                    break (allocation_id, target, claim_window_sec);
                 }
                 Ok(crate::backend::AllocateOutcome::Queued { ticket: t }) => {
                     alloc_outcome("queued");
@@ -294,13 +346,16 @@ impl GridRouter {
                 .await;
             }
         };
-        let (allocation_id, target) = allocation;
+        let (allocation_id, target, claim_window_sec) = allocation;
         // 3. Create the session on Appium with the SAME raw body (byte-identical).
+        // The create call is bounded by the claim window (the backend reaps the
+        // unconfirmed allocation after it) so we never hand back a session the
+        // backend has already released.
         let resp = appium_client()
             .post(format!("{target}/session"))
             .header("Content-Type", "application/json")
             .body(raw.clone())
-            .timeout(self.proxy_timeout)
+            .timeout(create_timeout(self.proxy_timeout, claim_window_sec))
             .send()
             .await;
         match resp {
@@ -324,6 +379,26 @@ impl GridRouter {
                     )
                     .await;
                 }
+                // 4. Confirm with the backend BEFORE inserting the route or
+                // handing the client a session. A failed confirm means the
+                // backend may consider the allocation dead, so we roll back the
+                // Appium session rather than serve a session it does not track.
+                if let Err(e) = self.confirm_with_retry(&allocation_id, &session_id).await {
+                    log::warn!(
+                        "confirm failed for {allocation_id}, rolling back session {session_id}: {e}"
+                    );
+                    self.delete_appium_session(&target, &session_id).await;
+                    return respond(
+                        session,
+                        500,
+                        w3c::error_body(
+                            "session not created",
+                            "allocation confirm failed; session was rolled back",
+                        ),
+                        "application/json",
+                    )
+                    .await;
+                }
                 if let Some(upstream) = Upstream::parse(&target) {
                     self.routes.insert(&session_id, upstream);
                     crate::metrics::metrics()
@@ -334,9 +409,6 @@ impl GridRouter {
                         "confirmed session {session_id} has unparseable target {target:?}; \
                          no local route inserted — route will appear on next rebuild"
                     );
-                }
-                if let Err(e) = self.backend.confirm(&allocation_id, &session_id).await {
-                    log::warn!("confirm failed for {allocation_id}: {e}"); // sweep will reconcile
                 }
                 respond(session, status, body, "application/json").await
             }
@@ -406,7 +478,36 @@ async fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_session_id;
+    use super::{create_timeout, extract_session_id};
+    use std::time::Duration;
+
+    #[test]
+    fn create_timeout_none_keeps_proxy_timeout() {
+        let pt = Duration::from_secs(300);
+        assert_eq!(create_timeout(pt, None), pt);
+    }
+
+    #[test]
+    fn create_timeout_window_minus_five() {
+        assert_eq!(
+            create_timeout(Duration::from_secs(300), Some(120)),
+            Duration::from_secs(115)
+        );
+    }
+
+    #[test]
+    fn create_timeout_too_small_window_falls_back() {
+        let pt = Duration::from_secs(300);
+        assert_eq!(create_timeout(pt, Some(8)), pt);
+    }
+
+    #[test]
+    fn create_timeout_min_wins() {
+        assert_eq!(
+            create_timeout(Duration::from_secs(60), Some(120)),
+            Duration::from_secs(60)
+        );
+    }
 
     #[test]
     fn extract_session_id_w3c_shape() {
