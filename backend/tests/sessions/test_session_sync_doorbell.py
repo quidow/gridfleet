@@ -14,10 +14,8 @@ from unittest.mock import AsyncMock, Mock
 
 from app.sessions.service_sync import SessionSyncLoop, SessionSyncService
 from app.sessions.services_container import SessionServices
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
-
-_GRID_UP_EMPTY: dict[str, object] = {"value": {"ready": True, "nodes": []}}
 
 
 async def test_doorbell_set_wakes_loop_early() -> None:
@@ -33,7 +31,6 @@ async def test_doorbell_set_wakes_loop_early() -> None:
     svc = SessionSyncService(
         publisher=event_bus,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
-        grid=make_fake_grid(_GRID_UP_EMPTY),
         lifecycle=AsyncMock(),
     )
 
@@ -80,7 +77,6 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
     svc = SessionSyncService(
         publisher=event_bus,
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 30}),
-        grid=make_fake_grid(_GRID_UP_EMPTY),
         lifecycle=AsyncMock(),
     )
 

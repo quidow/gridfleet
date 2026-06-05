@@ -17,6 +17,8 @@ appium_driver:
   version: "==0.13.3"
   recommended: "0.13.3"
   known_bad: []
+insecure_features:
+  - session_discovery
 platforms:
   - id: roku_network
     display_name: "Roku (network)"

@@ -67,9 +67,7 @@ async def test_subscriber_loop_wakes_session_sync(
     hub_pub: zmq.asyncio.Socket,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    waker = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(), lifecycle=AsyncMock()
-    )
+    waker = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), lifecycle=AsyncMock())
     loop = event_bus_loop.GridEventBusSubscriberLoop(
         services=GridServices(
             grid=make_fake_grid(),

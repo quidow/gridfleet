@@ -2,47 +2,39 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from prometheus_client import Counter
-from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
 
+from app.appium_nodes.models import AppiumDesiredState
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import Device
 from app.devices.services import intent as intent_service
-from app.devices.services import (
-    intent_types,
-)
-from app.devices.services.state_derivation import GATING_VIOLATION
-from app.grid.slot_parser import list_slot_sessions
+from app.grid import appium_direct
+from app.grid.allocation import node_target
 from app.lifecycle.services import policy as lifecycle_policy
-from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
     from app.sessions.protocols import DeviceSessionLifecycle
     from app.sessions.services_container import SessionServices
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
-
-IntentRegistration = intent_types.IntentRegistration
-NODE_PROCESS = intent_types.NODE_PROCESS
-PRIORITY_ACTIVE_SESSION = intent_types.PRIORITY_ACTIVE_SESSION
 
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_session_sync_wake_source",
@@ -50,66 +42,10 @@ SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     labelnames=("source",),
 )
 
-
-def _extract_sessions_from_grid(grid_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Extract trackable active sessions from a Grid /status response.
-
-    Returns {session_id: {connection_target, device_id, test_name,
-    requested_capabilities}}. Probe sessions are filtered out. Identity
-    parsing is delegated to ``app.grid.slot_parser`` so this loop and the
-    ``/api/grid/status`` counter share one definition of "what is a real
-    session" — see that module for why ``stereotype`` (not ``capabilities``)
-    is the authoritative source for device id and connection target.
-    """
-    sessions: dict[str, dict[str, Any]] = {}
-    for parsed in list_slot_sessions(grid_data):
-        if parsed.is_probe:
-            continue
-        # Appium strips client-supplied ``gridfleet:*`` markers from matched
-        # caps, so a viability probe's slot looks like an ordinary session
-        # here. The probe runner registers the device id while its Grid
-        # slot is alive; skip those to avoid persisting a phantom row.
-        if parsed.device_id is not None and probe_inflight.is_probe_inflight(str(parsed.device_id)):
-            continue
-        sessions[parsed.session_id] = {
-            "connection_target": parsed.connection_target,
-            "device_id": str(parsed.device_id) if parsed.device_id is not None else None,
-            "test_name": parsed.test_name,
-            "requested_capabilities": parsed.requested_capabilities,
-        }
-    return sessions
-
-
-async def _resolve_device_from_hub_info(db: AsyncSession, info: dict[str, Any]) -> Device | None:
-    """Find the ``Device`` row a hub slot points at, preferring the
-    stereotype-derived ``device_id`` (a real UUID) over the
-    ``connection_target`` lookup.
-
-    ``connection_target`` (the udid the driver echoes back) is not globally
-    unique — Roku reuses the IP, AVDs share serials across hosts, iOS
-    simulators reuse a UDID across reboots — so it is only a fallback for
-    hubs/nodes that for whatever reason advertised a stereotype without
-    ``appium:gridfleet:deviceId``.
-    """
-    device_id_str = info.get("device_id")
-    if isinstance(device_id_str, str) and device_id_str:
-        try:
-            device_uuid: uuid.UUID | None = uuid.UUID(device_id_str)
-        except ValueError:
-            logger.debug(
-                "Stereotype device_id %r is not a valid UUID; falling back to connection_target", device_id_str
-            )
-            device_uuid = None
-        if device_uuid is not None:
-            device = (await db.execute(select(Device).where(Device.id == device_uuid))).scalar_one_or_none()
-            if device is not None:
-                return device
-    connection_target = info.get("connection_target")
-    if isinstance(connection_target, str) and connection_target:
-        return (
-            await db.execute(select(Device).where(Device.connection_target == connection_target))
-        ).scalar_one_or_none()
-    return None
+GRID_ORPHAN_SESSIONS_KILLED_TOTAL = Counter(
+    "gridfleet_grid_orphan_sessions_killed",
+    "Appium sessions terminated by the observation sweep because no DB row tracks them.",
+)
 
 
 class SessionSyncService:
@@ -118,12 +54,10 @@ class SessionSyncService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        grid: GridServiceProtocol,
         lifecycle: DeviceSessionLifecycle,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._grid = grid
         self._lifecycle = lifecycle
         self._doorbell: asyncio.Event | None = None  # lazy: created on first access on the running loop
 
@@ -148,257 +82,173 @@ class SessionSyncService:
         return woke
 
     async def sync(self, db: AsyncSession) -> None:
-        """Sync Grid sessions with the Session table."""
-        grid_data = await self._grid.get_status()
+        """Observation sweep: reconcile DB-truth sessions against live Appium nodes.
 
-        # Fence: Grid /status is a slow external call. If another backend took
-        # leadership while we awaited it, drop all writes from this cycle.
+        The Selenium hub is gone. This loop polls each device's Appium server
+        directly (``app.grid.appium_direct``):
+
+        1. Liveness — every running DB session is probed; a definitively dead
+           one is closed through the same ended path the allocator uses. An
+           indeterminate (network) verdict is left untouched: we never kill on
+           uncertainty.
+        2. Orphan kill — each running node is enumerated; any Appium session
+           with no matching DB row (and no in-flight viability probe) is
+           terminated so a leaked session cannot pin a device busy forever.
+
+        The loop never inserts or hydrates Session rows: row creation is owned
+        by the allocation API. It also runs the stale ``stop_pending`` sweep,
+        which depends on DB state only.
+        """
+        # Fence: a foreign leader must not write. The Appium probes below are
+        # slow external calls, but the fence runs first so we drop the whole
+        # cycle's writes if leadership changed before we started.
         await assert_current_leader(db, settings=self._settings)
 
-        # Skip the Grid-driven sync when the hub is unreachable, but still run
-        # the stale ``stop_pending`` sweep — the sweep relies on DB state only,
-        # so it must heal historical rows even during Grid outages.
-        if not grid_data.get("value", {}).get("ready", False) and "error" in grid_data:
-            logger.debug("Grid unreachable, skipping Grid session sync (sweep still runs)")
-            await self._sweep_stale_stop_pending(db)
-            await db.commit()
-            return
+        await self._check_liveness(db)
+        await self._kill_orphans(db)
+        await self._sweep_stale_stop_pending(db)
+        await db.commit()
 
-        active = _extract_sessions_from_grid(grid_data)
-        running_stmt = select(Session).where(
+    async def _check_liveness(self, db: AsyncSession) -> None:
+        """Close DB-truth running sessions that Appium reports as gone."""
+        running_stmt = (
+            select(Session)
+            .options(
+                selectinload(Session.device).selectinload(Device.appium_node),
+                selectinload(Session.device).selectinload(Device.host),
+                joinedload(Session.run),
+            )
+            .where(
+                Session.status == SessionStatus.running,
+                Session.ended_at.is_(None),
+            )
+        )
+        running_sessions = (await db.execute(running_stmt)).scalars().all()
+
+        device_ids_to_restore: set[uuid.UUID] = set()
+        for session in running_sessions:
+            device = session.device
+            if device is None:
+                continue
+            target = node_target(device)
+            if target is None:
+                continue
+            alive = await appium_direct.session_alive(target, session.session_id)
+            if alive is None:
+                logger.debug("session_liveness_indeterminate session=%s device=%s", session.session_id, device.id)
+                continue
+            if alive:
+                continue
+            await self._end_session(db, session)
+            if session.device_id is not None:
+                device_ids_to_restore.add(session.device_id)
+
+        for device_id in sorted(device_ids_to_restore):
+            await self._restore_device_after_session_end(db, device_id)
+
+    async def _end_session(self, db: AsyncSession, session: Session) -> None:
+        """Close a single running session the same way the allocator does."""
+        sid = session.session_id
+        session.ended_at = datetime.now(UTC)
+        attached_run = session.run
+        if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
+            session.status = SessionStatus.error
+            session.error_type = "run_released"
+            session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
+        else:
+            session.status = SessionStatus.passed  # default; pytest helper can override
+        session_service.queue_session_ended_event(db, session, device=session.device, publisher=self._publisher)
+        if session.device_id is not None:
+            await intent_service.IntentService(db).revoke_intents_and_reconcile(
+                device_id=session.device_id,
+                sources=[f"active_session:{sid}"],
+                reason=f"Session {sid} ended",
+                publisher=self._publisher,
+            )
+        logger.info("Session %s ended", sid)
+
+    async def _restore_device_after_session_end(self, db: AsyncSession, device_id: uuid.UUID) -> None:
+        """Per-device still-running check + lifecycle handler + restore."""
+        count_stmt = select(Session).where(
+            Session.device_id == device_id,
             Session.status == SessionStatus.running,
             Session.ended_at.is_(None),
         )
-        running_result = await db.execute(running_stmt)
-        known_running: dict[str, uuid.UUID | None] = {
-            session.session_id: session.device_id for session in running_result.scalars().all()
-        }
-        known_session_ids: set[str] = set()
-        if active:
-            known_result = await db.execute(select(Session.session_id).where(Session.session_id.in_(active)))
-            known_session_ids = set(known_result.scalars().all())
+        if (await db.execute(count_stmt)).scalars().first() is not None:
+            return
+        device = (await db.execute(select(Device).where(Device.id == device_id))).scalar_one_or_none()
+        if device is None:
+            return
+        outcome = await self._lifecycle.handle_session_finished(db, device)
+        if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
+            return
+        if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
+            # A fresh client session arrived between our running-set check and
+            # the locked check inside the helper; leave the device busy.
+            return
+        # Authoritative recheck under the row lock. ``handle_session_finished``
+        # may have already derived the correct state; a fresh session inserted
+        # between it and this lock must override that derivation. Always recheck.
+        locked_device = await device_locking.lock_device(db, device.id)
+        fresh_running_stmt = select(Session.id).where(
+            Session.device_id == locked_device.id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+        )
+        fresh_running = (await db.execute(fresh_running_stmt)).first()
+        reason = "Session ended" if fresh_running is None else "Fresh session started"
+        # Mark dirty either way: the reconciler derives available/offline from
+        # durable facts when no session remains, or restores busy when one does.
+        await intent_service.IntentService(db).mark_dirty_and_reconcile(
+            locked_device.id, reason=reason, publisher=self._publisher
+        )
 
-        # Process new sessions
-        for sid, info in active.items():
-            if sid in known_running and known_running[sid] is None:
-                # Orphan row from a ``POST /api/sessions`` that ran before the
-                # backend could resolve the device (the testkit no longer sends
-                # ``device_id`` / ``connection_target`` from driver.capabilities
-                # because those caps are not reliable). Hydrate the row now
-                # using the prefix-stable hub stereotype.
-                await self._hydrate_orphan_session_row(db, sid, info)
+    async def _kill_orphans(self, db: AsyncSession) -> None:
+        """Terminate Appium sessions with no tracking DB row, per running node."""
+        device_stmt = (
+            select(Device).options(selectinload(Device.appium_node), selectinload(Device.host)).join(Device.appium_node)
+        )
+        devices = (await db.execute(device_stmt)).scalars().all()
+        for device in devices:
+            node = device.appium_node
+            if node is None or node.desired_state is not AppiumDesiredState.running:
                 continue
-
-            if sid in known_running or sid in known_session_ids:
+            target = node_target(device)
+            if target is None:
                 continue
-
-            connection_target = info.get("connection_target")
-            if not connection_target:
+            live_ids = await appium_direct.list_sessions(target)
+            if live_ids is None:
+                logger.debug("session_discovery_unavailable device=%s target=%s", device.id, target)
                 continue
-
-            device_id = info.get("device_id")
-            if isinstance(device_id, str) and device_id:
-                try:
-                    stmt = select(Device).where(Device.id == uuid.UUID(device_id))
-                except ValueError:
-                    stmt = select(Device).where(Device.connection_target == connection_target)
-            else:
-                stmt = select(Device).where(Device.connection_target == connection_target)
-            result = await db.execute(stmt)
-            device = result.scalar_one_or_none()
-
-            if device is None:
-                logger.warning("Grid session %s references unknown connection target: %s", sid, connection_target)
+            if not live_ids:
                 continue
-
-            # Resolve reservation before creating session so run_id is persisted
-            reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
-            reservation_run_id = (
-                reservation_run.id
-                if (
-                    reservation_run is not None
-                    and reservation_run.state == RunState.active
-                    and not run_service.reservation_entry_is_excluded(reservation_entry)
-                )
-                else None
-            )
-
-            # Insert the session record idempotently. The partial unique index
-            # ``ux_sessions_session_id_running`` enforces single-active-row per
-            # ``session_id``, so a concurrent registrant (testkit POST /sessions)
-            # racing this loop cannot create a duplicate. ON CONFLICT DO NOTHING
-            # short-circuits cleanly; we then refetch the existing row and skip
-            # the device-state flip (the other writer already owns it).
-            insert_stmt = (
-                pg_insert(Session)
-                .values(
-                    id=uuid.uuid4(),
-                    session_id=sid,
-                    device_id=device.id,
-                    test_name=info.get("test_name"),
-                    status=SessionStatus.running,
-                    requested_capabilities=info.get("requested_capabilities"),
-                    run_id=reservation_run_id,
-                )
-                .on_conflict_do_nothing(
-                    index_elements=[Session.session_id],
-                    index_where=text("status = 'running' AND ended_at IS NULL"),
-                )
-                .returning(Session.id)
-            )
-            inserted_id = (await db.execute(insert_stmt)).scalar_one_or_none()
-            if inserted_id is None:
-                logger.info(
-                    "Skipping new session %s; concurrent writer already inserted a running row",
-                    sid,
-                )
-                continue
-
-            session = await db.get(Session, inserted_id)
-            if session is None:
-                # Row vanished between INSERT RETURNING and SELECT — should not
-                # happen, but bail rather than crash the whole sync cycle.
-                continue
-
-            # Mark device busy under row lock
-            locked_device = await device_locking.lock_device(db, device.id)
-            if locked_device.operational_state is not DeviceOperationalState.available:
-                GATING_VIOLATION.labels(kind="session_on_non_available").inc()
-                logger.error(
-                    "gating_violation: session started on device not in available state",
-                    device_id=str(locked_device.id),
-                    operational_state=locked_device.operational_state,
-                )
-            # No explicit SESSION_STARTED transition: register_intents_and_reconcile
-            # calls reconcile_device which derives busy (has_running_session=True).
-            await intent_service.IntentService(db).register_intents_and_reconcile(
-                device_id=locked_device.id,
-                intents=[
-                    IntentRegistration(
-                        source=f"active_session:{sid}",
-                        axis=NODE_PROCESS,
-                        payload={"action": "start", "priority": PRIORITY_ACTIVE_SESSION},
-                    )
-                ],
-                reason=f"Session {sid} started",
-                publisher=self._publisher,
-            )
-            session_service.queue_session_started_event(
-                db,
-                session,
-                device=device,
-                run_id=str(reservation_run_id) if reservation_run_id is not None else None,
-                publisher=self._publisher,
-            )
-            logger.info("Tracked new session %s on device %s (%s)", sid, device.name, connection_target)
-
-        # Process ended sessions. Pass A: end every duplicate ``running`` row
-        # for each disappeared session_id and collect the distinct device_ids
-        # that need a busy → ready check. ``known_running`` collapses to a single
-        # device_id per session_id (dict overwrite), so legacy rows pointing at
-        # different devices for the same session_id would only restore one
-        # device if we relied on it. Walking ``ended_sessions.device_id``
-        # ensures every affected device is considered.
-        ended_sids = [sid for sid in known_running if sid not in active]
-        device_ids_to_restore: set[uuid.UUID] = set()
-
-        for sid in ended_sids:
-            sess_stmt = (
-                select(Session)
-                .options(selectinload(Session.device), joinedload(Session.run))
-                .where(Session.session_id == sid, Session.status == SessionStatus.running)
-            )
-            sess_result = await db.execute(sess_stmt)
-            # Tolerate duplicate ``session_id`` rows that slipped past the partial
-            # unique index (older data, or pre-migration writes). Crashing on
-            # MultipleResultsFound stalls the whole loop and leaves devices busy.
-            ended_sessions = list(sess_result.scalars().all())
-
-            for ended_session in ended_sessions:
-                ended_device = ended_session.device
-                ended_session.ended_at = datetime.now(UTC)
-                attached_run = ended_session.run
-                if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
-                    ended_session.status = SessionStatus.error
-                    ended_session.error_type = "run_released"
-                    ended_session.error_message = (
-                        f"Run ended while session was still running ({attached_run.state.value})"
-                    )
-                else:
-                    ended_session.status = SessionStatus.passed  # default; pytest helper can override
-                session_service.queue_session_ended_event(
-                    db, ended_session, device=ended_device, publisher=self._publisher
-                )
-                if ended_session.device_id is not None:
-                    await intent_service.IntentService(db).revoke_intents_and_reconcile(
-                        device_id=ended_session.device_id,
-                        sources=[f"active_session:{sid}"],
-                        reason=f"Session {sid} ended",
-                        publisher=self._publisher,
-                    )
-                logger.info("Session %s ended", sid)
-                if ended_session.device_id is not None:
-                    device_ids_to_restore.add(ended_session.device_id)
-
-        # Pass B: per-device still_running check + lifecycle handler + restore.
-        # Sorted so concurrent loops acquire device row locks in a consistent
-        # order (matches ``device_locking.lock_devices``).
-        for device_id in sorted(device_ids_to_restore):
-            count_stmt = select(Session).where(
-                Session.device_id == device_id,
-                Session.status == SessionStatus.running,
+            known_stmt = select(Session.session_id).where(
+                Session.device_id == device.id,
+                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
                 Session.ended_at.is_(None),
             )
-            count_result = await db.execute(count_stmt)
-            if count_result.scalars().first() is not None:
+            known_ids = set((await db.execute(known_stmt)).scalars().all())
+            if probe_inflight.is_probe_inflight(str(device.id)):
                 continue
-            dev_stmt = select(Device).where(Device.id == device_id)
-            dev_result = await db.execute(dev_stmt)
-            device = dev_result.scalar_one_or_none()
-            if device is None:
-                continue
-            outcome = await self._lifecycle.handle_session_finished(db, device)
-            if outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED:
-                continue
-            if outcome is lifecycle_policy.DeferredStopOutcome.RUNNING_SESSION_EXISTS:
-                # A fresh client session arrived between our running-set check
-                # and the locked check inside the helper; leave the device busy
-                # so the new session keeps it.
-                continue
-            # Authoritative recheck under the row lock. ``handle_session_finished``
-            # (reconciler path) may have already derived the correct state; but a
-            # fresh session inserted between handle_session_finished and this lock
-            # must override that derivation. Always recheck under lock.
-            locked_device = await device_locking.lock_device(db, device.id)
-            fresh_running_stmt = select(Session.id).where(
-                Session.device_id == locked_device.id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-            )
-            fresh_running = (await db.execute(fresh_running_stmt)).first()
-            if fresh_running is None:
-                # Mark dirty: the reconciler derives available or offline from
-                # durable facts (no running session + readiness + stop_in_flight).
-                await intent_service.IntentService(db).mark_dirty_and_reconcile(
-                    locked_device.id, reason="Session ended", publisher=self._publisher
+            for live_id in live_ids:
+                if live_id in known_ids:
+                    continue
+                terminated = await appium_direct.terminate_session(target, live_id)
+                GRID_ORPHAN_SESSIONS_KILLED_TOTAL.inc()
+                logger.warning(
+                    "grid_orphan_session_killed session=%s device=%s target=%s terminated=%s",
+                    live_id,
+                    device.id,
+                    target,
+                    terminated,
                 )
-            else:
-                # Fresh session exists → device must be busy. If reconcile inside
-                # handle_session_finished set available, fix it back to busy.
-                await intent_service.IntentService(db).mark_dirty_and_reconcile(
-                    locked_device.id, reason="Fresh session started", publisher=self._publisher
-                )
-
-        await self._sweep_stale_stop_pending(db)
-        await db.commit()
 
     async def _sweep_stale_stop_pending(self, db: AsyncSession) -> None:
         """Backstop sweep: clear stop_pending on devices that have no running sessions.
 
         Protects against any session-end path that bypassed
         `lifecycle_policy.complete_deferred_stop_if_session_ended`. Runs every session_sync
-        cycle (independent of Grid availability) and is a no-op for devices that
-        are correctly clean.
+        cycle and is a no-op for devices that are correctly clean.
 
         Selects only ``Device.id`` ordered for deterministic iteration; the row
         lock is taken inside ``handle_session_finished`` per device, never as a
@@ -415,121 +265,17 @@ class SessionSyncService:
                 continue
             await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
 
-    async def _hydrate_orphan_session_row(self, db: AsyncSession, sid: str, info: dict[str, Any]) -> None:
-        """Bind a device-less ``Session`` row to its Device and fire the busy
-        transition.
-
-        Why orphan rows exist: the testkit's ``register_session_from_driver``
-        used to inspect ``driver.capabilities`` for vendor-prefixed identifying
-        caps that the Appium driver strips on the W3C echo, so every real
-        Appium client posted ``device_id=None`` / ``connection_target=None``.
-        Those caps cannot be made reliable on the client side (vendor namespaces
-        are not echoed back, plain udid is not globally unique), so the client
-        now sends only ``session_id`` and trusts the backend to bind the row.
-        This helper is the binding step.
-
-        Identity comes from ``slot.session.stereotype`` (parsed upstream by
-        ``app.grid.slot_parser``), which is prefix-stable. The Device row is
-        locked before the state machine fires so concurrent state writers
-        cannot lose the busy transition.
-        """
-        # Take ``SELECT … FOR UPDATE`` on the Session row so a concurrent
-        # ``POST /api/sessions/{id}/end`` (or any other session-end path)
-        # cannot land ``ended_at = NOW`` between this read and the
-        # ``session.device_id = locked_device.id`` write below. Without the
-        # lock the hydrator would happily bind a device to a row that has
-        # already ended, and would fire ``SESSION_STARTED`` on the device for
-        # a session that no longer exists.
-        session_stmt = (
-            select(Session)
-            .where(
-                Session.session_id == sid,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-                Session.device_id.is_(None),
-            )
-            .with_for_update()
-        )
-        session = (await db.execute(session_stmt)).scalar_one_or_none()
-        if session is None:
-            # Row was hydrated by a concurrent writer or moved off the running
-            # state since the parent cycle's snapshot. Nothing to do.
-            return
-
-        device = await _resolve_device_from_hub_info(db, info)
-        if device is None:
-            logger.warning("Cannot hydrate orphan session %s: device lookup failed (%r)", sid, info)
-            return
-
-        locked_device = await device_locking.lock_device(db, device.id)
-        # Re-check the locked Session row under the same transaction — the
-        # initial SELECT FOR UPDATE acquired the lock, but ``await
-        # _resolve_device_from_hub_info`` and ``device_locking.lock_device``
-        # both run async-yields, and the locked row may have been changed by
-        # the session-end path if its commit landed before our SELECT.
-        if session.status is not SessionStatus.running or session.ended_at is not None:
-            logger.info(
-                "Skipping orphan hydration for %s: session is no longer running (status=%s, ended_at=%s)",
-                sid,
-                session.status,
-                session.ended_at,
-            )
-            return
-        session.device_id = locked_device.id
-
-        reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, locked_device.id)
-        reservation_run_id: uuid.UUID | None = None
-        if (
-            reservation_run is not None
-            and reservation_run.state == RunState.active
-            and not run_service.reservation_entry_is_excluded(reservation_entry)
-        ):
-            reservation_run_id = reservation_run.id
-            session.run_id = reservation_run_id
-
-        if locked_device.operational_state != DeviceOperationalState.available:
-            GATING_VIOLATION.labels(kind="session_on_non_available").inc()
-            logger.error(
-                "gating_violation: session started on device not in available state",
-                device_id=str(locked_device.id),
-                operational_state=locked_device.operational_state,
-            )
-        # No explicit SESSION_STARTED transition: register_intents_and_reconcile
-        # calls reconcile_device which derives busy (has_running_session=True).
-        await intent_service.IntentService(db).register_intents_and_reconcile(
-            device_id=locked_device.id,
-            intents=[
-                IntentRegistration(
-                    source=f"active_session:{sid}",
-                    axis=NODE_PROCESS,
-                    payload={"action": "start", "priority": PRIORITY_ACTIVE_SESSION},
-                )
-            ],
-            reason=f"Session {sid} hydrated",
-            publisher=self._publisher,
-        )
-        session_service.queue_session_started_event(
-            db,
-            session,
-            device=locked_device,
-            run_id=str(reservation_run_id) if reservation_run_id is not None else None,
-            publisher=self._publisher,
-        )
-        logger.info("Hydrated orphan session %s onto device %s", sid, locked_device.name)
-
 
 class SessionSyncLoop:
     def __init__(self, *, services: SessionServices) -> None:
         self._services = services
 
     async def run(self) -> None:
-        """Background loop that syncs Grid sessions.
+        """Background loop that runs the session observation sweep.
 
-        Wakes on either the doorbell (set by the hub event-bus subscriber
-        on ``session-created`` / ``session-closed``) or the registry-
-        configured timeout, whichever comes first. The poll continues to
-        run as a drift reconciler against any bus event that was missed
-        (hub restart, network partition, slow joiner).
+        Wakes on either the doorbell (set by the grid event-bus subscriber) or
+        the registry-configured timeout, whichever comes first. The poll
+        continues to run as a drift reconciler against any wake that was missed.
         """
         sync = self._services.sync
         while True:

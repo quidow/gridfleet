@@ -572,7 +572,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             sync=SessionSyncService(
                 publisher=test_event_bus,
                 settings=settings_service,
-                grid=GridService(settings=settings_service),
                 lifecycle=_lifecycle_policy_svc,
             ),
             viability=_viability_svc,

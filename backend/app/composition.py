@@ -361,9 +361,7 @@ def compose_app(
         ),
         sessions=SessionServices(
             crud=SessionCrudService(publisher=bus, lifecycle=lifecycle_policy_svc),
-            sync=SessionSyncService(
-                publisher=bus, settings=settings_svc, grid=grid_svc, lifecycle=lifecycle_policy_svc
-            ),
+            sync=SessionSyncService(publisher=bus, settings=settings_svc, lifecycle=lifecycle_policy_svc),
             viability=viability_svc,
             settings=settings_svc,
             grid=grid_svc,
