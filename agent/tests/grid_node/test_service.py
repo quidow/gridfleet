@@ -12,10 +12,11 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+from agent_app.grid_node import hub_status_cache
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
-from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.service import GridNodeService, _probe_hub_registration
 
 
 class RecordingBus:
@@ -850,3 +851,70 @@ async def test_service_no_slots_snapshot_still_works(monkeypatch: pytest.MonkeyP
     payload = service._node_payload()
     assert payload["slots"] == []
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_probe_hub_registration_via_cached_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        assert url == "http://hub:4444/se/grid/node"
+        return [{"id": "other"}, {"id": "node-1"}]
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
+    assert await _probe_hub_registration("http://hub:4444/se/grid/node", "node-1") is True
+    assert await _probe_hub_registration("http://hub:4444/se/grid/node", "missing") is False
+
+
+@pytest.mark.asyncio
+async def test_probe_hub_registration_unknown_when_cache_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        return None
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
+    assert await _probe_hub_registration("http://hub:4444", "node-1") is None
+
+
+@pytest.mark.asyncio
+async def test_probe_hub_registration_disabled_without_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def explode(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        raise AssertionError("must not fetch when no hub URL is configured")
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", explode)
+    assert await _probe_hub_registration("", "node-1") is None
+
+
+@pytest.mark.asyncio
+async def test_probe_absent_in_cache_confirms_with_fresh_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stale shared snapshot must not flag a freshly-registered node as lost."""
+    calls: list[bool] = []
+
+    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        calls.append(fresh)
+        if fresh:
+            return [{"id": "node-1"}]  # hub ingested our NODE_ADDED by now
+        return [{"id": "other"}]  # stale neighbor snapshot
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
+    assert await _probe_hub_registration("http://hub:4444", "node-1") is True
+    assert calls == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_probe_absent_in_fresh_fetch_is_definitive(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        return [{"id": "other"}]
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
+    assert await _probe_hub_registration("http://hub:4444", "node-1") is False
+
+
+@pytest.mark.asyncio
+async def test_probe_fresh_fetch_failure_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        if fresh:
+            return None  # hub became unreachable between the two fetches
+        return [{"id": "other"}]
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
+    assert await _probe_hub_registration("http://hub:4444", "node-1") is None

@@ -39,6 +39,11 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
     ping_result = await _network_ping(serial)
     if ping_result is not None:
         results.append(ping_result)
+    expected = getattr(ctx, "expected_identity_value", None)
+    if connected and expected and getattr(ctx, "connection_type", None) == "network":
+        identity_result = await _verify_identity(adb, serial, str(expected))
+        if identity_result is not None:
+            results.append(identity_result)
     if getattr(ctx, "connection_type", None) == "usb" and getattr(ctx, "ip_address", None):
         timeout = float(getattr(ctx, "ip_ping_timeout_sec", None) or 2.0)
         count = int(getattr(ctx, "ip_ping_count", None) or 1)
@@ -51,6 +56,27 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
             )
         )
     return results
+
+
+async def _verify_identity(adb: str, serial: str, expected: str) -> HealthCheckResult | None:
+    """Compare ``ro.serialno`` at the probed adb target with the expected identity.
+
+    Network adb targets are addressed by ip:port, so a different device on a
+    reused address answers happily — only a definitive serial mismatch fails;
+    an empty/failed read reports nothing (never flap health on a flaky query).
+    """
+    try:
+        reported = await run_cmd([adb, "-s", serial, "shell", "getprop", "ro.serialno"], timeout=5)
+    except Exception:  # noqa: BLE001 — inconclusive, not a health failure
+        return None
+    if not reported:
+        return None
+    ok = reported == expected
+    return HealthCheckResult(
+        check_id="identity",
+        ok=ok,
+        detail="" if ok else f"Device at target reports serial {reported}, expected {expected}",
+    )
 
 
 async def _adb_connected(adb: str, serial: str) -> bool:

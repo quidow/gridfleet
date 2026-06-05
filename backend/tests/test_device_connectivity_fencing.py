@@ -34,12 +34,33 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
         os_type=OSType.linux,
     )
     db_session.add(host)
+    await db_session.flush()
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="conn-h1-001",
+            connection_target="conn-h1-001",
+            name="Conn H1 Device",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
     await db_session.commit()
 
     with (
         patch(
             "app.devices.services.connectivity._get_agent_devices",
             new=AsyncMock(return_value=set()),
+        ),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new=AsyncMock(return_value=None),
         ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
@@ -103,7 +124,7 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
         ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, None, LeadershipLost("site b")],
+            side_effect=[None, LeadershipLost("site b")],
         ),
         pytest.raises(LeadershipLost),
     ):
@@ -163,9 +184,8 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
             return_value=set(),
         ),
         patch(
-            "app.devices.services.connectivity._uses_endpoint_health",
-            new_callable=AsyncMock,
-            return_value=False,
+            "app.devices.services.connectivity._get_device_health",
+            new=AsyncMock(return_value=None),
         ),
         patch(
             "app.devices.services.connectivity._stop_disconnected_node",
@@ -192,7 +212,7 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadership_lost(
+async def test_check_connectivity_aborts_after_direct_probe_when_leadership_lost(
     db_session: AsyncSession,
 ) -> None:
     host = Host(
@@ -231,18 +251,13 @@ async def test_check_connectivity_aborts_in_endpoint_health_branch_when_leadersh
             return_value=set(),
         ),
         patch(
-            "app.devices.services.connectivity._uses_endpoint_health",
-            new_callable=AsyncMock,
-            return_value=True,
-        ),
-        patch(
             "app.devices.services.connectivity._get_device_health",
             new_callable=AsyncMock,
             return_value={"healthy": True},
         ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, None, LeadershipLost("site c")],
+            side_effect=[None, LeadershipLost("site c")],
         ),
         pytest.raises(LeadershipLost),
     ):

@@ -9,9 +9,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlparse
 
-import httpx
 import uvicorn
 
+from agent_app.grid_node import hub_status_cache
 from agent_app.grid_node.http_server import build_app
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
@@ -29,23 +29,28 @@ logger = logging.getLogger(__name__)
 async def _probe_hub_registration(hub_status_url: str, node_id: str) -> bool | None:
     """Ask the hub whether it currently has ``node_id`` registered.
 
-    Returns True/False from a successful ``GET {hub}/status``; ``None`` when the
-    hub is unreachable or the response is unparseable — callers must treat ``None``
-    as "unknown" (do not churn re-registrations, do not flip a confirmed node to
-    unregistered on a transient blip). Disabled (``None``) when no URL is set.
+    Returns True/False from a successful (possibly cached) ``GET {hub}/status``;
+    ``None`` when the hub is unreachable or the response is unparseable — callers
+    must treat ``None`` as "unknown" (do not churn re-registrations, do not flip
+    a confirmed node to unregistered on a transient blip). Disabled (``None``)
+    when no URL is set. The status fetch is shared host-wide via
+    ``hub_status_cache`` so per-node probes stay flat in the node count.
     """
     if not hub_status_url:
         return None
-    url = hub_status_url.rstrip("/") + "/status"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url)
-        if resp.status_code != 200:
-            return None
-        nodes = (resp.json().get("value") or {}).get("nodes") or []
-    except (httpx.HTTPError, ValueError):
+    nodes = await hub_status_cache.get_hub_nodes(hub_status_url)
+    if nodes is None:
         return None
-    return any(isinstance(node, dict) and node.get("id") == node_id for node in nodes)
+    if any(node.get("id") == node_id for node in nodes):
+        return True
+    # The shared snapshot may have been fetched before the hub ingested this
+    # node's own NODE_ADDED (fresh-node race) — absence is only definitive on
+    # a cache-bypassing fetch, otherwise a just-registered node would fire a
+    # spurious re-registration self-heal.
+    nodes = await hub_status_cache.get_hub_nodes(hub_status_url, fresh=True)
+    if nodes is None:
+        return None
+    return any(node.get("id") == node_id for node in nodes)
 
 
 def _build_os_info() -> dict[str, str]:

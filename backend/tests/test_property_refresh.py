@@ -1,11 +1,13 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.devices.models import ConnectionType
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.connectivity import ConnectivityService
@@ -21,6 +23,7 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.hosts.models import Host, HostStatus, OSType
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
+from app.packs.services.discovery import PackDiscoveryService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
@@ -198,3 +201,120 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         await loop.run()
 
     log_exception.assert_called_once_with("Property refresh cycle failed")
+
+
+def _discovery_service(fetcher: AsyncMock | None = None) -> PackDiscoveryService:
+    return PackDiscoveryService(
+        agent_get_pack_devices=AsyncMock(return_value={"candidates": []}),
+        agent_get_pack_device_properties=fetcher or AsyncMock(return_value=None),
+        settings=MagicMock(),
+        circuit_breaker=MagicMock(),
+        serializer=MagicMock(),
+        identity_guard=MagicMock(),
+    )
+
+
+def _roku_device(**overrides: object) -> SimpleNamespace:
+    defaults: dict[str, object] = {
+        "identity_value": "SER123",
+        "connection_target": "10.0.0.5",
+        "pack_id": "roku",
+        "connection_type": ConnectionType.network,
+        "os_version": None,
+        "os_version_display": None,
+        "software_versions": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_fetch_pack_device_properties_passes_identity_value() -> None:
+    fetcher = AsyncMock(return_value=None)
+    svc = _discovery_service(fetcher)
+    host = SimpleNamespace(ip="192.168.1.10", agent_port=5100)
+    await svc.fetch_pack_device_properties(host, _roku_device())  # type: ignore[arg-type]
+    assert fetcher.await_args is not None
+    assert fetcher.await_args.kwargs["identity_value"] == "SER123"
+    assert fetcher.await_args.args[2] == "10.0.0.5"  # still queries the known target
+
+
+@pytest.mark.asyncio
+async def test_apply_updates_connection_target_for_verified_identity() -> None:
+    svc = _discovery_service()
+    device = _roku_device()
+    session = AsyncMock()
+    await svc.apply_pack_device_properties(
+        session,
+        device,  # type: ignore[arg-type]
+        {
+            "identity_value": "SER123",
+            "detected_properties": {"connection_target": "10.0.0.9", "os_version": "14.5"},
+        },
+    )
+    assert device.connection_target == "10.0.0.9"
+    assert device.os_version == "14.5"
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_apply_ignores_connection_target_on_identity_mismatch() -> None:
+    svc = _discovery_service()
+    device = _roku_device()
+    session = AsyncMock()
+    await svc.apply_pack_device_properties(
+        session,
+        device,  # type: ignore[arg-type]
+        {
+            "identity_value": "OTHER-SERIAL",
+            "detected_properties": {"connection_target": "10.0.0.9"},
+        },
+    )
+    assert device.connection_target == "10.0.0.5"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_no_commit_when_connection_target_unchanged() -> None:
+    svc = _discovery_service()
+    device = _roku_device()
+    session = AsyncMock()
+    await svc.apply_pack_device_properties(
+        session,
+        device,  # type: ignore[arg-type]
+        {
+            "identity_value": "SER123",
+            "detected_properties": {"connection_target": "10.0.0.5"},
+        },
+    )
+    assert device.connection_target == "10.0.0.5"
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_skips_connection_target_for_non_network_device() -> None:
+    """Emulator/USB connection targets are owned by intake/verification, not refresh.
+
+    The android pack's discover reports the live adb serial while normalize
+    reports the stable AVD name — letting refresh write both forms would make
+    the row oscillate every cycle. Only network devices (the DHCP-move case)
+    get the connection_target heal.
+    """
+    svc = _discovery_service()
+    device = _roku_device(
+        identity_value="avd:Television_1080p",
+        connection_target="emulator-5554",
+        pack_id="appium-uiautomator2",
+        connection_type=ConnectionType.virtual,
+    )
+    session = AsyncMock()
+    await svc.apply_pack_device_properties(
+        session,
+        device,  # type: ignore[arg-type]
+        {
+            "identity_value": "avd:Television_1080p",
+            "detected_properties": {"connection_target": "Television_1080p"},
+        },
+    )
+    assert device.connection_target == "emulator-5554"
+    session.commit.assert_not_awaited()
