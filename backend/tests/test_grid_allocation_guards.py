@@ -62,7 +62,6 @@ async def test_reaper_cycle_requires_wired_allocation(db_session: AsyncSession) 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     services = GridServices(
-        grid=None,  # type: ignore[arg-type]  # unused by run_cycle
         settings=None,  # type: ignore[arg-type]
         session_factory=async_sessionmaker(db_session.bind),
         allocation=None,
@@ -73,7 +72,6 @@ async def test_reaper_cycle_requires_wired_allocation(db_session: AsyncSession) 
 
 def test_router_allocation_helper_requires_wired_allocation() -> None:
     services = GridServices(
-        grid=None,  # type: ignore[arg-type]
         settings=None,  # type: ignore[arg-type]
         session_factory=None,  # type: ignore[arg-type]
         allocation=None,
