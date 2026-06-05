@@ -2,6 +2,25 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.23.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.23.0...gridfleet-agent-v0.23.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **agent:** add hub-registration reconciler with converge matrix ([1b9b815](https://github.com/quidow/gridfleet/commit/1b9b815d1b914d4e947c2cb99a3365d0239bdb14))
+* **agent:** add structured hub-node observation ([19a58ba](https://github.com/quidow/gridfleet/commit/19a58ba7adaa047376430eba6d23676a164bf8ae))
+* **agent:** flush terminal grid events on bus close ([6200e48](https://github.com/quidow/gridfleet/commit/6200e48ed1d242d930793b67dcaa33af918b5fcd))
+* **agent:** reconcile relay hub registration; remove drain self-stop race ([a429452](https://github.com/quidow/gridfleet/commit/a429452c3a41c8eedbcd5a8c1bf09022f654cdb1))
+* **agent:** record launch spec before applying reconfigure ([6877bdc](https://github.com/quidow/gridfleet/commit/6877bdcb766890d7b9ba403bf79834001dd38418))
+* **agent:** single-owner hub registration; remove drain self-stop ([93003f3](https://github.com/quidow/gridfleet/commit/93003f30f9ad99ef20c613382c11962809ba3c64))
+* **agent:** supervisor no longer self-stops the relay on drain-complete ([f4114c9](https://github.com/quidow/gridfleet/commit/f4114c90570b38cec3fbd6df0ce7dede2ec1fb1c))
+* **agent:** sweep stray hub registrations on relay start ([06aca14](https://github.com/quidow/gridfleet/commit/06aca14ae2267cf60eb2e75837fdbf9680352c3d))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /agent in the python-dependencies group ([#515](https://github.com/quidow/gridfleet/issues/515)) ([6907e89](https://github.com/quidow/gridfleet/commit/6907e8909852bd15394518948978131a4ef770e5))
+
 ## [0.23.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.22.3...gridfleet-agent-v0.23.0) (2026-06-05)
 
 
