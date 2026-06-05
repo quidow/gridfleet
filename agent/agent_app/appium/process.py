@@ -40,6 +40,7 @@ from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.event_bus import EventBus
 from agent_app.grid_node.protocol import build_slots
 from agent_app.grid_node.service import GridNodeService
+from agent_app.grid_node.stray_sweep import sweep_stray_registrations
 from agent_app.grid_node.supervisor import GridNodeSupervisorHandle, start_grid_node_supervisor
 from agent_app.grid_url import get_local_ip
 from agent_app.observability import sanitize_log_value
@@ -948,6 +949,22 @@ class AppiumProcessManager:
         try:
             await handle.start()
             await handle.wait_until_running()
+            if handle.service is not None:
+                # Best-effort cleanup of hub registrations pointing at this
+                # host with no live relay (husks from crashes or the pre-fix
+                # F-G2 wedge); see ``stray_sweep`` module docstring.
+                live_ids = {
+                    h.service.node_id
+                    for h in self._grid_supervisors.values()
+                    if h.service is not None and h.is_running()
+                } | {config.node_id}
+                own_prefix = self._grid_external_url(0).rsplit(":", 1)[0] + ":"
+                await sweep_stray_registrations(
+                    hub_status_url=agent_settings.grid_node.grid_hub_url,
+                    bus=handle.service.bus_for_sweep(),
+                    own_uri=lambda uri: uri.startswith(own_prefix),
+                    live_node_ids=live_ids,
+                )
             # Defense in depth: a freshly constructed ``NodeState`` always
             # initializes ``_drain=False``. If the backend asked us to start
             # this relay with sessions blocked (cooldown / maintenance carried

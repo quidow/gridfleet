@@ -9,6 +9,8 @@ from agent_app._supervision import ExponentialBackoff
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agent_app.grid_node.hub_registration import EventPublisher
+
 
 class GridNodeServiceProtocol(Protocol):
     @property
@@ -36,6 +38,9 @@ class GridNodeServiceProtocol(Protocol):
         raise NotImplementedError
 
     async def drain_to_block_new_sessions(self) -> None:
+        raise NotImplementedError
+
+    def bus_for_sweep(self) -> EventPublisher:
         raise NotImplementedError
 
 

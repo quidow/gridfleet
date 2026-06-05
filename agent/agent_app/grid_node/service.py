@@ -226,6 +226,11 @@ class GridNodeService:
     def is_registered_with_hub(self) -> bool:
         return self._registration.is_registered_with_hub()
 
+    def bus_for_sweep(self) -> EventPublisher:
+        # Reusing the live relay's connected bus for the stray-registration
+        # sweep avoids a transient ZMQ socket + slow-joiner dance.
+        return self._bus
+
     def has_active_session(self) -> bool:
         return any(slot.state == "BUSY" for slot in self.state.snapshot().slots)
 
