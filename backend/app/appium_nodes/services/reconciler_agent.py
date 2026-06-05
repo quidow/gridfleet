@@ -520,8 +520,8 @@ async def stop_remote_node(
     Returns True on confirmed agent acknowledgement, False otherwise. Callers
     that mutate DB node state on the back of a stop MUST gate that mutation on
     True — a False return means we cannot prove the agent process is gone, and
-    flipping the DB to ``stopped`` would leave the agent process orphaned with
-    its Selenium Grid registration intact.
+    flipping the DB to ``stopped`` would leave the agent's Appium process
+    orphaned and still reachable by the router on its allocated port.
     """
     try:
         resp = await appium_stop(

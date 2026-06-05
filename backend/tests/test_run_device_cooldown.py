@@ -373,11 +373,10 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cooldown must push the ``accepting_new_sessions=False`` reconfigure to
-    the agent before the HTTP response returns. Otherwise the
-    Selenium Grid hub keeps routing new sessions to the cooled-down device
-    until the next ``device_intent_reconciler_loop`` tick (default 5 s).
-    During that window testkit's next ``webdriver.Remote(...)`` lands on the
-    same relay because hub-side caps still match.
+    the agent before the HTTP response returns. Otherwise new sessions keep
+    reaching the cooled-down device until the next
+    ``device_intent_reconciler_loop`` tick (default 5 s). During that window
+    testkit's next ``webdriver.Remote(...)`` can still land on the same node.
     """
     device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
     run = await _create_run(client)

@@ -471,13 +471,13 @@ async def reconcile_device(
     )
     if changed:
         node.generation += 1
-    # Stage a reconfigure for caps/run-id updates on a running relay, and for
-    # any transition that must stop the hub routing to it: ``stop_pending``
+    # Stage a reconfigure for caps/run-id updates on a running node, and for
+    # any transition that must stop new sessions reaching it: ``stop_pending``
     # (graceful) or ``not accepting_new_sessions`` (a hard stop flips this
     # without setting ``stop_pending``). Without the ``accepting_new_sessions``
     # arm, a hard/idle ``desired_state=stopped`` derives ``offline`` synchronously
-    # (``stop_in_flight``) but pushes no drain — the relay stays UP at the hub and
-    # a direct/free session lands on the now-offline device (N7,
+    # (``stop_in_flight``) but pushes no drain — the Appium node stays UP and a
+    # direct session lands on the now-offline device (N7,
     # ``session_on_non_available``). Mirrors the start-path defense-in-depth in
     # ``reconciler_agent.mark_node_running``.
     should_stage_reconfigure = (

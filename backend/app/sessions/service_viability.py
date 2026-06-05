@@ -435,14 +435,15 @@ async def get_session_viability(db: AsyncSession, device: Device) -> dict[str, A
 def _classify_session_error(error: str | None) -> str | None:
     """Categorise a viability probe failure for diagnostics.
 
-    ``grid_no_slot`` matches the Selenium Grid signature seen when the hub
-    accepts a session-create request but can't route it to a node: the response
-    carries ``Driver info: driver.version: unknown`` because no driver loaded.
-    This is a transient infrastructure error (relay registration race), not a
-    persistent device-side fault.
+    ``grid_no_slot`` matches the signature seen when Appium accepts a
+    session-create request but no driver is loaded: the response carries
+    ``Driver info: driver.version: unknown``. This is a transient
+    infrastructure error (node still warming up), not a persistent device-side
+    fault. The category name is retained for backward compatibility with
+    historical session_viability records.
 
     Everything else is ``driver``. Unrecognised payloads are debug-logged with
-    a short excerpt so future Grid signature changes surface in operator logs
+    a short excerpt so future signature changes surface in operator logs
     without requiring a code change to this classifier.
     """
     if error is None:

@@ -271,7 +271,7 @@ _DEFINITIONS: list[SettingDefinition] = [
         default=3,
         description=(
             "Consecutive session_viability failures required before the manager "
-            "parks the device. Tolerates transient Selenium Grid hiccups."
+            "parks the device. Tolerates transient Appium session hiccups."
         ),
         min_value=1,
         max_value=20,
