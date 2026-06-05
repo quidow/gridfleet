@@ -168,6 +168,9 @@ class HubRegistrationReconciler:
             await self._remove_and_confirm()
             await self._publish_added()
             return
+        # Hub confirmed it has us: a later unknown observation (hub blip) must
+        # not trigger the blind first-announce ADDED.
+        self._announced = True
         self._registered_with_hub = True
 
     async def _converge_draining(self, observed: HubObserved) -> None:

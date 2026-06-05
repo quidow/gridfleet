@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 
 import uvicorn
 
-from agent_app.grid_node import hub_status_cache
 from agent_app.grid_node.http_server import build_app
+from agent_app.grid_node.hub_registration import HubObserved, HubRegistrationReconciler, observe_hub_node
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import EventType, event_envelope
 from agent_app.grid_node.upstream_pool import AppiumUpstreamPool
@@ -24,33 +24,6 @@ if TYPE_CHECKING:
 
 _GRID_NODE_VERSION = "4.43.0"
 logger = logging.getLogger(__name__)
-
-
-async def _probe_hub_registration(hub_status_url: str, node_id: str) -> bool | None:
-    """Ask the hub whether it currently has ``node_id`` registered.
-
-    Returns True/False from a successful (possibly cached) ``GET {hub}/status``;
-    ``None`` when the hub is unreachable or the response is unparseable — callers
-    must treat ``None`` as "unknown" (do not churn re-registrations, do not flip
-    a confirmed node to unregistered on a transient blip). Disabled (``None``)
-    when no URL is set. The status fetch is shared host-wide via
-    ``hub_status_cache`` so per-node probes stay flat in the node count.
-    """
-    if not hub_status_url:
-        return None
-    nodes = await hub_status_cache.get_hub_nodes(hub_status_url)
-    if nodes is None:
-        return None
-    if any(node.get("id") == node_id for node in nodes):
-        return True
-    # The shared snapshot may have been fetched before the hub ingested this
-    # node's own NODE_ADDED (fresh-node race) — absence is only definitive on
-    # a cache-bypassing fetch, otherwise a just-registered node would fire a
-    # spurious re-registration self-heal.
-    nodes = await hub_status_cache.get_hub_nodes(hub_status_url, fresh=True)
-    if nodes is None:
-        return None
-    return any(node.get("id") == node_id for node in nodes)
 
 
 def _build_os_info() -> dict[str, str]:
@@ -212,25 +185,46 @@ class GridNodeService:
             config=config, state=self.state, bus=bus, node_status_payload=self._node_payload
         )
         self._started = False
-        self._requested_stop = False
         self._heartbeat_task: asyncio.Task[None] | None = None
-        # Whether the hub last confirmed it has this node. Starts True so an
-        # unreachable/disabled probe (which returns None) degrades to the prior
-        # "process up == up" behavior rather than pinning a healthy node at
-        # "registering" forever. It flips to False only on a *definitive* probe
-        # result that the hub does not list this node — which also triggers the
-        # NODE_ADDED self-heal.
-        self._registered_with_hub = True
-        self._registration_probe = registration_probe or (
-            lambda: _probe_hub_registration(self.config.hub_status_url, self.config.node_id)
+        self._drain_grace_override: float | None = None
+
+        async def _observe(fresh: bool) -> HubObserved | None:
+            if registration_probe is not None:
+                # Test seam predating structured observation: map bool|None
+                # onto presence-only HubObserved.
+                result = await registration_probe()
+                if result is None:
+                    return None
+                if not result:
+                    return HubObserved(present=False, availability=None, run_id=None)
+                return HubObserved(present=True, availability="UP", run_id=self._local_run_id())
+            return await observe_hub_node(self.config.hub_status_url, self.config.node_id, fresh=fresh)
+
+        self._registration = HubRegistrationReconciler(
+            node_id=config.node_id,
+            bus=bus,
+            node_payload=self._node_payload,
+            local_run_id=self._local_run_id,
+            observe=_observe,
+            has_busy_slots=lambda: any(slot.state == "BUSY" for slot in self.state.snapshot().slots),
+            drain_grace_sec=lambda: (
+                self._drain_grace_override
+                if self._drain_grace_override is not None
+                else self.config.session_timeout_sec
+            ),
         )
+
+    def _local_run_id(self) -> str:
+        slots = self.state.snapshot_slots()
+        raw = slots[0].stereotype.caps.get("gridfleet:run_id") if slots else None
+        return raw if isinstance(raw, str) else "free"
 
     @property
     def node_id(self) -> str:
         return self.config.node_id
 
     def is_registered_with_hub(self) -> bool:
-        return self._registered_with_hub
+        return self._registration.is_registered_with_hub()
 
     def has_active_session(self) -> bool:
         return any(slot.state == "BUSY" for slot in self.state.snapshot().slots)
@@ -247,11 +241,8 @@ class GridNodeService:
             # silently dropped (slow-joiner). 250 ms is the same settle delay
             # Selenium itself uses in `BoundZmqEventBus`.
             await asyncio.sleep(0.25)
-            # Selenium NodeAddedEvent expects a bare NodeId UUID string.
-            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
-            # Push initial NodeStatus so the hub can populate the registry slot map
-            # without waiting for the first heartbeat tick.
-            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+            self._registration.set_desired("registered")
+            await self._registration.converge()
         except Exception:
             with contextlib.suppress(Exception):
                 await self._http_server.stop()
@@ -265,8 +256,8 @@ class GridNodeService:
         if not self._started:
             return
         try:
-            # Selenium NodeRemovedEvent expects a NodeStatus payload (not just the NodeId).
-            await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
+            self._registration.set_desired("absent")
+            await self._registration.converge()
         finally:
             try:
                 await self._http_server.stop()
@@ -299,40 +290,8 @@ class GridNodeService:
                 "endTime": now_iso,
             }
             await self._bus.publish(event_envelope(EventType.SESSION_CLOSED, session_closed_payload))
-        snapshot = self.state.snapshot()
-        if snapshot.drain:
-            # Selenium's drain semantics let in-flight sessions finish before the
-            # node is torn down. Only complete the drain (and let the supervisor
-            # stop the node) once every slot is FREE; otherwise emit a NODE_STATUS
-            # heartbeat so the hub continues to render the node as DRAINING.
-            if all(slot.state == "FREE" for slot in snapshot.slots):
-                self._requested_stop = True
-                # Selenium NodeDrainComplete expects a bare NodeId UUID string.
-                await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
-                return
-            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
-            return
+        await self._registration.try_converge()
         await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
-        await self._reconcile_hub_registration()
-
-    async def _reconcile_hub_registration(self) -> None:
-        """Self-heal a lost registration (N11).
-
-        The initial NODE_ADDED is fire-and-forget and can be dropped — by the ZMQ
-        slow-joiner, or by racing the prior incarnation's NODE_REMOVED for the reused
-        ``uuid5(target:port)`` nodeId on a same-port restart. When that happens the
-        hub never adds the node and the device wedges until node_health force-restarts
-        it onto a different port. Here we ask the hub whether it actually knows us and
-        re-assert NODE_ADDED if not, so the relay recovers within one heartbeat.
-        """
-        registered = await self._registration_probe()
-        if registered is None:
-            return  # hub unreachable / check disabled — keep the last known state, do not churn
-        self._registered_with_hub = registered
-        if not registered:
-            logger.warning("grid_node_reregistering_lost_node", extra={"node_id": self.config.node_id})
-            await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
-            await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
 
     async def drain_to_block_new_sessions(self) -> None:
         """Mark the relay as DRAINING without removing or re-adding it.
@@ -342,14 +301,13 @@ class GridNodeService:
         process is actually torn down — that is why cooldown / maintenance
         flows must use this path instead. After ``mark_drain`` the local
         ``NodeState`` rejects new reservations, and Selenium's hub stops
-        routing once it processes the ``node-drain-started`` event. The node
-        leaves the hub for real only when the process is stopped (and the
-        heartbeat loop publishes ``node-removed``).
+        routing once it processes the ``node-drain-started`` event.
         """
         if not self._started:
             raise RuntimeError("GridNodeService.drain_to_block_new_sessions called before start()")
         self.state.mark_drain()
-        await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
+        self._registration.set_desired("draining")
+        await self._registration.converge()
 
     async def reregister_with_caps_update(
         self,
@@ -359,22 +317,6 @@ class GridNodeService:
     ) -> None:
         if not self._started:
             raise RuntimeError("GridNodeService.reregister_with_caps_update called before start()")
-
-        grace = self.config.session_timeout_sec if drain_grace_sec is None else drain_grace_sec
-        await self._bus.publish(event_envelope(EventType.NODE_DRAIN, self.config.node_id))
-
-        deadline = asyncio.get_running_loop().time() + grace
-        while True:
-            if not any(slot.state == "BUSY" for slot in self.state.snapshot().slots):
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                logger.warning("grid_node_drain_timeout", extra={"node_id": self.config.node_id, "waited_sec": grace})
-                break
-            await asyncio.sleep(0.05)
-
-        await self._bus.publish(event_envelope(EventType.NODE_DRAIN_COMPLETE, self.config.node_id))
-        await self._bus.publish(event_envelope(EventType.NODE_REMOVED, self._node_payload()))
-
         self.state.update_all_slot_caps(updates)
         # Re-publishing as a fresh node implies sessions are welcome again.
         # The local ``_drain`` flag latches ``True`` once ``mark_drain`` runs,
@@ -382,13 +324,15 @@ class GridNodeService:
         # keep rejecting hub reservations at ``NodeState.reserve`` without
         # this clear.
         self.state.clear_drain()
-
-        await asyncio.sleep(0.25)
-        await self._bus.publish(event_envelope(EventType.NODE_ADDED, self.config.node_id))
-        await self._bus.publish(event_envelope(EventType.NODE_STATUS, self._node_payload()))
+        self._drain_grace_override = drain_grace_sec
+        try:
+            self._registration.set_desired("registered")
+            await self._registration.converge()
+        finally:
+            self._drain_grace_override = None
 
     def snapshot(self) -> dict[str, object]:
-        return {"requested_stop": self._requested_stop, "started": self._started}
+        return {"started": self._started}
 
     async def call_stop_from_heartbeat_for_test(self) -> None:
         self._heartbeat_task = asyncio.current_task()

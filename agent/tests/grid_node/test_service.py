@@ -12,11 +12,10 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-from agent_app.grid_node import hub_status_cache
 from agent_app.grid_node.config import GridNodeConfig
 from agent_app.grid_node.node_state import NodeState
 from agent_app.grid_node.protocol import Slot, Stereotype
-from agent_app.grid_node.service import GridNodeService, _probe_hub_registration
+from agent_app.grid_node.service import GridNodeService
 
 
 class RecordingBus:
@@ -126,35 +125,39 @@ async def test_service_stops_event_bus_if_http_server_start_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_drain_publishes_drain_complete_and_requests_stop() -> None:
+async def test_drain_heartbeat_never_completes_or_stops() -> None:
+    """F-G2/D1: the heartbeat's drain branch used to publish drain-complete
+    and request a self-stop once all slots were FREE. The relay now stays up
+    and DRAINING until the backend delivers an explicit stop."""
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
-    service.state.mark_drain()
+    await service.drain_to_block_new_sessions()
     await service.run_heartbeat_once()
-    assert bus.events[-1]["type"] == "node-drain-complete"
-    assert service.snapshot()["requested_stop"] is True
+    await service.run_heartbeat_once()
+    assert all(event["type"] != "node-drain-complete" for event in bus.events)
+    assert bus.events[-1]["type"] == "node-heartbeat"
+    assert bus.events[-1]["data"]["availability"] == "DRAINING"
+    assert service.snapshot()["started"] is True
     await service.stop()
 
 
 @pytest.mark.asyncio
-async def test_drain_waits_for_busy_slots_before_completing() -> None:
+async def test_drain_with_busy_slot_keeps_heartbeating_after_release() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
     reservation = service.state.reserve({"platformName": "Android"})
     service.state.commit(reservation.id, session_id="active-session", started_at=time.monotonic())
-    service.state.mark_drain()
+    await service.drain_to_block_new_sessions()
     await service.run_heartbeat_once()
-    # Active session must keep the node up — drain emits a status heartbeat,
-    # not drain-complete, and the supervisor is not asked to stop.
     assert bus.events[-1]["type"] == "node-heartbeat"
-    assert all(event["type"] != "node-drain-complete" for event in bus.events)
-    assert service.snapshot()["requested_stop"] is False
     service.state.release("active-session")
     await service.run_heartbeat_once()
-    assert bus.events[-1]["type"] == "node-drain-complete"
-    assert service.snapshot()["requested_stop"] is True
+    # Slots all FREE under drain: still no drain-complete, no self-stop.
+    assert all(event["type"] != "node-drain-complete" for event in bus.events)
+    assert bus.events[-1]["type"] == "node-heartbeat"
+    assert service.snapshot()["started"] is True
     await service.stop()
 
 
@@ -215,10 +218,44 @@ async def test_heartbeat_reservation_reap_ttl_tracks_proxy_timeout(monkeypatch: 
     assert service.state.snapshot().slots[0].state == "FREE"
 
 
+def _scripted_hub(monkeypatch: pytest.MonkeyPatch, responses: list[list[dict[str, object]] | None]) -> None:
+    """Script successive ``hub_status_cache.get_hub_nodes`` results (last repeats)."""
+    from agent_app.grid_node import hub_status_cache
+
+    queue = list(responses)
+
+    async def fake_get(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_get)
+
+
+def _hub_view(node_id: str, *, availability: str = "UP", run_id: str = "free") -> dict[str, object]:
+    return {
+        "id": node_id,
+        "availability": availability,
+        "slots": [{"stereotype": {"platformName": "Android", "gridfleet:run_id": run_id}}],
+    }
+
+
 @pytest.mark.asyncio
-async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence() -> None:
+async def test_reregister_with_caps_update_publishes_drain_remove_add_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bus = RecordingBus()
-    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    # start(): hub already lists us UP with the matching free run_id (no-op);
+    # reregister: hub still shows the old run_id, post-REMOVED confirm = gone.
+    _scripted_hub(
+        monkeypatch,
+        [
+            [_hub_view("node-1", run_id="free")],  # start converge: match, no-op
+            [_hub_view("node-1", run_id="free")],  # reregister observe: stale vs abc-123
+            [],  # post-REMOVED confirm: gone
+        ],
+    )
+    service = GridNodeService(
+        config=_config(hub_status_url="http://hub:4444"), bus=bus, http_server=RecordingHttpServer()
+    )
     await service.start()
     bus.events.clear()
 
@@ -274,7 +311,9 @@ async def test_drain_to_block_new_sessions_publishes_drain_only() -> None:
     the relay before the device process is torn down, restoring routability
     while the cooldown is still active."""
     bus = RecordingBus()
-    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    service = GridNodeService(
+        config=_config(), bus=bus, http_server=RecordingHttpServer(), registration_probe=_probe(True)
+    )
     await service.start()
     bus.events.clear()
 
@@ -292,9 +331,19 @@ async def test_drain_to_block_new_sessions_before_start_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
+async def test_reregister_waits_for_busy_slot_until_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     bus = RecordingBus()
-    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    _scripted_hub(
+        monkeypatch,
+        [
+            [_hub_view("node-1", run_id="free")],  # start converge: match, no-op
+            [_hub_view("node-1", run_id="free")],  # reregister observe: stale vs xyz
+            [],  # post-REMOVED confirm: gone
+        ],
+    )
+    service = GridNodeService(
+        config=_config(hub_status_url="http://hub:4444"), bus=bus, http_server=RecordingHttpServer()
+    )
     await service.start()
     reservation = service.state.reserve({"platformName": "Android"})
     service.state.commit(reservation.id, session_id="session-1", started_at=time.monotonic())
@@ -309,12 +358,39 @@ async def test_reregister_waits_for_busy_slot_until_timeout() -> None:
     assert "node-added" in [event["type"] for event in bus.events]
 
 
-def _config() -> GridNodeConfig:
+@pytest.mark.asyncio
+async def test_heartbeat_during_reregister_never_stops_the_relay() -> None:
+    """F-G2/D1 (TR10, 2026-06-05): a heartbeat tick landing inside the
+    cooldown-drain window used to set _requested_stop and the supervisor
+    killed the bus mid-reregistration — the fresh NODE_ADDED then raised
+    'event bus is not started' and the hub kept a DRAINING husk forever.
+    With single-owner converge there is nothing to race: the relay stays
+    started and the final published event is the fresh registration."""
+    bus = RecordingBus()
+    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
+    await service.start()
+    await service.drain_to_block_new_sessions()  # cooldown lands
+
+    await asyncio.gather(
+        service.run_heartbeat_once(),  # ticks inside the cooldown-drain window
+        service.reregister_with_caps_update(updates={"gridfleet:run_id": "free"}),
+        service.run_heartbeat_once(),
+    )
+
+    assert service.snapshot()["started"] is True
+    assert service.snapshot().get("requested_stop") is not True
+    assert "stop" not in bus.calls  # the bus must never be stopped by drain
+    added_indices = [i for i, e in enumerate(bus.events) if e["type"] == "node-added"]
+    assert added_indices, "fresh registration must land"
+
+
+def _config(hub_status_url: str = "") -> GridNodeConfig:
     return GridNodeConfig(
         node_id="node-1",
         node_uri="http://127.0.0.1:5555",
         appium_upstream="http://127.0.0.1:4723",
         slots=[Slot(id="slot-1", stereotype=Stereotype(caps={"platformName": "Android"}))],
+        hub_status_url=hub_status_url,
         hub_publish_url="tcp://127.0.0.1:4442",
         hub_subscribe_url="tcp://127.0.0.1:4443",
         heartbeat_sec=5.0,
@@ -349,7 +425,9 @@ async def test_heartbeat_reregisters_when_hub_is_missing_node() -> None:
     added_after_heartbeat = [e["type"] for e in bus.events].count("node-added")
     assert added_after_start == 1
     assert added_after_heartbeat == 2  # re-asserted because the hub did not list this node
-    assert service.is_registered_with_hub() is False
+    # The converge pass re-added the node and optimistically considers it
+    # registered; the next observation corrects the flag if the add was lost.
+    assert service.is_registered_with_hub() is True
 
 
 @pytest.mark.asyncio
@@ -360,7 +438,9 @@ async def test_heartbeat_does_not_reregister_when_already_registered() -> None:
     )
     await service.start()
     await service.run_heartbeat_once()
-    assert [e["type"] for e in bus.events].count("node-added") == 1
+    # The hub already listed this node at start — converge is a no-op, so no
+    # NODE_ADDED is ever published (was 1 with the old blind start ADDED).
+    assert [e["type"] for e in bus.events].count("node-added") == 0
     assert service.is_registered_with_hub() is True
 
 
@@ -383,7 +463,7 @@ async def test_heartbeat_does_not_reregister_when_probe_unknown() -> None:
 @pytest.mark.asyncio
 async def test_unknown_probe_keeps_prior_registered_state() -> None:
     bus = RecordingBus()
-    results: list[bool | None] = [True, None]
+    results: list[bool | None] = [True, True, None]  # start() converges too
 
     async def probe() -> bool | None:
         return results.pop(0)
@@ -394,6 +474,8 @@ async def test_unknown_probe_keeps_prior_registered_state() -> None:
     assert service.is_registered_with_hub() is True
     await service.run_heartbeat_once()  # None -> keep prior True (transient hub blip)
     assert service.is_registered_with_hub() is True
+    # And the blip must not blind-republish NODE_ADDED for a confirmed node.
+    assert [e["type"] for e in bus.events].count("node-added") == 0
 
 
 # --- GridNodeService properties / snapshot ---
@@ -422,7 +504,7 @@ async def test_service_has_active_session_false() -> None:
 @pytest.mark.asyncio
 async def test_service_snapshot_defaults() -> None:
     service = GridNodeService(config=_config(), bus=RecordingBus(), http_server=RecordingHttpServer())
-    assert service.snapshot() == {"requested_stop": False, "started": False}
+    assert service.snapshot() == {"started": False}
 
 
 @pytest.mark.asyncio
@@ -514,19 +596,7 @@ def test_service_node_payload_caps_max_sessions_at_one_with_multiple_slots() -> 
 
 
 @pytest.mark.asyncio
-async def test_service_heartbeat_when_drain_and_all_free_requests_stop() -> None:
-    bus = RecordingBus()
-    service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
-    await service.start()
-    service.state.mark_drain()
-    await service.run_heartbeat_once()
-    assert service.snapshot()["requested_stop"] is True
-    assert bus.events[-1]["type"] == "node-drain-complete"
-    await service.stop()
-
-
-@pytest.mark.asyncio
-async def test_service_heartbeat_when_drain_and_busy_does_not_request_stop() -> None:
+async def test_service_heartbeat_when_drain_and_busy_keeps_heartbeating() -> None:
     bus = RecordingBus()
     service = GridNodeService(config=_config(), bus=bus, http_server=RecordingHttpServer())
     await service.start()
@@ -534,7 +604,6 @@ async def test_service_heartbeat_when_drain_and_busy_does_not_request_stop() -> 
     service.state.commit(reservation.id, session_id="s-1", started_at=time.monotonic())
     service.state.mark_drain()
     await service.run_heartbeat_once()
-    assert service.snapshot()["requested_stop"] is False
     assert bus.events[-1]["type"] == "node-heartbeat"
     await service.stop()
 
@@ -821,11 +890,11 @@ async def test_service_full_lifecycle_with_uvicorn(monkeypatch: pytest.MonkeyPat
     await service.start()
     assert bus.calls == ["start", "publish:node-added", "publish:node-heartbeat"]
     service.state.mark_drain()
-    deadline = time.monotonic() + 2.0
-    while not service.snapshot()["requested_stop"] and time.monotonic() < deadline:
-        await service.run_heartbeat_once()
-        await asyncio.sleep(0.01)
-    assert "node-drain-complete" in [e["type"] for e in bus.events]
+    await service.run_heartbeat_once()
+    await service.run_heartbeat_once()
+    # Drain never completes or stops the relay from the heartbeat path.
+    assert "node-drain-complete" not in [e["type"] for e in bus.events]
+    assert service.snapshot()["started"] is True
     await service.stop()
     assert bus.calls[-1] == "stop"
 
@@ -851,70 +920,3 @@ async def test_service_no_slots_snapshot_still_works(monkeypatch: pytest.MonkeyP
     payload = service._node_payload()
     assert payload["slots"] == []
     await service.stop()
-
-
-@pytest.mark.asyncio
-async def test_probe_hub_registration_via_cached_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        assert url == "http://hub:4444/se/grid/node"
-        return [{"id": "other"}, {"id": "node-1"}]
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
-    assert await _probe_hub_registration("http://hub:4444/se/grid/node", "node-1") is True
-    assert await _probe_hub_registration("http://hub:4444/se/grid/node", "missing") is False
-
-
-@pytest.mark.asyncio
-async def test_probe_hub_registration_unknown_when_cache_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        return None
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
-    assert await _probe_hub_registration("http://hub:4444", "node-1") is None
-
-
-@pytest.mark.asyncio
-async def test_probe_hub_registration_disabled_without_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def explode(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        raise AssertionError("must not fetch when no hub URL is configured")
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", explode)
-    assert await _probe_hub_registration("", "node-1") is None
-
-
-@pytest.mark.asyncio
-async def test_probe_absent_in_cache_confirms_with_fresh_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A stale shared snapshot must not flag a freshly-registered node as lost."""
-    calls: list[bool] = []
-
-    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        calls.append(fresh)
-        if fresh:
-            return [{"id": "node-1"}]  # hub ingested our NODE_ADDED by now
-        return [{"id": "other"}]  # stale neighbor snapshot
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
-    assert await _probe_hub_registration("http://hub:4444", "node-1") is True
-    assert calls == [False, True]
-
-
-@pytest.mark.asyncio
-async def test_probe_absent_in_fresh_fetch_is_definitive(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        return [{"id": "other"}]
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
-    assert await _probe_hub_registration("http://hub:4444", "node-1") is False
-
-
-@pytest.mark.asyncio
-async def test_probe_fresh_fetch_failure_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_nodes(url: str, *, fresh: bool = False) -> list[dict[str, object]] | None:
-        if fresh:
-            return None  # hub became unreachable between the two fetches
-        return [{"id": "other"}]
-
-    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_nodes)
-    assert await _probe_hub_registration("http://hub:4444", "node-1") is None

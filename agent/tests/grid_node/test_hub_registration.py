@@ -68,6 +68,17 @@ async def test_observe_unreachable_hub_returns_none(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
+async def test_observe_fresh_fetch_failure_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_get(url: str, *, fresh: bool = False) -> list[dict[str, Any]] | None:
+        if fresh:
+            return None  # hub became unreachable between the two fetches
+        return [_hub_node("other")]
+
+    monkeypatch.setattr(hub_status_cache, "get_hub_nodes", fake_get)
+    assert await observe_hub_node("http://hub:4444", "n1") is None
+
+
+@pytest.mark.asyncio
 async def test_observe_disabled_when_no_url() -> None:
     assert await observe_hub_node("", "n1") is None
 
