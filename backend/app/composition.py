@@ -36,6 +36,7 @@ from app.devices.services.fleet_capacity import FleetCapacityService
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
@@ -46,6 +47,7 @@ from app.devices.services_container import DeviceServices
 from app.diagnostics.services.export import DiagnosticExportService
 from app.diagnostics.services_container import DiagnosticsServices
 from app.events.services_container import EventServices
+from app.grid.allocation import AllocationService, pack_slot_stereotype
 from app.grid.service import GridService
 from app.grid.services_container import GridServices
 from app.hosts.service import HostCrudService
@@ -383,6 +385,12 @@ def compose_app(
             grid=grid_svc,
             settings=settings_svc,
             session_factory=session_factory,
+            allocation=AllocationService(
+                intent_factory=IntentService,
+                publisher=bus,
+                stereotype_provider=pack_slot_stereotype,
+                settings=settings_svc,
+            ),
         ),
         packs=PackServices(
             catalog=pack_catalog,

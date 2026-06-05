@@ -18,6 +18,7 @@ class SessionStatus(enum.StrEnum):
     passed = "passed"
     failed = "failed"
     error = "error"
+    pending = "pending"
 
 
 class Session(Base):
@@ -40,6 +41,7 @@ class Session(Base):
     test_name: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.running, nullable=False)
     requested_pack_id: Mapped[str | None] = mapped_column(String, nullable=True)
     requested_platform_id: Mapped[str | None] = mapped_column(String, nullable=True)

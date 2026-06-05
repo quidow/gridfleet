@@ -50,6 +50,8 @@ from app.diagnostics import router as diagnostics_router
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
 from app.grid import router as grid
+from app.grid import router_internal as grid_router_internal
+from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.grid.event_bus_loop import GridEventBusSubscriberLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
@@ -211,6 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
         run_reaper = RunReaperLoop(services=app_services.runs)
+        allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
         grid_event_bus = GridEventBusSubscriberLoop(
             services=app_services.grid,
             session_sync_waker=app_services.sessions.sync,
@@ -234,6 +237,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (job_worker.run(), "durable_job_worker_loop"),
             (webhook_delivery.run(), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper.run(), "run_reaper_loop"),
+            (allocation_reaper.run(), "grid_allocation_reaper_loop"),
             (data_cleanup.run(), "data_cleanup_loop"),
             (session_viability.run(), "session_viability_loop"),
             (fleet_capacity.run(), "fleet_capacity_collector_loop"),
@@ -304,6 +308,7 @@ app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dep
 app.include_router(diagnostics_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(grid_router_internal.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(verification_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

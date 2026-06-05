@@ -399,6 +399,29 @@ _DEFINITIONS: list[SettingDefinition] = [
         env_var="GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL",
     ),
     SettingDefinition(
+        key="grid.queue_timeout_sec",
+        category="grid",
+        setting_type="int",
+        default=300,
+        description="How long a queued new-session request may wait for a device before failing",
+        env_var="GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC",
+        min_value=5,
+        max_value=3600,
+    ),
+    SettingDefinition(
+        key="grid.claim_window_sec",
+        category="grid",
+        setting_type="int",
+        default=120,
+        description=(
+            "How long an allocated (pending) session may remain unconfirmed before it is failed. "
+            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create."
+        ),
+        env_var="GRIDFLEET_GRID_CLAIM_WINDOW_SEC",
+        min_value=5,
+        max_value=600,
+    ),
+    SettingDefinition(
         key="appium.port_range_start",
         category="grid",
         setting_type="int",

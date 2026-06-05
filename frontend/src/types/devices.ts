@@ -49,7 +49,7 @@ export type DevicePatch = Schemas['DevicePatch'];
 export type ConfigAuditEntry = Schemas['ConfigAuditEntryRead'];
 export type TestDataAuditEntry = Schemas['TestDataAuditEntryRead'];
 export type SessionOutcomeHeatmapRow = Omit<Schemas['SessionOutcomeHeatmapRow'], 'status'> & {
-  status: Exclude<SessionStatus, 'running'>;
+  status: Exclude<SessionStatus, 'running' | 'pending'>;
 };
 
 export type DeviceLifecyclePolicy = {

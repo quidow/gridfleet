@@ -5261,7 +5261,7 @@ export interface components {
          * SessionStatus
          * @enum {string}
          */
-        SessionStatus: "running" | "passed" | "failed" | "error";
+        SessionStatus: "running" | "passed" | "failed" | "error" | "pending";
         /** SessionStatusUpdate */
         SessionStatusUpdate: {
             status: components["schemas"]["SessionStatus"];
