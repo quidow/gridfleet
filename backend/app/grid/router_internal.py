@@ -86,6 +86,20 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
             if ticket.status == GridQueueStatus.expired:
                 await db.commit()
                 return JSONResponse(status_code=410, content={"status": "expired", "message": "queue timeout"})
+            if ticket.status == GridQueueStatus.claimed:
+                # Lost-Allocated-response retry: return the original allocation rather
+                # than double-claiming. A reaped claim resets the ticket to waiting and
+                # falls through to a fresh attempt below.
+                resumed = await allocation.resume_claimed(db, ticket=ticket)
+                if resumed is not None:
+                    await db.commit()
+                    claim_window_sec = int(cast("int", services.settings.get("grid.claim_window_sec")))
+                    return AllocateResponse(
+                        status="allocated",
+                        allocation_id=resumed.allocation_id,
+                        target=resumed.target,
+                        claim_window_sec=claim_window_sec,
+                    )
             result = await allocation.try_allocate(db, ticket=ticket)
             # try_allocate cancels the ticket on an invalid body; re-read past
             # mypy's narrowing from the early returns above.

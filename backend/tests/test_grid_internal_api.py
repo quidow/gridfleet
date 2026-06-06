@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import func, select
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -115,6 +116,42 @@ async def test_confirm_fail_ended_and_routes(
     assert resp.status_code == 204
     resp = await client.get("/internal/grid/routes")
     assert resp.json()["routes"] == []
+
+
+@pytest.mark.db
+async def test_allocate_claimed_ticket_retry_is_idempotent(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """A retry carrying the already-claimed ticket returns the SAME allocation and does
+    not claim a second device or create a second Session row (#2)."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    # Recover the claimed ticket id (the Allocated response does not carry it; a real
+    # router would have it from a prior queued response).
+    ticket = (
+        (
+            await db_session.execute(
+                select(GridSessionQueueTicket).where(GridSessionQueueTicket.session_row_id == uuid.UUID(allocation_id))
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert ticket is not None and ticket.status == GridQueueStatus.claimed
+
+    sessions_before = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
+
+    resp2 = await client.post(
+        "/internal/grid/allocate",
+        json={"body": _body(platformName="Android"), "ticket": str(ticket.id)},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "allocated"
+    assert resp2.json()["allocation_id"] == allocation_id
+
+    sessions_after = (await db_session.execute(select(func.count()).select_from(Session))).scalar_one()
+    assert sessions_after == sessions_before
 
 
 @pytest.mark.db

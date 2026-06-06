@@ -190,6 +190,46 @@ class AllocationService:
                     return result
         return None
 
+    async def resume_claimed(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
+        """Idempotently resume a ``claimed`` ticket whose Allocated response was lost.
+
+        A router retry after a transport error on a committed Allocated response
+        re-hits allocate with the same ``claimed`` ticket. Re-claiming would orphan
+        the first pending session and double-allocate a device. Instead:
+
+        * If the ticket's Session row is still ``pending`` or ``running`` (not ended),
+          return the SAME allocation — the original claim is honest and still alive.
+        * If the row was failed/reaped (the claim window expired while the response was
+          lost), reset the ticket to ``waiting`` so the caller proceeds to a fresh
+          ``try_allocate``. The client is still long-polling; that's the honest
+          continuation.
+        """
+        if ticket.session_row_id is None:
+            ticket.status = GridQueueStatus.waiting
+            return None
+        stmt = (
+            select(Session)
+            .options(selectinload(Session.device).selectinload(Device.appium_node))
+            .options(selectinload(Session.device).selectinload(Device.host))
+            .where(Session.id == ticket.session_row_id)
+        )
+        row = (await db.execute(stmt)).scalars().first()
+        if (
+            row is None
+            or row.ended_at is not None
+            or row.status not in (SessionStatus.pending, SessionStatus.running)
+            or row.device is None
+        ):
+            ticket.status = GridQueueStatus.waiting
+            return None
+        target = node_target(row.device)
+        if target is None:
+            # The device lost its node/host association; treat like a reaped claim and
+            # let the client wait for a fresh allocation rather than hand back a dead target.
+            ticket.status = GridQueueStatus.waiting
+            return None
+        return AllocationResult(allocation_id=row.id, target=target)
+
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         stmt = (
             select(Device)

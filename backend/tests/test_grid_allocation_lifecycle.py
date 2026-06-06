@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -125,6 +126,68 @@ async def test_mark_ended_closes_running_and_frees_device(
     assert seeded_available_device.operational_state == DeviceOperationalState.available
     # unknown session id is a no-op
     await allocation_service.mark_ended(db_session, appium_session_id="never-existed")
+
+
+async def _claimed_ticket_for(db_session: AsyncSession, allocated_pending: Session) -> GridSessionQueueTicket:
+    """Return the ticket that claimed ``allocated_pending`` (try_allocate set it)."""
+    stmt = select(GridSessionQueueTicket).where(GridSessionQueueTicket.session_row_id == allocated_pending.id)
+    ticket = (await db_session.execute(stmt)).scalars().first()
+    assert ticket is not None
+    assert ticket.status == GridQueueStatus.claimed
+    return ticket
+
+
+@pytest.mark.db
+async def test_resume_claimed_returns_same_allocation_for_live_row(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+) -> None:
+    """Lost-Allocated-response retry: a claimed ticket with a live pending row returns
+    the SAME allocation, no second Session row, no second device claimed (#2)."""
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    sessions_before = len((await db_session.execute(select(Session))).scalars().all())
+
+    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+
+    assert result is not None
+    assert result.allocation_id == allocated_pending.id
+    assert ticket.status == GridQueueStatus.claimed
+    sessions_after = len((await db_session.execute(select(Session))).scalars().all())
+    assert sessions_after == sessions_before
+
+
+@pytest.mark.db
+async def test_resume_claimed_returns_same_allocation_for_running_row(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+) -> None:
+    """A confirmed (running) row is still the honest allocation to hand back."""
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="run-id")
+
+    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+
+    assert result is not None
+    assert result.allocation_id == allocated_pending.id
+
+
+@pytest.mark.db
+async def test_resume_claimed_resets_ticket_when_row_reaped(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+) -> None:
+    """If the claim was reaped while the response was lost, resume resets the ticket to
+    waiting so the caller proceeds to a fresh try_allocate (#2)."""
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
+
+    result = await allocation_service.resume_claimed(db_session, ticket=ticket)
+
+    assert result is None
+    assert ticket.status == GridQueueStatus.waiting
 
 
 @pytest.mark.db
