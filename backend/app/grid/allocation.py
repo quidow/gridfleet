@@ -213,8 +213,16 @@ class AllocationService:
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
         eligible = await self._eligible_devices(db)
+        # Memoize the pack-rendered stereotype per device within this attempt: the
+        # render hits the DB per device, and the device loop below may re-touch a
+        # device. Cross-tick caching is deliberately avoided — stereotypes follow pack
+        # releases (#13).
+        stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
         for device in eligible:
-            stereotype = await self._stereotype_provider(db, device)
+            stereotype = stereotype_cache.get(device.id)
+            if stereotype is None:
+                stereotype = await self._stereotype_provider(db, device)
+                stereotype_cache[device.id] = stereotype
             reservation_run_id = await self._load_reservation_run_id(db, device)
             for candidate in candidates:
                 if not candidate_matches_stereotype(candidate, stereotype):
@@ -266,10 +274,13 @@ class AllocationService:
         ):
             ticket.status = GridQueueStatus.waiting
             return None
-        target = node_target(row.device)
+        # Prefer the live target; fall back to the target stored at allocation if the
+        # node port was transiently stale-cleared (#6).
+        target = node_target(row.device) or row.router_target
         if target is None:
-            # The device lost its node/host association; treat like a reaped claim and
-            # let the client wait for a fresh allocation rather than hand back a dead target.
+            # The device lost its node/host association and no target was ever stored;
+            # treat like a reaped claim and let the client wait for a fresh allocation
+            # rather than hand back a dead target.
             ticket.status = GridQueueStatus.waiting
             return None
         return AllocationResult(allocation_id=row.id, target=target)
@@ -401,6 +412,9 @@ class AllocationService:
             status=SessionStatus.pending,
             requested_capabilities=candidate,
             run_id=run_id,
+            # Persist the allocation target so /routes can fall back to it if the
+            # device's node port is transiently stale-cleared later (#6).
+            router_target=target,
         )
         db.add(row)
         # Flush the Session row before pointing the ticket at it: there is no ORM

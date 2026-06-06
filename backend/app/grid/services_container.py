@@ -16,5 +16,4 @@ if TYPE_CHECKING:
 class GridServices:
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
-    # None only in event-bus-loop test harnesses; production composition always wires it.
-    allocation: AllocationService | None = None
+    allocation: AllocationService

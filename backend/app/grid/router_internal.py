@@ -27,7 +27,6 @@ from app.grid.allocation import (
     GRID_ALLOCATION_OUTCOME_TOTAL,
     AllocationNotPendingError,
     AllocationResult,
-    AllocationService,
     node_target,
 )
 from app.grid.dependencies import GridServicesDep
@@ -42,19 +41,12 @@ from app.grid.schemas_internal import (
     RouteEntry,
     RoutesResponse,
 )
-from app.grid.services_container import GridServices
 from app.sessions.models import Session, SessionStatus
 
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
 
 LONG_POLL_SEC = 25.0
 RETRY_INTERVAL_SEC = 1.0
-
-
-def _allocation(services: GridServices) -> AllocationService:
-    if services.allocation is None:
-        raise RuntimeError("grid allocation service is not wired")
-    return services.allocation
 
 
 async def _get_or_create_ticket(
@@ -72,7 +64,7 @@ async def _get_or_create_ticket(
 
 @router.post("/allocate", response_model=AllocateResponse)
 async def allocate(payload: AllocateRequest, services: GridServicesDep) -> AllocateResponse | JSONResponse:
-    allocation = _allocation(services)
+    allocation = services.allocation
     deadline = time.monotonic() + LONG_POLL_SEC
     ticket_id = payload.ticket
     while True:
@@ -133,9 +125,7 @@ async def cancel_ticket(ticket_id: uuid.UUID, db: DbDep) -> Response:
 @router.post("/sessions/{allocation_id}/confirm", status_code=204)
 async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, services: GridServicesDep) -> Response:
     try:
-        await _allocation(services).confirm(
-            db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id
-        )
+        await services.allocation.confirm(db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id)
     except AllocationNotPendingError:
         return Response(status_code=409)
     await db.commit()
@@ -144,14 +134,14 @@ async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, 
 
 @router.post("/sessions/{allocation_id}/fail", status_code=204)
 async def fail(allocation_id: uuid.UUID, payload: FailRequest, db: DbDep, services: GridServicesDep) -> Response:
-    await _allocation(services).fail(db, allocation_id=allocation_id, message=payload.message)
+    await services.allocation.fail(db, allocation_id=allocation_id, message=payload.message)
     await db.commit()
     return Response(status_code=204)
 
 
 @router.post("/sessions/ended", status_code=204)
 async def ended(payload: EndedRequest, db: DbDep, services: GridServicesDep) -> Response:
-    await _allocation(services).mark_ended(db, appium_session_id=payload.session_id)
+    await services.allocation.mark_ended(db, appium_session_id=payload.session_id)
     await db.commit()
     return Response(status_code=204)
 
@@ -169,9 +159,11 @@ async def routes(db: DbDep) -> RoutesResponse:
     rows = (await db.execute(stmt)).scalars().all()
     entries: list[RouteEntry] = []
     for row in rows:
-        if row.device is None:
-            continue
-        target = node_target(row.device)
+        # Prefer the live node target; fall back to the target stored at allocation so a
+        # running session whose device's node port was transiently stale-cleared
+        # (recovery backoff) does not vanish from the route table mid-flight (#6). Only
+        # skip when both are null.
+        target = (node_target(row.device) if row.device is not None else None) or row.router_target
         if target is None:
             continue
         entries.append(RouteEntry(session_id=row.session_id, target=target))

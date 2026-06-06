@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,9 @@ class GridSessionQueueTicket(Base):
     """Durable FIFO ticket for a W3C new-session request awaiting a device."""
 
     __tablename__ = "grid_session_queue"
+    # Composite index for the reaper's `status = 'waiting' ORDER BY created_at` scans
+    # and the older-waiter FIFO veto load (#19).
+    __table_args__ = (Index("ix_grid_session_queue_status_created_at", "status", "created_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     requested_body: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

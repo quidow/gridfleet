@@ -42,6 +42,11 @@ class Session(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Direct Appium base URL captured at allocation time. The /routes handler prefers
+    # the live node_target(device) but falls back to this stored value when the
+    # device's appium_node.port was transiently stale-cleared (recovery backoff), so a
+    # running session never vanishes from the router's route table mid-flight (#6).
+    router_target: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[SessionStatus] = mapped_column(Enum(SessionStatus), default=SessionStatus.running, nullable=False)
     requested_pack_id: Mapped[str | None] = mapped_column(String, nullable=True)
     requested_platform_id: Mapped[str | None] = mapped_column(String, nullable=True)

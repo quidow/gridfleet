@@ -48,10 +48,7 @@ class GridAllocationReaperLoop:
             await asyncio.sleep(INTERVAL_SEC)
 
     async def run_cycle(self, db: AsyncSession) -> None:
-        allocation = self._services.allocation
-        if allocation is None:
-            raise RuntimeError("grid allocation service is not wired")
-        reaped = await allocation.reap_expired(db)
+        reaped = await self._services.allocation.reap_expired(db)
         if reaped["pending_failed"] or reaped["tickets_expired"]:
             logger.info(
                 "grid_allocation_reaped",
