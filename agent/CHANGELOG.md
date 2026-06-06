@@ -2,6 +2,29 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.24.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.23.1...gridfleet-agent-v0.24.0) (2026-06-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** the agent no longer runs a Grid relay node and ignores AGENT_GRID_* environment variables.
+* **backend:** drop relay fields from agent node-start contract
+
+### Features
+
+* **agent:** remove grid relay; agent manages appium only ([3f91751](https://github.com/quidow/gridfleet/commit/3f9175154a625b29ea396aa3f65cfc37d90c8e28))
+* **backend:** drop relay fields from agent node-start contract ([e41a50e](https://github.com/quidow/gridfleet/commit/e41a50e6d3ea98866dd762b5ea70afc3c6025a24))
+
+
+### Bug Fixes
+
+* **agent:** re-emit has_active_session in node snapshot via localhost Appium ([00de983](https://github.com/quidow/gridfleet/commit/00de983a380caf0547c73743fe7002bb62a87973))
+
+
+### Documentation
+
+* **docs:** grid router architecture replaces selenium hub ([f24d872](https://github.com/quidow/gridfleet/commit/f24d8723e6f87fdc1f7280da0bdac7f38ca998e9))
+
 ## [0.23.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.23.0...gridfleet-agent-v0.23.1) (2026-06-05)
 
 
