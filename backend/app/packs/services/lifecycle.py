@@ -9,7 +9,8 @@ from sqlalchemy.orm import selectinload
 from app.devices.models import Device, DeviceReservation
 from app.packs.models import DriverPack, DriverPackRelease, PackState
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,8 +51,12 @@ class PackLifecycleService:
                 .select_from(Session)
                 .outerjoin(Device, Device.id == Session.device_id)
                 .where(
-                    Session.status == SessionStatus.running,
-                    Session.ended_at.is_(None),
+                    # running|pending via the shared chokepoint: a grid allocation in
+                    # the allocate->confirm window mints a pending row with run_id=None
+                    # and no reservation, so it is invisible to the run gate — counting
+                    # it here keeps the drain from tearing down the runtime mid-create
+                    # (wave-5 #9).
+                    live_session_predicate(),
                     or_(
                         Session.requested_pack_id == pack_id,
                         Device.pack_id == pack_id,
