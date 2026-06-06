@@ -353,6 +353,62 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
     assert events[0]["data"]["host_resource_samples_deleted"] == 4
 
 
+async def test_cleanup_purges_old_terminal_and_dangling_grid_tickets(db_session: AsyncSession, db_host: Host) -> None:
+    """Terminal tickets (cancelled/expired) and dangling `claimed` rows (session
+    already purged, FK SET NULL) older than retention.sessions_days are deleted;
+    waiting tickets and claimed tickets with a live session row are never touched."""
+    from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+
+    device_id = await _create_device(db_session, db_host)
+    old_time = datetime.now(UTC) - timedelta(days=100)
+    recent_time = datetime.now(UTC) - timedelta(days=1)
+
+    live_session = Session(
+        session_id="ticket-live-session",
+        device_id=device_id,
+        status=SessionStatus.running,
+        started_at=old_time,
+    )
+    db_session.add(live_session)
+    await db_session.flush()
+
+    def _ticket(
+        status: GridQueueStatus, *, updated: datetime, session_row_id: uuid.UUID | None = None
+    ) -> GridSessionQueueTicket:
+        return GridSessionQueueTicket(
+            requested_body={"capabilities": {"alwaysMatch": {}, "firstMatch": [{}]}},
+            status=status,
+            session_row_id=session_row_id,
+            created_at=updated,
+            updated_at=updated,
+        )
+
+    old_expired = _ticket(GridQueueStatus.expired, updated=old_time)
+    old_cancelled = _ticket(GridQueueStatus.cancelled, updated=old_time)
+    old_dangling_claimed = _ticket(GridQueueStatus.claimed, updated=old_time, session_row_id=None)
+    recent_expired = _ticket(GridQueueStatus.expired, updated=recent_time)
+    old_waiting = _ticket(GridQueueStatus.waiting, updated=old_time)
+    old_claimed_live = _ticket(GridQueueStatus.claimed, updated=old_time, session_row_id=live_session.id)
+    db_session.add_all(
+        [old_expired, old_cancelled, old_dangling_claimed, recent_expired, old_waiting, old_claimed_live]
+    )
+    await db_session.commit()
+
+    event_bus._log.clear()
+    await DataCleanupService(publisher=event_bus, settings=FakeSettingsReader({})).cleanup_old_data(db_session)
+
+    remaining = {row.id for row in (await db_session.execute(select(GridSessionQueueTicket))).scalars().all()}
+    assert old_expired.id not in remaining
+    assert old_cancelled.id not in remaining
+    assert old_dangling_claimed.id not in remaining
+    assert recent_expired.id in remaining
+    assert old_waiting.id in remaining
+    assert old_claimed_live.id in remaining
+
+    events = recent_events(event_bus, event_types=["system.cleanup_completed"])
+    assert events[0]["data"]["grid_queue_tickets_deleted"] == 3
+
+
 async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_session: AsyncSession) -> None:
     old_time = datetime.now(UTC) - timedelta(days=45)
     recent_time = datetime.now(UTC) - timedelta(days=1)

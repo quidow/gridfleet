@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -283,3 +284,61 @@ async def test_reap_expired_pending_and_tickets(
     assert stale_ticket.status == GridQueueStatus.expired
     await db_session.refresh(fresh_ticket)
     assert fresh_ticket.status == GridQueueStatus.waiting
+
+
+@pytest.mark.db
+async def test_fail_expires_claimed_ticket(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """Reaper-failing a claim must terminalize the claimed ticket — otherwise it
+    dangles ``claimed`` forever once the session is purged (harness G7)."""
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired
+
+
+@pytest.mark.db
+async def test_mark_ended_expires_claimed_ticket(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """The router-DELETE close path (mark_ended -> close_running_session) must
+    terminalize the claimed ticket."""
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="end-me")
+    await allocation_service.mark_ended(db_session, appium_session_id="end-me")
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired
+
+
+@pytest.mark.db
+async def test_sweep_close_expires_claimed_ticket(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """The session_sync sweep close path (close_running_session directly) must
+    terminalize the claimed ticket — same chokepoint as mark_ended."""
+    from app.sessions.service import close_running_session
+
+    ticket = await _claimed_ticket_for(db_session, allocated_pending)
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="swept")
+    row = (
+        (
+            await db_session.execute(
+                select(Session).options(selectinload(Session.device)).where(Session.id == allocated_pending.id)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    await close_running_session(db_session, row, attached_run=None, publisher=event_bus)
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired

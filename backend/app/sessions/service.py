@@ -174,10 +174,15 @@ async def close_running_session(
     loaded for the event payload; ``attached_run`` carries the run-terminal
     decision (pass the eager-loaded ``session.run``).
     """
+    from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
+
     sid = session.session_id
     session.ended_at = datetime.now(UTC)
     _apply_session_terminal_status(session, attached_run=attached_run)
     queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+    # Terminalize any allocation ticket whose claim minted this session (router DELETE
+    # + session_sync sweep both flow through here); a no-op for non-allocation sessions.
+    await expire_tickets_for_session(db, session.id)
     await db.flush()
     if session.device_id is not None:
         await IntentService(db).revoke_intents_and_reconcile(

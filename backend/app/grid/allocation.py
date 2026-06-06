@@ -66,6 +66,31 @@ class AllocationResult:
     target: str
 
 
+async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -> int:
+    """Terminalize any ``claimed`` ticket still pointing at *session_row_id*.
+
+    A ticket goes ``claimed`` when ``_claim`` mints its pending Session row, but it
+    is never moved off ``claimed`` afterwards: when the allocation finishes (failed
+    by the reaper, ended by the router, or swept closed) the ticket is left
+    dangling. Once ``data_cleanup`` purges the Session the FK (``ondelete=SET NULL``)
+    nulls ``session_row_id`` and the junk ticket lives forever (harness G7).
+
+    Called from every seam where an allocation Session leaves running/pending:
+    ``AllocationService.fail`` (reaper) and ``close_running_session`` (router DELETE
+    + session_sync sweep). Idempotent — the ``status='claimed'`` guard makes a second
+    call a no-op. Returns the number of tickets transitioned.
+    """
+    result = await db.execute(
+        update(GridSessionQueueTicket)
+        .where(
+            GridSessionQueueTicket.session_row_id == session_row_id,
+            GridSessionQueueTicket.status == GridQueueStatus.claimed,
+        )
+        .values(status=GridQueueStatus.expired)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def _candidate_passes_reservation(
     candidate: dict[str, Any], reservation_run_id: uuid.UUID | None
 ) -> tuple[bool, uuid.UUID | None]:
@@ -156,6 +181,7 @@ class AllocationService:
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
             return  # idempotent: already confirmed/reaped
+        await expire_tickets_for_session(db, allocation_id)
         await db.refresh(row)
         await db.flush()
         if device_id is not None:
