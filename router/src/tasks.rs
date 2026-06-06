@@ -49,8 +49,16 @@ pub fn spawn_activity_flush(activity: Arc<ActivityTracker>, backend: Arc<Backend
             if drained.is_empty() {
                 continue;
             }
-            if let Err(e) = backend.flush_activity(drained).await {
-                log::warn!("activity flush failed: {e}");
+            // Clone before the fallible flush: on failure we re-insert the
+            // timestamps so an abandoned-but-still-active session is not falsely
+            // aged out by the backend idle reaper. A newer touch that landed
+            // mid-flush wins (see ActivityTracker::restore).
+            if let Err(e) = backend.flush_activity(drained.clone()).await {
+                log::warn!(
+                    "activity flush failed, restoring {} entries: {e}",
+                    drained.len()
+                );
+                activity.restore(drained);
             }
         }
     });
