@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
+use pingora::protocols::http::v1::common::is_upgrade_req;
 use pingora::proxy::{ProxyHttp, Session};
 
 use crate::activity::ActivityTracker;
@@ -126,14 +127,21 @@ impl ProxyHttp for GridRouter {
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         ctx: &mut RouterCtx,
     ) -> Result<Box<HttpPeer>> {
         let upstream = ctx.upstream.clone().expect("set by request_filter");
         let mut peer = Box::new(HttpPeer::new(upstream.authority(), false, String::new()));
         peer.options.connection_timeout = Some(Duration::from_secs(5));
-        peer.options.read_timeout = Some(self.proxy_timeout);
-        peer.options.write_timeout = Some(self.proxy_timeout);
+        // An Upgrade request (WebSocket — W3C BiDi / CDP on the session path)
+        // becomes a long-lived duplex tunnel after the 101: frames can
+        // legitimately be minutes apart (paused debugger, slow test), so the
+        // per-command read/write timeouts must not tear it down (wave-5 #2).
+        // pingora tunnels the upgrade itself; same predicate proxy_h1 uses.
+        if !is_upgrade_req(session.req_header()) {
+            peer.options.read_timeout = Some(self.proxy_timeout);
+            peer.options.write_timeout = Some(self.proxy_timeout);
+        }
         Ok(peer)
     }
 
