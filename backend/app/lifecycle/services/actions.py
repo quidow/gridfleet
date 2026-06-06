@@ -23,6 +23,7 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
+    now_iso,
     set_action,
     write_state,
 )
@@ -302,6 +303,16 @@ class LifecyclePolicyActionsService:
             and fresh.get("recovery_suppressed_reason") == suppression_reason
         )
         if already_suppressed:
+            # The suppression is re-asserted (still in force), not aged residue.
+            # Refresh the recency the self-heal staleness gate
+            # (``clear_self_heal_suppression``) reads — ``last_action_at`` — so it
+            # does not misread an in-force suppression as stale and clear it
+            # mid-scenario (live S10 evidence). Preserve the dedup intent: no new
+            # event, no incident row, no change to ``last_action`` semantics; just
+            # restamp the timestamp and return False.
+            fresh["last_action_at"] = now_iso()
+            write_state(device, fresh)
+            await db.commit()
             return False
         fresh["recovery_suppressed_reason"] = suppression_reason
         set_action(fresh, "recovery_suppressed")

@@ -2078,3 +2078,149 @@ async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytes
     )  # type: ignore[arg-type]
     assert failing.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
     mock_complete_auto_stop.assert_awaited_once()
+
+
+def _make_actions_service() -> LifecyclePolicyActionsService:
+    return LifecyclePolicyActionsService(
+        publisher=event_bus,
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
+    )
+
+
+async def _suppressed_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    *,
+    identity: str,
+    last_action_at: str,
+    suppression_reason: str = "Recovery probe failed",
+) -> Device:
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=identity,
+            connection_target=identity,
+            name=identity,
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.offline,
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            lifecycle_policy_state={
+                "last_action": "recovery_suppressed",
+                "last_action_at": last_action_at,
+                "recovery_suppressed_reason": suppression_reason,
+            },
+        )
+    db_session.add(device)
+    await db_session.commit()
+    return device
+
+
+async def test_record_recovery_suppressed_dedup_refreshes_timestamp_keeps_fresh(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A re-asserted same-reason suppression refreshes ``last_action_at`` (S10):
+    the self-heal staleness gate then treats it as fresh and does NOT clear it,
+    and no second incident row is emitted."""
+    from app.devices.services.lifecycle_policy_state import clear_self_heal_suppression
+
+    stale = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat()
+    device = await _suppressed_device(db_session, db_host, identity="s10-refresh", last_action_at=stale)
+
+    result = await _make_actions_service().record_recovery_suppressed(
+        db_session,
+        device,
+        {},
+        source="device_connectivity",
+        reason="connectivity lost",
+        suppression_reason="Recovery probe failed",
+        run=None,
+    )
+    assert result is False
+
+    reloaded = await db_session.get(Device, device.id)
+    assert reloaded is not None
+    refreshed_at = reloaded.lifecycle_policy_state["last_action_at"]
+    assert refreshed_at != stale
+    assert (datetime.now(UTC) - datetime.fromisoformat(refreshed_at)).total_seconds() < 120
+
+    # Dedup still suppressed an incident: exactly zero lifecycle_recovery_suppressed
+    # events (the device was seeded with state directly, no prior incident).
+    incident_stmt = select(DeviceEvent).where(
+        DeviceEvent.device_id == device.id,
+        DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed,
+    )
+    assert len(list((await db_session.execute(incident_stmt)).scalars().all())) == 0
+
+    # The refreshed timestamp means the staleness gate sees an in-force (fresh)
+    # suppression and leaves it intact.
+    locked = await lifecycle_policy_module.device_locking.lock_device(db_session, device.id)
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+
+
+async def test_record_recovery_suppressed_dedup_emits_no_second_incident(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The first suppression records one incident; a same-reason re-assertion
+    dedups (returns False) and emits no second incident."""
+    device = await _suppressed_device(
+        db_session,
+        db_host,
+        identity="s10-no-second-incident",
+        last_action_at=(datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
+        suppression_reason="brand new reason",
+    )
+    # Seed with a DIFFERENT prior reason so the first call writes (not dedup),
+    # then the second call dedups.
+    svc = _make_actions_service()
+    first = await svc.record_recovery_suppressed(
+        db_session,
+        device,
+        {},
+        source="device_connectivity",
+        reason="connectivity lost",
+        suppression_reason="Recovery probe failed",
+        run=None,
+    )
+    assert first is False  # record_recovery_suppressed always returns False
+    second = await svc.record_recovery_suppressed(
+        db_session,
+        device,
+        {},
+        source="device_connectivity",
+        reason="connectivity lost",
+        suppression_reason="Recovery probe failed",
+        run=None,
+    )
+    assert second is False
+
+    incident_stmt = select(DeviceEvent).where(
+        DeviceEvent.device_id == device.id,
+        DeviceEvent.event_type == DeviceEventType.lifecycle_recovery_suppressed,
+    )
+    assert len(list((await db_session.execute(incident_stmt)).scalars().all())) == 1
+
+
+async def test_clear_self_heal_clears_aged_residue_without_reassertion(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Genuinely aged residue (no re-assertion to refresh it) still clears —
+    Fix 2 must not break the legitimate self-heal path."""
+    from app.devices.services.lifecycle_policy_state import clear_self_heal_suppression
+
+    stale = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat()
+    device = await _suppressed_device(db_session, db_host, identity="s10-aged", last_action_at=stale)
+
+    locked = await lifecycle_policy_module.device_locking.lock_device(db_session, device.id)
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "self_healed"
