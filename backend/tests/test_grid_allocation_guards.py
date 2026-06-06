@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -141,6 +142,30 @@ async def test_older_waiter_with_invalid_body_is_skipped(
     await db_session.flush()
     # the malformed older ticket must not block the younger one
     assert await _service().try_allocate(db_session, ticket=younger) is not None
+
+
+@pytest.mark.db
+async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, seeded_available_device: Device) -> None:
+    """Node-viability predicate (#8): a device whose Appium node is mid-restart
+    (transition_token set) must be excluded from grid eligibility, matching the
+    run allocator's node filter."""
+    from app.appium_nodes.models import AppiumNode
+
+    node = (
+        (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == seeded_available_device.id)))
+        .scalars()
+        .one()
+    )
+    # Viable before: the device is eligible.
+    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    assert seeded_available_device.id in eligible_ids
+
+    with state_write_guard.bypass():
+        node.transition_token = uuid.uuid4()
+    await db_session.flush()
+
+    eligible_ids = {d.id for d in await _service()._eligible_devices(db_session)}
+    assert seeded_available_device.id not in eligible_ids
 
 
 @pytest.mark.db

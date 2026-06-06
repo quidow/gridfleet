@@ -18,7 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.util import identity_key
 
+from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
+from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.core.protocols import SettingsReader
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -250,7 +252,9 @@ class AllocationService:
     async def _eligible_devices(self, db: DbSession) -> list[Device]:
         stmt = (
             select(Device)
+            .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .where(Device.operational_state == DeviceOperationalState.available)
+            .where(node_viable_predicate())
             .where(
                 ~select(Session.id)
                 .where(
@@ -317,8 +321,11 @@ class AllocationService:
         run_id: uuid.UUID | None,
     ) -> AllocationResult | None:
         locked = await device_locking.lock_device(db, device.id)
-        # Re-verify under the row lock: state and absence of active sessions may have changed.
+        # Re-verify under the row lock: state, node viability, and absence of active
+        # sessions may have changed since _eligible_devices ran.
         if locked.operational_state != DeviceOperationalState.available:
+            return None
+        if not device_node_is_viable(locked):
             return None
         recheck = await db.execute(
             select(Session.id).where(
