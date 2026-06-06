@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.packs.services.capability import StereotypeTemplate
+
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
@@ -29,7 +31,7 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device) -> dict[str, Any]:
+async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
     return {"platformName": "Android"}
 
 
@@ -182,12 +184,55 @@ async def test_mid_restart_device_not_grid_eligible(db_session: AsyncSession, se
 
 
 @pytest.mark.db
-async def test_pack_slot_stereotype_tolerates_missing_pack(db_session: AsyncSession) -> None:
-    # pack tables not seeded -> render_stereotype raises LookupError -> grid caps only
+async def test_pack_slot_stereotype_tolerates_missing_pack(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    # pack tables not seeded -> load_stereotype_template raises LookupError -> the
+    # device falls back to grid caps only, but the lookup failure is logged + counted
+    # (#1) so an operator can see why the device dropped out of the pool.
+    from app.grid.allocation import GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL
+
     _, device = await seed_host_and_device(db_session, identity=f"grid-guard-nopack-{uuid.uuid4().hex[:8]}")
-    stereotype = await pack_slot_stereotype(db_session, device)
+    before = GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get()
+    with caplog.at_level("WARNING"):
+        stereotype = await pack_slot_stereotype(db_session, device)
     assert stereotype.get("appium:gridfleet:deviceId") == str(device.id)
     assert "platformName" not in stereotype
+    assert GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get() == before + 1
+    assert any("grid_stereotype_lookup_error" in r.message and str(device.id) in r.message for r in caplog.records)
+
+
+@pytest.mark.db
+async def test_pack_slot_stereotype_template_cache_collapses_lookups(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #11: two same-pack/platform devices share one template fetch via the
+    # per-attempt cache; without it each device would issue its own DB lookup.
+    import app.grid.allocation as allocation_module
+
+    await seed_test_packs(db_session)
+    _, dev_a, _ = await seed_host_and_running_node(db_session, identity=f"grid-tmpl-a-{uuid.uuid4().hex[:8]}")
+    _, dev_b, _ = await seed_host_and_running_node(db_session, identity=f"grid-tmpl-b-{uuid.uuid4().hex[:8]}")
+    await db_session.commit()
+
+    calls: list[tuple[str, str]] = []
+    real = allocation_module.load_stereotype_template
+
+    async def _counting(db: AsyncSession, *, pack_id: str, platform_id: str) -> StereotypeTemplate:
+        calls.append((pack_id, platform_id))
+        return await real(db, pack_id=pack_id, platform_id=platform_id)
+
+    monkeypatch.setattr(allocation_module, "load_stereotype_template", _counting)
+
+    cache: dict[tuple[str, str], StereotypeTemplate] = {}
+    caps_a = await allocation_module.pack_slot_stereotype(db_session, dev_a, template_cache=cache)
+    caps_b = await allocation_module.pack_slot_stereotype(db_session, dev_b, template_cache=cache)
+    assert caps_a["platformName"] == "Android"
+    assert caps_b["platformName"] == "Android"
+    # Distinct devices -> distinct routing surface, identical pack template.
+    assert caps_a["appium:gridfleet:deviceId"] == str(dev_a.id)
+    assert caps_b["appium:gridfleet:deviceId"] == str(dev_b.id)
+    assert len(calls) == 1
 
 
 @pytest.mark.db

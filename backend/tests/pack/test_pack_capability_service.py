@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.services.capability import (
+    load_stereotype_template,
     render_default_capabilities,
     render_device_field_capabilities,
     render_stereotype,
@@ -59,6 +60,27 @@ async def test_render_stereotype_drops_keys_with_missing_context(db_session: Asy
     assert "appium:os_version" not in caps
     # Renderer still emits the hard-coded platformName from the platform model.
     assert caps["platformName"] == "Android"
+
+
+@pytest.mark.asyncio
+async def test_stereotype_template_split_interpolates_purely(db_session: AsyncSession) -> None:
+    # #11: the DB-touching template fetch is split from the pure per-device
+    # interpolation. One template fetch feeds many devices; interpolation does no IO
+    # (it is a sync method on the frozen template) and matches render_stereotype.
+    await seed_test_packs(db_session)
+    await db_session.commit()
+
+    template = await load_stereotype_template(db_session, pack_id="appium-uiautomator2", platform_id="android_mobile")
+    caps_14 = template.interpolate({"os_version": "14"})
+    caps_15 = template.interpolate({"os_version": "15"})
+    assert caps_14["appium:os_version"] == "14"
+    assert caps_15["appium:os_version"] == "15"
+    assert caps_14["platformName"] == "Android"
+    # Same shape as the single-shot helper for a given context.
+    direct = await render_stereotype(
+        db_session, pack_id="appium-uiautomator2", platform_id="android_mobile", device_context={"os_version": "14"}
+    )
+    assert caps_14 == direct
 
 
 @pytest.mark.asyncio

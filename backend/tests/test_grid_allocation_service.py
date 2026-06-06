@@ -32,7 +32,7 @@ def _body(**caps: str) -> dict[str, Any]:
     return {"capabilities": {"alwaysMatch": caps, "firstMatch": [{}]}}
 
 
-async def _stereotype_stub(db: AsyncSession, device: Device) -> dict[str, Any]:
+async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: object | None = None) -> dict[str, Any]:
     return {
         "platformName": "Android",
         "appium:udid": device.connection_target,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -15,13 +16,51 @@ if TYPE_CHECKING:
     from app.packs.services.platform_resolver import ResolvedPackPlatform
 
 
-async def render_stereotype(
+@dataclass(frozen=True)
+class StereotypeTemplate:
+    """The pack-rendered, device-independent half of a slot stereotype.
+
+    Holds everything ``render_stereotype`` fetches from the DB for a given
+    ``(pack_id, platform_id)``: the platform's advertised ``platformName`` /
+    ``automationName`` plus the raw (uninterpolated) ``stereotype`` base from the
+    release manifest. Detached from the ORM so it is safe to cache across devices
+    and apply pure per-device interpolation against (``interpolate``).
+    """
+
+    platform_name: str
+    automation_name: str
+    stereotype_base: dict[str, Any]
+
+    def interpolate(self, device_context: dict[str, object] | None) -> dict[str, Any]:
+        """Apply per-device template interpolation. Pure: no DB, no shared state."""
+        rendered: dict[str, Any] = {
+            "platformName": self.platform_name,
+            "appium:automationName": self.automation_name,
+        }
+        ctx = device_context or {}
+        for key, value in self.stereotype_base.items():
+            if isinstance(value, str):
+                interpolated = _interpolate(value, ctx)
+                if interpolated is None:
+                    continue
+                rendered[key] = interpolated
+            else:
+                rendered[key] = value
+        return rendered
+
+
+async def load_stereotype_template(
     session: AsyncSession,
     *,
     pack_id: str,
     platform_id: str,
-    device_context: dict[str, object] | None = None,
-) -> dict[str, Any]:
+) -> StereotypeTemplate:
+    """Fetch the device-independent stereotype template for a pack/platform.
+
+    The only DB-touching half of stereotype rendering — cacheable by
+    ``(pack_id, platform_id)``. Raises ``LookupError`` when the pack has no
+    selectable release or the platform is absent from it.
+    """
     pack = await session.scalar(
         select(DriverPack)
         .where(DriverPack.id == pack_id)
@@ -34,20 +73,22 @@ async def render_stereotype(
     if platform is None:
         raise LookupError(f"platform {platform_id!r} not in {pack_id} release {release.release}")
     stereotype_base: dict[str, Any] = platform.data.get("capabilities", {}).get("stereotype", {})
-    rendered: dict[str, Any] = {
-        "platformName": platform.appium_platform_name,
-        "appium:automationName": platform.automation_name,
-    }
-    ctx = device_context or {}
-    for key, value in stereotype_base.items():
-        if isinstance(value, str):
-            interpolated = _interpolate(value, ctx)
-            if interpolated is None:
-                continue
-            rendered[key] = interpolated
-        else:
-            rendered[key] = value
-    return rendered
+    return StereotypeTemplate(
+        platform_name=platform.appium_platform_name,
+        automation_name=platform.automation_name,
+        stereotype_base=stereotype_base,
+    )
+
+
+async def render_stereotype(
+    session: AsyncSession,
+    *,
+    pack_id: str,
+    platform_id: str,
+    device_context: dict[str, object] | None = None,
+) -> dict[str, Any]:
+    template = await load_stereotype_template(session, pack_id=pack_id, platform_id=platform_id)
+    return template.interpolate(device_context)
 
 
 async def resolve_workaround_env(

@@ -7,10 +7,10 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge
 from sqlalchemy import select, update
@@ -27,7 +27,7 @@ from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.packs.services.capability import render_stereotype
+from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
@@ -44,6 +44,11 @@ GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
 GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
     "Waiting tickets in grid_session_queue.",
+)
+GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL = Counter(
+    "gridfleet_grid_stereotype_lookup_error",
+    "Pack/platform lookups that failed while rendering a device's slot stereotype "
+    "(device falls back to an empty pack stereotype and is unmatchable until repaired).",
 )
 
 # Extra budget on top of grid.claim_window_sec before the reaper fails a pending row.
@@ -62,7 +67,20 @@ class AllocationNotPendingError(Exception):
 
 
 IntentFactory = Callable[[DbSession], IntentService]
-StereotypeProvider = Callable[[DbSession, Device], Awaitable[dict[str, Any]]]
+# A per-attempt cache of pack-rendered stereotype templates keyed by (pack_id,
+# platform_id). The template half is device-independent (#11), so a fleet of
+# same-pack devices renders one DB lookup per unique pack/platform per attempt.
+StereotypeTemplateCache = dict[tuple[str, str], StereotypeTemplate]
+
+
+class StereotypeProvider(Protocol):
+    async def __call__(
+        self,
+        db: DbSession,
+        device: Device,
+        *,
+        template_cache: StereotypeTemplateCache | None = None,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -286,14 +304,18 @@ class AllocationService:
         reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
         # Memoize the pack-rendered stereotype per device within this attempt: the
         # render hits the DB per device, and the device loop below may re-touch a
-        # device. The render interpolates per-device context (udid, os_version), so it
-        # is NOT poolable across same-pack devices; cross-tick caching is also avoided —
-        # stereotypes follow pack releases (#13).
+        # device. The interpolated result is per-device (udid, os_version) so it is
+        # NOT poolable across same-pack devices. The DB-touching half — the pack
+        # template — IS device-independent, so it is cached separately by
+        # (pack_id, platform_id) within this attempt, collapsing N same-pack DB
+        # lookups to one (#11). Both caches are per-attempt; stereotypes follow pack
+        # releases so cross-tick caching is avoided (#13).
         stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
+        template_cache: StereotypeTemplateCache = {}
         for device in eligible:
             stereotype = stereotype_cache.get(device.id)
             if stereotype is None:
-                stereotype = await self._stereotype_provider(db, device)
+                stereotype = await self._stereotype_provider(db, device, template_cache=template_cache)
                 stereotype_cache[device.id] = stereotype
             reservation_run_id = self._reservation_run_id(reservation_map.get(device.id), device.id)
             for candidate in candidates:
@@ -499,22 +521,49 @@ class AllocationService:
         return AllocationResult(allocation_id=row.id, target=target)
 
 
-async def pack_slot_stereotype(db: DbSession, device: Device) -> dict[str, Any]:
+async def pack_slot_stereotype(
+    db: DbSession,
+    device: Device,
+    *,
+    template_cache: StereotypeTemplateCache | None = None,
+) -> dict[str, Any]:
     """Compose the slot stereotype the relay advertises for *device*.
 
     Mirrors what ``start_remote_node`` sends to the agent: pack-rendered
     stereotype (platformName, automationName, manifest filters, ``appium:udid``
     via device context) merged with the manager-owned routing surface
     (deviceId + tag fanout) from ``build_grid_stereotype_caps``.
+
+    When the device's pack/platform cannot be resolved (pack deleted, platform
+    dropped from the release) the pack half falls back to empty so one broken pack
+    cannot wedge allocation for every other device — but the failure is logged and
+    counted (``gridfleet_grid_stereotype_lookup_error``) because such a device
+    advertises no capabilities and is silently unmatchable until repaired (#1).
+
+    *template_cache*, when supplied, memoizes the device-independent template by
+    ``(pack_id, platform_id)`` so a fleet of same-pack devices issues one DB
+    lookup per unique pack/platform instead of one per device (#11).
     """
     stereotype: dict[str, Any] = {}
     resolved = resolve_pack_for_device(device)
     if resolved is not None:
+        pack_id, platform_id = resolved
         try:
-            stereotype = await render_stereotype(
-                db, pack_id=resolved[0], platform_id=resolved[1], device_context=build_device_context(device)
+            template = template_cache.get(resolved) if template_cache is not None else None
+            if template is None:
+                template = await load_stereotype_template(db, pack_id=pack_id, platform_id=platform_id)
+                if template_cache is not None:
+                    template_cache[resolved] = template
+            stereotype = template.interpolate(build_device_context(device))
+        except LookupError as exc:
+            GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL.inc()
+            logger.warning(
+                "grid_stereotype_lookup_error device=%s pack=%s platform=%s: %s",
+                device.id,
+                pack_id,
+                platform_id,
+                exc,
             )
-        except LookupError:
             stereotype = {}
     stereotype.update(build_grid_stereotype_caps(device, pack_stereotype=None))
     return stereotype
@@ -533,8 +582,8 @@ def resolve_router_target(row: Session) -> str | None:
 def node_target(device: Device) -> str | None:
     """Direct Appium base URL: host address + the Appium process port.
 
-    ``AppiumNode.port`` is the agent-reported Appium server port (the agent's
-    ``running_nodes[*].port``), NOT the grid relay's node port.
+    ``AppiumNode.port`` is the direct Appium server port reported by the agent
+    (the agent's ``running_nodes[*].port``).
 
     ``lock_device`` eager-loads ``appium_node`` and ``host``. Host address uses
     ``host.ip`` — the same expression node registration uses (reconciler_agent).
