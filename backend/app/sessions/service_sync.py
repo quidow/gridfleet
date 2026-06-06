@@ -43,6 +43,11 @@ LOOP_NAME = "session_sync"
 # whole sweep, while a host's parallel devices are probed together. Mirrors
 # node_health's PROBE_CONCURRENCY_PER_HOST.
 PROBE_CONCURRENCY_PER_HOST = 2
+# Freshness gate for the liveness probe (wave-5 #19): the router flushes
+# last_activity_at every ~10s while traffic flows (router tasks.rs,
+# spawn_activity_flush), so activity within 3x that cadence proves the session
+# alive without spending a per-session GET each sweep tick.
+ACTIVITY_FRESH_WINDOW_SEC = 30.0
 
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_session_sync_wake_source",
@@ -205,6 +210,7 @@ class SessionSyncService:
         idle_cutoff = now_utc() - timedelta(seconds=idle_timeout)
         grace = int(self._settings.get("grid.session_first_command_grace_sec"))
         grace_cutoff = now_utc() - timedelta(seconds=grace)
+        fresh_cutoff = now_utc() - timedelta(seconds=ACTIVITY_FRESH_WINDOW_SEC)
 
         running_stmt = (
             select(Session)
@@ -257,6 +263,17 @@ class SessionSyncService:
             target = resolve_router_target(session)
             reap_reason = _reap_reason(session)
             node_stopped = _node_stopped(session)
+            if (
+                reap_reason is None
+                and not node_stopped
+                and session.last_activity_at is not None
+                and session.last_activity_at >= fresh_cutoff
+            ):
+                # Router-flushed activity inside the freshness window: the session
+                # was provably alive moments ago — skip the probe entirely (#19).
+                # Reap verdicts are unaffected: idle/never-commanded imply non-fresh
+                # or NULL activity, and an operator node-stop still closes above.
+                return _LivenessVerdict(action="leave", reap_reason=None)
             async with host_semaphores[device.host_id]:
                 if reap_reason is not None or node_stopped:
                     if target is None:

@@ -439,6 +439,50 @@ async def test_idle_session_terminate_failure_defers_close(
     assert service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get() == before
 
 
+async def test_recently_active_session_skips_liveness_probe(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wave-5 #19: the router flushes last_activity_at every ~10s while traffic
+    flows, so a session active within the freshness window is provably alive —
+    the sweep must not spend one GET per running session per tick re-verifying
+    it. Sessions with stale or NULL activity are still probed."""
+    fresh_device = await _seed_device_with_node(
+        db_session, db_host, identity_value="probe-fresh", operational_state=DeviceOperationalState.busy
+    )
+    stale_device = await _seed_device_with_node(
+        db_session, db_host, identity_value="probe-stale", operational_state=DeviceOperationalState.busy
+    )
+    fresh = Session(
+        session_id="sess-fresh",
+        device_id=fresh_device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC),
+    )
+    stale = Session(
+        session_id="sess-stale",
+        device_id=stale_device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add_all([fresh, stale])
+    await db_session.commit()
+
+    probed: list[str] = []
+
+    async def recording_session_alive(target: str, session_id: str, **_: object) -> bool | None:
+        probed.append(session_id)
+        return True
+
+    monkeypatch.setattr(service_sync.appium_direct, "session_alive", recording_session_alive)
+    # idle_timeout large so the stale session is probed, not reaped.
+    await _idle_sync_service(idle_timeout_sec=86400).sync(db_session)
+
+    assert "sess-fresh" not in probed
+    assert "sess-stale" in probed
+    await db_session.refresh(fresh)
+    assert fresh.status == SessionStatus.running
+
+
 async def test_idle_session_under_threshold_untouched(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
