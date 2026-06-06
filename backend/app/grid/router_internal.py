@@ -186,7 +186,8 @@ async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     # the Session table (not the ORM mapper, whose bulk path would demand PK values)
     # parameterized on the matched session_id and the new timestamp, fed the per-
     # session bind list.
-    table = cast("Table", Session.__table__)
+    table = Session.__table__
+    assert isinstance(table, Table)  # mypy narrowing; always true for a mapped model
     stmt = (
         update(table)
         .where(table.c.session_id == bindparam("b_session_id"), table.c.status == SessionStatus.running)
