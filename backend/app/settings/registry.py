@@ -384,6 +384,20 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=3600,
     ),
     SettingDefinition(
+        key="grid.session_idle_timeout_sec",
+        category="grid",
+        setting_type="int",
+        default=1800,
+        description=(
+            "How long a running session may go without reported client activity before the observation sweep "
+            "terminates it. Replaces the relay's idle timeout (Appium does not enforce newCommandTimeout idle kills "
+            "reliably), so an abandoned client that crashes without a DELETE cannot pin its device busy forever."
+        ),
+        env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC",
+        min_value=60,
+        max_value=86400,
+    ),
+    SettingDefinition(
         key="grid.claim_window_sec",
         category="grid",
         setting_type="int",

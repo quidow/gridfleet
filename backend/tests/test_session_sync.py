@@ -262,6 +262,140 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
 
 
 # --------------------------------------------------------------------------- #
+# Idle reaper (#3)                                                             #
+# --------------------------------------------------------------------------- #
+
+
+def _idle_sync_service(idle_timeout_sec: int) -> SessionSyncService:
+    return SessionSyncService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"grid.session_idle_timeout_sec": idle_timeout_sec}),
+        lifecycle=AsyncMock(),
+    )
+
+
+async def test_idle_session_over_threshold_reaped(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """A running session whose last activity is older than the idle timeout is
+    terminated on the node, closed, the device freed, and the counter advances."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="idle-1", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-idle",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    before = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+    after = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+
+    assert (target, "sess-idle") in _stub_appium_direct["terminated"]
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.passed
+    assert session.ended_at is not None
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+    assert after == before + 1
+
+
+async def test_idle_session_under_threshold_untouched(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """A session that reported activity within the idle window is left running."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="idle-2", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-fresh",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
+async def test_idle_falls_back_to_started_at_when_no_activity(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """A session that never reported activity (null last_activity_at) still ages off
+    its started_at."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="idle-3", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-never-reported",
+        device_id=device.id,
+        status=SessionStatus.running,
+        started_at=datetime.now(UTC) - timedelta(seconds=120),
+        last_activity_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    assert (target, "sess-never-reported") in _stub_appium_direct["terminated"]
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+
+
+async def test_idle_session_no_node_target_closes_row(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """An idle session on a device with no node target has nothing to terminate, but
+    the DB row is still closed so it cannot pin the device busy forever."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="idle-nonode",
+            connection_target="idle-nonode",
+            name="Idle No Node",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-idle-nonode",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []  # no target to terminate against
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+    assert session.status == SessionStatus.passed
+
+
+# --------------------------------------------------------------------------- #
 # Orphan kill                                                                  #
 # --------------------------------------------------------------------------- #
 

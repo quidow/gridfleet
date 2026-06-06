@@ -46,6 +46,11 @@ GRID_ORPHAN_SESSIONS_KILLED_TOTAL = Counter(
     "Appium sessions terminated by the observation sweep because no DB row tracks them.",
 )
 
+GRID_IDLE_SESSIONS_REAPED_TOTAL = Counter(
+    "gridfleet_grid_idle_sessions_reaped",
+    "Running sessions terminated by the observation sweep for exceeding grid.session_idle_timeout_sec.",
+)
+
 
 class SessionSyncService:
     def __init__(
@@ -109,7 +114,23 @@ class SessionSyncService:
         await db.commit()
 
     async def _check_liveness(self, db: AsyncSession) -> None:
-        """Close DB-truth running sessions that Appium reports as gone."""
+        """Close DB-truth running sessions that Appium reports as gone, plus idle reaping.
+
+        Two reasons close a running session here:
+
+        1. Liveness — Appium reports the session definitively gone (an
+           indeterminate network verdict is left untouched; we never kill on
+           uncertainty).
+        2. Idle — the session's last reported client activity (the router flushes
+           ``last_activity_at`` every 10 s; null falls back to ``started_at`` so a
+           session that never reported activity still ages) is older than
+           ``grid.session_idle_timeout_sec``. Appium does not reliably enforce
+           newCommandTimeout idle kills, so an abandoned client that crashed
+           without a DELETE would otherwise pin its device busy forever.
+        """
+        idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
+        idle_cutoff = datetime.now(UTC) - timedelta(seconds=idle_timeout)
+
         running_stmt = (
             select(Session)
             .options(
@@ -130,6 +151,26 @@ class SessionSyncService:
             if device is None:
                 continue
             target = node_target(device)
+            last_activity = session.last_activity_at or session.started_at
+            if last_activity < idle_cutoff:
+                # Idle reap: terminate the live Appium session if we have a target,
+                # then close the DB row the same way a vanished session is closed.
+                # A device with no node target has nothing to terminate — close the
+                # row regardless so the abandoned session stops pinning it busy.
+                if target is not None:
+                    await appium_direct.terminate_session(target, session.session_id)
+                GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
+                logger.warning(
+                    "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s",
+                    session.session_id,
+                    device.id,
+                    last_activity.isoformat(),
+                    idle_timeout,
+                )
+                await self._end_session(db, session)
+                if session.device_id is not None:
+                    device_ids_to_restore.add(session.device_id)
+                continue
             if target is None:
                 continue
             alive = await appium_direct.session_alive(target, session.session_id)

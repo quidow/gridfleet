@@ -17,7 +17,7 @@ from typing import cast
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select, update
+from sqlalchemy import Table, bindparam, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -180,11 +180,21 @@ async def routes(db: DbDep) -> RoutesResponse:
 
 @router.post("/activity", status_code=204)
 async def activity(payload: ActivityRequest, db: DbDep) -> Response:
-    for session_id, ts in payload.sessions.items():
-        await db.execute(
-            update(Session)
-            .where(Session.session_id == session_id, Session.status == SessionStatus.running)
-            .values(last_activity_at=ts)
-        )
+    if not payload.sessions:
+        return Response(status_code=204)
+    # One executemany round trip instead of N serial UPDATEs: a Core UPDATE against
+    # the Session table (not the ORM mapper, whose bulk path would demand PK values)
+    # parameterized on the matched session_id and the new timestamp, fed the per-
+    # session bind list.
+    table = cast("Table", Session.__table__)
+    stmt = (
+        update(table)
+        .where(table.c.session_id == bindparam("b_session_id"), table.c.status == SessionStatus.running)
+        .values(last_activity_at=bindparam("b_last_activity_at"))
+    )
+    await db.execute(
+        stmt,
+        [{"b_session_id": session_id, "b_last_activity_at": ts} for session_id, ts in payload.sessions.items()],
+    )
     await db.commit()
     return Response(status_code=204)

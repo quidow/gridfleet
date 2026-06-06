@@ -40,6 +40,20 @@ async def seeded_available_device(db_session: AsyncSession) -> Device:
     return device
 
 
+@pytest_asyncio.fixture
+async def two_running_sessions(db_session: AsyncSession) -> tuple[str, str]:
+    """Two confirmed running sessions on distinct devices, returned by session_id."""
+    await seed_test_packs(db_session)
+    sids: list[str] = []
+    for i in range(2):
+        _, device, _ = await seed_host_and_running_node(db_session, identity=f"grid-act-{uuid.uuid4().hex[:8]}")
+        sid = f"act-bulk-{i}"
+        db_session.add(Session(session_id=sid, device_id=device.id, status=SessionStatus.running))
+        sids.append(sid)
+    await db_session.commit()
+    return sids[0], sids[1]
+
+
 @pytest.mark.db
 async def test_allocate_immediate_match(client: AsyncClient, seeded_available_device: Device) -> None:
     resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
@@ -191,6 +205,30 @@ async def test_activity_updates_last_activity_at(
     assert row is not None
     await db_session.refresh(row)
     assert row.last_activity_at is not None
+
+
+@pytest.mark.db
+async def test_activity_bulk_update_round_trips_distinct_timestamps(
+    client: AsyncClient, db_session: AsyncSession, two_running_sessions: tuple[str, str]
+) -> None:
+    """Rider #21: the single executemany activity write must land each session's own
+    timestamp (no cross-talk between rows)."""
+    sid_a, sid_b = two_running_sessions
+    resp = await client.post(
+        "/internal/grid/activity",
+        json={"sessions": {sid_a: "2026-06-05T12:00:00Z", sid_b: "2026-06-05T13:30:00Z"}},
+    )
+    assert resp.status_code == 204
+
+    stmt = select(Session).where(Session.session_id.in_((sid_a, sid_b)))
+    by_sid = {row.session_id: row for row in (await db_session.execute(stmt)).scalars().all()}
+    for row in by_sid.values():
+        await db_session.refresh(row)
+    assert by_sid[sid_a].last_activity_at is not None
+    assert by_sid[sid_b].last_activity_at is not None
+    # Distinct timestamps proves per-row binding, not a single shared value.
+    assert by_sid[sid_a].last_activity_at != by_sid[sid_b].last_activity_at
+    assert by_sid[sid_b].last_activity_at > by_sid[sid_a].last_activity_at
 
 
 @pytest.mark.db
