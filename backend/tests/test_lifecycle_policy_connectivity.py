@@ -108,6 +108,34 @@ async def test_self_heal_clears_suppression_when_recovery_allowed(
     assert policy_state(locked)["last_action"] == "self_healed"
 
 
+async def test_self_heal_clear_does_not_commit_callers_transaction(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Wave-5 #6: the connectivity loop is single-batch-commit — one commit at cycle
+    end owns the transaction boundary. clear_suppression_on_self_heal must not commit
+    the caller's session mid-cycle: a later exception in the same cycle could no
+    longer roll back the already-committed partial state. A rollback after the call
+    must restore the suppression residue."""
+    device = await _make_available_device(db_session, db_host, identity="self-heal-no-commit")
+    device_id = device.id
+    locked = await device_locking.lock_device(db_session, device_id)
+    _seed_suppression_residue(locked)
+    await db_session.commit()
+
+    svc = _build_lifecycle_policy_service()
+    locked = await device_locking.lock_device(db_session, device_id)
+    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    assert cleared is True
+
+    # Simulate a later failure in the same connectivity cycle.
+    await db_session.rollback()
+
+    locked = await device_locking.lock_device(db_session, device_id)
+    state_after = policy_state(locked)
+    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
+
+
 async def test_self_heal_does_not_clear_under_operator_stop_deny(
     db_session: AsyncSession,
     db_host: Host,
