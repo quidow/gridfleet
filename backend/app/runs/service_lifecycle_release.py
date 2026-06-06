@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -36,6 +38,10 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
+# Bound concurrent Appium DELETEs per host during run release so a single hung
+# node cannot stall the whole release. Mirrors session_sync's
+# PROBE_CONCURRENCY_PER_HOST.
+TERMINATE_CONCURRENCY_PER_HOST = 2
 
 
 class RunReleaseService:
@@ -220,20 +226,46 @@ class RunReleaseService:
         if not sessions:
             return
 
+        # Three phases (wave-5 #8): the callers hold the run FOR UPDATE for the
+        # whole call, so awaiting each Appium DELETE serially cost up to Nx10s of
+        # wall time under lock. Resolve targets serially (DB reads), gather the
+        # DELETEs concurrently bounded per host (no DB access inside the gather —
+        # the AsyncSession is not task-safe), then do the DB writes serially.
+        targets: dict[uuid.UUID, str | None] = {}
         for session in sessions:
             if session.status == SessionStatus.running:
                 # A live Appium session: best-effort DELETE on the node before closing
                 # the DB row. With no reachable target or a failed delete, leave the row
                 # running so it is not falsely marked ended (the idle reaper backstops).
-                target = await self._session_node_target(db, session)
-                if target is None:
+                targets[session.id] = await self._session_node_target(db, session)
+
+        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(TERMINATE_CONCURRENCY_PER_HOST)
+        )
+
+        async def _terminate(session: Session, target: str) -> bool:
+            host_id = session.device.host_id if session.device is not None else None
+            async with host_semaphores[host_id]:
+                return await appium_direct.terminate_session(target, session.session_id)
+
+        running_with_target = [
+            (session, target)
+            for session in sessions
+            if session.status == SessionStatus.running and (target := targets.get(session.id)) is not None
+        ]
+        results = await asyncio.gather(*[_terminate(session, target) for session, target in running_with_target])
+        terminated_ok = {session.id: ok for (session, _), ok in zip(running_with_target, results, strict=True)}
+
+        for session in sessions:
+            if session.status == SessionStatus.running:
+                if targets.get(session.id) is None:
                     logger.warning(
                         "Leaving session %s running because no Appium node target was resolvable during run %s release",
                         session.session_id,
                         run.id,
                     )
                     continue
-                if not await appium_direct.terminate_session(target, session.session_id):
+                if not terminated_ok[session.id]:
                     logger.warning(
                         "Leaving session %s running because Appium deletion failed during run %s release",
                         session.session_id,
