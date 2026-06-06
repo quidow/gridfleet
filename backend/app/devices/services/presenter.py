@@ -71,6 +71,7 @@ class DevicePresenterService:
             readiness.readiness_state,
             health_healthy=health_summary.get("healthy") if health_summary else None,
             hardware_health_status=hardware_status,
+            review_required=bool(device.review_required),
         )
 
         emulator_state_value: str | None = None

@@ -156,6 +156,7 @@ class DeviceCrudService:
                         readiness.readiness_state,
                         health_healthy=(health_summary or {}).get("healthy"),
                         hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
+                        review_required=bool(device.review_required),
                     )
                     is wanted
                 ):

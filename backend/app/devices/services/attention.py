@@ -15,7 +15,10 @@ def compute_needs_attention(
     *,
     health_healthy: bool | None = None,
     hardware_health_status: HardwareHealthStatus | None = None,
+    review_required: bool = False,
 ) -> bool:
+    if review_required:
+        return True
     if lifecycle_state in _LIFECYCLE_NEEDS_ATTENTION:
         return True
     if readiness_state in _READINESS_NEEDS_ATTENTION:
