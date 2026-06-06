@@ -126,6 +126,14 @@ async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, 
     try:
         await services.allocation.confirm(db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id)
     except AllocationNotPendingError:
+        # The router rolls the just-created Appium session back best-effort on 409.
+        # Record the reported id on the terminal row first (wave-5 #7) so the orphan
+        # sweep can kill exactly this session if that rollback DELETE fails — even
+        # while the device already holds a new pending allocation.
+        await services.allocation.record_doomed_appium_session(
+            db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id
+        )
+        await db.commit()
         return Response(status_code=409)
     await db.commit()
     return Response(status_code=204)

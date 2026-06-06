@@ -400,42 +400,41 @@ class SessionSyncService:
         )
         devices = (await db.execute(device_stmt)).scalars().all()
 
-        # Resolve the routing target per device, then two batched IN-queries over that
-        # candidate set (#12): one for devices holding a pending row, one for known live
-        # ids per device. The allocate->confirm window holds a placeholder session_id
-        # while the real Appium id is created; the live session is absent from known_ids
-        # so the sweep would kill an in-creation session. Skip the whole device while ANY
-        # pending row exists, regardless of age — the allocation reaper owns expiring stale
-        # pending rows (claim window + confirm grace), so the sweep must not race it by
-        # killing a still-confirming session on an over-age row.
+        # Resolve the routing target per device, then batched IN-queries over that
+        # candidate set (#12): devices holding a pending row, known live ids per
+        # device, and doomed terminal ids. The allocate->confirm window holds a
+        # placeholder session_id while the real Appium id is created, so an
+        # in-creation session is indistinguishable BY ID from a fresh foreign orphan.
+        # On a device with a pending row the sweep therefore kills only ids it can
+        # prove doomed — ids recorded on a TERMINAL row (the 409-confirm path stamps
+        # the real id when the router's rollback may have failed; see
+        # ``record_doomed_appium_session``) — and spares every unknown id, which may
+        # be the pending allocation's own session, regardless of the row's age: the
+        # allocation reaper owns expiring stale pending rows (claim window + confirm
+        # grace).
         #
-        # Accepted trade-off (#7): a router-crash orphan on a pending device — an Appium
-        # session created before the router died but never confirmed — is NOT cleaned by
-        # this sweep while the pending row lives. It persists at most claim_window +
-        # confirm_grace, until the reaper fails the pending row and frees the device; the
-        # next sweep tick (the device no longer skipped) then terminates the orphan.
-        routable: list[tuple[Device, str]] = []
+        # Residual trade-off (#7): an orphan whose id was never reported backend-side
+        # (router died before confirm) is spared while ANY pending row lives. It
+        # persists at most claim_window + confirm_grace, until the reaper fails the
+        # pending row and frees the device; the next sweep tick then terminates it.
+        candidates: list[tuple[Device, str]] = []
         for device in devices:
             target = node_target(device)
             if target is None:
                 continue
-            routable.append((device, target))
+            candidates.append((device, target))
 
-        routable_ids = [device.id for device, _ in routable]
+        candidate_ids = [device.id for device, _ in candidates]
         devices_with_pending: set[uuid.UUID] = set()
-        if routable_ids:
+        if candidate_ids:
             pending_rows = await db.execute(
                 select(Session.device_id).where(
-                    Session.device_id.in_(routable_ids),
+                    Session.device_id.in_(candidate_ids),
                     Session.status == SessionStatus.pending,
                     Session.ended_at.is_(None),
                 )
             )
             devices_with_pending = {device_id for (device_id,) in pending_rows.all() if device_id is not None}
-
-        candidates: list[tuple[Device, str]] = [
-            (device, target) for device, target in routable if device.id not in devices_with_pending
-        ]
 
         # Probe phase: enumerate every candidate node's live sessions concurrently,
         # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
@@ -456,7 +455,6 @@ class SessionSyncService:
 
         # Resolve the known (running/pending) session ids for every candidate device in
         # one IN-query, grouped by device (#12), before the write loop.
-        candidate_ids = [device.id for device, _ in candidates]
         known_ids_by_device: defaultdict[uuid.UUID, set[str]] = defaultdict(set)
         if candidate_ids:
             known_rows = await db.execute(
@@ -468,6 +466,29 @@ class SessionSyncService:
             for device_id, session_id in known_rows.all():
                 if device_id is not None:
                     known_ids_by_device[device_id].add(session_id)
+
+        # Doomed ids for pending devices: a live id matching a TERMINAL row is provably
+        # not the in-creation session (which has no row until confirm) and is killable
+        # even while the pending allocation is in flight. Bounded by the enumerated live
+        # ids, so the query never scans full session history.
+        pending_live_ids = {
+            live_id
+            for (device, _), live_ids in zip(candidates, live_id_lists, strict=True)
+            if device.id in devices_with_pending
+            for live_id in (live_ids or [])
+        }
+        doomed_ids_by_device: defaultdict[uuid.UUID, set[str]] = defaultdict(set)
+        if pending_live_ids:
+            doomed_rows = await db.execute(
+                select(Session.device_id, Session.session_id).where(
+                    Session.device_id.in_([d for d in candidate_ids if d in devices_with_pending]),
+                    Session.session_id.in_(pending_live_ids),
+                    Session.ended_at.is_not(None),
+                )
+            )
+            for device_id, session_id in doomed_rows.all():
+                if device_id is not None:
+                    doomed_ids_by_device[device_id].add(session_id)
 
         # Write phase: terminate orphans serially on the session.
         for (device, target), live_ids in zip(candidates, live_id_lists, strict=True):
@@ -482,6 +503,10 @@ class SessionSyncService:
                 continue
             for live_id in live_ids:
                 if live_id in known_ids:
+                    continue
+                if device.id in devices_with_pending and live_id not in doomed_ids_by_device[device.id]:
+                    # Unknown id on a pending device — may be the pending allocation's
+                    # own in-creation session; spare it (see the candidate comment).
                     continue
                 terminated = await appium_direct.terminate_session(target, live_id)
                 if terminated:

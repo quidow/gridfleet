@@ -316,6 +316,40 @@ class AllocationService:
             intent = self._intent_factory(db)
             await intent.mark_dirty_and_reconcile(device_id, reason="grid_allocation_failed", publisher=self._publisher)
 
+    async def record_doomed_appium_session(
+        self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str
+    ) -> bool:
+        """Stamp the Appium id reported by a 409-rejected confirm onto the terminal row.
+
+        When a confirm loses to the reaper/run-cancel, the router rolls the
+        freshly-created Appium session back with a best-effort DELETE. If that DELETE
+        fails, nothing tracks the orphan — and the orphan sweep spares unknown ids on
+        a device holding a new pending row (it cannot tell an in-creation session
+        from an orphan by id). Swapping the terminal row's ``alloc-`` placeholder for
+        the real id makes the orphan a *known doomed id* the sweep can kill precisely.
+
+        Guards: only a terminal row still carrying its placeholder is stamped, and
+        never while any live row owns the id (the legacy-register conflict case —
+        that session is alive and tracked, not an orphan). Returns True iff stamped.
+        """
+        row = await db.get(Session, allocation_id)
+        if row is None or row.ended_at is None or not row.session_id.startswith("alloc-"):
+            return False
+        live_owner = await db.scalar(
+            select(Session.id).where(Session.session_id == appium_session_id, live_session_predicate()).limit(1)
+        )
+        if live_owner is not None:
+            return False
+        row.session_id = appium_session_id
+        await db.flush()
+        logger.info(
+            "grid_doomed_appium_session_recorded allocation=%s appium_session=%s device=%s",
+            allocation_id,
+            appium_session_id,
+            row.device_id,
+        )
+        return True
+
     async def mark_ended(self, db: DbSession, *, appium_session_id: str) -> None:
         """Close a running session the same way session_sync closes vanished sessions.
 

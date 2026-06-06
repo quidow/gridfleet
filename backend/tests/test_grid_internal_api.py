@@ -242,6 +242,56 @@ async def test_confirm_after_reaper_failed_row_is_409(
 
 
 @pytest.mark.db
+async def test_confirm_409_on_terminal_row_stamps_doomed_appium_id(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """Wave-5 #7: a confirm rejected because the row is already terminal must record
+    the reported Appium id on that row (placeholder swap). The router's rollback
+    DELETE is best-effort; without the id nothing tracks the orphan, and the orphan
+    sweep spares unknown ids while the device holds a new pending row."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    await client.post(f"/internal/grid/sessions/{allocation_id}/fail", json={"message": "claim window expired"})
+    late = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-doomed"}
+    )
+    assert late.status_code == 409
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.session_id == "appium-doomed"  # real id recorded for the orphan sweep
+    assert row.status == SessionStatus.error  # row stays terminal
+
+
+@pytest.mark.db
+async def test_confirm_409_does_not_stamp_when_live_row_owns_the_id(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """The doomed-id stamp must never claim an Appium id a live row legitimately owns
+    (legacy register_session conflict): that session is alive and tracked, not an
+    orphan, and stamping would let the sweep treat a live id as doomed."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+    await client.post(f"/internal/grid/sessions/{allocation_id}/fail", json={"message": "claim window expired"})
+
+    # A legitimately-running row (legacy register path) already owns the id.
+    db_session.add(Session(session_id="appium-live", device_id=None, status=SessionStatus.running))
+    await db_session.commit()
+
+    late = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-live"}
+    )
+    assert late.status_code == 409
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.session_id.startswith("alloc-")  # placeholder untouched
+
+
+@pytest.mark.db
 async def test_confirm_leaves_last_activity_at_null(
     client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
