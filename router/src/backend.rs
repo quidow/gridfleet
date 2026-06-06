@@ -107,6 +107,10 @@ impl BackendClient {
             reqwest::Method::POST,
             &format!("/internal/grid/sessions/{allocation_id}/confirm"),
         )
+        // Confirm is a tiny POST. Cap it well below the shared client's 40s so the
+        // worst-case retry budget (3 attempts + 2s sleeps) stays inside the
+        // backend reaper's confirm grace rather than 3×40s.
+        .timeout(std::time::Duration::from_secs(10))
         .json(&serde_json::json!({"appium_session_id": appium_session_id}))
         .send()
         .await?

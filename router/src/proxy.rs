@@ -118,16 +118,7 @@ impl ProxyHttp for GridRouter {
             // session sweep reconcile any leaked entries.
             if (200..300).contains(&status) || status == 404 {
                 if let Some(session_id) = ctx.session_id.clone() {
-                    self.routes.remove(&session_id);
-                    crate::metrics::metrics()
-                        .active_routes
-                        .set(self.routes.len() as i64);
-                    let backend = self.backend.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = backend.session_ended(&session_id).await {
-                            log::warn!("session_ended notify failed for {session_id}: {e}");
-                        }
-                    });
+                    self.prune_and_notify_ended(session_id);
                 }
             }
         }
@@ -138,23 +129,29 @@ impl ProxyHttp for GridRouter {
         crate::metrics::metrics()
             .request_duration
             .observe(ctx.started.elapsed().as_secs_f64());
-        // A DELETE that errored before a response means response_filter never
-        // ran, so the route was NOT pruned (it lingers until the next reconcile).
+        // A DELETE that errored before any response means response_filter never
+        // ran. The client's DELETE intent is unambiguous, so we still prune the
+        // route and notify the backend that the session ended — otherwise the
+        // route lingers and the device stays busy until the backend idle sweep.
         if ctx.is_delete && e.is_some() {
             crate::metrics::metrics().delete_orphaned_total.inc();
+            if let Some(session_id) = ctx.session_id.clone() {
+                self.prune_and_notify_ended(session_id);
+            }
         }
     }
 }
 
 /// Bound the Appium create call so we never wait past the backend's claim
-/// window (the reaper would release the allocation under us). When the backend
-/// reports a `claim_window_sec` large enough to honor (> 10s), cap the create
-/// at `claim_window_sec - 5s`, but never above the configured `proxy_timeout`.
-/// A missing or too-small window falls back to `proxy_timeout` unchanged.
+/// window (the reaper would release the allocation under us). For any reported
+/// `claim_window_sec`, cap the create at `max(window - 5, 5)s` and never above
+/// the configured `proxy_timeout`. The 5s floor keeps a tiny window from
+/// yielding a zero/negative budget. A missing window falls back to
+/// `proxy_timeout` unchanged.
 fn create_timeout(proxy_timeout: Duration, claim_window_sec: Option<u64>) -> Duration {
     match claim_window_sec {
-        Some(w) if w > 10 => proxy_timeout.min(Duration::from_secs(w - 5)),
-        _ => proxy_timeout,
+        Some(w) => proxy_timeout.min(Duration::from_secs(w.saturating_sub(5).max(5))),
+        None => proxy_timeout,
     }
 }
 
@@ -167,6 +164,23 @@ fn alloc_outcome(outcome: &str) {
 }
 
 impl GridRouter {
+    /// Remove the local route for a session and fire-and-forget a
+    /// `session_ended` notify to the backend. Shared by the DELETE success path
+    /// (`response_filter`) and the DELETE transport-failure path (`logging`):
+    /// in both cases the client asked for the session to be gone.
+    fn prune_and_notify_ended(&self, session_id: String) {
+        self.routes.remove(&session_id);
+        crate::metrics::metrics()
+            .active_routes
+            .set(self.routes.len() as i64);
+        let backend = self.backend.clone();
+        tokio::spawn(async move {
+            if let Err(e) = backend.session_ended(&session_id).await {
+                log::warn!("session_ended notify failed for {session_id}: {e}");
+            }
+        });
+    }
+
     /// Common path for session commands and DELETE: resolve the upstream,
     /// touch activity, and arm the ctx for `upstream_peer`. Returns a 404 W3C
     /// envelope when no route exists even after a one-shot rebuild.
@@ -404,17 +418,36 @@ impl GridRouter {
                     )
                     .await;
                 }
-                if let Some(upstream) = Upstream::parse(&target) {
-                    self.routes.insert(&session_id, upstream);
-                    crate::metrics::metrics()
-                        .active_routes
-                        .set(self.routes.len() as i64);
-                } else {
+                let Some(upstream) = Upstream::parse(&target) else {
+                    // Confirm already succeeded, so the backend row is `running`,
+                    // but the target is unroutable — every future command would
+                    // 404 locally and the route would never rebuild (rebuild
+                    // paths drop unparseable targets too). Roll the session back:
+                    // DELETE it on Appium, then tell the backend it ended, and
+                    // fail the create rather than hand back a dead session.
                     log::warn!(
                         "confirmed session {session_id} has unparseable target {target:?}; \
-                         no local route inserted — route will appear on next rebuild"
+                         rolling back (DELETE + session_ended) and failing create"
                     );
-                }
+                    self.delete_appium_session(&target, &session_id).await;
+                    if let Err(e) = self.backend.session_ended(&session_id).await {
+                        log::warn!("session_ended notify failed for unroutable {session_id}: {e}");
+                    }
+                    return respond(
+                        session,
+                        500,
+                        w3c::error_body(
+                            "session not created",
+                            "allocated target was unroutable; session was rolled back",
+                        ),
+                        "application/json",
+                    )
+                    .await;
+                };
+                self.routes.insert(&session_id, upstream);
+                crate::metrics::metrics()
+                    .active_routes
+                    .set(self.routes.len() as i64);
                 respond(session, status, body, "application/json").await
             }
             Ok(r) => {
@@ -492,9 +525,17 @@ mod tests {
     }
 
     #[test]
-    fn create_timeout_too_small_window_falls_back() {
+    fn create_timeout_small_window_floors_at_five() {
+        // max(8-5, 5) = 5, well under proxy_timeout, so the floor wins.
         let pt = Duration::from_secs(300);
-        assert_eq!(create_timeout(pt, Some(8)), pt);
+        assert_eq!(create_timeout(pt, Some(8)), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn create_timeout_tiny_window_floors_at_five() {
+        // The registry min is 5; max(5-5, 5) = 5 keeps a sane create budget.
+        let pt = Duration::from_secs(300);
+        assert_eq!(create_timeout(pt, Some(5)), Duration::from_secs(5));
     }
 
     #[test]

@@ -544,6 +544,258 @@ fn new_session_confirm_failure_rolls_back() {
     }
 }
 
+/// Backend stub for the DELETE-against-dead-upstream flow (F4). Serves
+/// `/internal/grid/routes` with a single session pointing at `dead_target`
+/// (a port nothing listens on) and records `/internal/grid/sessions/ended`
+/// hits. After a failed DELETE the router must still notify session_ended and
+/// prune the route so a follow-up command 404s locally.
+fn spawn_backend_dead_route(dead_target: String) -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let ended = Arc::new(AtomicUsize::new(0));
+    let e = ended.clone();
+    thread::spawn(move || {
+        // Serve the dead route only until the first session_ended arrives, so
+        // the post-prune /routes refetch on the follow-up command returns empty
+        // and the router answers 404 (route genuinely gone).
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/routes" {
+                let routes = if e.load(Ordering::SeqCst) == 0 {
+                    serde_json::json!({
+                        "routes": [{"session_id": "dead-session", "target": dead_target}],
+                    })
+                } else {
+                    serde_json::json!({ "routes": [] })
+                };
+                let resp =
+                    tiny_http::Response::from_string(routes.to_string()).with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if url == "/internal/grid/sessions/ended" {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["session_id"], "dead-session", "session_ended payload");
+                e.fetch_add(1, Ordering::SeqCst);
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, ended)
+}
+
+/// Reserve a TCP port and immediately release it: the returned `http://` target
+/// points at a port nothing listens on, so proxying to it fails at transport.
+fn dead_http_target() -> String {
+    let port = free_port();
+    format!("http://127.0.0.1:{port}")
+}
+
+#[test]
+fn delete_against_dead_upstream_still_notifies_ended() {
+    let dead_target = dead_http_target();
+    let (backend_addr, ended) = spawn_backend_dead_route(dead_target);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // DELETE the session: the upstream is dead, so the proxy fails at transport
+    // and the client sees an error (no clean 2xx). The router must still fire
+    // session_ended and prune the route.
+    let result = ureq::delete(&format!("{base}/session/dead-session")).call();
+    assert!(
+        result.is_err(),
+        "DELETE to a dead upstream should not succeed, got: {result:?}"
+    );
+
+    // Wait for the fire-and-forget session_ended notify to land.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ended.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended after a failed DELETE"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    // The route was pruned: a follow-up command 404s locally (the post-prune
+    // /routes refetch returns empty).
+    let err = ureq::get(&format!("{base}/session/dead-session/url")).call();
+    match err {
+        Err(ureq::Error::Status(404, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
+        }
+        other => panic!("expected 404 after prune, got {other:?}"),
+    }
+}
+
+/// Backend stub for the unparseable-target-after-confirm flow (F8). Allocate
+/// answers allocated(A1) with an UPPERCASE-scheme target (reqwest reaches it
+/// for create + rollback DELETE, but `Upstream::parse` rejects the `HTTP://`
+/// prefix); confirm answers 200; `/sessions/ended` hits are recorded.
+fn spawn_backend_unroutable_target(uppercase_target: String) -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let ended = Arc::new(AtomicUsize::new(0));
+    let e = ended.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/allocate" {
+                let body = serde_json::json!({
+                    "status": "allocated",
+                    "allocation_id": "A1",
+                    "target": uppercase_target,
+                    "claim_window_sec": 120,
+                })
+                .to_string();
+                let resp = tiny_http::Response::from_string(body).with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if url == "/internal/grid/sessions/A1/confirm" {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else if url == "/internal/grid/sessions/ended" {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["session_id"], "app-1", "session_ended payload");
+                e.fetch_add(1, Ordering::SeqCst);
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, ended)
+}
+
+#[test]
+fn new_session_unparseable_target_rolls_back() {
+    // Stub Appium reachable via reqwest; records the rollback DELETE.
+    let (appium_addr, deletes) = spawn_appium_rollback();
+    // Uppercase the scheme: reqwest/url accept it (create + DELETE reach the
+    // stub), but `Upstream::parse`'s case-sensitive `http://` strip rejects it,
+    // forcing the post-confirm unroutable-target rollback path.
+    let uppercase_target = appium_addr.replacen("http://", "HTTP://", 1);
+    let (backend_addr, ended) = spawn_backend_unroutable_target(uppercase_target);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // Create: allocate ok, Appium create ok, confirm ok, but target unparseable
+    // -> client gets 500 "session not created".
+    let err = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
+    match err {
+        Err(ureq::Error::Status(500, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
+        }
+        other => panic!("expected 500, got {other:?}"),
+    }
+
+    // The router rolled the Appium session back via DELETE.
+    assert_eq!(
+        deletes.load(Ordering::SeqCst),
+        1,
+        "router must DELETE the unroutable Appium session"
+    );
+
+    // And notified the backend that the session ended (confirm had succeeded).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ended.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended for the unroutable session"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Backend stub for the confirm-timeout flow (F6): allocate -> allocated(A1);
+/// the FIRST confirm hangs ~11s before answering (so the router's per-request
+/// 10s confirm timeout fires and it retries), the SECOND confirm answers 200.
+/// With the old shared 40s client timeout the first attempt would simply
+/// succeed at 11s and never retry — so a recorded retry proves the 10s cap.
+fn spawn_backend_slow_confirm(appium_addr: String) -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let confirms = Arc::new(AtomicUsize::new(0));
+    let c = confirms.clone();
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/allocate" {
+                let body = serde_json::json!({
+                    "status": "allocated",
+                    "allocation_id": "A1",
+                    "target": appium_addr,
+                    "claim_window_sec": 120,
+                })
+                .to_string();
+                req.respond(tiny_http::Response::from_string(body).with_header(json_header))
+                    .unwrap();
+            } else if url == "/internal/grid/sessions/A1/confirm" {
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First attempt: stall past the router's 10s per-request cap.
+                    thread::sleep(Duration::from_secs(11));
+                }
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else if url == "/internal/grid/routes" {
+                req.respond(tiny_http::Response::from_string(r#"{"routes":[]}"#))
+                    .unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, confirms)
+}
+
+#[test]
+#[ignore = "slow: exercises the 10s confirm timeout + retry (~13s)"]
+fn confirm_per_request_timeout_triggers_retry() {
+    let appium_addr =
+        spawn_appium_new_session(200, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
+    let (backend_addr, confirms) = spawn_backend_slow_confirm(appium_addr);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    let started = Instant::now();
+    // First confirm times out at 10s -> 2s sleep -> second confirm 200 -> the
+    // session is created successfully and the body is relayed.
+    let body = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .unwrap()
+        .into_string()
+        .unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
+    assert_eq!(
+        confirms.load(Ordering::SeqCst),
+        2,
+        "first confirm must time out at 10s and the router must retry"
+    );
+    // The 10s per-request cap fired: the first attempt did NOT wait the shared
+    // 40s client timeout. (10s timeout + 2s sleep + fast 2nd attempt < 25s.)
+    assert!(
+        elapsed < Duration::from_secs(25),
+        "confirm should hit the 10s per-request cap, not the 40s client default; took {elapsed:?}"
+    );
+}
+
 /// Raw-TCP WebSocket echo stub (tiny_http cannot perform the HTTP 101 upgrade).
 /// Completes the RFC 6455 handshake and echoes one client frame back prefixed
 /// with `ws:`, so the test can prove frames splice through the router intact.
