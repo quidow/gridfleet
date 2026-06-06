@@ -17,10 +17,26 @@ pub struct Upstream {
 }
 
 impl Upstream {
-    /// Parse "http://host:port" (the backend's target format).
+    /// Parse "http://host:port" (the backend's target format). Bracketed IPv6
+    /// (`http://[::1]:4723`) is handled explicitly; an unbracketed IPv6 literal
+    /// (`http://::1:4723`) is rejected — the backend never emits it, and the
+    /// `host` field is stored bracket-free so `authority()` re-wraps it.
     pub fn parse(target: &str) -> Option<Self> {
-        let rest = target.strip_prefix("http://")?;
-        let (host, port) = rest.trim_end_matches('/').rsplit_once(':')?;
+        let rest = target.strip_prefix("http://")?.trim_end_matches('/');
+        let (host, port) = if let Some(after_bracket) = rest.strip_prefix('[') {
+            // Bracketed IPv6: split on the closing bracket, then expect `:port`.
+            let (host, tail) = after_bracket.split_once(']')?;
+            let port = tail.strip_prefix(':')?;
+            (host, port)
+        } else {
+            let (host, port) = rest.rsplit_once(':')?;
+            // A ':' remaining in the host means an unbracketed IPv6 literal
+            // (or other malformed authority) — reject defensively.
+            if host.contains(':') {
+                return None;
+            }
+            (host, port)
+        };
         if host.is_empty() {
             return None;
         }
@@ -30,8 +46,14 @@ impl Upstream {
         })
     }
 
+    /// Authority for `HttpPeer::new`. IPv6 hosts (detected by an embedded ':')
+    /// are re-wrapped in brackets so the authority stays valid.
     pub fn authority(&self) -> String {
-        format!("{}:{}", self.host, self.port)
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
     }
 }
 
@@ -75,6 +97,48 @@ mod tests {
     #[test]
     fn parse_rejects_empty_host() {
         assert!(Upstream::parse("http://:4723").is_none());
+    }
+
+    #[test]
+    fn parse_ipv4_and_hostname_unchanged() {
+        let v4 = Upstream::parse("http://10.0.0.5:4723").unwrap();
+        assert_eq!(v4.host, "10.0.0.5");
+        assert_eq!(v4.port, 4723);
+        assert_eq!(v4.authority(), "10.0.0.5:4723");
+
+        let host = Upstream::parse("http://device-host:4723/").unwrap();
+        assert_eq!(host.host, "device-host");
+        assert_eq!(host.port, 4723);
+        assert_eq!(host.authority(), "device-host:4723");
+    }
+
+    #[test]
+    fn parse_bracketed_ipv6_ok() {
+        let u = Upstream::parse("http://[::1]:4723").unwrap();
+        assert_eq!(u.host, "::1");
+        assert_eq!(u.port, 4723);
+        // authority() re-wraps the IPv6 host in brackets for HttpPeer::new.
+        assert_eq!(u.authority(), "[::1]:4723");
+    }
+
+    #[test]
+    fn parse_bracketed_ipv6_full_address() {
+        let u = Upstream::parse("http://[2001:db8::1]:4723/").unwrap();
+        assert_eq!(u.host, "2001:db8::1");
+        assert_eq!(u.port, 4723);
+        assert_eq!(u.authority(), "[2001:db8::1]:4723");
+    }
+
+    #[test]
+    fn parse_unbracketed_ipv6_rejected() {
+        // Defensive: the backend never emits this, but rsplit would mangle it
+        // into host="::1", port="4723" — reject instead.
+        assert!(Upstream::parse("http://::1:4723").is_none());
+    }
+
+    #[test]
+    fn parse_bracketed_ipv6_missing_port_rejected() {
+        assert!(Upstream::parse("http://[::1]").is_none());
     }
 
     #[test]

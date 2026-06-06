@@ -942,6 +942,177 @@ fn new_session_client_gone_rolls_back() {
     }
 }
 
+/// Backend stub for the confirm-503-then-204 flow (F8 / finding #8). Allocate
+/// answers allocated(A1); the FIRST confirm answers 503 (transient — e.g. a
+/// rolling deploy), the SECOND answers 204. A 5xx must be retried, not treated
+/// as permanent, so the session is created successfully without a rollback
+/// DELETE. Records confirm hits.
+fn spawn_backend_confirm_503_then_204(appium_addr: String) -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let confirms = Arc::new(AtomicUsize::new(0));
+    let c = confirms.clone();
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/allocate" {
+                let body = serde_json::json!({
+                    "status": "allocated",
+                    "allocation_id": "A1",
+                    "target": appium_addr,
+                    "claim_window_sec": 120,
+                })
+                .to_string();
+                req.respond(tiny_http::Response::from_string(body).with_header(json_header))
+                    .unwrap();
+            } else if url == "/internal/grid/sessions/A1/confirm" {
+                let n = c.fetch_add(1, Ordering::SeqCst);
+                let status = if n == 0 { 503 } else { 204 };
+                req.respond(tiny_http::Response::from_string("").with_status_code(status))
+                    .unwrap();
+            } else if url == "/internal/grid/routes" {
+                req.respond(tiny_http::Response::from_string(r#"{"routes":[]}"#))
+                    .unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, confirms)
+}
+
+#[test]
+fn new_session_confirm_503_retries_then_succeeds() {
+    // Stub Appium records any rollback DELETE (there must be NONE — confirm
+    // eventually succeeds).
+    let (appium_addr, deletes) = spawn_appium_rollback();
+    let (backend_addr, confirms) = spawn_backend_confirm_503_then_204(appium_addr);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // First confirm 503 -> retry (2s sleep) -> second confirm 204 -> success;
+    // Appium's create body is relayed byte-identical.
+    let body = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#)
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert_eq!(body, r#"{"value":{"sessionId":"app-1","capabilities":{}}}"#);
+    assert_eq!(
+        confirms.load(Ordering::SeqCst),
+        2,
+        "503 must be retried, not treated as permanent"
+    );
+    assert_eq!(
+        deletes.load(Ordering::SeqCst),
+        0,
+        "a retried-then-succeeded confirm must NOT roll the session back"
+    );
+}
+
+/// Appium stub for the missing-sessionId sweep flow (finding #4). POST /session
+/// returns 200 with a body that has NO sessionId. GET /appium/sessions serves a
+/// session list with one live id ("orphan-1"); DELETE /session/orphan-1 is
+/// recorded. The router must sweep + DELETE the orphan after failing the
+/// allocation. Returns (addr, delete_count).
+fn spawn_appium_missing_session_id() -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let d = deletes.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let method = req.method().as_str().to_string();
+            let path = req.url().to_string();
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body).unwrap();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if method == "POST" && path == "/session" {
+                // 200 success but the body carries no sessionId.
+                let resp = tiny_http::Response::from_string(r#"{"value":{}}"#)
+                    .with_status_code(200)
+                    .with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if method == "GET" && path == "/appium/sessions" {
+                let resp = tiny_http::Response::from_string(
+                    r#"{"value":[{"id":"orphan-1","capabilities":{}}]}"#,
+                )
+                .with_header(json_header);
+                req.respond(resp).unwrap();
+            } else if method == "DELETE" && path == "/session/orphan-1" {
+                d.fetch_add(1, Ordering::SeqCst);
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else {
+                let payload = serde_json::json!({
+                    "upstream": "appium",
+                    "method": method,
+                    "path": path,
+                    "body": body,
+                });
+                let resp =
+                    tiny_http::Response::from_string(payload.to_string()).with_header(json_header);
+                req.respond(resp).unwrap();
+            }
+        }
+    });
+    (addr, deletes)
+}
+
+#[test]
+fn new_session_missing_session_id_sweeps_and_fails() {
+    let (appium_addr, deletes) = spawn_appium_missing_session_id();
+    let allocate_body = serde_json::json!({
+        "status": "allocated",
+        "allocation_id": "A1",
+        "target": appium_addr,
+        "claim_window_sec": 120,
+    })
+    .to_string();
+    let (backend_addr, counts) = spawn_backend_new_session(200, allocate_body, false);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // Create: 200 with no sessionId -> client gets 500 "session not created".
+    let err = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
+    match err {
+        Err(ureq::Error::Status(500, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
+        }
+        other => panic!("expected 500, got {other:?}"),
+    }
+
+    // The backend allocation was failed (not confirmed).
+    assert_eq!(counts.fails.load(Ordering::SeqCst), 1, "must report fail");
+    assert_eq!(
+        counts.confirms.load(Ordering::SeqCst),
+        0,
+        "no confirm without a sessionId"
+    );
+
+    // The router swept the target and DELETEd the orphan session.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while deletes.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never swept+DELETEd the orphan session after a missing sessionId"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        deletes.load(Ordering::SeqCst),
+        1,
+        "exactly one orphan DELETE"
+    );
+}
+
 /// Raw-TCP WebSocket echo stub (tiny_http cannot perform the HTTP 101 upgrade).
 /// Completes the RFC 6455 handshake and echoes one client frame back prefixed
 /// with `ws:`, so the test can prove frames splice through the router intact.

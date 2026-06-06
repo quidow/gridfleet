@@ -16,6 +16,9 @@ pub struct Metrics {
     /// New sessions created+confirmed but rolled back because the downstream
     /// client was gone by the time we tried to write the response.
     pub new_session_client_gone_total: IntCounter,
+    /// Appium create returned 2xx but the body carried no sessionId; the
+    /// allocation is failed and a best-effort session sweep runs on the target.
+    pub create_missing_session_id_total: IntCounter,
     /// End-to-end request handling latency.
     pub request_duration: Histogram,
 }
@@ -54,6 +57,11 @@ pub fn metrics() -> &'static Metrics {
             "New sessions created and confirmed but rolled back (DELETE + session_ended) because the downstream client disconnected before the response could be written.",
         )
         .expect("metric");
+        let create_missing_session_id_total = IntCounter::new(
+            "gridfleet_router_create_missing_session_id_total",
+            "Appium create returned a 2xx whose body had no sessionId; the allocation was failed and a best-effort session sweep ran on the target node.",
+        )
+        .expect("metric");
         let request_duration = Histogram::with_opts(HistogramOpts::new(
             "gridfleet_router_request_duration_seconds",
             "End-to-end request handling latency",
@@ -65,6 +73,7 @@ pub fn metrics() -> &'static Metrics {
         prometheus::register(Box::new(active_routes.clone())).expect("register");
         prometheus::register(Box::new(delete_orphaned_total.clone())).expect("register");
         prometheus::register(Box::new(new_session_client_gone_total.clone())).expect("register");
+        prometheus::register(Box::new(create_missing_session_id_total.clone())).expect("register");
         prometheus::register(Box::new(request_duration.clone())).expect("register");
 
         Metrics {
@@ -73,6 +82,7 @@ pub fn metrics() -> &'static Metrics {
             active_routes,
             delete_orphaned_total,
             new_session_client_gone_total,
+            create_missing_session_id_total,
             request_duration,
         }
     })
@@ -97,10 +107,12 @@ mod tests {
         metrics().active_routes.set(3);
         metrics().delete_orphaned_total.inc();
         metrics().new_session_client_gone_total.inc();
+        metrics().create_missing_session_id_total.inc();
         let out = String::from_utf8(render()).unwrap();
         assert!(out.contains("gridfleet_router_commands_total"));
         assert!(out.contains("gridfleet_router_active_routes 3"));
         assert!(out.contains("gridfleet_router_delete_orphaned_total"));
         assert!(out.contains("gridfleet_router_new_session_client_gone_total"));
+        assert!(out.contains("gridfleet_router_create_missing_session_id_total"));
     }
 }

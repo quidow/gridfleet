@@ -155,6 +155,17 @@ fn create_timeout(proxy_timeout: Duration, claim_window_sec: Option<u64>) -> Dur
     }
 }
 
+/// A confirm error is permanent only when the backend returned a 4xx that is
+/// not 429: 409 (allocation already reaped/confirmed) is the designed case,
+/// 400/422 mean a malformed/rejected request we cannot fix by retrying.
+/// Transport errors (no status), 5xx, and 429 are transient and worth a retry.
+fn is_permanent_confirm_error(e: &reqwest::Error) -> bool {
+    match e.status() {
+        Some(s) => s.is_client_error() && s != reqwest::StatusCode::TOO_MANY_REQUESTS,
+        None => false,
+    }
+}
+
 /// Increment the allocate-outcome counter (allocated|queued|invalid|timeout|error).
 fn alloc_outcome(outcome: &str) {
     crate::metrics::metrics()
@@ -236,10 +247,13 @@ impl GridRouter {
         self.routes.get(session_id)
     }
 
-    /// Confirm an allocation, retrying transport failures (no HTTP status —
-    /// e.g. the backend is mid-deploy) up to 3 total attempts, 2s apart. An
-    /// HTTP error status (e.g. 409 = allocation already reaped) is permanent
-    /// and returned immediately without retry.
+    /// Confirm an allocation, retrying up to 3 total attempts, 2s apart.
+    /// Transport failures (no HTTP status — e.g. the backend is mid-deploy) and
+    /// retryable HTTP statuses (5xx, 429 — transient backend pressure or a
+    /// rolling deploy) are retried. Only a 4xx other than 429 is permanent
+    /// (409 = allocation already reaped/confirmed is the designed case) and is
+    /// returned immediately without retry; the per-request 10s timeout bounds
+    /// each attempt.
     async fn confirm_with_retry(
         &self,
         allocation_id: &str,
@@ -248,7 +262,7 @@ impl GridRouter {
         for attempt in 1..=3 {
             match self.backend.confirm(allocation_id, session_id).await {
                 Ok(()) => return Ok(()),
-                Err(e) if e.status().is_some() => return Err(e), // HTTP error: permanent
+                Err(e) if is_permanent_confirm_error(&e) => return Err(e),
                 Err(e) if attempt == 3 => return Err(e),
                 Err(e) => {
                     log::warn!(
@@ -259,6 +273,39 @@ impl GridRouter {
             }
         }
         unreachable!("loop returns on the third attempt")
+    }
+
+    /// Best-effort cleanup when Appium returns a 2xx create whose body has no
+    /// sessionId: we cannot DELETE by id (we have none), so enumerate the
+    /// target's sessions and DELETE each. The node is device-pinned and was
+    /// just allocated to us, so any live session on it is the one we just
+    /// created (or a stale one we also want gone). The list endpoint
+    /// (`GET /appium/sessions`) may 4xx when Appium's insecure feature flag is
+    /// off — that's tolerated; we simply skip the sweep and rely on the agent's
+    /// health checks / backend idle sweep to reclaim the stranded session.
+    async fn sweep_target_sessions(&self, target: &str) {
+        let resp = appium_client()
+            .get(format!("{target}/appium/sessions"))
+            .timeout(self.proxy_timeout)
+            .send()
+            .await;
+        let body = match resp {
+            Ok(r) if r.status().is_success() => r.bytes().await.unwrap_or_default(),
+            Ok(r) => {
+                log::warn!(
+                    "session sweep: list on {target} returned {}; skipping (insecure feature likely off)",
+                    r.status()
+                );
+                return;
+            }
+            Err(e) => {
+                log::warn!("session sweep: list on {target} failed: {e}");
+                return;
+            }
+        };
+        for id in w3c::extract_session_ids(&body) {
+            self.delete_appium_session(target, &id).await;
+        }
     }
 
     /// Best-effort DELETE of an Appium session created during a new-session flow
@@ -390,10 +437,17 @@ impl GridRouter {
                 let body = r.bytes().await.unwrap_or_default().to_vec();
                 let session_id = w3c::extract_session_id(&body).unwrap_or_default();
                 if session_id.is_empty() {
+                    crate::metrics::metrics()
+                        .create_missing_session_id_total
+                        .inc();
                     let _ = self
                         .backend
                         .fail(&allocation_id, "appium response missing sessionId")
                         .await;
+                    // The session may have been created on the node despite the
+                    // odd response shape; we have no id to DELETE, so sweep the
+                    // (device-pinned) target's session list and DELETE each.
+                    self.sweep_target_sessions(&target).await;
                     return respond(
                         session,
                         500,
