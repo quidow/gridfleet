@@ -80,24 +80,24 @@ impl ProxyHttp for GridRouter {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut RouterCtx) -> Result<bool> {
-        let method = session.req_header().method.as_str().to_string();
-        let path = session.req_header().uri.path().to_string();
-        let class = classify(&method, &path);
-        let label = match &class {
-            RouteClass::NewSession => "new_session",
-            RouteClass::SessionCommand { .. } => "command",
-            RouteClass::DeleteSession { .. } => "delete",
+        // Borrow method/path for classification; owned copies are only needed in
+        // the Unknown arm's error body (wave-5 #22).
+        let class = {
+            let req = session.req_header();
+            classify(req.method.as_str(), req.uri.path())
+        };
+        let m = crate::metrics::metrics();
+        match &class {
+            RouteClass::NewSession => m.commands_new_session.inc(),
+            RouteClass::SessionCommand { .. } => m.commands_command.inc(),
+            RouteClass::DeleteSession { .. } => m.commands_delete.inc(),
             // Plan classes are (new_session|command|delete|local); healthz/status/
             // metrics/unknown are all local-terminated, so map them to "local".
             RouteClass::Healthz
             | RouteClass::Status
             | RouteClass::Metrics
-            | RouteClass::Unknown => "local",
-        };
-        crate::metrics::metrics()
-            .commands_total
-            .with_label_values(&[label])
-            .inc();
+            | RouteClass::Unknown => m.commands_local.inc(),
+        }
         match class {
             RouteClass::Healthz => respond(session, 200, b"ok".to_vec(), "text/plain").await,
             RouteClass::Status => {
@@ -114,10 +114,14 @@ impl ProxyHttp for GridRouter {
                 self.route_session(session, ctx, session_id, true).await
             }
             RouteClass::Unknown => {
+                let detail = {
+                    let req = session.req_header();
+                    format!("{} {}", req.method.as_str(), req.uri.path())
+                };
                 respond(
                     session,
                     404,
-                    w3c::error_body("unknown command", &format!("{method} {path}")),
+                    w3c::error_body("unknown command", &detail),
                     "application/json",
                 )
                 .await
@@ -532,7 +536,7 @@ impl GridRouter {
         let resp = appium_client()
             .post(format!("{target}/session"))
             .header("Content-Type", "application/json")
-            .body(raw.clone())
+            .body(raw)
             .timeout(create_timeout(self.proxy_timeout, claim_window_sec))
             .send()
             .await;

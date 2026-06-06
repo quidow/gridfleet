@@ -19,8 +19,8 @@ IDENTITY_KEYS = frozenset(
     }
 )
 TAG_PREFIX = "appium:gridfleet:tag:"
-# Requested-capability key the testkit sends (testkit appium.py) and the relay
-# stereotype advertises (agent grid_node/protocol.py).
+# Requested-capability key the testkit sends (testkit appium.py); the allocator
+# parses it to join the session to a run ("free" sentinel = explicit free session).
 RUN_ID_CAP = "gridfleet:run_id"
 
 

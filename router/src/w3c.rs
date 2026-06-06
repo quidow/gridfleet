@@ -8,10 +8,15 @@ pub fn error_body(error: &str, message: &str) -> Vec<u8> {
 }
 
 pub fn status_body() -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "value": {"ready": true, "message": "GridFleet router"}
-    }))
-    .expect("static json")
+    // The body is static; serialize once and hand out clones (wave-5 #24).
+    static BODY: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BODY.get_or_init(|| {
+        serde_json::to_vec(&serde_json::json!({
+            "value": {"ready": true, "message": "GridFleet router"}
+        }))
+        .expect("static json")
+    })
+    .clone()
 }
 
 /// Session ids from an Appium list-sessions body (`GET /appium/sessions` or
