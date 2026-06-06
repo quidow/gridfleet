@@ -31,6 +31,7 @@ from app.grid.allocation import (
     resolve_router_target,
     transition_ticket,
 )
+from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.dependencies import GridServicesDep
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import (
@@ -48,7 +49,6 @@ from app.sessions.models import Session, SessionStatus
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
 
 LONG_POLL_SEC = 25.0
-RETRY_INTERVAL_SEC = 1.0
 
 
 async def _get_or_create_ticket(

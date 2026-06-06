@@ -26,6 +26,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
+from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
@@ -76,11 +77,6 @@ class AllocationNotPendingError(Exception):
 # expired by the reaper. 10 intervals (~10s at the 1s router poll) is comfortably
 # longer than a single slow poll but far shorter than the 300s queue timeout.
 TICKET_STALE_POLL_INTERVALS = 10
-# Local copy of the router long-poll re-attempt cadence. router_internal owns the
-# authoritative LONG_POLL/RETRY constants, but importing them here would create an
-# allocation<-router_internal cycle (router_internal already imports allocation);
-# the staleness window only needs the poll cadence, so it is duplicated with a note.
-RETRY_INTERVAL_SEC = 1.0
 
 
 def _ticket_liveness_cutoff(now: datetime) -> datetime:
