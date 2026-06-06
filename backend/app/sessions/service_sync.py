@@ -86,6 +86,7 @@ _LivenessAction = Literal["leave", "leave_indeterminate", "defer", "close_reap",
 class _LivenessVerdict:
     action: _LivenessAction
     reap_reason: str | None
+    defer_detail: str | None = None
 
 
 # Module-level wake hook (P2). The session_sync loop registers its running service's
@@ -263,8 +264,19 @@ class SessionSyncService:
                         # also skips a None-target device), re-allocating the device while
                         # the session keeps holding it. Defer to a later tick when a target
                         # resolves rather than close blind (C3).
-                        return _LivenessVerdict(action="defer", reap_reason=reap_reason)
-                    await appium_direct.terminate_session(target, session.session_id)
+                        return _LivenessVerdict(
+                            action="defer", reap_reason=reap_reason, defer_detail="no resolvable Appium target"
+                        )
+                    if not await appium_direct.terminate_session(target, session.session_id):
+                        # Terminate unconfirmed (5xx/timeout): the Appium session may
+                        # still be alive. Closing the row would free the device for
+                        # re-allocation under the live foreign session (wave-5 #3) —
+                        # keep the row and retry next tick, mirroring run-release.
+                        # An already-gone session converges: terminate_session maps
+                        # 404 to True, so the retry closes it.
+                        return _LivenessVerdict(
+                            action="defer", reap_reason=reap_reason, defer_detail="Appium terminate failed"
+                        )
                     action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
                     return _LivenessVerdict(action=action, reap_reason=reap_reason)
                 if target is None:
@@ -286,10 +298,11 @@ class SessionSyncService:
             assert device is not None
             if verdict.action == "defer":
                 logger.warning(
-                    "grid_session_reap_deferred session=%s device=%s reason=%s (no resolvable Appium target)",
+                    "grid_session_reap_deferred session=%s device=%s reason=%s (%s)",
                     session.session_id,
                     device.id,
                     verdict.reap_reason or "node_stopped",
+                    verdict.defer_detail,
                 )
                 continue
             if verdict.action == "leave":

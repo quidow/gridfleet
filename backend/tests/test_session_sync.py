@@ -403,6 +403,42 @@ async def test_idle_session_over_threshold_reaped(
     assert after == before + 1
 
 
+async def test_idle_session_terminate_failure_defers_close(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wave-5 #3: a reap whose Appium DELETE fails (transient 5xx/timeout) must NOT
+    close the DB row — the session may still be alive on the node, and closing would
+    free the device for re-allocation under the live foreign session. The row stays
+    running and the reap retries next tick (terminate_session returns True on 404,
+    so an already-gone session still converges to close)."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="idle-termfail", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-idle-termfail",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    async def fake_terminate_fail(target: str, session_id: str, **_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate_fail)
+
+    before = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy
+    assert service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get() == before
+
+
 async def test_idle_session_under_threshold_untouched(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
