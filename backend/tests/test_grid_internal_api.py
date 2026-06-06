@@ -100,6 +100,20 @@ async def test_allocate_invalid_body_is_400(client: AsyncClient, seeded_availabl
 
 
 @pytest.mark.db
+async def test_allocate_invalid_body_400_carries_merge_detail(
+    client: AsyncClient, seeded_available_device: Device
+) -> None:
+    """Wave-5 #26: the descriptive CapabilityMergeError text (e.g. "'firstMatch'
+    must be a list of objects") must reach the W3C client in the 400 body instead
+    of a hard-coded generic 'invalid capabilities'."""
+    resp = await client.post("/internal/grid/allocate", json={"body": {"capabilities": {"firstMatch": "nope"}}})
+    assert resp.status_code == 400
+    data = resp.json()
+    assert data["status"] == "invalid"
+    assert "firstMatch" in data["message"], f"detail lost: {data['message']!r}"
+
+
+@pytest.mark.db
 async def test_cancel_ticket(client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device) -> None:
     resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="iOS")})
     ticket_id = resp.json()["ticket"]

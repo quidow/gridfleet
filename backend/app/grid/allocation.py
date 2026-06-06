@@ -421,11 +421,15 @@ class AllocationService:
         ticket.last_polled_at = now_utc()
         try:
             candidates = merge_candidates(ticket.requested_body)
-        except CapabilityMergeError:
-            logger.warning("grid_allocation_invalid_body ticket=%s", ticket.id)
+        except CapabilityMergeError as e:
+            logger.warning("grid_allocation_invalid_body ticket=%s detail=%s", ticket.id, e)
             transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
-            return None
+            # Re-raise so the API layer can put the descriptive merge message
+            # (e.g. "'firstMatch' must be a list of objects") in the 400 body
+            # instead of a generic text (wave-5 #26). The ticket is already
+            # cancelled; the caller commits before responding.
+            raise
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)

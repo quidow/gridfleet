@@ -33,6 +33,7 @@ from app.grid.allocation import (
 )
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.dependencies import GridServicesDep
+from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import (
     ActivityRequest,
@@ -97,13 +98,15 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 if resumed is not None:
                     await db.commit()
                     return _allocated(resumed)
-            result = await allocation.try_allocate(db, ticket=ticket)
-            # try_allocate cancels the ticket on an invalid body; re-read past
-            # mypy's narrowing from the early returns above.
-            cancelled = cast("GridQueueStatus", ticket.status) == GridQueueStatus.cancelled
+            try:
+                result = await allocation.try_allocate(db, ticket=ticket)
+            except CapabilityMergeError as e:
+                # try_allocate already cancelled the ticket; persist that and put
+                # the descriptive merge message in the 400 body (wave-5 #26). A
+                # re-poll of the cancelled ticket gets the generic text above.
+                await db.commit()
+                return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
             await db.commit()
-        if cancelled:
-            return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
         if result is not None:
             return _allocated(result)
         if time.monotonic() >= deadline:
