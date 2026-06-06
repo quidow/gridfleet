@@ -344,6 +344,25 @@ async def test_activity_updates_last_activity_at(
 
 
 @pytest.mark.db
+async def test_activity_accepts_bare_session_id_list(
+    client: AsyncClient, db_session: AsyncSession, two_running_sessions: tuple[str, str]
+) -> None:
+    """Wave-5 #12: the router only needs to say WHICH sessions were active — the
+    backend stamps server-side now() regardless of caller timestamps. The endpoint
+    accepts a bare id list; the legacy id->timestamp map stays accepted for
+    deploy-order compatibility with older routers."""
+    sid_a, sid_b = two_running_sessions
+    resp = await client.post("/internal/grid/activity", json={"sessions": [sid_a, sid_b, "unknown"]})
+    assert resp.status_code == 204
+
+    stmt = select(Session).where(Session.session_id.in_((sid_a, sid_b)))
+    rows = (await db_session.execute(stmt)).scalars().all()
+    for row in rows:
+        await db_session.refresh(row)
+        assert row.last_activity_at is not None
+
+
+@pytest.mark.db
 async def test_activity_stamps_server_now_ignoring_caller_timestamps(
     client: AsyncClient, db_session: AsyncSession, two_running_sessions: tuple[str, str]
 ) -> None:

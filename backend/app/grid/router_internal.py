@@ -181,14 +181,14 @@ async def routes(db: DbDep) -> RoutesResponse:
 async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     if not payload.sessions:
         return Response(status_code=204)
-    # The payload means "these sessions were active"; we ignore the caller-supplied
-    # datetimes (the router host's wall clock — clock skew there would otherwise extend
-    # or defeat idle reaping, which is judged against this host's clock) and stamp a
-    # single server-side now() for every reported session. One UPDATE over an IN-set.
+    # The payload means "these sessions were active"; stamp a single server-side
+    # now() for every reported session (the legacy map form's caller datetimes were
+    # always ignored — router clock skew would otherwise extend or defeat idle
+    # reaping, which is judged against this host's clock). One UPDATE over an IN-set.
     now = now_utc()
     await db.execute(
         update(Session)
-        .where(Session.session_id.in_(list(payload.sessions.keys())), Session.status == SessionStatus.running)
+        .where(Session.session_id.in_(payload.session_ids), Session.status == SessionStatus.running)
         .values(last_activity_at=now)
     )
     await db.commit()
