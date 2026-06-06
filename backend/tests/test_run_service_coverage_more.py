@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.exc import NoResultFound
@@ -753,12 +753,25 @@ async def test_mark_running_sessions_released_closes_pending_session(
 
     svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
     # The pending device must still be considered busy by the release gate (#3).
-    assert await svc._device_has_running_session(db_session, device.id) is True
+    from app.sessions import service as sessions_service
 
-    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+    assert await sessions_service.device_has_running_session(db_session, device.id) is True
+
+    # C12: a never-confirmed pending row never emitted session.started, so closing it
+    # must NOT emit session.ended (matching the reaper's silent close).
+    queued: list[str] = []
+    orig_queue = EventBus.queue_for_session
+
+    def _spy(self: EventBus, db: object, event_type: str, data: dict, **kwargs: object) -> None:
+        queued.append(event_type)
+        return orig_queue(self, db, event_type, data, **kwargs)  # type: ignore[arg-type]
+
+    with patch.object(EventBus, "queue_for_session", _spy):
+        await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
     assert pending.status == SessionStatus.error
     assert pending.error_type == "run_released"
     assert pending.ended_at is not None
+    assert "session.ended" not in queued
     await db_session.refresh(ticket)
     assert ticket.status == GridQueueStatus.expired
 

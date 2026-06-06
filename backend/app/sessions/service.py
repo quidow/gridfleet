@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
+from app.core.errors import AppError
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -29,6 +30,19 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
     from app.sessions.protocols import DeviceSessionLifecycle
+
+
+class DeviceLiveSessionConflictError(AppError):
+    """The target device already has a different live session (register_session, harness P1).
+
+    Surfaced as HTTP 409 by the global ``AppError`` handler: registering a second
+    live session for a device the grid router is mid-confirming (or that another
+    client already holds) would double-bind the hardware. The session_id idempotency
+    check keys on session_id, not the device, so it does not catch this.
+    """
+
+    status_code = 409
+    code = "DEVICE_BUSY"
 
 
 async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
@@ -179,9 +193,17 @@ async def close_running_session(
     from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
 
     sid = session.session_id
+    # A row still ``pending`` at close was never confirmed: ``session.started`` is queued
+    # only at confirm (allocation.py), and the row carries a placeholder ``alloc-<uuid>``
+    # session_id no consumer ever saw start. Emitting ``session.ended`` for it would be an
+    # unpaired event (a spurious "session ended" toast in the UI), so suppress it —
+    # matching the reaper's silent close of the same pending class (C12). A confirmed
+    # (``running``) row always emits ended.
+    never_confirmed = session.status == SessionStatus.pending
     session.ended_at = datetime.now(UTC)
     _apply_session_terminal_status(session, attached_run=attached_run)
-    queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+    if not never_confirmed:
+        queue_session_ended_event(db, session, device=session.device, publisher=publisher)
     # Terminalize any allocation ticket whose claim minted this session (router DELETE
     # + session_sync sweep both flow through here); a no-op for non-allocation sessions.
     await expire_tickets_for_session(db, session.id)
@@ -483,6 +505,24 @@ class SessionCrudService:
             )
             if device is None and (device_id is not None or connection_target is not None):
                 raise ValueError("No matching device found for running session target")
+            if device is not None:
+                # Device-level live-session guard (harness P1). The row lock is held;
+                # recheck for a live (running|pending) session bound to this device
+                # whose session_id differs from ours. The grid allocator commits a
+                # ``pending`` placeholder row while the device still derives
+                # ``available``, so without this recheck a concurrent register_session
+                # for a different id would insert a second live row and double-bind the
+                # device the router is mid-confirming. Same session_id is the legitimate
+                # idempotent re-register and is allowed through.
+                conflicting = await db.scalar(
+                    select(Session.session_id)
+                    .where(live_session_predicate(device.id), Session.session_id != session_id)
+                    .limit(1)
+                )
+                if conflicting is not None:
+                    raise DeviceLiveSessionConflictError(
+                        f"device {device.id} already has a live session ({conflicting})"
+                    )
         else:
             device = await _resolve_device_for_session(
                 db,
