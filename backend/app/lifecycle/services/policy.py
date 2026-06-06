@@ -70,6 +70,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Self-heal suppression clear: residue must be older than this before a healthy
+# connectivity tick is allowed to wipe it, so an in-flight failure sequence
+# (verify-failure records suppression seconds before its auto-stop lands) is not
+# clobbered by a transient healthy probe racing in between (regression S10).
+_SELF_HEAL_MIN_AGE_INTERVAL_FACTOR = 2.0  # at least two connectivity check intervals
+_SELF_HEAL_MIN_AGE_FLOOR_SEC = 120.0  # absolute floor (= factor x default 60s interval)
+
 
 class LifecyclePolicyService:
     def __init__(
@@ -792,14 +799,24 @@ class LifecyclePolicyService:
         device is healthy and not offline. We additionally gate on
         ``device.recovery_allowed``: an active operator-stop deny intent (RECOVERY
         axis) flips that to False, which makes the suppression a legitimate,
-        operator-owned hold — it must stay sticky (N13). Returns True when residue
-        was actually cleared so the incident fires exactly once; subsequent cycles
-        no-op.
+        operator-owned hold — it must stay sticky (N13).
+
+        Final gate: only clear residue older than ``min_age_seconds`` (>= 2x the
+        connectivity check interval). A verify-failure records the suppression
+        seconds before its auto-stop lands, and a concurrent healthy connectivity
+        tick can race in between — clearing fresh residue would wipe an in-flight
+        shelving sequence (regression S10). Returns True when residue was actually
+        cleared so the incident fires exactly once; subsequent cycles no-op.
         """
         device = await _reload_device(db, device)
         if not device.recovery_allowed:
             return False
-        cleared = clear_self_heal_suppression(device)
+        check_interval = float(self._settings.get("general.device_check_interval_sec"))
+        # Residue must survive at least two connectivity ticks before we treat it
+        # as stale, so an in-flight failure sequence (suppression → auto-stop) is
+        # never wiped by a transient healthy probe landing between the two.
+        min_age_seconds = max(_SELF_HEAL_MIN_AGE_FLOOR_SEC, _SELF_HEAL_MIN_AGE_INTERVAL_FACTOR * check_interval)
+        cleared = clear_self_heal_suppression(device, min_age_seconds=min_age_seconds)
         if not cleared:
             return False
         await self._incidents.record_lifecycle_incident(

@@ -202,7 +202,7 @@ def clear_operator_start_suppression(device: Device) -> None:
     write_state(device, next_state)
 
 
-def clear_self_heal_suppression(device: Device) -> bool:
+def clear_self_heal_suppression(device: Device, *, min_age_seconds: float) -> bool:
     """Clear recovery-suppression residue when a device self-heals naturally.
 
     A device can recover without any recovery path firing: an agent restart →
@@ -217,6 +217,15 @@ def clear_self_heal_suppression(device: Device) -> bool:
     Clears the suppression reason, the backoff window, and the stale failure
     trail, then stamps ``self_healed``. Returns True when residue was actually
     cleared so callers can record the self-heal exactly once.
+
+    Staleness gate (``min_age_seconds``): only clear residue whose recording
+    (``last_action_at``) is older than the threshold. A failure sequence still
+    in flight — verify-failure records ``recovery_suppressed`` seconds before
+    the auto-stop lands, and a concurrent healthy connectivity tick can race
+    in between — must NOT be wiped (regression S10). Genuinely stale residue
+    (hours-old leftovers after a natural reconverge) is. A missing/unparseable
+    ``last_action_at`` is treated as not-yet-stale (returns False) so an
+    in-flight sequence is never cleared on a timestamp we cannot trust.
 
     Leaves the maintenance-hold tautology
     (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched — a device held in
@@ -240,6 +249,9 @@ def clear_self_heal_suppression(device: Device) -> bool:
         or bool(next_state.get("recovery_backoff_attempts"))
     )
     if not has_residue:
+        return False
+    recorded_at = parse_iso(next_state.get("last_action_at"))
+    if recorded_at is None or (now() - recorded_at).total_seconds() < min_age_seconds:
         return False
     clear_backoff(next_state)
     next_state["recovery_suppressed_reason"] = None

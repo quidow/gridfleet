@@ -1,6 +1,6 @@
 """D1: connectivity loss must NOT exclude device from its active run."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -19,6 +19,7 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
+from tests.fakes.settings import FakeSettingsReader
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -29,7 +30,7 @@ def _build_lifecycle_policy_service() -> LifecyclePolicyService:
     return LifecyclePolicyService(
         review=build_review_service(),
         publisher=event_bus,
-        settings=None,  # type: ignore[arg-type]
+        settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
             reservation=RunReservationService(review=build_review_service()),
@@ -66,11 +67,12 @@ async def _make_available_device(
     return device
 
 
-def _seed_suppression_residue(device: Device) -> None:
+def _seed_suppression_residue(device: Device, *, age_seconds: float = 3600.0) -> None:
     fresh = policy_state(device)
     fresh["last_failure_source"] = "session_viability"
     fresh["last_failure_reason"] = "Recovery viability probe failed"
     fresh["last_action"] = "recovery_suppressed"
+    fresh["last_action_at"] = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
     fresh["recovery_suppressed_reason"] = "Recovery probe failed"
     write_state(device, fresh)
 
@@ -115,6 +117,29 @@ async def test_self_heal_does_not_clear_under_operator_stop_deny(
     device = await _make_available_device(db_session, db_host, identity="self-heal-deny-1", recovery_allowed=False)
     locked = await device_locking.lock_device(db_session, device.id)
     _seed_suppression_residue(locked)
+    await db_session.commit()
+
+    svc = _build_lifecycle_policy_service()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    assert cleared is False
+    await db_session.refresh(locked)
+    state_after = policy_state(locked)
+    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert state_after["last_action"] == "recovery_suppressed"
+
+
+async def test_self_heal_does_not_clear_in_flight_fresh_suppression(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression S10: a verify-failure records suppression seconds before its
+    auto-stop lands. A healthy connectivity tick racing in between must NOT wipe
+    the in-flight residue — it is genuinely seconds old, not stale leftover."""
+    device = await _make_available_device(db_session, db_host, identity="self-heal-fresh-1")
+    locked = await device_locking.lock_device(db_session, device.id)
+    _seed_suppression_residue(locked, age_seconds=0.0)
     await db_session.commit()
 
     svc = _build_lifecycle_policy_service()

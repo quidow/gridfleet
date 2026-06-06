@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -546,7 +547,7 @@ async def test_clear_self_heal_suppression_preserves_maintenance_tautology(
         locked,
         {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
     )
-    assert clear_self_heal_suppression(locked) is False
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
     assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
 
 
@@ -558,8 +559,72 @@ async def test_clear_self_heal_suppression_noop_on_clean_state(
     device = await _create_device(db_session, default_host_id)
     locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
     write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
-    assert clear_self_heal_suppression(locked) is False
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
     assert locked.lifecycle_policy_state["last_action"] == "sentinel"
+
+
+async def test_clear_self_heal_suppression_skips_fresh_residue(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue recorded just now (in-flight failure sequence) must NOT be cleared
+    by a racing healthy connectivity tick (regression S10)."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+
+
+async def test_clear_self_heal_suppression_clears_aged_residue(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue older than the staleness threshold (hours-old leftover after a
+    natural reconverge) is cleared and stamps ``self_healed``."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "self_healed"
+
+
+async def test_clear_self_heal_suppression_skips_residue_without_timestamp(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue with no parseable ``last_action_at`` is treated as not-yet-stale so
+    an in-flight sequence is never cleared on an untrusted timestamp."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": None,
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
 
 
 async def test_port_allocation_increments(
