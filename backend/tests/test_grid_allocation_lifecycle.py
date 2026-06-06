@@ -111,6 +111,51 @@ async def test_fail_releases_device(
 
 
 @pytest.mark.db
+async def test_confirm_after_reaper_fail_raises_not_pending(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """Race: the reaper fails the pending row first; confirm must then lose (raise),
+    not blindly overwrite it back to running (#4)."""
+    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
+    await db_session.refresh(allocated_pending)
+    assert allocated_pending.status == SessionStatus.error
+
+    with pytest.raises(AllocationNotPendingError):
+        await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="too-late")
+
+    await db_session.refresh(allocated_pending)
+    # The reaper's terminal state stands; confirm did not split it back to running.
+    assert allocated_pending.status == SessionStatus.error
+    assert allocated_pending.ended_at is not None
+
+
+@pytest.mark.db
+async def test_fail_after_confirm_is_noop_device_stays_busy(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """Race: confirm wins first; a late reaper fail must no-op rather than error a
+    now-running session or free a still-busy device (#4)."""
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="confirmed-id")
+    await db_session.refresh(seeded_available_device)
+    assert seeded_available_device.operational_state == DeviceOperationalState.busy
+
+    await allocation_service.fail(db_session, allocation_id=allocated_pending.id, message="claim window expired")
+
+    await db_session.refresh(allocated_pending)
+    assert allocated_pending.status == SessionStatus.running
+    assert allocated_pending.session_id == "confirmed-id"
+    assert allocated_pending.ended_at is None
+    await db_session.refresh(seeded_available_device)
+    assert seeded_available_device.operational_state == DeviceOperationalState.busy
+
+
+@pytest.mark.db
 async def test_mark_ended_closes_running_and_frees_device(
     db_session: AsyncSession,
     allocated_pending: Session,

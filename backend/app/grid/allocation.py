@@ -13,9 +13,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from prometheus_client import Counter, Gauge
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.util import identity_key
 
 from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.core.protocols import SettingsReader
@@ -78,25 +79,49 @@ class AllocationService:
         self._settings = settings
 
     async def confirm(self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str) -> None:
-        """Swap the placeholder session id for the Appium id and promote to ``running``."""
-        row = await db.get(Session, allocation_id)
-        if row is None or row.status != SessionStatus.pending:
+        """Swap the placeholder session id for the Appium id and promote to ``running``.
+
+        The status transition is a conditional UPDATE guarded on ``status='pending'``
+        so the reaper failing the row mid-confirm loses the race deterministically:
+        rowcount 0 means the row is no longer pending and we raise (the router rolls
+        back the Appium session).
+        """
+        result = await db.execute(
+            update(Session)
+            .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
+            .values(session_id=appium_session_id, status=SessionStatus.running)
+        )
+        if int(getattr(result, "rowcount", 0) or 0) == 0:
             raise AllocationNotPendingError(allocation_id)
-        row.session_id = appium_session_id
-        row.status = SessionStatus.running
+        # Keep any ORM-mapped instance coherent with the Core write.
+        row = db.identity_map.get(identity_key(Session, allocation_id), None)
+        if row is not None:
+            await db.refresh(row)
         await db.flush()
 
     async def fail(self, db: DbSession, *, allocation_id: uuid.UUID, message: str) -> None:
+        # Lock first (as before), then attempt the conditional transition. The device
+        # lock + reconcile only fire on a successful transition: rowcount 0 means the
+        # row was already confirmed/reaped, so we no-op (idempotent) and skip reconcile.
         row = await db.get(Session, allocation_id)
-        if row is None or row.status != SessionStatus.pending:
-            return  # idempotent: already confirmed/reaped
+        if row is None:
+            return
         device_id = row.device_id
         if device_id is not None:
             await device_locking.lock_device(db, device_id)
-        row.status = SessionStatus.error
-        row.error_type = "allocation_failed"
-        row.error_message = message
-        row.ended_at = datetime.now(UTC)
+        result = await db.execute(
+            update(Session)
+            .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
+            .values(
+                status=SessionStatus.error,
+                error_type="allocation_failed",
+                error_message=message,
+                ended_at=datetime.now(UTC),
+            )
+        )
+        if int(getattr(result, "rowcount", 0) or 0) == 0:
+            return  # idempotent: already confirmed/reaped
+        await db.refresh(row)
         await db.flush()
         if device_id is not None:
             intent = self._intent_factory(db)
