@@ -10,13 +10,6 @@ from itertools import count
 from agent_app.logs.schemas import ShippedLogLine
 
 _HEARTBEAT_LOGGER_PREFIXES = ("agent.heartbeat.request",)
-_LEVEL_NAME_TO_INT = {
-    "DEBUG": logging.DEBUG,
-    "INFO": logging.INFO,
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-    "CRITICAL": logging.CRITICAL,
-}
 
 
 class ShipperHandler(logging.Handler):
@@ -28,12 +21,6 @@ class ShipperHandler(logging.Handler):
         self._min_level = min_level
         self._seq = count()
         self.dropped_count = 0
-
-    def set_min_level(self, level: str | int) -> None:
-        if isinstance(level, str):
-            self._min_level = _LEVEL_NAME_TO_INT.get(level.upper(), logging.INFO)
-        else:
-            self._min_level = level
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.name.startswith(_HEARTBEAT_LOGGER_PREFIXES):
