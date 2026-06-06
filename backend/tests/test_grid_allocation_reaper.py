@@ -99,3 +99,74 @@ async def test_reaper_cycle_fails_expired_pending(
     assert GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="claim_expired")._value.get() == claim_expired_before + 1
     assert GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired")._value.get() == expired_before + 1
     assert GRID_QUEUE_DEPTH._value.get() == 0
+
+
+@pytest.mark.db
+async def test_reaper_wakes_session_sync_after_failing_pending(
+    db_session: AsyncSession,
+    expired_pending_session: Session,
+    reaper: GridAllocationReaperLoop,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2: failing a reaped pending row frees its device; the reaper must ring the
+    session_sync doorbell so the orphan/liveness sweep runs immediately instead of up to
+    one poll interval later (racing a router-crash orphan re-allocation)."""
+    woke: list[bool] = []
+    monkeypatch.setattr(
+        "app.grid.allocation_reaper.request_session_sync_wake",
+        lambda: woke.append(True),
+    )
+
+    await reaper.run_cycle(db_session)
+
+    await db_session.refresh(expired_pending_session)
+    assert expired_pending_session.status == SessionStatus.error
+    assert woke == [True]
+
+
+@pytest.mark.db
+async def test_reaper_does_not_wake_session_sync_when_no_pending_freed(
+    db_session: AsyncSession,
+    reaper: GridAllocationReaperLoop,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wake fires only when a pending row was actually failed: expiring a stale ticket
+    (no device freed) must not ring the doorbell."""
+    await seed_test_packs(db_session)
+    stale = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        created_at=datetime.now(UTC) - timedelta(hours=1),
+    )
+    db_session.add(stale)
+    await db_session.flush()
+    woke: list[bool] = []
+    monkeypatch.setattr(
+        "app.grid.allocation_reaper.request_session_sync_wake",
+        lambda: woke.append(True),
+    )
+
+    await reaper.run_cycle(db_session)
+
+    await db_session.refresh(stale)
+    assert stale.status == GridQueueStatus.expired
+    assert woke == []
+
+
+@pytest.mark.db
+async def test_reaper_expires_stale_polled_ticket_before_queue_timeout(
+    db_session: AsyncSession, reaper: GridAllocationReaperLoop
+) -> None:
+    """C8: a young (within queue_timeout) waiting ticket whose client stopped polling
+    is expired by the reaper on liveness, not after the full 300s queue timeout."""
+    stale = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        created_at=datetime.now(UTC) - timedelta(seconds=30),  # well within the 300s queue timeout
+        last_polled_at=datetime.now(UTC) - timedelta(seconds=60),  # >> 10x1s liveness window
+    )
+    db_session.add(stale)
+    await db_session.flush()
+
+    await reaper.run_cycle(db_session)
+
+    await db_session.refresh(stale)
+    assert stale.status == GridQueueStatus.expired

@@ -12,6 +12,7 @@ from app.core.leader.advisory import LeadershipLost
 from app.core.observability import get_logger, observe_background_loop
 from app.grid.allocation import GRID_QUEUE_DEPTH
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.sessions.service_sync import request_session_sync_wake
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,12 @@ class GridAllocationReaperLoop:
                 pending_failed=reaped["pending_failed"],
                 tickets_expired=reaped["tickets_expired"],
             )
+        if reaped["pending_failed"]:
+            # A reaped pending row just freed its device (P2). Ring the session_sync
+            # doorbell so the orphan/liveness sweep runs immediately instead of up to one
+            # poll interval later — closing the window where the freed device is
+            # re-allocatable while a router-crash orphan may still hold it.
+            request_session_sync_wake()
         depth = await db.scalar(
             select(func.count())
             .select_from(GridSessionQueueTicket)

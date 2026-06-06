@@ -27,6 +27,7 @@ from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,6 +86,27 @@ _LivenessAction = Literal["leave", "leave_indeterminate", "defer", "close_reap",
 class _LivenessVerdict:
     action: _LivenessAction
     reap_reason: str | None
+
+
+# Module-level wake hook (P2). The session_sync loop registers its running service's
+# ``wake`` here on startup; other leader-owned loops (e.g. the allocation reaper, which
+# runs in the same process as the leader's session_sync loop) call
+# ``request_session_sync_wake`` to ring the doorbell after they free a device, so the
+# sweep runs immediately instead of waiting up to one poll interval. In-process only:
+# the reaper and the leader session_sync loop are co-located on the leader, so a direct
+# in-memory hook is sufficient and avoids a bus round trip.
+_WAKE_HOOK: Callable[[], None] | None = None
+
+
+def register_session_sync_wake_hook(hook: Callable[[], None]) -> None:
+    global _WAKE_HOOK
+    _WAKE_HOOK = hook
+
+
+def request_session_sync_wake() -> None:
+    """Ring the session_sync doorbell if a loop is registered; no-op otherwise."""
+    if _WAKE_HOOK is not None:
+        _WAKE_HOOK()
 
 
 class SessionSyncService:
@@ -489,12 +511,16 @@ class SessionSyncLoop:
     async def run(self) -> None:
         """Background loop that runs the session observation sweep.
 
-        Wakes on either the doorbell (``wake()`` — currently no production
-        caller since the grid event-bus subscriber was removed; kept for a
-        future direct-observation trigger) or the registry-configured
-        timeout, whichever comes first. The poll runs as a drift reconciler.
+        Wakes on either the doorbell (rung via ``request_session_sync_wake`` —
+        e.g. the allocation reaper after it frees a reaped pending device, P2)
+        or the registry-configured timeout, whichever comes first. The poll runs
+        as a drift reconciler.
         """
         sync = self._services.sync
+        # Register this running service's doorbell so co-located leader loops can ring it
+        # (P2). Registered on the leader process; non-leader loops exit before reaching
+        # work, so the last registration wins and points at the active loop.
+        register_session_sync_wake_hook(sync.wake)
         while True:
             interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
             try:
