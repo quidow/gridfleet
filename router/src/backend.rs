@@ -100,6 +100,26 @@ impl BackendClient {
                 };
                 Ok(AllocateOutcome::Fatal { status, message })
             }
+            status @ 400..=499 => {
+                // Any other 4xx is a request-level rejection retrying cannot fix
+                // (e.g. FastAPI 422 on a malformed allocate envelope). Surface the
+                // body's detail to the client immediately instead of spinning the
+                // 2s retry loop to the new-session deadline (wave-5 #5). Only 5xx
+                // and transport errors stay transient.
+                let raw = resp.text().await.unwrap_or_default();
+                let detail = serde_json::from_str::<serde_json::Value>(&raw)
+                    .ok()
+                    .and_then(|v| {
+                        v["message"]
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| (!v["detail"].is_null()).then(|| v["detail"].to_string()))
+                    })
+                    .unwrap_or(raw);
+                Ok(AllocateOutcome::Invalid {
+                    message: format!("backend rejected allocate ({status}): {detail}"),
+                })
+            }
             _ => {
                 let v: serde_json::Value = resp.error_for_status()?.json().await?;
                 if v["status"] == "allocated" {

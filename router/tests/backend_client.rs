@@ -246,6 +246,41 @@ async fn allocate_410_returns_queue_timeout() {
 }
 
 #[tokio::test]
+async fn allocate_unexpected_4xx_is_invalid_fail_fast() {
+    // Wave-5 #5: an unexpected 4xx (e.g. FastAPI 422 on a malformed allocate
+    // envelope) is a request-level rejection retrying cannot fix. It must map to
+    // Invalid (immediate 400 to the client with the body's detail), not an Err the
+    // new-session loop retries for the full 330s deadline masking the real error.
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let req = server.recv().unwrap();
+        assert_eq!(req.url(), "/internal/grid/allocate");
+        let resp = json_response(
+            r#"{"detail":[{"type":"model_attributes_type","msg":"Input should be a valid dictionary"}]}"#,
+        )
+        .with_status_code(422);
+        req.respond(resp).unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+    // Valid JSON but not an object — passes the router's parse check, 422s on the
+    // backend's AllocateRequest model.
+    let raw = br#"[]"#;
+    match client.allocate(raw, None).await.unwrap() {
+        gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
+            assert!(
+                message.contains("422"),
+                "message should carry the status: {message}"
+            );
+            assert!(
+                message.contains("valid dictionary"),
+                "message should carry the backend detail: {message}"
+            );
+        }
+        other => panic!("expected Invalid, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn fetch_routes_roundtrip() {
     let (server, addr) = stub_backend();
     thread::spawn(move || {
