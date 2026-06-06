@@ -21,13 +21,18 @@ pub fn spawn_route_reconcile(routes: Arc<RouteMap>, backend: Arc<BackendClient>)
         interval.tick().await; // consume the immediate tick
         loop {
             interval.tick().await;
+            // Capture the insert generation BEFORE the fetch: a session
+            // confirmed+inserted by the data plane mid-fetch must survive the
+            // rebuild, not be evicted by the (now-stale) snapshot (C4).
+            let gen = routes.insert_generation();
             match backend.fetch_routes().await {
                 Ok(entries) => {
-                    routes.replace_all(
+                    routes.replace_if_unchanged(
                         entries
                             .iter()
                             .filter_map(|(s, t)| Some((s.clone(), Upstream::parse(t)?)))
                             .collect(),
+                        gen,
                     );
                     metrics().active_routes.set(routes.len() as i64);
                 }

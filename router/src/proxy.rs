@@ -227,18 +227,23 @@ impl GridRouter {
 
     /// Route-map lookup with one-shot rebuild on miss (covers router restart
     /// racing live sessions). The refetch on miss is deliberately un-coalesced:
-    /// concurrent misses may each issue a backend fetch; replace_all is atomic
-    /// and idempotent so duplicate fetches are safe.
+    /// concurrent misses may each issue a backend fetch. We capture the route
+    /// map's insert generation BEFORE the fetch and rebuild via
+    /// `replace_if_unchanged`, so a route confirmed+inserted by another request
+    /// mid-fetch is overlaid on the (now-stale) snapshot instead of being
+    /// evicted by the wholesale swap (C4).
     async fn resolve(&self, session_id: &str) -> Option<Upstream> {
         if let Some(u) = self.routes.get(session_id) {
             return Some(u);
         }
+        let gen = self.routes.insert_generation();
         if let Ok(entries) = self.backend.fetch_routes().await {
-            self.routes.replace_all(
+            self.routes.replace_if_unchanged(
                 entries
                     .iter()
                     .filter_map(|(s, t)| Some((s.clone(), Upstream::parse(t)?)))
                     .collect(),
+                gen,
             );
             crate::metrics::metrics()
                 .active_routes
