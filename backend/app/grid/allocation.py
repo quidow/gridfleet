@@ -117,6 +117,22 @@ class AllocationService:
         if row is not None:
             await db.refresh(row)
         await db.flush()
+        # This is the authoritative creation point for router-issued sessions (spec
+        # §8): emit session.started here so consumers fire for clients that never hit
+        # the legacy register API (Appium Inspector, plain WebDriver). Reload with the
+        # device eagerly so the event payload renders without a lazy IO.
+        session = (
+            (await db.execute(select(Session).options(selectinload(Session.device)).where(Session.id == allocation_id)))
+            .scalars()
+            .one()
+        )
+        session_service.queue_session_started_event(
+            db,
+            session,
+            device=session.device,
+            run_id=str(session.run_id) if session.run_id is not None else None,
+            publisher=self._publisher,
+        )
 
     async def fail(self, db: DbSession, *, allocation_id: uuid.UUID, message: str) -> None:
         # Lock first (as before), then attempt the conditional transition. The device

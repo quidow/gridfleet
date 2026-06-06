@@ -14,6 +14,8 @@ import pytest_asyncio
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from unittest.mock import AsyncMock
+
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService
@@ -21,7 +23,8 @@ from app.grid.matching import RUN_ID_CAP
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import seed_host_and_running_node
+from app.sessions.service import SessionCrudService
+from tests.helpers import drain_handlers, recent_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -216,3 +219,81 @@ async def test_concurrent_allocation_single_winner(
     # With two independent transactions the FIFO check may make either ticket
     # lose — the invariant is exactly-one-winner, not which.
     assert sorted(outcomes) == [False, True]
+
+
+async def _started_events_for(session_id: str) -> list[dict[str, Any]]:
+    """Drain after-commit handlers and return session.started events for a session id."""
+    await drain_handlers(event_bus)
+    return [
+        e["data"]
+        for e in recent_events(event_bus, event_types=["session.started"])
+        if e["data"].get("session_id") == session_id
+    ]
+
+
+@pytest.mark.db
+async def test_confirm_emits_one_session_started_for_free_row(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """confirm() is the authoritative emission point: a run-less allocation emits
+    exactly one session.started with no run id (spec §8)."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="free-ssn")
+    await db_session.commit()
+
+    started = await _started_events_for("free-ssn")
+    assert len(started) == 1
+    assert started[0]["run_id"] is None
+
+
+@pytest.mark.db
+async def test_confirm_emits_one_session_started_with_run_id(
+    db_session: AsyncSession, seeded_reserved_device: ReservedDevice, allocation_service: AllocationService
+) -> None:
+    """A run-bound allocation emits exactly one session.started carrying the run id,
+    proving consumers can attribute router sessions to their reservation (spec §8)."""
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(seeded_reserved_device.reservation_run_id)}),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="run-ssn")
+    await db_session.commit()
+
+    started = await _started_events_for("run-ssn")
+    assert len(started) == 1
+    assert started[0]["run_id"] == str(seeded_reserved_device.reservation_run_id)
+
+
+@pytest.mark.db
+async def test_allocate_confirm_register_emits_session_started_once(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """De-dup: the full allocate -> confirm -> legacy register flow yields exactly ONE
+    session.started. confirm() emits; register_session then finds the already-running
+    row and returns early without a second emission."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await allocation_service.confirm(db_session, allocation_id=result.allocation_id, appium_session_id="dedup-ssn")
+    await db_session.commit()
+
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    await crud.register_session(
+        db_session,
+        session_id="dedup-ssn",
+        test_name="dedup",
+        device_id=seeded_available_device.id,
+        status=SessionStatus.running,
+    )
+
+    started = await _started_events_for("dedup-ssn")
+    assert len(started) == 1
