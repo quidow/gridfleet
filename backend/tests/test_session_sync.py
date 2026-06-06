@@ -531,11 +531,13 @@ async def test_orphan_spared_during_alloc_confirm_window(
     assert _stub_appium_direct["terminated"] == []
 
 
-async def test_orphan_killed_when_pending_row_over_age(
+async def test_orphan_sweep_skips_device_with_over_age_pending_row(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """An over-age pending row (past claim_window) is the reaper's to fail; the sweep
-    proceeds and an unknown live session is terminated."""
+    """F7: a device with ANY pending row is skipped by the orphan sweep regardless of
+    the row's age. Expiring stale pending rows is the allocation reaper's job (claim
+    window + confirm grace); the sweep must not race it by killing a session whose
+    confirm is still in flight on an over-age row."""
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="orph-overage", operational_state=DeviceOperationalState.busy
     )
@@ -543,7 +545,7 @@ async def test_orphan_killed_when_pending_row_over_age(
         session_id="alloc-stale-uuid",
         device_id=device.id,
         status=SessionStatus.pending,
-        started_at=datetime.now(UTC) - timedelta(seconds=600),  # well past the 120s default
+        started_at=datetime.now(UTC) - timedelta(seconds=600),  # well past the claim window
     )
     db_session.add(stale_pending)
     await db_session.commit()
@@ -552,7 +554,7 @@ async def test_orphan_killed_when_pending_row_over_age(
     _stub_appium_direct["list"][target] = ["real-appium-sess-id"]
     await _make_sync_service().sync(db_session)
 
-    assert (target, "real-appium-sess-id") in _stub_appium_direct["terminated"]
+    assert _stub_appium_direct["terminated"] == []
 
 
 async def test_orphan_kill_metric_not_incremented_when_terminate_fails(

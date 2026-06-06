@@ -258,7 +258,6 @@ class SessionSyncService:
 
     async def _kill_orphans(self, db: AsyncSession) -> None:
         """Terminate Appium sessions with no tracking DB row, per running node."""
-        claim_window = int(self._settings.get("grid.claim_window_sec"))
         device_stmt = (
             select(Device)
             .options(selectinload(Device.appium_node), selectinload(Device.host))
@@ -267,14 +266,15 @@ class SessionSyncService:
         )
         devices = (await db.execute(device_stmt)).scalars().all()
 
-        # Serial DB filter: decide which devices are probe candidates (running node,
-        # routable target, no in-window pending row). The allocate->confirm window
-        # holds a placeholder session_id while the real Appium id is created; the live
-        # session is absent from known_ids so the sweep would kill an in-creation
-        # session. Skip the whole device while any in-window pending row exists — the
-        # allocation reaper owns that window.
-        window_start = datetime.now(UTC) - timedelta(seconds=claim_window)
-        candidates: list[tuple[Device, str]] = []
+        # In-memory filter to routable running-node devices, then two batched IN-queries
+        # over that candidate set (#12): one for devices holding a pending row, one for
+        # known live ids per device. The allocate->confirm window holds a placeholder
+        # session_id while the real Appium id is created; the live session is absent from
+        # known_ids so the sweep would kill an in-creation session. Skip the whole device
+        # while ANY pending row exists, regardless of age — the allocation reaper owns
+        # expiring stale pending rows (claim window + confirm grace), so the sweep must
+        # not race it by killing a still-confirming session on an over-age row.
+        routable: list[tuple[Device, str]] = []
         for device in devices:
             node = device.appium_node
             if node is None or node.desired_state is not AppiumDesiredState.running:
@@ -282,15 +282,23 @@ class SessionSyncService:
             target = node_target(device)
             if target is None:
                 continue
-            pending_in_window_stmt = select(Session.id).where(
-                Session.device_id == device.id,
-                Session.status == SessionStatus.pending,
-                Session.ended_at.is_(None),
-                Session.started_at >= window_start,
+            routable.append((device, target))
+
+        routable_ids = [device.id for device, _ in routable]
+        devices_with_pending: set[uuid.UUID] = set()
+        if routable_ids:
+            pending_rows = await db.execute(
+                select(Session.device_id).where(
+                    Session.device_id.in_(routable_ids),
+                    Session.status == SessionStatus.pending,
+                    Session.ended_at.is_(None),
+                )
             )
-            if (await db.execute(pending_in_window_stmt)).first() is not None:
-                continue
-            candidates.append((device, target))
+            devices_with_pending = {device_id for (device_id,) in pending_rows.all() if device_id is not None}
+
+        candidates: list[tuple[Device, str]] = [
+            (device, target) for device, target in routable if device.id not in devices_with_pending
+        ]
 
         # Probe phase: enumerate every candidate node's live sessions concurrently,
         # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
@@ -305,7 +313,23 @@ class SessionSyncService:
 
         live_id_lists = await asyncio.gather(*[_enumerate(target, device.host_id) for device, target in candidates])
 
-        # Write phase: resolve known ids and terminate orphans serially on the session.
+        # Resolve the known (running/pending) session ids for every candidate device in
+        # one IN-query, grouped by device (#12), before the write loop.
+        candidate_ids = [device.id for device, _ in candidates]
+        known_ids_by_device: defaultdict[uuid.UUID, set[str]] = defaultdict(set)
+        if candidate_ids:
+            known_rows = await db.execute(
+                select(Session.device_id, Session.session_id).where(
+                    Session.device_id.in_(candidate_ids),
+                    Session.status.in_((SessionStatus.running, SessionStatus.pending)),
+                    Session.ended_at.is_(None),
+                )
+            )
+            for device_id, session_id in known_rows.all():
+                if device_id is not None:
+                    known_ids_by_device[device_id].add(session_id)
+
+        # Write phase: terminate orphans serially on the session.
         for (device, target), live_ids in zip(candidates, live_id_lists, strict=True):
             if live_ids is None:
                 GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.inc()
@@ -313,12 +337,7 @@ class SessionSyncService:
                 continue
             if not live_ids:
                 continue
-            known_stmt = select(Session.session_id).where(
-                Session.device_id == device.id,
-                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                Session.ended_at.is_(None),
-            )
-            known_ids = set((await db.execute(known_stmt)).scalars().all())
+            known_ids = known_ids_by_device[device.id]
             if probe_inflight.is_probe_inflight(str(device.id)):
                 continue
             for live_id in live_ids:
