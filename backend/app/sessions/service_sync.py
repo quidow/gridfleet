@@ -3,21 +3,22 @@ from __future__ import annotations
 import asyncio
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from prometheus_client import Counter
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
 
-from app.appium_nodes.models import AppiumDesiredState
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services import intent as intent_service
 from app.grid import appium_direct
-from app.grid.allocation import node_target
+from app.grid.allocation import node_target, resolve_router_target
 from app.lifecycle.services import policy as lifecycle_policy
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
@@ -67,6 +68,23 @@ GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL = Counter(
     "gridfleet_grid_orphan_enum_unavailable",
     "Orphan-sweep session enumeration (list_sessions) returned unavailable/unreachable for a node.",
 )
+
+GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL = Counter(
+    "gridfleet_grid_node_stopped_sessions_closed",
+    "Running sessions closed by the observation sweep because their device's node "
+    "has desired_state != running (operator stopped the node out from under the session).",
+)
+
+# Liveness sweep per-session verdict. Separating these out (Q13) replaces the prior
+# overloaded ``bool | None`` probe return (where ``True`` meant both "alive" and
+# "nothing to probe") and lets ``reap_reason`` be computed exactly once per session.
+_LivenessAction = Literal["leave", "leave_indeterminate", "defer", "close_reap", "close_node_stopped", "close_dead"]
+
+
+@dataclass(frozen=True, slots=True)
+class _LivenessVerdict:
+    action: _LivenessAction
+    reap_reason: str | None
 
 
 class SessionSyncService:
@@ -131,14 +149,21 @@ class SessionSyncService:
         await db.commit()
 
     async def _check_liveness(self, db: AsyncSession) -> None:
-        """Close DB-truth running sessions that Appium reports as gone, plus idle reaping.
+        """Close DB-truth running sessions that should no longer pin their device.
 
-        Two reasons close a running session here:
+        A running session is closed when one of these is unambiguously true:
 
-        1. Liveness — Appium reports the session definitively gone (an
+        1. Liveness — Appium reports the session definitively gone. An
            indeterminate network verdict is left untouched; we never kill on
-           uncertainty).
-        2. Idle / never-commanded — two cutoffs apply depending on whether the
+           uncertainty.
+        2. Node stopped — the device's Appium node has ``desired_state ==
+           stopped`` (an operator stopped the node out from under the live
+           session). Operator intent is unambiguous, so close the session even
+           though the probe is necessarily indeterminate (connection refused on
+           a stopped process maps to ``None``) (C2). An ``observed-down`` node
+           whose ``desired_state`` is still ``running`` (a crash with a respawn
+           possibly in flight) is left to the probe.
+        3. Idle / never-commanded — two cutoffs apply depending on whether the
            client has ever issued a command:
 
            * ``last_activity_at`` non-NULL (the router flushes it every 10 s once
@@ -172,17 +197,13 @@ class SessionSyncService:
         )
         running_sessions = (await db.execute(running_stmt)).scalars().all()
 
-        # Probe phase: gather the per-session Appium probes concurrently, bounded by a
-        # per-host semaphore, so a single hung node cannot stall the sweep wall time
-        # (#10). Idle sessions get a terminate probe; live sessions get an alive probe.
-        # No DB access happens inside the gather — writes are applied serially below.
         host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
         )
         sessions_with_device = [s for s in running_sessions if s.device is not None]
 
         def _reap_reason(session: Session) -> str | None:
-            """Return why a session should be reaped, or None to leave it alone.
+            """Return why a session should be reaped (idle / never-commanded), else None.
 
             NULL activity means the client never issued a command — age it against
             the first-command grace from ``started_at`` (the claim time). Any
@@ -193,36 +214,71 @@ class SessionSyncService:
                 return "never_commanded" if session.started_at < grace_cutoff else None
             return "idle" if session.last_activity_at < idle_cutoff else None
 
-        async def _probe(session: Session) -> bool | None:
+        def _node_stopped(session: Session) -> bool:
+            node = session.device.appium_node if session.device is not None else None
+            return node is not None and node.desired_state is not AppiumDesiredState.running
+
+        # Probe phase: gather one verdict per session concurrently, bounded by a per-host
+        # semaphore, so a single hung node cannot stall the sweep wall time (#10). The
+        # reap_reason and node-stopped facts are computed once here (Q13) and carried into
+        # the write loop so they are not recomputed. No DB access happens inside the gather.
+        async def _probe(session: Session) -> _LivenessVerdict:
             device = session.device
             assert device is not None  # filtered above
-            target = node_target(device)
-            is_idle = _reap_reason(session) is not None
+            # Resolve via resolve_router_target — the same fallback every other consumer
+            # uses (/routes, resume_claimed, run-release): prefer the live node_target but
+            # fall back to Session.router_target stored at allocation when the live target
+            # is unresolvable (node row gone / host association lost). The reap previously
+            # used node_target directly, the one consumer that did not adopt the fallback.
+            target = resolve_router_target(session)
+            reap_reason = _reap_reason(session)
+            node_stopped = _node_stopped(session)
             async with host_semaphores[device.host_id]:
-                if is_idle:
-                    if target is not None:
-                        await appium_direct.terminate_session(target, session.session_id)
-                    return None  # verdict unused for idle reaps
+                if reap_reason is not None or node_stopped:
+                    if target is None:
+                        # No resolvable Appium target at all: closing the DB row would
+                        # orphan a possibly-still-live Appium session (and _kill_orphans
+                        # also skips a None-target device), re-allocating the device while
+                        # the session keeps holding it. Defer to a later tick when a target
+                        # resolves rather than close blind (C3).
+                        return _LivenessVerdict(action="defer", reap_reason=reap_reason)
+                    await appium_direct.terminate_session(target, session.session_id)
+                    action: _LivenessAction = "close_reap" if reap_reason is not None else "close_node_stopped"
+                    return _LivenessVerdict(action=action, reap_reason=reap_reason)
                 if target is None:
-                    return True  # nothing to probe; treated as "leave alone"
-                return await appium_direct.session_alive(target, session.session_id)
+                    return _LivenessVerdict(action="leave", reap_reason=None)  # nothing to probe
+                alive = await appium_direct.session_alive(target, session.session_id)
+                if alive is None:
+                    return _LivenessVerdict(action="leave_indeterminate", reap_reason=None)
+                return _LivenessVerdict(action="leave" if alive else "close_dead", reap_reason=None)
 
-        probe_results = await asyncio.gather(*[_probe(s) for s in sessions_with_device])
+        verdicts = await asyncio.gather(*[_probe(s) for s in sessions_with_device])
 
         # Re-fence after the slow probe phase (node_health pattern): another backend
         # may have taken leadership while we awaited Appium — drop the write phase.
         await assert_current_leader(db, settings=self._settings)
 
         device_ids_to_restore: set[uuid.UUID] = set()
-        for session, alive in zip(sessions_with_device, probe_results, strict=True):
+        for session, verdict in zip(sessions_with_device, verdicts, strict=True):
             device = session.device
             assert device is not None
-            reap_reason = _reap_reason(session)
-            if reap_reason is not None:
-                # Reap: the Appium session (if any target) was already terminated in the
-                # probe phase; close the DB row the same way a vanished session is closed
-                # so the abandoned session stops pinning the device busy.
-                if reap_reason == "never_commanded":
+            if verdict.action == "defer":
+                logger.warning(
+                    "grid_session_reap_deferred session=%s device=%s reason=%s (no resolvable Appium target)",
+                    session.session_id,
+                    device.id,
+                    verdict.reap_reason or "node_stopped",
+                )
+                continue
+            if verdict.action == "leave":
+                continue
+            if verdict.action == "leave_indeterminate":
+                logger.debug("session_liveness_indeterminate session=%s device=%s", session.session_id, device.id)
+                continue
+            # Every remaining action closes the DB row the same way a vanished session is
+            # closed, so the session stops pinning the device busy.
+            if verdict.action == "close_reap":
+                if verdict.reap_reason == "never_commanded":
                     GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL.inc()
                     logger.warning(
                         "grid_never_commanded_session_reaped session=%s device=%s started_at=%s grace_sec=%s",
@@ -240,15 +296,13 @@ class SessionSyncService:
                         session.last_activity_at.isoformat() if session.last_activity_at else None,
                         idle_timeout,
                     )
-                await self._end_session(db, session)
-                if session.device_id is not None:
-                    device_ids_to_restore.add(session.device_id)
-                continue
-            if alive is None:
-                logger.debug("session_liveness_indeterminate session=%s device=%s", session.session_id, device.id)
-                continue
-            if alive:
-                continue
+            elif verdict.action == "close_node_stopped":
+                GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL.inc()
+                logger.warning(
+                    "grid_node_stopped_session_closed session=%s device=%s",
+                    session.session_id,
+                    device.id,
+                )
             await self._end_session(db, session)
             if session.device_id is not None:
                 device_ids_to_restore.add(session.device_id)
@@ -300,22 +354,25 @@ class SessionSyncService:
 
     async def _kill_orphans(self, db: AsyncSession) -> None:
         """Terminate Appium sessions with no tracking DB row, per running node."""
+        # Filter to desired-running nodes in SQL (#20) instead of loading every
+        # node-bearing device and discarding the stopped ones in Python.
         device_stmt = (
             select(Device)
             .options(selectinload(Device.appium_node), selectinload(Device.host))
             .join(Device.appium_node)
+            .where(AppiumNode.desired_state == AppiumDesiredState.running)
             .order_by(Device.id)
         )
         devices = (await db.execute(device_stmt)).scalars().all()
 
-        # In-memory filter to routable running-node devices, then two batched IN-queries
-        # over that candidate set (#12): one for devices holding a pending row, one for
-        # known live ids per device. The allocate->confirm window holds a placeholder
-        # session_id while the real Appium id is created; the live session is absent from
-        # known_ids so the sweep would kill an in-creation session. Skip the whole device
-        # while ANY pending row exists, regardless of age — the allocation reaper owns
-        # expiring stale pending rows (claim window + confirm grace), so the sweep must
-        # not race it by killing a still-confirming session on an over-age row.
+        # Resolve the routing target per device, then two batched IN-queries over that
+        # candidate set (#12): one for devices holding a pending row, one for known live
+        # ids per device. The allocate->confirm window holds a placeholder session_id
+        # while the real Appium id is created; the live session is absent from known_ids
+        # so the sweep would kill an in-creation session. Skip the whole device while ANY
+        # pending row exists, regardless of age — the allocation reaper owns expiring stale
+        # pending rows (claim window + confirm grace), so the sweep must not race it by
+        # killing a still-confirming session on an over-age row.
         #
         # Accepted trade-off (#7): a router-crash orphan on a pending device — an Appium
         # session created before the router died but never confirmed — is NOT cleaned by
@@ -324,9 +381,6 @@ class SessionSyncService:
         # next sweep tick (the device no longer skipped) then terminates the orphan.
         routable: list[tuple[Device, str]] = []
         for device in devices:
-            node = device.appium_node
-            if node is None or node.desired_state is not AppiumDesiredState.running:
-                continue
             target = node_target(device)
             if target is None:
                 continue

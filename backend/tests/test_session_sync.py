@@ -228,6 +228,65 @@ async def test_pending_session_never_probed(
     assert session.ended_at is None
 
 
+async def test_operator_stopped_node_session_closed(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """C2: a running session whose device's node has desired_state == stopped (an
+    operator stopped the node out from under the live session) is closed and the device
+    freed, even though the probe over a stopped process is indeterminate. Operator intent
+    is unambiguous."""
+    device = await _seed_device_with_node(
+        db_session,
+        db_host,
+        identity_value="opstop-1",
+        operational_state=DeviceOperationalState.busy,
+        desired_state=AppiumDesiredState.stopped,
+    )
+    session = Session(session_id="sess-opstop", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    # Probe is indeterminate (connection refused on a stopped process) — without the
+    # node-state input the session would be left running.
+    _stub_appium_direct["alive"]["sess-opstop"] = None
+    target = f"http://{db_host.ip}:4723"
+    before = service_sync.GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL._value.get()
+    await _make_sync_service(lifecycle=_make_real_lifecycle()).sync(db_session)
+    after = service_sync.GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL._value.get()
+
+    assert (target, "sess-opstop") in _stub_appium_direct["terminated"]
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.passed
+    assert session.ended_at is not None
+    assert after == before + 1
+
+
+async def test_desired_running_indeterminate_session_untouched(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """C2: a session whose node is still desired_state == running but whose probe is
+    indeterminate (an observed-down node with a respawn possibly in flight) is left
+    untouched — the node-stopped close fires only on an unambiguous operator stop."""
+    device = await _seed_device_with_node(
+        db_session,
+        db_host,
+        identity_value="desired-run-indet",
+        operational_state=DeviceOperationalState.busy,
+        desired_state=AppiumDesiredState.running,
+    )
+    session = Session(session_id="sess-desired-run-indet", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    _stub_appium_direct["alive"]["sess-desired-run-indet"] = None
+    await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
 async def test_all_running_sessions_probed_concurrently(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -459,11 +518,14 @@ async def test_old_started_at_with_recent_activity_survives(
     assert session.ended_at is None
 
 
-async def test_idle_session_no_node_target_closes_row(
+async def test_idle_session_no_node_target_defers(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """An idle session on a device with no node target has nothing to terminate, but
-    the DB row is still closed so it cannot pin the device busy forever."""
+    """C3: an idle session whose device has NO resolvable Appium target (no node row
+    and no stored router_target) must DEFER — closing the DB row blind would orphan a
+    possibly-still-live Appium session and let the device be re-allocated while the
+    session keeps holding it. The row stays running for a later tick when a target
+    resolves."""
     with state_write_guard.bypass():
         device = Device(
             pack_id="appium-uiautomator2",
@@ -494,6 +556,50 @@ async def test_idle_session_no_node_target_closes_row(
     await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []  # no target to terminate against
+    await db_session.refresh(session)
+    assert session.ended_at is None
+    assert session.status == SessionStatus.running
+
+
+async def test_idle_session_port_resolves_via_stored_router_target(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """C3: an idle session whose device's live node target is unresolvable (no node row)
+    but which has a router_target stored at allocation is terminated via that stored
+    target and the DB row is closed — the reap now uses resolve_router_target's fallback,
+    matching every other consumer."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="idle-stored-target",
+            connection_target="idle-stored-target",
+            name="Idle Stored Target",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    stored_target = f"http://{db_host.ip}:4799"
+    session = Session(
+        session_id="sess-idle-stored",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+        router_target=stored_target,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    assert (stored_target, "sess-idle-stored") in _stub_appium_direct["terminated"]
     await db_session.refresh(session)
     assert session.ended_at is not None
     assert session.status == SessionStatus.passed
