@@ -31,6 +31,40 @@ pub struct GridRouter {
     pub new_session_timeout: Duration,
 }
 
+/// How to tear down the leaked Appium session during a new-session rollback.
+enum AppiumRollback<'a> {
+    /// Create/confirm returned a session id: DELETE it directly.
+    ById { session_id: &'a str },
+    /// Create returned a 2xx with no usable session id: sweep the device-pinned
+    /// target's session list and DELETE each.
+    SweepTarget,
+}
+
+/// What to tell the backend during a new-session rollback.
+enum BackendRollback<'a> {
+    /// Pre-confirm: the allocation never became a running session — fail it.
+    Fail {
+        allocation_id: &'a str,
+        message: &'a str,
+    },
+    /// Post-confirm: the backend row is `running` — notify that it ended.
+    Ended { session_id: &'a str },
+    /// The confirm call itself failed (e.g. 409 already-confirmed/reaped); the
+    /// backend already owns the allocation's fate, so notify nothing.
+    None,
+}
+
+/// One rollback descriptor per `handle_new_session` error branch. Every field
+/// is mandatory, so a future branch cannot compile without deciding each step
+/// (Q4 — the four hand-rolled subsets are now one path).
+struct Rollback<'a> {
+    appium: AppiumRollback<'a>,
+    backend: BackendRollback<'a>,
+    /// Whether a local route was already inserted for this session and must be
+    /// pruned. Only meaningful with `AppiumRollback::ById`.
+    prune_route: bool,
+}
+
 #[async_trait]
 impl ProxyHttp for GridRouter {
     type CTX = RouterCtx;
@@ -313,6 +347,45 @@ impl GridRouter {
         }
     }
 
+    /// Single rollback path for a half-created new-session flow. Every error
+    /// branch in `handle_new_session` builds one `Rollback` and calls this, so
+    /// the full set of cleanup steps (Appium teardown, backend notify, local
+    /// route prune) lives in one place. Adding a new error branch forces the
+    /// author to fill every `Rollback` field — none can be silently forgotten
+    /// (Q4). Order: prune the local route first (stop routing new commands to a
+    /// session we are tearing down), then DELETE on Appium, then notify the
+    /// backend.
+    async fn rollback_created_session(&self, target: &str, plan: Rollback<'_>) {
+        if plan.prune_route {
+            if let AppiumRollback::ById { session_id } = plan.appium {
+                self.routes.remove(session_id);
+                crate::metrics::metrics()
+                    .active_routes
+                    .set(self.routes.len() as i64);
+            }
+        }
+        match plan.appium {
+            AppiumRollback::ById { session_id } => {
+                self.delete_appium_session(target, session_id).await
+            }
+            AppiumRollback::SweepTarget => self.sweep_target_sessions(target).await,
+        }
+        match plan.backend {
+            BackendRollback::Fail {
+                allocation_id,
+                message,
+            } => {
+                let _ = self.backend.fail(allocation_id, message).await;
+            }
+            BackendRollback::Ended { session_id } => {
+                if let Err(e) = self.backend.session_ended(session_id).await {
+                    log::warn!("session_ended notify failed for {session_id}: {e}");
+                }
+            }
+            BackendRollback::None => {}
+        }
+    }
+
     /// Best-effort DELETE of an Appium session created during a new-session flow
     /// that we are rolling back. Errors are logged and ignored — the agent's
     /// health checks reclaim a stranded session if this fails.
@@ -465,14 +538,21 @@ impl GridRouter {
                     crate::metrics::metrics()
                         .create_missing_session_id_total
                         .inc();
-                    let _ = self
-                        .backend
-                        .fail(&allocation_id, "appium response missing sessionId")
-                        .await;
                     // The session may have been created on the node despite the
                     // odd response shape; we have no id to DELETE, so sweep the
-                    // (device-pinned) target's session list and DELETE each.
-                    self.sweep_target_sessions(&target).await;
+                    // (device-pinned) target. Pre-confirm, so fail the allocation.
+                    self.rollback_created_session(
+                        &target,
+                        Rollback {
+                            appium: AppiumRollback::SweepTarget,
+                            backend: BackendRollback::Fail {
+                                allocation_id: &allocation_id,
+                                message: "appium response missing sessionId",
+                            },
+                            prune_route: false,
+                        },
+                    )
+                    .await;
                     return respond(
                         session,
                         500,
@@ -492,7 +572,20 @@ impl GridRouter {
                     log::warn!(
                         "confirm failed for {allocation_id}, rolling back session {session_id}: {e}"
                     );
-                    self.delete_appium_session(&target, &session_id).await;
+                    // Confirm itself failed (may be a 409 already-confirmed/
+                    // reaped): the backend owns the allocation, so notify
+                    // nothing — just DELETE the Appium session. No route yet.
+                    self.rollback_created_session(
+                        &target,
+                        Rollback {
+                            appium: AppiumRollback::ById {
+                                session_id: &session_id,
+                            },
+                            backend: BackendRollback::None,
+                            prune_route: false,
+                        },
+                    )
+                    .await;
                     return respond(
                         session,
                         500,
@@ -515,10 +608,21 @@ impl GridRouter {
                         "confirmed session {session_id} has unparseable target {target:?}; \
                          rolling back (DELETE + session_ended) and failing create"
                     );
-                    self.delete_appium_session(&target, &session_id).await;
-                    if let Err(e) = self.backend.session_ended(&session_id).await {
-                        log::warn!("session_ended notify failed for unroutable {session_id}: {e}");
-                    }
+                    // Confirm succeeded → backend row is `running`: notify ended.
+                    // No route was inserted (parse failed), so nothing to prune.
+                    self.rollback_created_session(
+                        &target,
+                        Rollback {
+                            appium: AppiumRollback::ById {
+                                session_id: &session_id,
+                            },
+                            backend: BackendRollback::Ended {
+                                session_id: &session_id,
+                            },
+                            prune_route: false,
+                        },
+                    )
+                    .await;
                     return respond(
                         session,
                         500,
@@ -553,16 +657,21 @@ impl GridRouter {
                             "client gone before new-session response for {session_id}; \
                              rolling back (DELETE + session_ended + route prune): {e}"
                         );
-                        self.delete_appium_session(&target, &session_id).await;
-                        if let Err(e) = self.backend.session_ended(&session_id).await {
-                            log::warn!(
-                                "session_ended notify failed for client-gone {session_id}: {e}"
-                            );
-                        }
-                        self.routes.remove(&session_id);
-                        crate::metrics::metrics()
-                            .active_routes
-                            .set(self.routes.len() as i64);
+                        // Confirmed + routed: prune the route, DELETE on Appium,
+                        // and notify the backend the (running) session ended.
+                        self.rollback_created_session(
+                            &target,
+                            Rollback {
+                                appium: AppiumRollback::ById {
+                                    session_id: &session_id,
+                                },
+                                backend: BackendRollback::Ended {
+                                    session_id: &session_id,
+                                },
+                                prune_route: true,
+                            },
+                        )
+                        .await;
                         Err(e)
                     }
                 }
