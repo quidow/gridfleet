@@ -9,7 +9,6 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.observability import BACKGROUND_LOOP_NAMES, build_background_loop_snapshot, set_background_loop_snapshot
 from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.devices.services import service as device_service
@@ -20,7 +19,7 @@ from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.service_viability import SessionViabilityService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device_record, create_host
+from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
@@ -143,13 +142,7 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
 
 @pytest.mark.asyncio
 async def test_health(client: AsyncClient, db_session: AsyncSession) -> None:
-    for loop_name in BACKGROUND_LOOP_NAMES:
-        await set_background_loop_snapshot(
-            db_session,
-            loop_name,
-            build_background_loop_snapshot(loop_name, interval_seconds=60.0),
-        )
-    await db_session.commit()
+    await seed_ready_loop_snapshots(db_session)
 
     resp = await client.get("/api/health")
     assert resp.status_code == 200

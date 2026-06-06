@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import Mock
 
@@ -11,6 +11,7 @@ from sqlalchemy import delete
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.models import ControlPlaneStateEntry
+from app.core.observability import BACKGROUND_LOOP_NAMES, LOOP_HEARTBEAT_NAMESPACE
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.events.event_bus import EventBus, register_events_gauge_refresher
@@ -448,6 +449,30 @@ def reset_event_bus(bus: EventBus) -> None:
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
+
+
+async def seed_ready_loop_snapshots(db: AsyncSession) -> None:
+    """Seed a fresh heartbeat snapshot for every background loop so readiness checks pass."""
+    now = datetime.now(UTC)
+    await control_plane_state_store.set_many(
+        db,
+        LOOP_HEARTBEAT_NAMESPACE,
+        {
+            loop_name: {
+                "loop_name": loop_name,
+                "owner": "test",
+                "interval_seconds": 60.0,
+                "last_started_at": now.isoformat(),
+                "last_succeeded_at": now.isoformat(),
+                "last_error_at": None,
+                "last_error": None,
+                "last_duration_seconds": 0.01,
+                "next_expected_at": (now + timedelta(seconds=60.0)).isoformat(),
+            }
+            for loop_name in BACKGROUND_LOOP_NAMES
+        },
+    )
+    await db.commit()
 
 
 async def reset_connectivity_control_plane_state(db: AsyncSession) -> None:
