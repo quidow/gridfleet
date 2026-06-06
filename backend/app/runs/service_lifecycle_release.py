@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     import uuid
@@ -234,9 +235,17 @@ class RunReleaseService:
     async def _session_node_target(self, db: AsyncSession, session: Session) -> str | None:
         if session.device_id is None:
             return None
-        try:
-            device = await device_locking.lock_device(db, session.device_id, load_sessions=False)
-        except NoResultFound:
+        # Read-only target resolution: the caller awaits a 10s Appium DELETE next, so a
+        # row lock here would serialize the reconciler and every state writer on this
+        # device against Appium latency. Plain load with the eager-loaded
+        # appium_node/host node_target() needs (#9).
+        stmt = (
+            select(Device)
+            .options(selectinload(Device.appium_node), selectinload(Device.host))
+            .where(Device.id == session.device_id)
+        )
+        device = (await db.execute(stmt)).scalars().first()
+        if device is None:
             return None
         return node_target(device)
 

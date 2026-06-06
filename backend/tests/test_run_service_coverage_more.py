@@ -581,6 +581,58 @@ async def test_mark_running_sessions_released_success_path(
     assert untouched.status == SessionStatus.running
 
 
+@pytest.mark.db
+async def test_mark_running_sessions_released_leaves_row_when_terminate_fails(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Appium DELETE failure leaves the running row untouched (not falsely ended)."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Release Term Fail Device",
+        identity_value="run-release-termfail-001",
+        operational_state=DeviceOperationalState.busy,
+    )
+    run = await create_reserved_run(db_session, name="release-termfail-run", devices=[device], state=RunState.cancelled)
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="",
+            )
+        )
+    session = Session(session_id="release-termfail", device_id=device.id, run_id=run.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session",
+        AsyncMock(return_value=False),
+    )
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
+@pytest.mark.db
+async def test_session_node_target_no_device_returns_none(db_session: AsyncSession) -> None:
+    """#9 read-only target resolution: a session with no device_id, and a session whose
+    device row is missing, both resolve to no target without taking a row lock."""
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    no_device = Session(session_id="no-device-target", device_id=None, status=SessionStatus.running)
+    assert await svc._session_node_target(db_session, no_device) is None
+
+    missing_device = Session(session_id="missing-device-target", device_id=uuid.uuid4(), status=SessionStatus.running)
+    assert await svc._session_node_target(db_session, missing_device) is None
+
+
 async def test_report_preparation_failure_and_cooldown_escalation_paths(
     db_session: AsyncSession,
     db_host: Host,
