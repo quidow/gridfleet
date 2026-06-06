@@ -49,6 +49,7 @@ from app.devices.services import state_write_guard
 from app.diagnostics import router as diagnostics_router
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
+from app.grid import appium_direct
 from app.grid import router as grid
 from app.grid import router_internal as grid_router_internal
 from app.grid.allocation_reaper import GridAllocationReaperLoop
@@ -263,6 +264,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await svc.shutdown()
         await control_plane_leader.release()
         await bus.shutdown()
+        await appium_direct.aclose()
         await pool.close()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)

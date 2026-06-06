@@ -7,12 +7,37 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return a shared, connection-pooled client.
+
+    A fresh ``httpx.AsyncClient()`` per call re-runs ``create_ssl_context`` every
+    time — pathological here because the session-observation sweep hits this module
+    on every tick for every running session. Per-call ``timeout=`` arguments stay on
+    each request; the shared client carries no default timeout that would fight them.
+    """
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _client
+
+
+async def aclose() -> None:
+    """Close the shared client (app lifespan shutdown; tests)."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+
 
 async def terminate_session(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
     """DELETE a session on the Appium node. 404 means already gone (success)."""
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.delete(f"{target}/session/{session_id}", timeout=timeout)
+        resp = await _get_client().delete(f"{target}/session/{session_id}", timeout=timeout)
         return resp.status_code == 404 or resp.is_success
     except httpx.HTTPError as exc:
         logger.warning("appium_terminate_failed target=%s session=%s err=%s", target, session_id, exc)
@@ -26,8 +51,7 @@ async def session_alive(target: str, session_id: str, *, timeout: float = 10.0) 
     None = indeterminate (network error) — callers MUST NOT treat None as dead.
     """
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{target}/session/{session_id}/timeouts", timeout=timeout)
+        resp = await _get_client().get(f"{target}/session/{session_id}/timeouts", timeout=timeout)
     except httpx.HTTPError:
         return None
     if resp.is_success:
@@ -40,8 +64,7 @@ async def list_sessions(target: str, *, timeout: float = 10.0) -> list[str] | No
     'session_discovery' insecure feature on the node). None = unsupported/unreachable.
     """
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{target}/appium/sessions", timeout=timeout)
+        resp = await _get_client().get(f"{target}/appium/sessions", timeout=timeout)
     except httpx.HTTPError:
         return None
     if not resp.is_success:
@@ -65,8 +88,7 @@ async def create_session(
     ``timeout`` is keyword-required on purpose: the probe timeout is caller-driven.
     """
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{target}/session", json=capabilities, timeout=timeout)
+        resp = await _get_client().post(f"{target}/session", json=capabilities, timeout=timeout)
     except httpx.HTTPError as exc:
         return None, str(exc), True
     # A non-JSON error body (HTML 502, plain-text crash dump) must not escape as a

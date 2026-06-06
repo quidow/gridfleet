@@ -9,18 +9,11 @@ from app.grid import appium_direct
 
 TARGET = "http://appium-host:4723"
 
-_REAL_ASYNC_CLIENT = httpx.AsyncClient
-
 
 def _patch_transport(monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx.Request], httpx.Response]) -> None:
-    """Force ``httpx.AsyncClient()`` inside the module to use a mock transport."""
-    transport = httpx.MockTransport(handler)
-
-    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
-        kwargs.pop("transport", None)
-        return _REAL_ASYNC_CLIENT(transport=transport)
-
-    monkeypatch.setattr(appium_direct.httpx, "AsyncClient", factory)
+    """Force ``appium_direct._get_client()`` to return a mock-transport client."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(appium_direct, "_get_client", lambda: client)
 
 
 async def test_terminate_session_404_is_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,3 +106,24 @@ async def test_create_session_returns_session_id_or_error(monkeypatch: pytest.Mo
     assert sid is None
     assert err == "status 500"
     assert transport_error is False
+
+
+async def test_get_client_pools_and_aclose_resets() -> None:
+    """Repeated calls reuse one pooled client; aclose() closes and clears it."""
+    await appium_direct.aclose()  # start clean
+    first = appium_direct._get_client()
+    second = appium_direct._get_client()
+    assert first is second
+    assert not first.is_closed
+
+    await appium_direct.aclose()
+    assert first.is_closed
+    assert appium_direct._client is None
+
+    # A new client is minted on demand after reset.
+    third = appium_direct._get_client()
+    assert third is not first
+    await appium_direct.aclose()
+
+    # aclose() on an already-closed/absent client is a no-op.
+    await appium_direct.aclose()
