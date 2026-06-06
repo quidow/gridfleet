@@ -17,8 +17,9 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationNotPendingError, AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.runs.models import RunState
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import seed_host_and_running_node
+from tests.helpers import create_reserved_run, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 from tests.pack.factories import seed_test_packs
 
@@ -171,6 +172,31 @@ async def test_mark_ended_closes_running_and_frees_device(
     assert seeded_available_device.operational_state == DeviceOperationalState.available
     # unknown session id is a no-op
     await allocation_service.mark_ended(db_session, appium_session_id="never-existed")
+
+
+@pytest.mark.db
+async def test_mark_ended_run_terminal_marks_error(
+    db_session: AsyncSession,
+    allocated_pending: Session,
+    allocation_service: AllocationService,
+    seeded_available_device: Device,
+) -> None:
+    """A session whose owning run already reached a non-completed terminal state was
+    aborted out from under the client — mark_ended must close it ``error``, not
+    mask the abort as ``passed`` (#7)."""
+    await allocation_service.confirm(db_session, allocation_id=allocated_pending.id, appium_session_id="aborted-run")
+    run = await create_reserved_run(
+        db_session, name="cancelled-run", devices=[seeded_available_device], state=RunState.cancelled
+    )
+    allocated_pending.run_id = run.id
+    await db_session.flush()
+
+    await allocation_service.mark_ended(db_session, appium_session_id="aborted-run")
+
+    await db_session.refresh(allocated_pending)
+    assert allocated_pending.status == SessionStatus.error
+    assert allocated_pending.error_type == "run_released"
+    assert allocated_pending.ended_at is not None
 
 
 async def _claimed_ticket_for(db_session: AsyncSession, allocated_pending: Session) -> GridSessionQueueTicket:

@@ -18,7 +18,6 @@ from app.devices.services import intent as intent_service
 from app.grid import appium_direct
 from app.grid.allocation import node_target
 from app.lifecycle.services import policy as lifecycle_policy
-from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
@@ -149,22 +148,7 @@ class SessionSyncService:
     async def _end_session(self, db: AsyncSession, session: Session) -> None:
         """Close a single running session the same way the allocator does."""
         sid = session.session_id
-        session.ended_at = datetime.now(UTC)
-        attached_run = session.run
-        if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
-            session.status = SessionStatus.error
-            session.error_type = "run_released"
-            session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
-        else:
-            session.status = SessionStatus.passed  # default; pytest helper can override
-        session_service.queue_session_ended_event(db, session, device=session.device, publisher=self._publisher)
-        if session.device_id is not None:
-            await intent_service.IntentService(db).revoke_intents_and_reconcile(
-                device_id=session.device_id,
-                sources=[f"active_session:{sid}"],
-                reason=f"Session {sid} ended",
-                publisher=self._publisher,
-            )
+        await session_service.close_running_session(db, session, attached_run=session.run, publisher=self._publisher)
         logger.info("Session %s ended", sid)
 
     async def _restore_device_after_session_end(self, db: AsyncSession, device_id: uuid.UUID) -> None:

@@ -16,7 +16,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services.intent import IntentService
 from app.devices.services.state import set_operational_state
 from app.runs import service as run_service
-from app.runs.models import RunState
+from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
 from app.sessions.models import Session, SessionStatus
 
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
+    from app.runs.models import TestRun
     from app.sessions.protocols import DeviceSessionLifecycle
 
 
@@ -139,6 +140,52 @@ def queue_session_ended_event(
         build_session_ended_event_payload(session, device=device),
         severity=_session_ended_severity(str(session.status), session.error_type),
     )
+
+
+def _apply_session_terminal_status(session: Session, *, attached_run: TestRun | None) -> None:
+    """Decide and stamp the terminal status for a session being closed.
+
+    A session whose owning run reached a non-``completed`` terminal state was
+    aborted out from under it → ``error`` with a run-released reason. Otherwise
+    the W3C teardown carries no outcome, so we default to ``passed`` (real
+    outcomes are owned by run/test reporting). Shared by every session-close
+    path (session_sync liveness + grid mark_ended) so they cannot drift.
+    """
+    if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
+        session.status = SessionStatus.error
+        session.error_type = "run_released"
+        session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
+    else:
+        session.status = SessionStatus.passed
+
+
+async def close_running_session(
+    db: AsyncSession,
+    session: Session,
+    *,
+    attached_run: TestRun | None,
+    publisher: EventPublisher,
+) -> None:
+    """Close one running session: stamp ended_at + terminal status, emit the
+    ended event, and revoke the active-session intent + reconcile its device.
+
+    The single shared close path used by both the session_sync liveness sweep
+    and the grid router's ``mark_ended`` handler. ``session.device`` must be
+    loaded for the event payload; ``attached_run`` carries the run-terminal
+    decision (pass the eager-loaded ``session.run``).
+    """
+    sid = session.session_id
+    session.ended_at = datetime.now(UTC)
+    _apply_session_terminal_status(session, attached_run=attached_run)
+    queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+    await db.flush()
+    if session.device_id is not None:
+        await IntentService(db).revoke_intents_and_reconcile(
+            device_id=session.device_id,
+            sources=[f"active_session:{sid}"],
+            reason=f"Session {sid} ended",
+            publisher=publisher,
+        )
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:

@@ -128,10 +128,16 @@ class AllocationService:
             await intent.mark_dirty_and_reconcile(device_id, reason="grid_allocation_failed", publisher=self._publisher)
 
     async def mark_ended(self, db: DbSession, *, appium_session_id: str) -> None:
-        """Close a running session the same way session_sync closes vanished sessions."""
+        """Close a running session the same way session_sync closes vanished sessions.
+
+        The router's ended notification carries no outcome (a W3C DELETE has none),
+        so the shared close path defaults to ``passed`` — unless the owning run
+        already reached a non-completed terminal state, in which case the session
+        was aborted out from under the client and is closed ``error`` (#7).
+        """
         stmt = (
             select(Session)
-            .options(selectinload(Session.device))
+            .options(selectinload(Session.device), selectinload(Session.run))
             .where(
                 Session.session_id == appium_session_id,
                 Session.status == SessionStatus.running,
@@ -141,21 +147,7 @@ class AllocationService:
         row = (await db.execute(stmt)).scalars().first()
         if row is None:
             return
-        row.ended_at = datetime.now(UTC)
-        # The router's ended notification carries no outcome (a W3C DELETE has none);
-        # `passed` mirrors the legacy session_sync default. Real outcomes are owned by
-        # run/test reporting, not by session teardown.
-        row.status = SessionStatus.passed
-        session_service.queue_session_ended_event(db, row, device=row.device, publisher=self._publisher)
-        await db.flush()
-        if row.device_id is not None:
-            intent = self._intent_factory(db)
-            await intent.revoke_intents_and_reconcile(
-                device_id=row.device_id,
-                sources=[f"active_session:{appium_session_id}"],
-                reason=f"Session {appium_session_id} ended",
-                publisher=self._publisher,
-            )
+        await session_service.close_running_session(db, row, attached_run=row.run, publisher=self._publisher)
 
     async def reap_expired(self, db: DbSession) -> dict[str, int]:
         # Fails expired claims one by one (each `fail` reconciles + flushes). Batch
