@@ -275,6 +275,12 @@ async fn allocate_unexpected_4xx_is_invalid_fail_fast() {
                 message.contains("valid dictionary"),
                 "message should carry the backend detail: {message}"
             );
+            // Re-review B1: the FastAPI detail array must be rendered as its
+            // msg text, not serialized JSON dumped into the message.
+            assert!(
+                !message.contains('{'),
+                "message should be human-readable, not raw JSON: {message}"
+            );
         }
         other => panic!("expected Invalid, got {other:?}"),
     }

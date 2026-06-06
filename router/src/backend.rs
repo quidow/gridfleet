@@ -106,15 +106,7 @@ impl BackendClient {
                 // 2s retry loop to the new-session deadline (wave-5 #5). Only 5xx
                 // and transport errors stay transient.
                 let raw = resp.text().await.unwrap_or_default();
-                let detail = serde_json::from_str::<serde_json::Value>(&raw)
-                    .ok()
-                    .and_then(|v| {
-                        v["message"]
-                            .as_str()
-                            .map(str::to_string)
-                            .or_else(|| (!v["detail"].is_null()).then(|| v["detail"].to_string()))
-                    })
-                    .unwrap_or(raw);
+                let detail = reject_detail(&raw);
                 Ok(AllocateOutcome::Invalid {
                     message: format!("backend rejected allocate ({status}): {detail}"),
                 })
@@ -225,5 +217,64 @@ impl BackendClient {
             .await?
             .error_for_status()?;
         Ok(())
+    }
+}
+
+/// Best-effort human-readable detail from a backend rejection body: a
+/// top-level `message`, then FastAPI-style `detail` (a string, or an array of
+/// validation objects whose `msg` fields are joined — re-review B1: never dump
+/// serialized JSON into the client-facing message), else the raw body text.
+fn reject_detail(raw: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return raw.to_string();
+    };
+    if let Some(message) = v["message"].as_str() {
+        return message.to_string();
+    }
+    match &v["detail"] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(items) => {
+            let msgs: Vec<&str> = items.iter().filter_map(|i| i["msg"].as_str()).collect();
+            if msgs.is_empty() {
+                v["detail"].to_string()
+            } else {
+                msgs.join("; ")
+            }
+        }
+        serde_json::Value::Null => raw.to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_detail;
+
+    #[test]
+    fn reject_detail_prefers_message() {
+        assert_eq!(reject_detail(r#"{"message":"no match"}"#), "no match");
+    }
+
+    #[test]
+    fn reject_detail_joins_fastapi_msgs() {
+        let raw = r#"{"detail":[{"type":"t","msg":"Input should be a valid dictionary"},{"msg":"second"}]}"#;
+        assert_eq!(
+            reject_detail(raw),
+            "Input should be a valid dictionary; second"
+        );
+    }
+
+    #[test]
+    fn reject_detail_string_detail() {
+        assert_eq!(
+            reject_detail(r#"{"detail":"plain reason"}"#),
+            "plain reason"
+        );
+    }
+
+    #[test]
+    fn reject_detail_falls_back_to_raw() {
+        assert_eq!(reject_detail("plain crash dump"), "plain crash dump");
+        assert_eq!(reject_detail(r#"{"other":1}"#), r#"{"other":1}"#);
     }
 }
