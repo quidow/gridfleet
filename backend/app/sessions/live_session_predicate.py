@@ -38,8 +38,3 @@ def live_session_predicate(device_id: uuid.UUID | None = None) -> ColumnElement[
     if device_id is not None:
         predicate = (Session.device_id == device_id) & predicate
     return predicate
-
-
-def session_is_live(session: Session) -> bool:
-    """Python twin of :func:`live_session_predicate` for a loaded Session row."""
-    return session.status in _LIVE_STATUSES and session.ended_at is None
