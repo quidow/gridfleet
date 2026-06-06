@@ -202,6 +202,54 @@ def clear_operator_start_suppression(device: Device) -> None:
     write_state(device, next_state)
 
 
+def clear_self_heal_suppression(device: Device) -> bool:
+    """Clear recovery-suppression residue when a device self-heals naturally.
+
+    A device can recover without any recovery path firing: an agent restart →
+    reconvergence leaves the node running, the device available, and the health
+    checks green, but neither ``attempt_auto_recovery`` (which short-circuits
+    when the node is already running) nor an operator start ran. The
+    ``recovery_suppressed_reason`` recorded by the last failed recovery attempt
+    (e.g. "Recovery probe failed") therefore lingers on the JSON forever, so the
+    device keeps deriving ``recovery_state="suppressed"`` (presenter "Recovery
+    Paused" → ``needs_attention=true``) despite being healthy.
+
+    Clears the suppression reason, the backoff window, and the stale failure
+    trail, then stamps ``self_healed``. Returns True when residue was actually
+    cleared so callers can record the self-heal exactly once.
+
+    Leaves the maintenance-hold tautology
+    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched — a device held in
+    maintenance is governed by the maintenance-exit path, not connectivity
+    self-heal. No-op (returns False) when nothing is suppressed so a clean
+    device emits no action churn on every connectivity cycle.
+
+    Caller must hold the device row lock, must gate on ``device.recovery_allowed``
+    (an active operator-stop deny intent makes the suppression legitimate and
+    sticky by design), and is responsible for the commit; this helper performs an
+    in-memory read-modify-write through ``write_state``.
+    """
+    next_state = state(device)
+    suppression = next_state.get("recovery_suppressed_reason")
+    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
+        return False
+    has_residue = (
+        bool(suppression)
+        or next_state.get("last_action") == "recovery_suppressed"
+        or bool(next_state.get("backoff_until"))
+        or bool(next_state.get("recovery_backoff_attempts"))
+    )
+    if not has_residue:
+        return False
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    next_state["last_failure_source"] = None
+    next_state["last_failure_reason"] = None
+    set_action(next_state, "self_healed")
+    write_state(device, next_state)
+    return True
+
+
 def set_maintenance_reason(device: Device, reason: str) -> None:
     next_state = state(device)
     next_state["maintenance_reason"] = reason

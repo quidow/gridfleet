@@ -382,6 +382,15 @@ class ConnectivityService:
             # startup-recovery reason (restores the old endpoint-health
             # branch's cleanup, now unified for every device).
             await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
+            # Self-heal: a device that reconverged naturally (e.g. agent restart →
+            # node running, device available, health green) never runs a recovery
+            # path, so a stale ``recovery_suppressed_reason`` lingers and the device
+            # derives ``needs_attention=true`` forever. Clear the residue now that
+            # the device is provably healthy. Gated on ``recovery_allowed`` inside
+            # the helper so an operator-stop hold stays sticky.
+            await self._lifecycle_policy.clear_suppression_on_self_heal(
+                db, device, reason="Device self-healed after healthy reconnect"
+            )
             return
         if not await is_ready_for_use_async(db, device):
             logger.debug("Device %s is connected but still awaiting setup/verification", device.name)

@@ -32,6 +32,7 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
+    clear_self_heal_suppression,
     loaded_node,
     now,
     parse_iso,
@@ -776,6 +777,42 @@ class LifecyclePolicyService:
             source="connectivity",
             detail="Manager marked the device offline after connectivity loss",
         )
+
+    async def clear_suppression_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
+        """Clear recovery-suppression residue when a healthy device self-healed.
+
+        Covers the gap that the operator-start (``clear_operator_start_suppression``)
+        and maintenance-exit (``clear_maintenance_recovery_suppression``) paths do
+        not: an agent restart → reconvergence leaves the node running and the
+        device available without any recovery path firing, so a stale
+        ``recovery_suppressed_reason`` (e.g. "Recovery probe failed") keeps the
+        device deriving ``recovery_state="suppressed"`` forever.
+
+        Caller (``device_connectivity`` healthy path) has already established the
+        device is healthy and not offline. We additionally gate on
+        ``device.recovery_allowed``: an active operator-stop deny intent (RECOVERY
+        axis) flips that to False, which makes the suppression a legitimate,
+        operator-owned hold — it must stay sticky (N13). Returns True when residue
+        was actually cleared so the incident fires exactly once; subsequent cycles
+        no-op.
+        """
+        device = await _reload_device(db, device)
+        if not device.recovery_allowed:
+            return False
+        cleared = clear_self_heal_suppression(device)
+        if not cleared:
+            return False
+        await self._incidents.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_recovered,
+            summary_state=DeviceLifecyclePolicySummaryState.idle,
+            reason=reason,
+            detail="Device self-healed; cleared stale recovery suppression",
+            source="device_checks",
+        )
+        await db.commit()
+        return True
 
     async def clear_pending_auto_stop_on_recovery(
         self,

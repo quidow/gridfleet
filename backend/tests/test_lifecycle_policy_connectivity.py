@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
+from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.lifecycle_policy_state import write_state
 from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -19,6 +21,111 @@ from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+def _build_lifecycle_policy_service() -> LifecyclePolicyService:
+    from tests.helpers import test_event_bus as event_bus
+
+    return LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=None,  # type: ignore[arg-type]
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=Mock(),
+        node_manager=AsyncMock(),
+    )
+
+
+async def _make_available_device(
+    db_session: AsyncSession, db_host: Host, *, identity: str, recovery_allowed: bool = True
+) -> Device:
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=identity,
+            connection_target=identity,
+            name=f"Self-heal device {identity}",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+            recovery_allowed=recovery_allowed,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    return device
+
+
+def _seed_suppression_residue(device: Device) -> None:
+    fresh = policy_state(device)
+    fresh["last_failure_source"] = "session_viability"
+    fresh["last_failure_reason"] = "Recovery viability probe failed"
+    fresh["last_action"] = "recovery_suppressed"
+    fresh["recovery_suppressed_reason"] = "Recovery probe failed"
+    write_state(device, fresh)
+
+
+async def test_self_heal_clears_suppression_when_recovery_allowed(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A healthy device with stale suppression residue and no deny intent gets
+    the residue cleared in one cycle; a second cycle is a no-op (no churn)."""
+    device = await _make_available_device(db_session, db_host, identity="self-heal-clear-1")
+    locked = await device_locking.lock_device(db_session, device.id)
+    _seed_suppression_residue(locked)
+    await db_session.commit()
+
+    svc = _build_lifecycle_policy_service()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    assert cleared is True
+    await db_session.refresh(locked)
+    state_after = policy_state(locked)
+    assert state_after["recovery_suppressed_reason"] is None
+    assert state_after["last_action"] == "self_healed"
+    assert state_after["last_failure_reason"] is None
+    assert state_after["backoff_until"] is None
+
+    # Second cycle: nothing left to clear -> no-op, no action churn.
+    locked = await device_locking.lock_device(db_session, device.id)
+    cleared_again = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    assert cleared_again is False
+    await db_session.refresh(locked)
+    assert policy_state(locked)["last_action"] == "self_healed"
+
+
+async def test_self_heal_does_not_clear_under_operator_stop_deny(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """An active operator-stop deny intent (recovery_allowed=False) makes the
+    suppression a legitimate operator-owned hold — it must stay sticky (N13)."""
+    device = await _make_available_device(db_session, db_host, identity="self-heal-deny-1", recovery_allowed=False)
+    locked = await device_locking.lock_device(db_session, device.id)
+    _seed_suppression_residue(locked)
+    await db_session.commit()
+
+    svc = _build_lifecycle_policy_service()
+
+    locked = await device_locking.lock_device(db_session, device.id)
+    cleared = await svc.clear_suppression_on_self_heal(db_session, locked, reason="self-heal")
+    assert cleared is False
+    await db_session.refresh(locked)
+    state_after = policy_state(locked)
+    assert state_after["recovery_suppressed_reason"] == "Recovery probe failed"
+    assert state_after["last_action"] == "recovery_suppressed"
 
 
 async def test_connectivity_loss_keeps_device_in_run(

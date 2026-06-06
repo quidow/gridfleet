@@ -17,6 +17,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_operator_start_suppression,
+    clear_self_heal_suppression,
     set_maintenance_reason,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -530,6 +531,34 @@ async def test_clear_operator_start_suppression_noop_on_clean_state(
     locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
     write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
     clear_operator_start_suppression(locked)
+    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
+
+
+async def test_clear_self_heal_suppression_preserves_maintenance_tautology(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """The maintenance-hold suppression is governed by the maintenance-exit path,
+    not by connectivity self-heal, so it must survive (returns False)."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
+    )
+    assert clear_self_heal_suppression(locked) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
+
+
+async def test_clear_self_heal_suppression_noop_on_clean_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with no suppression/backoff/failure residue emits no action churn."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
+    assert clear_self_heal_suppression(locked) is False
     assert locked.lifecycle_policy_state["last_action"] == "sentinel"
 
 
