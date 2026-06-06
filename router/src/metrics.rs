@@ -13,6 +13,9 @@ pub struct Metrics {
     pub active_routes: IntGauge,
     /// DELETEs proxied that failed upstream before a response (route retained).
     pub delete_orphaned_total: IntCounter,
+    /// New sessions created+confirmed but rolled back because the downstream
+    /// client was gone by the time we tried to write the response.
+    pub new_session_client_gone_total: IntCounter,
     /// End-to-end request handling latency.
     pub request_duration: Histogram,
 }
@@ -46,6 +49,11 @@ pub fn metrics() -> &'static Metrics {
             "DELETE /session proxied but upstream failed before a response; route entry retained until the next reconcile.",
         )
         .expect("metric");
+        let new_session_client_gone_total = IntCounter::new(
+            "gridfleet_router_new_session_client_gone_total",
+            "New sessions created and confirmed but rolled back (DELETE + session_ended) because the downstream client disconnected before the response could be written.",
+        )
+        .expect("metric");
         let request_duration = Histogram::with_opts(HistogramOpts::new(
             "gridfleet_router_request_duration_seconds",
             "End-to-end request handling latency",
@@ -56,6 +64,7 @@ pub fn metrics() -> &'static Metrics {
         prometheus::register(Box::new(allocate_outcomes.clone())).expect("register");
         prometheus::register(Box::new(active_routes.clone())).expect("register");
         prometheus::register(Box::new(delete_orphaned_total.clone())).expect("register");
+        prometheus::register(Box::new(new_session_client_gone_total.clone())).expect("register");
         prometheus::register(Box::new(request_duration.clone())).expect("register");
 
         Metrics {
@@ -63,6 +72,7 @@ pub fn metrics() -> &'static Metrics {
             allocate_outcomes,
             active_routes,
             delete_orphaned_total,
+            new_session_client_gone_total,
             request_duration,
         }
     })
@@ -86,9 +96,11 @@ mod tests {
         metrics().commands_total.with_label_values(&["local"]).inc();
         metrics().active_routes.set(3);
         metrics().delete_orphaned_total.inc();
+        metrics().new_session_client_gone_total.inc();
         let out = String::from_utf8(render()).unwrap();
         assert!(out.contains("gridfleet_router_commands_total"));
         assert!(out.contains("gridfleet_router_active_routes 3"));
         assert!(out.contains("gridfleet_router_delete_orphaned_total"));
+        assert!(out.contains("gridfleet_router_new_session_client_gone_total"));
     }
 }

@@ -22,3 +22,7 @@ env_logger = "0.11"
 ureq = "2"
 tiny_http = "0.12"
 ring = "0.17"
+# Tests need SO_LINGER=0 to force an immediate RST on close (std's set_linger is
+# still unstable), deterministically failing the router's response write to a
+# departed client.
+socket2 = "0.6"

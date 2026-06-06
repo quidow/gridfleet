@@ -303,9 +303,16 @@ impl GridRouter {
         // `new_session_timeout` caps this entire allocate phase only. The Appium
         // create call in step 3 is separately bounded by `proxy_timeout`
         // (deliberate — cold-device session creation can take minutes).
-        // Note: a client disconnect during this long-poll is NOT detected; if the
-        // client departs while we hold a ticket the session may still be created
-        // on its behalf and is subsequently reconciled by the backend idle sweep.
+        // Note: a client disconnect during this long-poll is NOT detected
+        // mid-loop. pingora 0.8's `Session` exposes no cheap, non-destructive
+        // downstream-liveness probe — `stream()` yields a `Box<dyn IO>` whose
+        // trait offers only `shutdown`/`id`/digest accessors, and the body is
+        // already fully drained above, so the only way to observe a half-closed
+        // client is a blocking async read that would consume bytes. We therefore
+        // do NOT break the loop early; instead the success-path `respond` write
+        // is the terminal guard: when the client is gone its write fails and we
+        // roll the created+confirmed session back (DELETE + session_ended +
+        // route prune) rather than leaking a zombie that pins the device.
         let deadline = Instant::now() + self.new_session_timeout;
         let mut ticket: Option<String> = None;
         let allocation = loop {
@@ -448,7 +455,38 @@ impl GridRouter {
                 crate::metrics::metrics()
                     .active_routes
                     .set(self.routes.len() as i64);
-                respond(session, status, body, "application/json").await
+                // Hand the session to the client. The route is inserted and the
+                // confirm is already sent, so if this write fails (the client
+                // disconnected during the allocate long-poll — see step 2's
+                // note) the session would otherwise be a confirmed, routed
+                // zombie pinning its device until a manual DELETE or the backend
+                // idle sweep. Roll the just-created session back: DELETE it on
+                // Appium, tell the backend it ended (the row is `running`
+                // post-confirm), and drop the local route. This is the terminal
+                // guard for the undetected-disconnect case.
+                match respond(session, status, body, "application/json").await {
+                    Ok(v) => Ok(v),
+                    Err(e) => {
+                        crate::metrics::metrics()
+                            .new_session_client_gone_total
+                            .inc();
+                        log::warn!(
+                            "client gone before new-session response for {session_id}; \
+                             rolling back (DELETE + session_ended + route prune): {e}"
+                        );
+                        self.delete_appium_session(&target, &session_id).await;
+                        if let Err(e) = self.backend.session_ended(&session_id).await {
+                            log::warn!(
+                                "session_ended notify failed for client-gone {session_id}: {e}"
+                            );
+                        }
+                        self.routes.remove(&session_id);
+                        crate::metrics::metrics()
+                            .active_routes
+                            .set(self.routes.len() as i64);
+                        Err(e)
+                    }
+                }
             }
             Ok(r) => {
                 let status = r.status().as_u16();

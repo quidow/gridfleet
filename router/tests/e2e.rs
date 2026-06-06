@@ -796,6 +796,152 @@ fn confirm_per_request_timeout_triggers_retry() {
     );
 }
 
+/// Backend stub for the client-gone rollback flow. Models the live bug:
+/// allocate answers `queued` for the first `queue_count` polls (a short stall
+/// each, so the client has time to disconnect mid-loop), then `allocated(A1)`;
+/// confirm answers 200; `/sessions/ended` hits are recorded; `/routes` answers
+/// empty (no route should survive the rollback).
+fn spawn_backend_client_gone(
+    appium_addr: String,
+    queue_count: usize,
+) -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let ended = Arc::new(AtomicUsize::new(0));
+    let e = ended.clone();
+    thread::spawn(move || {
+        let mut polls = 0usize;
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            let json_header =
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap();
+            if url == "/internal/grid/allocate" {
+                if polls < queue_count {
+                    polls += 1;
+                    // Brief stall so the router stays in the allocate loop while
+                    // the client closes its socket.
+                    thread::sleep(Duration::from_millis(200));
+                    let resp =
+                        tiny_http::Response::from_string(r#"{"status":"queued","ticket":"T1"}"#)
+                            .with_header(json_header);
+                    req.respond(resp).unwrap();
+                } else {
+                    let body = serde_json::json!({
+                        "status": "allocated",
+                        "allocation_id": "A1",
+                        "target": appium_addr,
+                        "claim_window_sec": 120,
+                    })
+                    .to_string();
+                    let resp = tiny_http::Response::from_string(body).with_header(json_header);
+                    req.respond(resp).unwrap();
+                }
+            } else if url == "/internal/grid/sessions/A1/confirm" {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else if url == "/internal/grid/sessions/ended" {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["session_id"], "app-1", "session_ended payload");
+                e.fetch_add(1, Ordering::SeqCst);
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            } else if url == "/internal/grid/routes" {
+                req.respond(tiny_http::Response::from_string(r#"{"routes":[]}"#))
+                    .unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, ended)
+}
+
+#[test]
+fn new_session_client_gone_rolls_back() {
+    // Stub Appium serves the create and records the rollback DELETE.
+    let (appium_addr, deletes) = spawn_appium_rollback();
+    // Backend queues a few times (stalling), then allocates + confirms.
+    let (backend_addr, ended) = spawn_backend_client_gone(appium_addr, 2);
+    let router = spawn_router(&backend_addr);
+
+    // Open a raw connection, send the new-session POST, then abruptly RESET the
+    // socket while the backend is still answering `queued`. By the time the
+    // backend allocates and the router creates+confirms the Appium session, the
+    // downstream is gone — the final response write fails and must trigger the
+    // rollback (DELETE on Appium + session_ended to the backend + route prune).
+    //
+    // SO_LINGER=0 makes close() send an immediate RST instead of a graceful
+    // FIN. This is the deterministic lever: a graceful FIN-close leaves the
+    // peer's first write succeeding (loopback buffers a small response, the
+    // EPIPE only lands on a SECOND write — and pingora coalesces a
+    // Content-Length response into a single socket write), so the write error
+    // would never surface. An RST makes the router's very first response write
+    // fail, exactly as it does in the live repro where the abandoned client's
+    // OS has already reset the connection.
+    {
+        use socket2::{Domain, SockAddr, Socket, Type};
+        let sock = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let addr: std::net::SocketAddr = format!("127.0.0.1:{}", router.port).parse().unwrap();
+        sock.connect(&SockAddr::from(addr)).unwrap();
+        sock.set_linger(Some(Duration::from_secs(0))).unwrap();
+        let mut stream: TcpStream = sock.into();
+        let body = r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
+        let request = format!(
+            "POST /session HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            router.port,
+            body.len(),
+            body
+        );
+        stream.write_all(request.as_bytes()).unwrap();
+        stream.flush().unwrap();
+        // Let the router accept the connection and read the request into the
+        // allocate loop BEFORE we reset — an RST that races accept() would make
+        // pingora drop the connection before `handle_new_session` ever runs (no
+        // session to roll back). The backend stalls each queued poll ~200ms, so
+        // a short sleep here lands the RST mid-loop, after the request is read
+        // but well before allocate returns `allocated`.
+        thread::sleep(Duration::from_millis(150));
+        // drop -> close() -> RST (linger=0): the response write later hits a
+        // reset connection.
+    }
+
+    // The router must roll the Appium session back via DELETE.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while deletes.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never DELETEd the Appium session after the client vanished"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    // ...and notified the backend that the session ended (row was `running`).
+    while ended.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended for the client-gone session"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    // No route survives: a follow-up command on a FRESH connection 404s after a
+    // routes refetch returns empty.
+    let err = ureq::get(&format!(
+        "http://127.0.0.1:{}/session/app-1/url",
+        router.port
+    ))
+    .call();
+    match err {
+        Err(ureq::Error::Status(404, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
+        }
+        other => panic!("expected 404 after rollback prune, got {other:?}"),
+    }
+}
+
 /// Raw-TCP WebSocket echo stub (tiny_http cannot perform the HTTP 101 upgrade).
 /// Completes the RFC 6455 handshake and echoes one client frame back prefixed
 /// with `ws:`, so the test can prove frames splice through the router intact.
