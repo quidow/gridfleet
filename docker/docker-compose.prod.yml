@@ -40,7 +40,10 @@ services:
     environment:
       GRIDFLEET_ROUTER_LISTEN: 0.0.0.0:4444
       GRIDFLEET_ROUTER_BACKEND: http://backend:8000
-      GRIDFLEET_ROUTER_BACKEND_AUTH: ${GRIDFLEET_ROUTER_BACKEND_AUTH:-}
+      # ?err (not :?) — unset fails the deploy (auth is on by default and the router
+      # would 401 on every allocate); explicitly-set-empty stays valid for
+      # GRIDFLEET_AUTH_ENABLED=false labs (empty = router sends no auth header).
+      GRIDFLEET_ROUTER_BACKEND_AUTH: ${GRIDFLEET_ROUTER_BACKEND_AUTH?set GRIDFLEET_ROUTER_BACKEND_AUTH in docker/.env (user:pass machine credentials; set empty only when GRIDFLEET_AUTH_ENABLED=false)}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
