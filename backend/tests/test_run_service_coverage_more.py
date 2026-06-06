@@ -15,6 +15,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
+from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs import service as run_service
@@ -579,6 +580,59 @@ async def test_mark_running_sessions_released_success_path(
         terminate_grid_sessions=False,
     )
     assert untouched.status == SessionStatus.running
+
+
+@pytest.mark.db
+async def test_mark_running_sessions_released_expires_claimed_ticket(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F10: run-release closes a grid-allocated session AND terminalizes the ``claimed``
+    ticket that minted it — otherwise the ticket dangles ``claimed`` until retention
+    purges the session row."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Release Ticket Device",
+        identity_value="run-release-ticket-001",
+        operational_state=DeviceOperationalState.busy,
+    )
+    run = await create_reserved_run(db_session, name="release-ticket-run", devices=[device], state=RunState.cancelled)
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="",
+            )
+        )
+    session = Session(
+        session_id="release-ticket-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running
+    )
+    db_session.add(session)
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(
+        requested_body={"capabilities": {"alwaysMatch": {}, "firstMatch": [{}]}},
+        status=GridQueueStatus.claimed,
+        session_row_id=session.id,
+    )
+    db_session.add(ticket)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session",
+        AsyncMock(return_value=True),
+    )
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+
+    assert session.status == SessionStatus.error
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired
 
 
 @pytest.mark.db

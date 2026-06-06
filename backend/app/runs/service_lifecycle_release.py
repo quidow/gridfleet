@@ -231,6 +231,13 @@ class RunReleaseService:
             session.ended_at = released_at
             session.error_type = "run_released"
             session.error_message = error_message
+            # Terminalize the allocation ticket that minted this session (a grid-allocated
+            # session for a reserved run carries a ``claimed`` ticket); otherwise the
+            # ticket dangles ``claimed`` until the session row's retention purge. Mirrors
+            # close_running_session's late import to avoid an import cycle.
+            from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
+
+            await expire_tickets_for_session(db, session.id)
 
     async def _session_node_target(self, db: AsyncSession, session: Session) -> str | None:
         if session.device_id is None:
