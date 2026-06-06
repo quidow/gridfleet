@@ -490,6 +490,51 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     assert node.accepting_new_sessions is False
 
 
+async def test_graceful_stop_holds_node_running_while_session_pending(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A ``pending`` session (the allocate->confirm window) must defer a graceful stop
+    the same way a ``running`` session does (F1). Killing the Appium process mid-create
+    fails the in-flight session creation.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="graceful-pending")
+    node = await _seed_node(db_session, device.id, generation=2)
+    with state_write_guard.bypass():
+        node.desired_state = AppiumDesiredState.running
+    with state_write_guard.bypass():
+        node.desired_port = 4723
+    with state_write_guard.bypass():
+        node.port = 4723
+    with state_write_guard.bypass():
+        node.pid = 1234
+    with state_write_guard.bypass():
+        node.active_connection_target = device.connection_target
+    db_session.add(Session(session_id="alloc-pending-1", device_id=device.id, status=SessionStatus.pending))
+    await db_session.commit()
+    service = IntentService(db_session)
+    await service.register_intents(
+        device_id=device.id,
+        reason="health failure",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:node:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "stop", "stop_mode": "graceful", "priority": 60},
+            ),
+        ],
+    )
+    await db_session.commit()
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.stop_pending is True
+    assert node.accepting_new_sessions is False
+
+
 async def test_graceful_stop_applies_once_session_ends(
     db_session: AsyncSession,
     db_host: Host,

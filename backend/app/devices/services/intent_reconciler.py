@@ -501,7 +501,11 @@ async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UU
         .select_from(Session)
         .where(
             Session.device_id == device_id,
-            Session.status == SessionStatus.running,
+            # ``pending`` is the allocate->confirm window (a placeholder session row
+            # exists before the Appium id is confirmed). A graceful stop must defer for
+            # it the same as for ``running``, or the Appium process is killed mid-create
+            # and the client gets "session not created".
+            Session.status.in_((SessionStatus.running, SessionStatus.pending)),
             Session.ended_at.is_(None),
         )
     )
