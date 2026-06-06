@@ -1,12 +1,17 @@
-//! Per-session last-activity accumulator, drained by the periodic flusher (spec §5).
+//! Per-session activity accumulator, drained by the periodic flusher (spec §5).
+//!
+//! Just the *set* of touched session ids: the backend stamps a server-side
+//! `now()` for every reported id and always ignored caller timestamps (clock
+//! skew on this host must not extend or defeat idle reaping), so tracking
+//! per-session `SystemTime`s and serializing RFC3339 was pure maintenance
+//! burden (wave-5 #12).
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 #[derive(Default)]
 pub struct ActivityTracker {
-    inner: Mutex<HashMap<String, SystemTime>>,
+    inner: Mutex<HashSet<String>>,
 }
 
 impl ActivityTracker {
@@ -14,27 +19,17 @@ impl ActivityTracker {
         self.inner
             .lock()
             .expect("poisoned")
-            .insert(session_id.to_string(), SystemTime::now());
+            .insert(session_id.to_string());
     }
-    pub fn drain(&self) -> HashMap<String, SystemTime> {
+    pub fn drain(&self) -> HashSet<String> {
         std::mem::take(&mut *self.inner.lock().expect("poisoned"))
     }
 
-    /// Re-insert drained entries after a failed flush so their timestamps are not
-    /// lost. A concurrent `touch` between the drain and this call leaves a newer
-    /// timestamp in the map; we keep whichever is newer per session, so a fresh
-    /// touch is never clobbered by a stale restored value.
-    pub fn restore(&self, drained: HashMap<String, SystemTime>) {
-        let mut map = self.inner.lock().expect("poisoned");
-        for (sid, ts) in drained {
-            map.entry(sid)
-                .and_modify(|cur| {
-                    if ts > *cur {
-                        *cur = ts;
-                    }
-                })
-                .or_insert(ts);
-        }
+    /// Re-insert drained ids after a failed flush so they are not lost. A
+    /// concurrent `touch` between the drain and this call is a plain set
+    /// union — nothing to reconcile.
+    pub fn restore(&self, drained: HashSet<String>) {
+        self.inner.lock().expect("poisoned").extend(drained);
     }
 }
 
@@ -47,7 +42,7 @@ mod tests {
         let t = ActivityTracker::default();
         t.touch("s1");
         let drained = t.drain();
-        assert!(drained.contains_key("s1"));
+        assert!(drained.contains("s1"));
         assert!(t.drain().is_empty()); // drained means drained
     }
 
@@ -58,21 +53,17 @@ mod tests {
         let drained = t.drain();
         assert!(t.drain().is_empty());
         t.restore(drained);
-        assert!(t.drain().contains_key("s1")); // failed flush did not lose the entry
+        assert!(t.drain().contains("s1")); // failed flush did not lose the entry
     }
 
     #[test]
-    fn restore_keeps_newer_touch() {
-        let mut drained = HashMap::new();
-        let old = SystemTime::UNIX_EPOCH;
-        drained.insert("s1".to_string(), old);
-
+    fn restore_unions_with_mid_flush_touch() {
         let t = ActivityTracker::default();
-        t.touch("s1"); // a fresh touch landed mid-flush; its timestamp is "now"
+        t.touch("s1");
+        let drained = t.drain();
+        t.touch("s2"); // a fresh touch landed mid-flush
         t.restore(drained);
-
         let after = t.drain();
-        // The newer mid-flush touch must win over the stale restored value.
-        assert!(after["s1"] > old);
+        assert!(after.contains("s1") && after.contains("s2"));
     }
 }

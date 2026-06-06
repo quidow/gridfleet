@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn stub_backend() -> (tiny_http::Server, String) {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
@@ -162,17 +161,18 @@ async fn confirm_ended_fail_activity_roundtrip() {
         let mut body = String::new();
         req.as_reader().read_to_string(&mut body).unwrap();
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["sessions"]["sess-a"], "1970-01-01T00:00:00Z");
+        // Bare id list (wave-5 #12): the backend stamps server-side now() per id.
+        assert_eq!(v["sessions"], serde_json::json!(["sess-a"]));
         req.respond(tiny_http::Response::empty(204)).unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
-    let mut sessions: HashMap<String, SystemTime> = HashMap::new();
-    sessions.insert("sess-a".to_string(), UNIX_EPOCH);
+    let mut sessions: HashSet<String> = HashSet::new();
+    sessions.insert("sess-a".to_string());
     client.flush_activity(sessions).await.unwrap();
 
     // flush_activity empty -> no request
     let client = gridfleet_router::backend::BackendClient::new("http://127.0.0.1:1", None);
-    client.flush_activity(HashMap::new()).await.unwrap();
+    client.flush_activity(HashSet::new()).await.unwrap();
 }
 
 #[tokio::test]
