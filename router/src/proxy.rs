@@ -142,6 +142,9 @@ impl ProxyHttp for GridRouter {
         // legitimately be minutes apart (paused debugger, slow test), so the
         // per-command read/write timeouts must not tear it down (wave-5 #2).
         // pingora tunnels the upgrade itself; same predicate proxy_h1 uses.
+        // Accepted risk: a client sending a bogus Upgrade header opts its own
+        // request out of the read timeout. :4444 sits inside the lab network
+        // boundary (docs/guides/security.md), so the only victim is itself.
         if !is_upgrade_req(session.req_header()) {
             peer.options.read_timeout = Some(self.proxy_timeout);
             peer.options.write_timeout = Some(self.proxy_timeout);

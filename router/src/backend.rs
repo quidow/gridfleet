@@ -219,9 +219,8 @@ impl BackendClient {
         if sessions.is_empty() {
             return Ok(());
         }
-        let ids: Vec<&String> = sessions.iter().collect();
         self.req(reqwest::Method::POST, "/internal/grid/activity")
-            .json(&serde_json::json!({"sessions": ids}))
+            .json(&serde_json::json!({"sessions": sessions}))
             .send()
             .await?
             .error_for_status()?;

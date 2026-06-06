@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -13,6 +12,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.runs.models import TestRun
     from app.runs.protocols import DeviceDeferredStop
 
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
@@ -77,7 +78,7 @@ class RunReleaseService:
         active_reservations = [
             reservation for reservation in run.device_reservations if reservation.released_at is None
         ]
-        released_at = datetime.now(UTC)
+        released_at = now_utc()
         await self._mark_running_sessions_released(
             db,
             run,

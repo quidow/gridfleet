@@ -499,7 +499,7 @@ class SessionSyncService:
         if pending_live_ids:
             doomed_rows = await db.execute(
                 select(Session.device_id, Session.session_id).where(
-                    Session.device_id.in_([d for d in candidate_ids if d in devices_with_pending]),
+                    Session.device_id.in_(devices_with_pending),
                     Session.session_id.in_(pending_live_ids),
                     Session.ended_at.is_not(None),
                 )

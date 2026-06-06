@@ -52,11 +52,12 @@ class ActivityRequest(BaseModel):
     values of the legacy id->timestamp map form were always ignored (router
     clock skew must not extend or defeat idle reaping). Routers send a bare id
     list (wave-5 #12); the map form stays accepted for deploy-order
-    compatibility with older routers.
+    compatibility with older routers — drop it once every deployed router is
+    past the list-form release.
     """
 
     sessions: list[str] | dict[str, datetime]
 
     @property
     def session_ids(self) -> list[str]:
-        return list(self.sessions) if isinstance(self.sessions, list) else list(self.sessions.keys())
+        return self.sessions if isinstance(self.sessions, list) else list(self.sessions.keys())
