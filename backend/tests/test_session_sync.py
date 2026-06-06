@@ -227,6 +227,39 @@ async def test_pending_session_never_probed(
     assert session.ended_at is None
 
 
+async def test_all_running_sessions_probed_concurrently(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#10: every running session is probed in one sweep (the probes are gathered, not
+    skipped). Records the set of probed session ids and asserts all of them appear."""
+    import asyncio
+
+    probed: set[str] = set()
+
+    async def recording_alive(target: str, session_id: str, **_: object) -> bool:
+        await asyncio.sleep(0)  # yield so gathered probes interleave
+        probed.add(session_id)
+        return True
+
+    monkeypatch.setattr(service_sync.appium_direct, "session_alive", recording_alive)
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", AsyncMock(return_value=None))
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", AsyncMock(return_value=True))
+
+    expected: set[str] = set()
+    for i in range(5):
+        device = await _seed_device_with_node(
+            db_session, db_host, identity_value=f"probe-conc-{i}", operational_state=DeviceOperationalState.busy
+        )
+        sid = f"sess-conc-{i}"
+        db_session.add(Session(session_id=sid, device_id=device.id, status=SessionStatus.running))
+        expected.add(sid)
+    await db_session.commit()
+
+    await _make_sync_service().sync(db_session)
+
+    assert probed == expected
+
+
 async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
@@ -395,6 +428,45 @@ async def test_idle_session_no_node_target_closes_row(
     assert session.status == SessionStatus.passed
 
 
+async def test_non_idle_session_without_node_target_left_alone(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """A fresh (non-idle) running session on a device with no node target has nothing to
+    probe; it is left running, not closed."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="fresh-nonode",
+            connection_target="fresh-nonode",
+            name="Fresh No Node",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.busy,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    session = Session(
+        session_id="sess-fresh-nonode",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
 # --------------------------------------------------------------------------- #
 # Orphan kill                                                                  #
 # --------------------------------------------------------------------------- #
@@ -528,7 +600,8 @@ async def test_orphan_with_inflight_probe_spared(
 async def test_list_sessions_none_skips_node(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """A node without session_discovery returns None — no enumeration, no kills."""
+    """A node without session_discovery returns None — no enumeration, no kills, and
+    the unavailable-enumeration counter (#17) increments."""
     await _seed_device_with_node(
         db_session, db_host, identity_value="orph-none", operational_state=DeviceOperationalState.busy
     )
@@ -536,9 +609,11 @@ async def test_list_sessions_none_skips_node(
 
     target = f"http://{db_host.ip}:4723"
     _stub_appium_direct["list"][target] = None  # default already None, but explicit
+    before = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get()
     await _make_sync_service().sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []
+    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get() == before + 1
 
 
 async def test_stopped_node_not_enumerated(

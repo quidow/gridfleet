@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 LOOP_NAME = "session_sync"
+# Bound concurrent Appium probes per host so a single hung node cannot stall the
+# whole sweep, while a host's parallel devices are probed together. Mirrors
+# node_health's PROBE_CONCURRENCY_PER_HOST.
+PROBE_CONCURRENCY_PER_HOST = 2
 
 SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_session_sync_wake_source",
@@ -49,6 +54,11 @@ GRID_ORPHAN_SESSIONS_KILLED_TOTAL = Counter(
 GRID_IDLE_SESSIONS_REAPED_TOTAL = Counter(
     "gridfleet_grid_idle_sessions_reaped",
     "Running sessions terminated by the observation sweep for exceeding grid.session_idle_timeout_sec.",
+)
+
+GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL = Counter(
+    "gridfleet_grid_orphan_enum_unavailable",
+    "Orphan-sweep session enumeration (list_sessions) returned unavailable/unreachable for a node.",
 )
 
 
@@ -142,23 +152,44 @@ class SessionSyncService:
                 Session.status == SessionStatus.running,
                 Session.ended_at.is_(None),
             )
+            .order_by(Session.id)
         )
         running_sessions = (await db.execute(running_stmt)).scalars().all()
 
-        device_ids_to_restore: set[uuid.UUID] = set()
-        for session in running_sessions:
+        # Probe phase: gather the per-session Appium probes concurrently, bounded by a
+        # per-host semaphore, so a single hung node cannot stall the sweep wall time
+        # (#10). Idle sessions get a terminate probe; live sessions get an alive probe.
+        # No DB access happens inside the gather — writes are applied serially below.
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+        )
+        sessions_with_device = [s for s in running_sessions if s.device is not None]
+
+        async def _probe(session: Session) -> bool | None:
             device = session.device
-            if device is None:
-                continue
+            assert device is not None  # filtered above
             target = node_target(device)
+            is_idle = (session.last_activity_at or session.started_at) < idle_cutoff
+            async with host_semaphores[device.host_id]:
+                if is_idle:
+                    if target is not None:
+                        await appium_direct.terminate_session(target, session.session_id)
+                    return None  # verdict unused for idle reaps
+                if target is None:
+                    return True  # nothing to probe; treated as "leave alone"
+                return await appium_direct.session_alive(target, session.session_id)
+
+        probe_results = await asyncio.gather(*[_probe(s) for s in sessions_with_device])
+
+        device_ids_to_restore: set[uuid.UUID] = set()
+        for session, alive in zip(sessions_with_device, probe_results, strict=True):
+            device = session.device
+            assert device is not None
             last_activity = session.last_activity_at or session.started_at
             if last_activity < idle_cutoff:
-                # Idle reap: terminate the live Appium session if we have a target,
-                # then close the DB row the same way a vanished session is closed.
-                # A device with no node target has nothing to terminate — close the
-                # row regardless so the abandoned session stops pinning it busy.
-                if target is not None:
-                    await appium_direct.terminate_session(target, session.session_id)
+                # Idle reap: the Appium session (if any target) was already terminated in
+                # the probe phase; close the DB row the same way a vanished session is
+                # closed so the abandoned session stops pinning the device busy.
                 GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
                 logger.warning(
                     "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s",
@@ -171,9 +202,6 @@ class SessionSyncService:
                 if session.device_id is not None:
                     device_ids_to_restore.add(session.device_id)
                 continue
-            if target is None:
-                continue
-            alive = await appium_direct.session_alive(target, session.session_id)
             if alive is None:
                 logger.debug("session_liveness_indeterminate session=%s device=%s", session.session_id, device.id)
                 continue
@@ -232,9 +260,21 @@ class SessionSyncService:
         """Terminate Appium sessions with no tracking DB row, per running node."""
         claim_window = int(self._settings.get("grid.claim_window_sec"))
         device_stmt = (
-            select(Device).options(selectinload(Device.appium_node), selectinload(Device.host)).join(Device.appium_node)
+            select(Device)
+            .options(selectinload(Device.appium_node), selectinload(Device.host))
+            .join(Device.appium_node)
+            .order_by(Device.id)
         )
         devices = (await db.execute(device_stmt)).scalars().all()
+
+        # Serial DB filter: decide which devices are probe candidates (running node,
+        # routable target, no in-window pending row). The allocate->confirm window
+        # holds a placeholder session_id while the real Appium id is created; the live
+        # session is absent from known_ids so the sweep would kill an in-creation
+        # session. Skip the whole device while any in-window pending row exists — the
+        # allocation reaper owns that window.
+        window_start = datetime.now(UTC) - timedelta(seconds=claim_window)
+        candidates: list[tuple[Device, str]] = []
         for device in devices:
             node = device.appium_node
             if node is None or node.desired_state is not AppiumDesiredState.running:
@@ -242,13 +282,6 @@ class SessionSyncService:
             target = node_target(device)
             if target is None:
                 continue
-            # Allocate→confirm window: a pending row holds a placeholder session_id
-            # while the real Appium id is being created. The live Appium session is
-            # absent from known_ids (placeholders only), so the sweep would kill an
-            # in-creation session. Skip the whole device while any in-window pending
-            # row exists — the allocation reaper owns that window (an over-age pending
-            # row is the reaper's to fail, so we let the sweep proceed once it expires).
-            window_start = datetime.now(UTC) - timedelta(seconds=claim_window)
             pending_in_window_stmt = select(Session.id).where(
                 Session.device_id == device.id,
                 Session.status == SessionStatus.pending,
@@ -257,9 +290,26 @@ class SessionSyncService:
             )
             if (await db.execute(pending_in_window_stmt)).first() is not None:
                 continue
-            live_ids = await appium_direct.list_sessions(target)
+            candidates.append((device, target))
+
+        # Probe phase: enumerate every candidate node's live sessions concurrently,
+        # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
+        # DB access inside the gather.
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
+            lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+        )
+
+        async def _enumerate(target: str, host_id: uuid.UUID) -> list[str] | None:
+            async with host_semaphores[host_id]:
+                return await appium_direct.list_sessions(target)
+
+        live_id_lists = await asyncio.gather(*[_enumerate(target, device.host_id) for device, target in candidates])
+
+        # Write phase: resolve known ids and terminate orphans serially on the session.
+        for (device, target), live_ids in zip(candidates, live_id_lists, strict=True):
             if live_ids is None:
-                logger.debug("session_discovery_unavailable device=%s target=%s", device.id, target)
+                GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.inc()
+                logger.warning("grid_orphan_enum_unavailable device=%s target=%s", device.id, target)
                 continue
             if not live_ids:
                 continue
