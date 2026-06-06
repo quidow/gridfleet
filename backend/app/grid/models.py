@@ -27,8 +27,11 @@ class GridSessionQueueTicket(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     requested_body: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # No standalone index: status is the leftmost column of the composite above,
+    # which serves every status-only scan; a second index was pure write
+    # amplification on a table churned every allocation poll (wave-5 #14).
     status: Mapped[GridQueueStatus] = mapped_column(
-        Enum(GridQueueStatus), default=GridQueueStatus.waiting, nullable=False, index=True
+        Enum(GridQueueStatus), default=GridQueueStatus.waiting, nullable=False
     )
     session_row_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
