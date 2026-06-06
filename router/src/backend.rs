@@ -21,6 +21,14 @@ pub enum AllocateOutcome {
         message: String,
     },
     QueueTimeout,
+    /// The backend rejected the request in a way that retrying cannot fix:
+    /// 401/403 (bad `GRIDFLEET_ROUTER_BACKEND_AUTH`) or 404 (the internal grid
+    /// API is not mounted / wrong base URL). The create must fail immediately
+    /// rather than spin the 2s-sleep retry loop until the new-session deadline.
+    Fatal {
+        status: u16,
+        message: String,
+    },
 }
 
 pub struct BackendClient {
@@ -81,6 +89,17 @@ impl BackendClient {
                 Ok(AllocateOutcome::Invalid { message })
             }
             410 => Ok(AllocateOutcome::QueueTimeout),
+            status @ (401 | 403 | 404) => {
+                // Permanent misconfiguration: bad backend auth (401/403) or the
+                // internal grid API not reachable at this base URL (404).
+                // Retrying cannot fix it, so surface it as Fatal so the create
+                // fails immediately instead of looping until the deadline.
+                let message = match status {
+                    401 | 403 => "backend authentication failed".to_string(),
+                    _ => "backend internal grid API not found".to_string(),
+                };
+                Ok(AllocateOutcome::Fatal { status, message })
+            }
             _ => {
                 let v: serde_json::Value = resp.error_for_status()?.json().await?;
                 if v["status"] == "allocated" {

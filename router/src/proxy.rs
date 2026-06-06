@@ -399,6 +399,26 @@ impl GridRouter {
                     )
                     .await;
                 }
+                Ok(crate::backend::AllocateOutcome::Fatal { status, message }) => {
+                    // Permanent backend misconfiguration (bad auth / API not
+                    // mounted). Fail the create immediately rather than spinning
+                    // the 2s-sleep retry loop until the new-session deadline.
+                    alloc_outcome("fatal");
+                    log::error!("allocate failed permanently ({status}): {message}");
+                    if let Some(t) = &ticket {
+                        let _ = self.backend.cancel_ticket(t).await;
+                    }
+                    return respond(
+                        session,
+                        500,
+                        w3c::error_body(
+                            "session not created",
+                            &format!("router misconfigured: {message}"),
+                        ),
+                        "application/json",
+                    )
+                    .await;
+                }
                 Err(e) => {
                     alloc_outcome("error");
                     log::warn!("allocate call failed, retrying: {e}");

@@ -1113,6 +1113,70 @@ fn new_session_missing_session_id_sweeps_and_fails() {
     );
 }
 
+/// Backend stub for the permanent-auth-failure flow (C9). Every
+/// POST /internal/grid/allocate answers 401 (bad backend auth); counts the
+/// allocate hits so the test can prove the router does NOT retry-loop.
+fn spawn_backend_allocate_401() -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let allocates = Arc::new(AtomicUsize::new(0));
+    let a = allocates.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            if url == "/internal/grid/allocate" {
+                a.fetch_add(1, Ordering::SeqCst);
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let resp = tiny_http::Response::from_string("unauthorized").with_status_code(401);
+                req.respond(resp).unwrap();
+            } else {
+                req.respond(tiny_http::Response::from_string("{}")).unwrap();
+            }
+        }
+    });
+    (addr, allocates)
+}
+
+#[test]
+fn new_session_backend_auth_failure_fails_immediately() {
+    let (backend_addr, allocates) = spawn_backend_allocate_401();
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // A 401 on allocate is a permanent misconfiguration: the router must fail
+    // the create immediately (well under the new-session deadline), not spin
+    // the 2s-sleep retry loop.
+    let started = Instant::now();
+    let err = ureq::post(&format!("{base}/session"))
+        .send_string(r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#);
+    let elapsed = started.elapsed();
+    match err {
+        Err(ureq::Error::Status(500, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "session not created", "got: {body}");
+            assert!(
+                v["value"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("router misconfigured"),
+                "expected a distinct misconfig message, got: {body}"
+            );
+        }
+        other => panic!("expected 500, got {other:?}"),
+    }
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "router must fail fast on a permanent auth error, took {elapsed:?}"
+    );
+    assert_eq!(
+        allocates.load(Ordering::SeqCst),
+        1,
+        "router must NOT retry a permanent auth failure"
+    );
+}
+
 /// Raw-TCP WebSocket echo stub (tiny_http cannot perform the HTTP 101 upgrade).
 /// Completes the RFC 6455 handshake and echoes one client frame back prefixed
 /// with `ws:`, so the test can prove frames splice through the router intact.
