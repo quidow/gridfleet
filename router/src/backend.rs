@@ -70,9 +70,16 @@ impl BackendClient {
             .send()
             .await?;
         match resp.status().as_u16() {
-            400 => Ok(AllocateOutcome::Invalid {
-                message: resp.text().await.unwrap_or_default(),
-            }),
+            400 => {
+                // Parse the JSON `message` field like the success branch; fall back to
+                // the raw text when the body is not the expected JSON shape.
+                let raw = resp.text().await.unwrap_or_default();
+                let message = serde_json::from_str::<serde_json::Value>(&raw)
+                    .ok()
+                    .and_then(|v| v["message"].as_str().map(str::to_string))
+                    .unwrap_or(raw);
+                Ok(AllocateOutcome::Invalid { message })
+            }
             410 => Ok(AllocateOutcome::QueueTimeout),
             _ => {
                 let v: serde_json::Value = resp.error_for_status()?.json().await?;

@@ -367,7 +367,7 @@ impl GridRouter {
             Ok(r) if r.status().is_success() => {
                 let status = r.status().as_u16();
                 let body = r.bytes().await.unwrap_or_default().to_vec();
-                let session_id = extract_session_id(&body).unwrap_or_default();
+                let session_id = w3c::extract_session_id(&body).unwrap_or_default();
                 if session_id.is_empty() {
                     let _ = self
                         .backend
@@ -456,15 +456,6 @@ fn appium_client() -> &'static reqwest::Client {
     })
 }
 
-/// value.sessionId per W3C; tolerate legacy top-level sessionId.
-fn extract_session_id(body: &[u8]) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
-    v["value"]["sessionId"]
-        .as_str()
-        .or_else(|| v["sessionId"].as_str())
-        .map(str::to_string)
-}
-
 async fn respond(
     session: &mut Session,
     status: u16,
@@ -483,7 +474,7 @@ async fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::{create_timeout, extract_session_id};
+    use super::create_timeout;
     use std::time::Duration;
 
     #[test]
@@ -512,23 +503,5 @@ mod tests {
             create_timeout(Duration::from_secs(60), Some(120)),
             Duration::from_secs(60)
         );
-    }
-
-    #[test]
-    fn extract_session_id_w3c_shape() {
-        let body = br#"{"value":{"sessionId":"app-1","capabilities":{}}}"#;
-        assert_eq!(extract_session_id(body).as_deref(), Some("app-1"));
-    }
-
-    #[test]
-    fn extract_session_id_legacy_top_level() {
-        let body = br#"{"sessionId":"legacy-9","status":0}"#;
-        assert_eq!(extract_session_id(body).as_deref(), Some("legacy-9"));
-    }
-
-    #[test]
-    fn extract_session_id_garbage_is_none() {
-        assert!(extract_session_id(b"not json").is_none());
-        assert!(extract_session_id(br#"{"value":{}}"#).is_none());
     }
 }

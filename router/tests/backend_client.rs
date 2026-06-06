@@ -181,8 +181,9 @@ async fn allocate_400_returns_invalid() {
     thread::spawn(move || {
         let req = server.recv().unwrap();
         assert_eq!(req.url(), "/internal/grid/allocate");
+        // Backend 400s carry a JSON envelope; the client extracts `message`.
         req.respond(
-            tiny_http::Response::from_string("bad caps")
+            tiny_http::Response::from_string(r#"{"status":"invalid","message":"bad caps"}"#)
                 .with_status_code(tiny_http::StatusCode(400)),
         )
         .unwrap();
@@ -191,7 +192,7 @@ async fn allocate_400_returns_invalid() {
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
     match client.allocate(raw, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
-            assert!(message.contains("bad caps"), "message was: {message}");
+            assert_eq!(message, "bad caps");
         }
         other => panic!("expected Invalid, got {other:?}"),
     }
@@ -203,6 +204,27 @@ async fn allocate_400_returns_invalid() {
             assert!(message.contains("invalid JSON"), "message was: {message}");
         }
         other => panic!("expected Invalid for bad JSON, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn allocate_400_non_json_body_falls_back_to_raw() {
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let req = server.recv().unwrap();
+        req.respond(
+            tiny_http::Response::from_string("plain crash dump")
+                .with_status_code(tiny_http::StatusCode(400)),
+        )
+        .unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+    let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
+    match client.allocate(raw, None).await.unwrap() {
+        gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
+            assert_eq!(message, "plain crash dump");
+        }
+        other => panic!("expected Invalid, got {other:?}"),
     }
 }
 

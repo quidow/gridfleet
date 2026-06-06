@@ -14,6 +14,15 @@ pub fn status_body() -> Vec<u8> {
     .expect("static json")
 }
 
+/// value.sessionId per W3C; tolerate legacy top-level sessionId.
+pub fn extract_session_id(body: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    v["value"]["sessionId"]
+        .as_str()
+        .or_else(|| v["sessionId"].as_str())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,5 +41,23 @@ mod tests {
         assert_eq!(v["value"]["error"], "invalid session id");
         assert_eq!(v["value"]["message"], "no route for session abc");
         assert_eq!(v["value"]["stacktrace"], "");
+    }
+
+    #[test]
+    fn extract_session_id_w3c_shape() {
+        let body = br#"{"value":{"sessionId":"app-1","capabilities":{}}}"#;
+        assert_eq!(extract_session_id(body).as_deref(), Some("app-1"));
+    }
+
+    #[test]
+    fn extract_session_id_legacy_top_level() {
+        let body = br#"{"sessionId":"legacy-9","status":0}"#;
+        assert_eq!(extract_session_id(body).as_deref(), Some("legacy-9"));
+    }
+
+    #[test]
+    fn extract_session_id_garbage_is_none() {
+        assert!(extract_session_id(b"not json").is_none());
+        assert!(extract_session_id(br#"{"value":{}}"#).is_none());
     }
 }
