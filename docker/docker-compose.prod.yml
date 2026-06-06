@@ -36,7 +36,7 @@ services:
       dockerfile: router/Dockerfile
     restart: unless-stopped
     ports:
-      - "${GRID_HUB_PORT:-4444}:4444"
+      - "${GRIDFLEET_ROUTER_PORT:-4444}:4444"
     environment:
       GRIDFLEET_ROUTER_LISTEN: 0.0.0.0:4444
       GRIDFLEET_ROUTER_BACKEND: http://backend:8000

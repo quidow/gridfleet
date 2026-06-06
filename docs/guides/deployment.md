@@ -39,7 +39,7 @@ Review `.env` before first boot. The most important values are:
 - `GRIDFLEET_MACHINE_AUTH_USERNAME`, `GRIDFLEET_MACHINE_AUTH_PASSWORD`
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
-- `GRID_HUB_PORT` (host port published for the WebDriver router, default `4444`)
+- `GRIDFLEET_ROUTER_PORT` (host port published for the WebDriver router, default `4444`)
 
 Production auth and host trust:
 
