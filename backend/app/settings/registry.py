@@ -398,6 +398,21 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=86400,
     ),
     SettingDefinition(
+        key="grid.session_first_command_grace_sec",
+        category="grid",
+        setting_type="int",
+        default=180,
+        description=(
+            "How long a running session whose client has never issued a command (NULL last_activity_at) may live "
+            "before the observation sweep terminates it. Measured from the allocation claim (started_at), so Appium "
+            "session-create time eats into the grace. Bounds abandoned-client zombie sessions that claim a device but "
+            "never route any WebDriver traffic, well below the full idle timeout."
+        ),
+        env_var="GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC",
+        min_value=30,
+        max_value=3600,
+    ),
+    SettingDefinition(
         key="grid.claim_window_sec",
         category="grid",
         setting_type="int",

@@ -58,6 +58,7 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `general.device_check_interval_sec` | `60` | Device connectivity verification cadence |
 | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `grid.queue_timeout_sec` | `300` | How long a queued new-session request waits for a device before failing |
 | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `grid.claim_window_sec` | `120` | How long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it |
+| `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `grid.session_first_command_grace_sec` | `180` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep reaps it; measured from the allocation claim |
 | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |
 | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `appium.port_range_end` | `4823` | Managed Appium port range end |
 | `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |

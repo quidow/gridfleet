@@ -97,6 +97,17 @@ def test_session_viability_defaults_to_hourly_probe() -> None:
     assert interval.max_value == 604800
 
 
+def test_session_first_command_grace_setting_is_registered() -> None:
+    setting = settings_registry.SETTINGS_REGISTRY["grid.session_first_command_grace_sec"]
+
+    assert setting.category == "grid"
+    assert setting.setting_type == "int"
+    assert setting.default == 180
+    assert setting.min_value == 30
+    assert setting.max_value == 3600
+    assert setting.env_var == "GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC"
+
+
 def test_device_cooldown_settings_are_registered() -> None:
     max_cooldown = settings_registry.SETTINGS_REGISTRY["general.device_cooldown_max_sec"]
 

@@ -157,9 +157,12 @@ class AllocationService:
         different id, or a row failed/reaped — is a genuine conflict and still raises
         (the router rolls back the Appium session via 409).
 
-        ``last_activity_at`` is stamped at confirm so the idle clock starts when the
-        session becomes live, not at the claim-time ``started_at`` (which precedes a
-        possibly multi-minute Appium create).
+        ``last_activity_at`` is intentionally NOT stamped at confirm: a ``running``
+        row with NULL activity means "the client never issued a command". The
+        router's server-stamped ``/internal/grid/activity`` flush is the only
+        writer, and ``SessionSyncService._check_liveness`` reaps a never-commanded
+        session after ``grid.session_first_command_grace_sec`` (measured from the
+        claim-time ``started_at``).
         """
         result = await db.execute(
             update(Session)
@@ -167,7 +170,6 @@ class AllocationService:
             .values(
                 session_id=appium_session_id,
                 status=SessionStatus.running,
-                last_activity_at=datetime.now(UTC),
             )
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:

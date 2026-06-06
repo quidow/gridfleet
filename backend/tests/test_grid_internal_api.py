@@ -242,11 +242,12 @@ async def test_confirm_after_reaper_failed_row_is_409(
 
 
 @pytest.mark.db
-async def test_confirm_stamps_last_activity_at(
+async def test_confirm_leaves_last_activity_at_null(
     client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
-    """F9: confirm starts the idle clock — last_activity_at is set at confirm, not left
-    null until the first activity flush."""
+    """Confirm does NOT stamp last_activity_at: a running row with NULL activity means
+    the client never issued a command. The first-command grace reap owns that case; the
+    server-stamped activity flush is the only writer of last_activity_at."""
     resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
     allocation_id = resp.json()["allocation_id"]
     assert (
@@ -256,7 +257,7 @@ async def test_confirm_stamps_last_activity_at(
     row = await db_session.get(Session, uuid.UUID(allocation_id))
     assert row is not None
     await db_session.refresh(row)
-    assert row.last_activity_at is not None
+    assert row.last_activity_at is None
 
 
 @pytest.mark.db

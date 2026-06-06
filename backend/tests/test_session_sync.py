@@ -300,10 +300,15 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
 # --------------------------------------------------------------------------- #
 
 
-def _idle_sync_service(idle_timeout_sec: int) -> SessionSyncService:
+def _idle_sync_service(idle_timeout_sec: int, *, first_command_grace_sec: int = 180) -> SessionSyncService:
     return SessionSyncService(
         publisher=event_bus,
-        settings=FakeSettingsReader({"grid.session_idle_timeout_sec": idle_timeout_sec}),
+        settings=FakeSettingsReader(
+            {
+                "grid.session_idle_timeout_sec": idle_timeout_sec,
+                "grid.session_first_command_grace_sec": first_command_grace_sec,
+            }
+        ),
         lifecycle=AsyncMock(),
     )
 
@@ -363,30 +368,95 @@ async def test_idle_session_under_threshold_untouched(
     assert session.ended_at is None
 
 
-async def test_idle_falls_back_to_started_at_when_no_activity(
+async def test_never_commanded_session_over_grace_reaped(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """A session that never reported activity (null last_activity_at) still ages off
-    its started_at."""
+    """A session that never reported activity (null last_activity_at) and whose
+    started_at (claim time) is older than the first-command grace is terminated on the
+    node, closed, the device freed, and the never-commanded counter (not the idle one)
+    advances."""
     device = await _seed_device_with_node(
-        db_session, db_host, identity_value="idle-3", operational_state=DeviceOperationalState.busy
+        db_session, db_host, identity_value="grace-1", operational_state=DeviceOperationalState.busy
     )
     session = Session(
-        session_id="sess-never-reported",
+        session_id="sess-never-commanded",
         device_id=device.id,
         status=SessionStatus.running,
-        started_at=datetime.now(UTC) - timedelta(seconds=120),
+        started_at=datetime.now(UTC) - timedelta(seconds=200),
         last_activity_at=None,
     )
     db_session.add(session)
     await db_session.commit()
 
     target = f"http://{db_host.ip}:4723"
-    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+    before_grace = service_sync.GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL._value.get()
+    before_idle = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+    # idle_timeout deliberately huge so only the grace path can fire.
+    await _idle_sync_service(idle_timeout_sec=86400, first_command_grace_sec=180).sync(db_session)
+    after_grace = service_sync.GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL._value.get()
+    after_idle = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
 
-    assert (target, "sess-never-reported") in _stub_appium_direct["terminated"]
+    assert (target, "sess-never-commanded") in _stub_appium_direct["terminated"]
     await db_session.refresh(session)
+    assert session.status == SessionStatus.passed
     assert session.ended_at is not None
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+    assert after_grace == before_grace + 1
+    assert after_idle == before_idle
+
+
+async def test_never_commanded_session_under_grace_untouched(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """A never-commanded session whose started_at is within the grace is left running —
+    a freshly created session that has not yet issued its first command."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="grace-2", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-fresh-noactivity",
+        device_id=device.id,
+        status=SessionStatus.running,
+        started_at=datetime.now(UTC) - timedelta(seconds=30),
+        last_activity_at=None,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=86400, first_command_grace_sec=180).sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
+async def test_old_started_at_with_recent_activity_survives(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """The grace never applies once activity is observed: a session whose started_at is
+    well past the grace but whose last_activity_at is recent ages only against the idle
+    timeout, so it survives."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="grace-3", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-old-but-active",
+        device_id=device.id,
+        status=SessionStatus.running,
+        started_at=datetime.now(UTC) - timedelta(seconds=1000),
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=10),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    await _idle_sync_service(idle_timeout_sec=60, first_command_grace_sec=180).sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
 
 
 async def test_idle_session_no_node_target_closes_row(

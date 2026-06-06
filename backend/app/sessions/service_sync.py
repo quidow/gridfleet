@@ -56,6 +56,12 @@ GRID_IDLE_SESSIONS_REAPED_TOTAL = Counter(
     "Running sessions terminated by the observation sweep for exceeding grid.session_idle_timeout_sec.",
 )
 
+GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL = Counter(
+    "gridfleet_grid_never_commanded_sessions_reaped",
+    "Running sessions with NULL last_activity_at terminated by the observation sweep for exceeding "
+    "grid.session_first_command_grace_sec (the client never issued a command).",
+)
+
 GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL = Counter(
     "gridfleet_grid_orphan_enum_unavailable",
     "Orphan-sweep session enumeration (list_sessions) returned unavailable/unreachable for a node.",
@@ -131,15 +137,24 @@ class SessionSyncService:
         1. Liveness — Appium reports the session definitively gone (an
            indeterminate network verdict is left untouched; we never kill on
            uncertainty).
-        2. Idle — the session's last reported client activity (the router flushes
-           ``last_activity_at`` every 10 s; null falls back to ``started_at`` so a
-           session that never reported activity still ages) is older than
-           ``grid.session_idle_timeout_sec``. Appium does not reliably enforce
-           newCommandTimeout idle kills, so an abandoned client that crashed
-           without a DELETE would otherwise pin its device busy forever.
+        2. Idle / never-commanded — two cutoffs apply depending on whether the
+           client has ever issued a command:
+
+           * ``last_activity_at`` non-NULL (the router flushes it every 10 s once
+             traffic flows): idle when older than ``grid.session_idle_timeout_sec``.
+           * ``last_activity_at`` NULL (the client never issued a command — an
+             abandoned-client zombie that claimed the device but never routed any
+             WebDriver traffic): never-commanded when ``started_at`` (the claim
+             time) is older than ``grid.session_first_command_grace_sec``.
+
+           Appium does not reliably enforce newCommandTimeout idle kills, so an
+           abandoned client that crashed without a DELETE would otherwise pin its
+           device busy forever.
         """
         idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
         idle_cutoff = datetime.now(UTC) - timedelta(seconds=idle_timeout)
+        grace = int(self._settings.get("grid.session_first_command_grace_sec"))
+        grace_cutoff = datetime.now(UTC) - timedelta(seconds=grace)
 
         running_stmt = (
             select(Session)
@@ -165,11 +180,23 @@ class SessionSyncService:
         )
         sessions_with_device = [s for s in running_sessions if s.device is not None]
 
+        def _reap_reason(session: Session) -> str | None:
+            """Return why a session should be reaped, or None to leave it alone.
+
+            NULL activity means the client never issued a command — age it against
+            the first-command grace from ``started_at`` (the claim time). Any
+            observed activity ages against the idle timeout; the ``started_at``
+            fallback is intentionally gone (grace owns the never-commanded case).
+            """
+            if session.last_activity_at is None:
+                return "never_commanded" if session.started_at < grace_cutoff else None
+            return "idle" if session.last_activity_at < idle_cutoff else None
+
         async def _probe(session: Session) -> bool | None:
             device = session.device
             assert device is not None  # filtered above
             target = node_target(device)
-            is_idle = (session.last_activity_at or session.started_at) < idle_cutoff
+            is_idle = _reap_reason(session) is not None
             async with host_semaphores[device.host_id]:
                 if is_idle:
                     if target is not None:
@@ -189,19 +216,29 @@ class SessionSyncService:
         for session, alive in zip(sessions_with_device, probe_results, strict=True):
             device = session.device
             assert device is not None
-            last_activity = session.last_activity_at or session.started_at
-            if last_activity < idle_cutoff:
-                # Idle reap: the Appium session (if any target) was already terminated in
-                # the probe phase; close the DB row the same way a vanished session is
-                # closed so the abandoned session stops pinning the device busy.
-                GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
-                logger.warning(
-                    "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s",
-                    session.session_id,
-                    device.id,
-                    last_activity.isoformat(),
-                    idle_timeout,
-                )
+            reap_reason = _reap_reason(session)
+            if reap_reason is not None:
+                # Reap: the Appium session (if any target) was already terminated in the
+                # probe phase; close the DB row the same way a vanished session is closed
+                # so the abandoned session stops pinning the device busy.
+                if reap_reason == "never_commanded":
+                    GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL.inc()
+                    logger.warning(
+                        "grid_never_commanded_session_reaped session=%s device=%s started_at=%s grace_sec=%s",
+                        session.session_id,
+                        device.id,
+                        session.started_at.isoformat(),
+                        grace,
+                    )
+                else:
+                    GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
+                    logger.warning(
+                        "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s",
+                        session.session_id,
+                        device.id,
+                        session.last_activity_at.isoformat() if session.last_activity_at else None,
+                        idle_timeout,
+                    )
                 await self._end_session(db, session)
                 if session.device_id is not None:
                     device_ids_to_restore.add(session.device_id)
