@@ -21,6 +21,7 @@ from app.grid.allocation import node_target
 from app.lifecycle.services import policy as lifecycle_policy
 from app.sessions import probe_inflight
 from app.sessions import service as session_service
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -372,8 +373,7 @@ class SessionSyncService:
             known_rows = await db.execute(
                 select(Session.device_id, Session.session_id).where(
                     Session.device_id.in_(candidate_ids),
-                    Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                    Session.ended_at.is_(None),
+                    live_session_predicate(),
                 )
             )
             for device_id, session_id in known_rows.all():

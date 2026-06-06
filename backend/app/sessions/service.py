@@ -18,6 +18,7 @@ from app.devices.services.state import set_operational_state
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -40,15 +41,7 @@ async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> 
     create is in flight), so it must gate the same as ``running`` — otherwise
     verification can start a probe on an allocated device and double-bind it.
     """
-    result = await db.execute(
-        select(Session.id)
-        .where(
-            Session.device_id == device_id,
-            Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-            Session.ended_at.is_(None),
-        )
-        .limit(1)
-    )
+    result = await db.execute(select(Session.id).where(live_session_predicate(device_id)).limit(1))
     return result.first() is not None
 
 

@@ -16,7 +16,8 @@ from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.state import appium_node_stop_in_flight, set_operational_state
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -89,15 +90,7 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
     ).scalar_one()
 
     has_running_session = (
-        await db.execute(
-            select(Session.id)
-            .where(
-                Session.device_id == device.id,
-                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                Session.ended_at.is_(None),
-            )
-            .limit(1)
-        )
+        await db.execute(select(Session.id).where(live_session_predicate(device.id)).limit(1))
     ).first() is not None
 
     has_verification_lease = (

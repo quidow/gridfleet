@@ -35,7 +35,8 @@ from app.devices.services.intent_evaluator import (
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
 from app.devices.services.state_derivation import apply_derived_state, device_in_service
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
     import uuid
@@ -496,19 +497,11 @@ async def reconcile_device(
 
 
 async def _device_has_active_client_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    count = await db.scalar(
-        select(func.count())
-        .select_from(Session)
-        .where(
-            Session.device_id == device_id,
-            # ``pending`` is the allocate->confirm window (a placeholder session row
-            # exists before the Appium id is confirmed). A graceful stop must defer for
-            # it the same as for ``running``, or the Appium process is killed mid-create
-            # and the client gets "session not created".
-            Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-            Session.ended_at.is_(None),
-        )
-    )
+    # ``pending`` is the allocate->confirm window (a placeholder session row exists
+    # before the Appium id is confirmed). A graceful stop must defer for it the same
+    # as for ``running``, or the Appium process is killed mid-create and the client
+    # gets "session not created". Shared via live_session_predicate.
+    count = await db.scalar(select(func.count()).select_from(Session).where(live_session_predicate(device_id)))
     return bool(count)
 
 

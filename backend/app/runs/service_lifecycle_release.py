@@ -32,6 +32,7 @@ from app.devices.services.state import ready_operational_state, set_operational_
 from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
 from app.sessions import service as session_service
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -107,8 +108,9 @@ class RunReleaseService:
             if not was_reserved and device.operational_state != DeviceOperationalState.busy:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if device.operational_state == DeviceOperationalState.busy and await self._device_has_running_session(
-                db, device.id
+            if (
+                device.operational_state == DeviceOperationalState.busy
+                and await session_service.device_has_running_session(db, device.id)
             ):
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
@@ -195,7 +197,7 @@ class RunReleaseService:
         del released_at  # close_running_session stamps ended_at itself
         if not terminate_grid_sessions:
             # complete_run path: session lifecycle is owned by the testkit/operator.
-            # Leaving running rows untouched keeps _device_has_running_session honest
+            # Leaving running rows untouched keeps device_has_running_session honest
             # so devices with live Grid sessions are not freed under the run.
             return
 
@@ -210,8 +212,7 @@ class RunReleaseService:
             .options(selectinload(Session.device), selectinload(Session.run))
             .where(
                 Session.run_id == run.id,
-                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                Session.ended_at.is_(None),
+                live_session_predicate(),
             )
         )
         result = await db.execute(stmt)
@@ -272,18 +273,3 @@ class RunReleaseService:
         # freshly-loaded device so it sees the eager-loaded node/host.
         set_committed_value(session, "device", device)
         return resolve_router_target(session)
-
-    async def _device_has_running_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        # Include pending: a device whose grid session is still in the allocate->confirm
-        # window is claimed by the router and must not be freed back to the pool (#3).
-        stmt = (
-            select(Session.id)
-            .where(
-                Session.device_id == device_id,
-                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                Session.ended_at.is_(None),
-            )
-            .limit(1)
-        )
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none() is not None
