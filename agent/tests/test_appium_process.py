@@ -249,21 +249,68 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
     await manager.shutdown()
 
 
-def test_process_snapshot_reports_running_node_fields() -> None:
+def _appium_sessions_client(*, status_code: int = 200, sessions: list[dict[str, Any]] | None = None) -> AsyncMock:
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = status_code
+    response.json.return_value = {"value": sessions if sessions is not None else []}
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    return client
+
+
+async def test_process_snapshot_reports_has_active_session_true() -> None:
+    # C1: the snapshot must re-emit has_active_session so the agent self-update drain
+    # gate can tell an idle node from one holding a live session. The source is now a
+    # localhost GET /appium/sessions per running node (the grid relay that used to
+    # report it is gone).
     manager = AppiumProcessManager()
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
     manager._info[4723] = AppiumProcessInfo(
         port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
     )
 
-    snapshot = manager.process_snapshot()
+    client = _appium_sessions_client(sessions=[{"id": "abc"}])
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
+        snapshot = await manager.process_snapshot()
 
     assert snapshot["running_nodes"][0] == {
         "port": 4723,
         "pid": 5003,
         "connection_target": "device-1",
         "platform_id": "android_mobile",
+        "has_active_session": True,
     }
+
+
+async def test_process_snapshot_reports_has_active_session_false_when_no_sessions() -> None:
+    manager = AppiumProcessManager()
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    client = _appium_sessions_client(sessions=[])
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
+        snapshot = await manager.process_snapshot()
+
+    assert snapshot["running_nodes"][0]["has_active_session"] is False
+
+
+async def test_process_snapshot_omits_has_active_session_when_enumeration_unavailable() -> None:
+    # Enumeration failure (Appium unreachable, or node lacks session_discovery) must
+    # OMIT the key, not report False — update.py then counts it as a (safe) blocker.
+    manager = AppiumProcessManager()
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723, pid=5003, connection_target="device-1", platform_id="android_mobile"
+    )
+
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("agent_app.appium.process.http_client.get_client", return_value=client):
+        snapshot = await manager.process_snapshot()
+
+    assert "has_active_session" not in snapshot["running_nodes"][0]
 
 
 async def test_start_requires_pack_metadata() -> None:
@@ -356,7 +403,7 @@ async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
 
     # Auto-restart must refuse to resurrect because a stop is pending.
     await manager._auto_restart_appium(4723, exit_code=9)
-    assert manager.process_snapshot()["recent_restart_events"] == []
+    assert (await manager.process_snapshot())["recent_restart_events"] == []
 
 
 async def test_start_can_disable_session_override() -> None:
@@ -641,7 +688,7 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
 
     assert [info.pid for info in manager.list_running()] == [2222]
     assert delays[0] == 1
-    snapshot = manager.process_snapshot()
+    snapshot = await manager.process_snapshot()
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
         "restart_succeeded",
@@ -674,7 +721,7 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
 
     await manager._auto_restart_appium(4723, exit_code=9)
 
-    snapshot = manager.process_snapshot()
+    snapshot = await manager.process_snapshot()
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
         "restart_exhausted",
@@ -723,7 +770,7 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
     assert manager.list_running() == []
     assert 4723 not in manager._launch_specs
     assert 4723 not in manager._info
-    snapshot = manager.process_snapshot()
+    snapshot = await manager.process_snapshot()
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
         "port_conflict",
@@ -862,7 +909,7 @@ async def test_appium_restart_does_not_create_duplicate_recovery_loop() -> None:
         await real_sleep(0)
         await real_sleep(0)
 
-    snapshot = manager.process_snapshot()
+    snapshot = await manager.process_snapshot()
     assert [event["process"] for event in snapshot["recent_restart_events"]] == [
         "appium",
         "appium",
@@ -1344,7 +1391,7 @@ async def test_auto_restart_returns_when_intentional_stop_during_sleep() -> None
     )
     manager._intentional_stop_ports.add(4723)
     await manager._auto_restart_appium(4723, exit_code=1)
-    assert manager.process_snapshot()["recent_restart_events"] == []
+    assert (await manager.process_snapshot())["recent_restart_events"] == []
 
 
 async def test_auto_restart_returns_when_no_launch_spec() -> None:
@@ -1358,7 +1405,7 @@ async def test_auto_restart_returns_when_no_launch_spec() -> None:
     with patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep):
         await manager._auto_restart_appium(4723, exit_code=1)
     # Should record crash_detected, then return after sleep because launch spec gone
-    events = [e["kind"] for e in manager.process_snapshot()["recent_restart_events"]]
+    events = [e["kind"] for e in (await manager.process_snapshot())["recent_restart_events"]]
     assert events == ["crash_detected"]
 
 
@@ -1386,7 +1433,7 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
     ):
         await manager._auto_restart_appium(4723, exit_code=1)
 
-    events = [e["kind"] for e in manager.process_snapshot()["recent_restart_events"]]
+    events = [e["kind"] for e in (await manager.process_snapshot())["recent_restart_events"]]
     assert events == ["crash_detected", "port_conflict"]
     assert 4723 not in manager._info
 
