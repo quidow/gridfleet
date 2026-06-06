@@ -635,6 +635,67 @@ fn delete_against_dead_upstream_still_notifies_ended() {
     }
 }
 
+/// Upstream Appium stub that answers 500 to every request (driver hiccup
+/// mid-teardown): the DELETE gets a response, but not a 2xx/404.
+fn spawn_appium_delete_500() -> String {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let resp = tiny_http::Response::from_string(
+                r#"{"value":{"error":"unknown error","message":"teardown hiccup"}}"#,
+            )
+            .with_status_code(500)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+            req.respond(resp).unwrap();
+        }
+    });
+    addr
+}
+
+#[test]
+fn delete_answered_5xx_still_notifies_ended_and_prunes() {
+    // Wave-5 #4: a client DELETE is unambiguous intent. If Appium answers 5xx
+    // mid-teardown, the router must still prune the route and notify
+    // session_ended — otherwise the backend `running` row pins the device until
+    // the idle timeout (~30 min). A session that actually survived the hiccup is
+    // the orphan sweep's job (the closed row's id is a doomed id).
+    let appium = spawn_appium_delete_500();
+    let (backend_addr, ended) = spawn_backend_dead_route(appium);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // The 500 is relayed to the client unchanged.
+    match ureq::delete(&format!("{base}/session/dead-session")).call() {
+        Err(ureq::Error::Status(500, _)) => {}
+        other => panic!("expected relayed 500, got {other:?}"),
+    }
+
+    // session_ended must still fire.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ended.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended after a 5xx-answered DELETE"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    // The route was pruned: a follow-up command 404s locally.
+    let err = ureq::get(&format!("{base}/session/dead-session/url")).call();
+    match err {
+        Err(ureq::Error::Status(404, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
+        }
+        other => panic!("expected 404 after prune, got {other:?}"),
+    }
+}
+
 /// Backend stub for the unparseable-target-after-confirm flow (F8). Allocate
 /// answers allocated(A1) with an UPPERCASE-scheme target (reqwest reaches it
 /// for create + rollback DELETE, but `Upstream::parse` rejects the `HTTP://`

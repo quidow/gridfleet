@@ -140,20 +140,19 @@ impl ProxyHttp for GridRouter {
     async fn response_filter(
         &self,
         _session: &mut Session,
-        upstream_response: &mut ResponseHeader,
+        _upstream_response: &mut ResponseHeader,
         ctx: &mut RouterCtx,
     ) -> Result<()> {
         if ctx.is_delete {
-            let status = upstream_response.status.as_u16();
-            // Prune on 2xx or 404 (session already gone upstream). Lossiness
-            // accepted: response_filter does not fire on upstream connect/transport
-            // failures, so a failed DELETE leaves the route entry and skips
-            // session_ended. The periodic route rebuild (Task 7) and the backend's
-            // session sweep reconcile any leaked entries.
-            if (200..300).contains(&status) || status == 404 {
-                if let Some(session_id) = ctx.session_id.clone() {
-                    self.prune_and_notify_ended(session_id);
-                }
+            // A client DELETE is unambiguous intent: prune and notify session_ended
+            // on ANY upstream response — including a 5xx from a driver hiccup
+            // mid-teardown, which previously left the route entry and the backend
+            // `running` row pinning the device until the idle timeout (wave-5 #4).
+            // If the Appium session actually survived the hiccup, the orphan sweep
+            // kills it next tick (the closed row's id is a doomed id). Transport
+            // failures never reach this filter; the logging() hook covers those.
+            if let Some(session_id) = ctx.session_id.clone() {
+                self.prune_and_notify_ended(session_id);
             }
         }
         Ok(())
