@@ -49,12 +49,13 @@ def build_grid_stereotype_caps(
     *,
     pack_stereotype: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compose the Selenium Grid slot stereotype for *device*.
+    """Compose the slot stereotype for *device*.
 
-    The stereotype is the per-slot routing surface used by the Selenium hub to
-    match incoming session requests against nodes. Appium-driver-side caps
-    (manufacturer, model, ip, sanitized device_config caps) deliberately stay
-    out — they flow to the driver via ``extra_caps`` instead.
+    The stereotype is the per-slot routing surface the backend allocation
+    service matches incoming session requests against when the router asks it
+    to allocate a device. Appium-driver-side caps (manufacturer, model, ip,
+    sanitized device_config caps) deliberately stay out — they flow to the
+    driver via ``extra_caps`` instead.
     """
     stereotype: dict[str, Any] = {}
     if pack_stereotype:

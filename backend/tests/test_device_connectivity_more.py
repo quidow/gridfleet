@@ -286,7 +286,6 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     async def fake_session() -> AsyncMock:
         yield AsyncMock()
 
-    _fake_grid = Mock()
     _fake_settings = FakeSettingsReader({"general.device_check_interval_sec": 1})
     _fake_publisher = AsyncMock()
     _fake_maintenance = MaintenanceService(
@@ -297,7 +296,7 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     )
     loop = device_connectivity.DeviceConnectivityLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_fake_grid),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_fake_publisher, settings=_fake_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_fake_publisher, settings=_fake_settings, crud=_fake_crud),
@@ -325,7 +324,6 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
             ),
             publisher=_fake_publisher,
             settings=_fake_settings,
-            grid=_fake_grid,
             session_factory=fake_session,
             circuit_breaker=Mock(),
             health=AsyncMock(),

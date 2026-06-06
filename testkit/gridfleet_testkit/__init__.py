@@ -6,7 +6,7 @@ the live Appium-side config can use `client.get_device_config(connection_target)
 
 Environment variables read by the client:
 
-- GRID_URL: Selenium Grid URL used by Appium helper defaults.
+- GRID_URL: WebDriver router URL used by Appium helper defaults.
 - GRIDFLEET_API_URL: GridFleet manager API base URL.
 - GRIDFLEET_TESTKIT_USERNAME: optional Basic auth username.
 - GRIDFLEET_TESTKIT_PASSWORD: optional Basic auth password.

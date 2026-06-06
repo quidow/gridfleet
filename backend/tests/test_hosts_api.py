@@ -212,7 +212,6 @@ async def test_get_host_diagnostics_returns_enriched_runtime_and_recent_agent_lo
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=1111,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,

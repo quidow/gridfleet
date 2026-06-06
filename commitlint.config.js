@@ -10,7 +10,7 @@ export default {
     "scope-enum": [
       2,
       "always",
-      ["backend", "agent", "frontend", "testkit", "docker", "ci", "docs", "deps", "deps-dev", "main"],
+      ["backend", "agent", "frontend", "router", "testkit", "docker", "ci", "docs", "deps", "deps-dev", "main"],
     ],
     "subject-min-length": [2, "always", 10],
     "subject-case": [2, "never", ["sentence-case", "start-case", "pascal-case", "upper-case"]],

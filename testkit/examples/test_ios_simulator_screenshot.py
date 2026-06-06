@@ -1,8 +1,8 @@
 """
-Manual baseline example: connect to an iOS simulator through Selenium Grid and take a screenshot.
+Manual baseline example: connect to an iOS simulator through the WebDriver router and take a screenshot.
 
 Requires:
-    - Selenium Grid hub running on localhost:4444
+    - WebDriver router running on localhost:4444
     - An iOS simulator registered and its Appium node running
     - The supported GridFleet testkit installed
     - Appium with the XCUITest driver installed (`appium driver install xcuitest`)

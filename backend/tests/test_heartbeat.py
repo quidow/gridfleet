@@ -393,7 +393,6 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=1111,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -524,7 +523,6 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
         node = AppiumNode(
             device_id=device.id,
             port=4724,
-            grid_url="http://hub:4444",
             pid=3333,
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
@@ -594,18 +592,12 @@ async def test_restart_exhausted_keeps_backend_fallback_available(db_session: As
     ]
 
     await set_node_health_failure_count(db_session, str(node.id), 2)
-    from unittest.mock import AsyncMock as _AsyncMock
-
-    fake_grid = _AsyncMock()
-    fake_grid.get_status = _AsyncMock(return_value={})
-    fake_grid.available_node_device_ids = Mock(return_value=None)
     with patch.object(NodeHealthService, "_check_node_health", return_value=ProbeResult(status="refused")):
         await NodeHealthService(
             publisher=Mock(),
             settings=FakeSettingsReader({}),
             pool=Mock(),
             circuit_breaker=Mock(),
-            grid=fake_grid,
             recovery_control=AsyncMock(),
             health=DeviceHealthService(publisher=Mock()),
             incidents=AsyncMock(),
@@ -648,7 +640,6 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             pid=4444,
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
@@ -773,7 +764,6 @@ async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(
         node = AppiumNode(
             device_id=device.id,
             port=4726,
-            grid_url="http://hub:4444",
             pid=5555,
             desired_state=AppiumDesiredState.running,
             desired_port=4726,

@@ -71,7 +71,6 @@ async def _setup_host_and_device(
             node = AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=0,
@@ -140,6 +139,52 @@ async def test_connected_device_stays_available(db_session: AsyncSession) -> Non
 
     await db_session.refresh(device)
     assert device.operational_state == DeviceOperationalState.available
+
+
+async def test_healthy_available_device_triggers_self_heal_clear(db_session: AsyncSession) -> None:
+    """A healthy, non-offline device routes through the self-heal clearer so any
+    stale recovery-suppression residue left by a prior failed recovery is cleared."""
+    _host, _device, _ = await _setup_host_and_device(db_session)
+    lifecycle_policy = AsyncMock()
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True},
+        ),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    lifecycle_policy.clear_suppression_on_self_heal.assert_awaited_once()
+
+
+async def test_disconnected_device_skips_self_heal_clear(db_session: AsyncSession) -> None:
+    """An unhealthy/disconnected device never reaches the healthy self-heal path,
+    so its suppression residue is left untouched."""
+    _host, _device, _node = await _setup_host_and_device(db_session, with_node=True)
+    lifecycle_policy = AsyncMock()
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    lifecycle_policy.clear_suppression_on_self_heal.assert_not_awaited()
 
 
 async def test_endpoint_only_device_stays_available_when_health_passes(db_session: AsyncSession) -> None:
@@ -1128,6 +1173,7 @@ async def test_ip_ping_threshold_flips_unhealthy(
     handler_calls: list[str] = []
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
 
     for _ in range(3):
         await ConnectivityService(
@@ -1387,6 +1433,7 @@ async def test_healthy_probe_trumps_enumeration_absence(db_session: AsyncSession
     mock_lifecycle_policy.note_connectivity_loss = AsyncMock()
     mock_lifecycle_policy.handle_health_failure = AsyncMock()
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
 
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),

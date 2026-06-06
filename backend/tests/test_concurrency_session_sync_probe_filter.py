@@ -1,18 +1,18 @@
 # backend/tests/test_concurrency_session_sync_probe_filter.py
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
 
-from app.devices.models import DeviceOperationalState
-from app.sessions.models import Session
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
+from app.sessions import probe_inflight, service_sync
 from app.sessions.service_sync import SessionSyncService
-from app.sessions.service_viability import PROBE_TEST_NAME
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -27,116 +27,88 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def _skip_leader_fencing() -> Iterator[None]:
-    """No-op assert_current_leader so unit tests don't need a real leader row."""
     with patch("app.sessions.service_sync.assert_current_leader"):
         yield
 
 
-async def test_session_sync_does_not_persist_probe_sessions(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
+async def _seed(db: AsyncSession, host: Host, identity: str) -> Device:
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value=identity,
+            connection_target=identity,
+            name=identity,
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db.add(device)
+    await db.flush()
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
+    db.add(node)
+    await db.commit()
+    return device
+
+
+async def test_inflight_probe_session_not_killed(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="probe-filter",
-        operational_state=DeviceOperationalState.available,
-    )
-    await db_session.commit()
+    """A viability probe's live Appium session must not be terminated as an orphan."""
+    device = await _seed(db_session, db_host, "probe-filter")
+    terminated: list[Any] = []
 
-    fake_status = {
-        "value": {
-            "ready": True,
-            "nodes": [
-                {
-                    "slots": [
-                        {
-                            "session": {
-                                "sessionId": "probe-session-1",
-                                "capabilities": {
-                                    "appium:udid": device.connection_target,
-                                    "gridfleet:probeSession": True,
-                                    "gridfleet:testName": PROBE_TEST_NAME,
-                                },
-                            }
-                        }
-                    ]
-                }
-            ],
-        }
-    }
+    async def fake_list(_target: str, **_: object) -> list[str]:
+        return ["probe-live-uuid"]
 
-    from unittest.mock import AsyncMock, Mock
+    async def fake_terminate(t: str, sid: str, **_: object) -> bool:
+        terminated.append((t, sid))
+        return True
 
-    from app.grid.service import GridService
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list)
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate)
 
-    fake_grid = AsyncMock()
-    fake_grid.get_status = AsyncMock(return_value=fake_status)
-    fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), lifecycle=AsyncMock())
+    probe_inflight.mark_probe_started(str(device.id))
+    try:
+        await svc.sync(db_session)
+    finally:
+        probe_inflight.mark_probe_finished(str(device.id))
 
-    svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
-    )
+    assert terminated == []
+
+
+async def test_orphan_session_killed_when_no_probe(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(db_session, db_host, "real-session")
+    target = f"http://{db_host.ip}:4723"
+    terminated: list[Any] = []
+
+    async def fake_list(_target: str, **_: object) -> list[str]:
+        return ["orphan-uuid"]
+
+    async def fake_terminate(t: str, sid: str, **_: object) -> bool:
+        terminated.append((t, sid))
+        return True
+
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list)
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate)
+
+    svc = SessionSyncService(publisher=event_bus, settings=FakeSettingsReader({}), lifecycle=AsyncMock())
     await svc.sync(db_session)
 
-    sessions = (
-        (await db_session.execute(select(Session).where(Session.session_id == "probe-session-1"))).scalars().all()
-    )
-    assert sessions == []
-
-
-async def test_session_sync_does_persist_real_session(
-    db_session: AsyncSession,
-    db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Sanity check: non-probe sessions still persist and mark device busy."""
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="real-session",
-        operational_state=DeviceOperationalState.available,
-    )
-    await db_session.commit()
-
-    fake_status = {
-        "value": {
-            "ready": True,
-            "nodes": [
-                {
-                    "slots": [
-                        {
-                            "session": {
-                                "sessionId": "real-session-1",
-                                "capabilities": {
-                                    "appium:udid": device.connection_target,
-                                    "gridfleet:testName": "actual_test",
-                                },
-                            }
-                        }
-                    ]
-                }
-            ],
-        }
-    }
-
-    from unittest.mock import AsyncMock, Mock
-
-    from app.grid.service import GridService
-
-    fake_grid = AsyncMock()
-    fake_grid.get_status = AsyncMock(return_value=fake_status)
-    fake_grid.available_node_device_ids = Mock(side_effect=lambda d: GridService.available_node_device_ids(d))
-
-    svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=fake_grid, lifecycle=AsyncMock()
-    )
-    await svc.sync(db_session)
-
-    sessions = (await db_session.execute(select(Session).where(Session.session_id == "real-session-1"))).scalars().all()
-    assert len(sessions) == 1
-    assert sessions[0].test_name == "actual_test"
-
-    await db_session.refresh(device)
-    assert device.operational_state == DeviceOperationalState.busy
+    assert terminated == [(target, "orphan-uuid")]

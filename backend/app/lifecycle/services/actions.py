@@ -23,13 +23,15 @@ from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_backoff,
     clear_deferred_stop,
+    now_iso,
     set_action,
     write_state,
 )
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
     import uuid
@@ -302,6 +304,16 @@ class LifecyclePolicyActionsService:
             and fresh.get("recovery_suppressed_reason") == suppression_reason
         )
         if already_suppressed:
+            # The suppression is re-asserted (still in force), not aged residue.
+            # Refresh the recency the self-heal staleness gate
+            # (``clear_self_heal_suppression``) reads — ``last_action_at`` — so it
+            # does not misread an in-force suppression as stale and clear it
+            # mid-scenario (live S10 evidence). Preserve the dedup intent: no new
+            # event, no incident row, no change to ``last_action`` semantics; just
+            # restamp the timestamp and return False.
+            fresh["last_action_at"] = now_iso()
+            write_state(device, fresh)
+            await db.commit()
             return False
         fresh["recovery_suppressed_reason"] = suppression_reason
         set_action(fresh, "recovery_suppressed")
@@ -377,15 +389,13 @@ class LifecyclePolicyActionsService:
         write_state(device, fresh)
 
     async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        stmt = (
-            select(func.count())
-            .select_from(Session)
-            .where(
-                Session.device_id == device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-            )
-        )
+        # Include ``pending``: a device in the grid allocate->confirm window is
+        # already claimed by the router (the Appium create is in flight). This gates
+        # auto-recovery (disruptive node restart) and auto-stop; restarting the node
+        # mid-create yields "session not created" for the client (C7). Shared via
+        # live_session_predicate so the gate cannot drift from the other live-session
+        # sites.
+        stmt = select(func.count()).select_from(Session).where(live_session_predicate(device_id))
         result = await db.execute(stmt)
         return bool(result.scalar_one())
 

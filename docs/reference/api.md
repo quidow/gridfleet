@@ -438,8 +438,8 @@ Supported dynamic group filters:
 
 | Method | Path | Purpose | Main input | Primary response |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/grid/status` | Read Grid status plus registry/device summary | none | grid/registry summary object |
-| `GET` | `/api/grid/queue` | Read queued Grid session requests | none | queue summary object |
+| `GET` | `/api/grid/status` | Read session/registry/device summary (served from Postgres, not a Grid hub) | none | grid/registry summary object |
+| `GET` | `/api/grid/queue` | Read queued new-session requests (from Postgres allocation state) | none | queue summary object |
 | `GET` | `/api/analytics/sessions/summary` | Read aggregated session analytics | `date_from`, `date_to`, `group_by`, `format` | `SessionSummaryRow[]` |
 | `GET` | `/api/analytics/devices/utilization` | Read device utilization analytics | `date_from`, `date_to`, `format` | `DeviceUtilizationRow[]` |
 | `GET` | `/api/analytics/devices/reliability` | Read device reliability analytics | `date_from`, `date_to`, `format` | `DeviceReliabilityRow[]` |

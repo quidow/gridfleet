@@ -29,6 +29,7 @@ from app.devices.services.intent_types import (
     IntentRegistration,
     NodeRunningPrecondition,
 )
+from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,18 +158,26 @@ class OperatorNodeLifecycleService:
         if device.host_id is None:
             raise NodeManagerError(f"Device {device.id} has no host assigned")
 
-        desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
-
         node: AppiumNode | None = device.appium_node
         if node is None:
+            # First-time allocation: no node row yet. candidate_ports()[0] picks
+            # the lowest free port for the host.
+            desired_port = (await candidate_ports(db, host_id=device.host_id, settings=self._settings))[0]
             node = AppiumNode(
                 device_id=device.id,
                 port=desired_port,
-                grid_url=self._settings.get("grid.hub_url"),
             )
             db.add(node)
             await db.flush()
             device.appium_node = node
+        else:
+            # Existing node: pin its current port. candidate_ports re-offers the
+            # node's own port as "free" during the pid-NULL gap (e.g. after a
+            # kill -9 while the agent death-watcher respawns on the NEXT free
+            # port), so taking candidate_ports()[0] reallocates the node onto a
+            # different port and induces a two-supervisor oscillation. Pinning
+            # node.port keeps desired_port stable across the gap.
+            desired_port = node.port
 
         revoke_sources = list(operator_stop_sources(device.id))
         if caller in {"operator_route", "operator_restart"}:
@@ -194,6 +203,12 @@ class OperatorNodeLifecycleService:
             publisher=self._publisher,
         )
         if caller in {"operator_route", "operator_restart"}:
+            # An explicit operator start overrides any prior recovery suppression.
+            # request_start already revoked the operator:stop deny intents above;
+            # clear the matching JSON residue so the device stops deriving
+            # recovery_state="suppressed" (presenter "blocked" / "Recovery Paused")
+            # while it is actually running and available.
+            clear_operator_start_suppression(device)
             await self._review.clear_review_required(
                 db, device, reason="Operator started Appium node", source="start_node"
             )

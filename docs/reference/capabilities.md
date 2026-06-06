@@ -189,7 +189,7 @@ Note: `appium:ip` is auto-injected from the device's `connection_target` / netwo
 
 ## Manual Example Request Capabilities
 
-The `testkit/examples/` files do not fetch `GET /api/devices/{id}/capabilities` first. They make a request through Selenium Grid using the pytest plugin `pack_id` + `platform_id` selector plus the minimum extra capabilities needed for that lane.
+The `testkit/examples/` files do not fetch `GET /api/devices/{id}/capabilities` first. They make a request through the WebDriver router using the pytest plugin `pack_id` + `platform_id` selector plus the minimum extra capabilities needed for that lane.
 
 The baseline examples parametrize the `appium_driver` fixture with a `pack_id` + `platform_id` selector (plus an extra cap only where the lane needs one). The testkit derives `appium:platform`, `platformName`, and `appium:automationName` itself; the examples never pass those literally. The selectors used by `testkit/examples/`:
 
@@ -202,26 +202,26 @@ The baseline examples parametrize the `appium_driver` fixture with a `pack_id` +
 | tvOS real device | `{"pack_id": "appium-xcuitest", "platform_id": "tvos"}` |
 | Roku | `{"pack_id": "appium-roku-dlenroc", "platform_id": "roku_network"}` |
 
-The derived `appium:platform` is the Grid stereotype key for the selected pack platform. Run and reservation APIs use `pack_id` plus `platform_id`; raw Appium capabilities use the stereotype generated from the resolved driver platform.
+The derived `appium:platform` is the stereotype key for the selected pack platform. Run and reservation APIs use `pack_id` plus `platform_id`; raw Appium capabilities use the stereotype generated from the resolved driver platform.
 
 Manual request routing notes:
 
-- `appium:platform` is a Grid stereotype key, not raw Appium `platformName`
-- Choose the value from the enabled driver-pack catalog; add it manually if you build options without a testkit shortcut and need Grid routing.
+- `appium:platform` is a stereotype routing key, not raw Appium `platformName`
+- Choose the value from the enabled driver-pack catalog; add it manually if you build options without a testkit shortcut and need the router to match a device.
 - To target a specific OS release, add `appium:os_version` (declared by curated pack manifests with a `{device.os_version}` template; the renderer fills it from the device row).
 - If you want raw Appium control instead of the shortcut, omit `platform` and pass `platformName` directly as a normal capability key
 
-### Grid stereotype routing keys
+### Stereotype routing keys
 
-The Selenium Grid slot stereotype is the **routing surface**. It carries only the keys the hub needs to match a client request against a slot. As of release 2026.05 the stereotype contains:
+Each device's stereotype is the **routing surface**. The backend allocation API (`/internal/grid/*`, called by the router) matches an incoming new-session request's capabilities against device stereotypes. The stereotype carries only the keys needed to match a client request to a device:
 
 - `platformName`, `appium:automationName` — derived from the active pack/platform manifest.
-- `appium:gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity from the hub back to the manager.
+- `appium:gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity.
 - `gridfleet:run_id` — `"free"` for the shared pool, or the active run UUID when the device is reserved for a run.
 - `appium:gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
 - Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
 
-Keys that describe the device for Appium's benefit (`appium:ip` and sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the Grid stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` plus Selenium's `NodeStatus.availability` cover the routing-suppression cases.
+Keys that describe the device for Appium's benefit (`appium:ip` and sanitized `device_config.appium_caps`) flow to the Appium driver via the start payload's `extra_caps` field, not via the stereotype. The deprecated `gridfleet:available` sentinel has been removed — `AppiumNode.accepting_new_sessions` covers the routing-suppression cases.
 
 ## Manager-Owned Session Caps
 

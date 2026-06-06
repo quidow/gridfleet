@@ -49,8 +49,10 @@ from app.devices.services import state_write_guard
 from app.diagnostics import router as diagnostics_router
 from app.events import router as events
 from app.events.event_bus import EventBus, register_events_gauge_refresher
+from app.grid import appium_direct
 from app.grid import router as grid
-from app.grid.event_bus_loop import GridEventBusSubscriberLoop
+from app.grid import router_internal as grid_router_internal
+from app.grid.allocation_reaper import GridAllocationReaperLoop
 from app.hosts import router as hosts
 from app.hosts import router_agent_logs as host_agent_logs
 from app.hosts import service as host_service
@@ -211,11 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host_resource_telemetry = HostResourceTelemetryLoop(services=app_services.hosts)
 
         run_reaper = RunReaperLoop(services=app_services.runs)
-        grid_event_bus = GridEventBusSubscriberLoop(
-            services=app_services.grid,
-            session_sync_waker=app_services.sessions.sync,
-            node_health_waker=app_services.appium_nodes.node_health,
-        )
+        allocation_reaper = GridAllocationReaperLoop(services=app_services.grid)
         pack_drain = PackDrainLoop(services=app_services.packs)
         job_worker = app_services.jobs
         webhook_delivery = WebhookDeliveryLoop(services=app_services.webhooks)
@@ -225,7 +223,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (app_services.leader_keepalive.run(), "control_plane_leader_keepalive"),
             (heartbeat.run(), "heartbeat_loop"),
             (session_sync.run(), "session_sync_loop"),
-            (grid_event_bus.run(), "grid_event_bus_subscriber_loop"),
             (node_health.run(), "node_health_loop"),
             (connectivity_loop.run(), "device_connectivity_loop"),
             (property_refresh.run(), "property_refresh_loop"),
@@ -234,6 +231,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (job_worker.run(), "durable_job_worker_loop"),
             (webhook_delivery.run(), "webhook_dispatcher.webhook_delivery_loop"),
             (run_reaper.run(), "run_reaper_loop"),
+            (allocation_reaper.run(), "grid_allocation_reaper_loop"),
             (data_cleanup.run(), "data_cleanup_loop"),
             (session_viability.run(), "session_viability_loop"),
             (fleet_capacity.run(), "fleet_capacity_collector_loop"),
@@ -266,9 +264,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await svc.shutdown()
         await control_plane_leader.release()
         await bus.shutdown()
+        await appium_direct.aclose()
         await pool.close()
-        await app_services.grid.grid.close()
-        await app_services.sessions.viability.close()
         await engine.dispose()
         pending_signal_tasks = list(signal_tasks)
         await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")
@@ -304,6 +301,7 @@ app.include_router(device_routers.catalog.router, dependencies=[Depends(auth_dep
 app.include_router(diagnostics_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(appium_node_routers.nodes.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(grid.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
+app.include_router(grid_router_internal.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(hosts.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(sessions_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])
 app.include_router(verification_router.router, dependencies=[Depends(auth_dependencies.require_any_auth)])

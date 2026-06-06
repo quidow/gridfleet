@@ -15,7 +15,7 @@ DOMAIN_SUBMODULES: dict[str, tuple[str, ...]] = {
     "webhooks": ("dispatcher", "models", "router", "schemas", "service"),
     "events": ("catalog", "event_bus", "models", "router", "schemas", "schemas_catalog"),
     "jobs": ("kinds", "models", "queue", "statuses"),
-    "grid": ("config", "router", "schemas", "service"),
+    "grid": ("models", "router", "schemas"),
     "plugins": ("models", "router", "schemas", "service"),
     "agent_comm": (
         "circuit_breaker",

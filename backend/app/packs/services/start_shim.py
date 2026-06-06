@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -14,6 +15,39 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
+
+
+logger = logging.getLogger(__name__)
+
+# Appium insecure feature that enables GET /appium/sessions. Orphan reaping
+# (session_sync._kill_orphans) depends on enumerating live sessions; a grid pack
+# whose manifest omits this loses orphan coverage entirely — a leaked session
+# (e.g. router crash between create and confirm) pins the device forever.
+_SESSION_DISCOVERY_FEATURE = "session_discovery"
+# Wildcard driver scope so the feature applies regardless of the active driver.
+_SESSION_DISCOVERY_WILDCARD = "*:session_discovery"
+
+
+def _ensure_session_discovery(insecure_features: list[str], *, pack_id: str) -> list[str]:
+    """Force ``session_discovery`` into the agent's --allow-insecure set.
+
+    The flag is otherwise purely manifest-driven and ingest only *warns* when a
+    pack omits it, so a third-party grid pack could ship without it and silently
+    lose orphan reaping (harness C10). Injecting it here guarantees every started
+    node can be enumerated. Already-present (bare, ``*:``-scoped, or driver-scoped
+    ``foo:session_discovery``) entries are left untouched.
+    """
+    has_feature = any(
+        feat == _SESSION_DISCOVERY_FEATURE or feat.endswith(f":{_SESSION_DISCOVERY_FEATURE}")
+        for feat in insecure_features
+    )
+    if has_feature:
+        return insecure_features
+    logger.info(
+        "start_shim_injecting_session_discovery pack=%s (manifest omitted it; required for grid orphan reaping)",
+        pack_id,
+    )
+    return [*insecure_features, _SESSION_DISCOVERY_WILDCARD]
 
 
 class PackStartPayloadError(RuntimeError):
@@ -108,12 +142,12 @@ async def build_pack_start_payload(
     insecure_features: list[str] = []
     if release is not None:
         insecure_features = release.manifest_json.get("insecure_features") or []
+    insecure_features = _ensure_session_discovery(insecure_features, pack_id=pack_id)
     appium_platform_name = str(stereotype.get("platformName") or resolved_platform.appium_platform_name)
     return {
         "pack_id": pack_id,
         "platform_id": platform_id,
         "appium_platform_name": appium_platform_name,
-        "stereotype_caps": stereotype,
         "workaround_env": workaround_env,
         "insecure_features": insecure_features,
         "grid_slots": resolved_platform.grid_slots,

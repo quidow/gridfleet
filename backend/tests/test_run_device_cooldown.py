@@ -125,7 +125,6 @@ async def test_cooldown_device_returns_503_when_inline_delivery_fails(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://grid:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
                 pid=12345,
@@ -297,7 +296,6 @@ async def test_cooldown_preserves_desired_grid_run_id(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
@@ -343,7 +341,6 @@ async def test_cooldown_escalation_delivers_agent_reconfigure_inline(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=4321,
             active_connection_target=device.connection_target,
         )
@@ -376,11 +373,10 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cooldown must push the ``accepting_new_sessions=False`` reconfigure to
-    the agent before the HTTP response returns. Otherwise the
-    Selenium Grid hub keeps routing new sessions to the cooled-down device
-    until the next ``device_intent_reconciler_loop`` tick (default 5 s).
-    During that window testkit's next ``webdriver.Remote(...)`` lands on the
-    same relay because hub-side caps still match.
+    the agent before the HTTP response returns. Otherwise new sessions keep
+    reaching the cooled-down device until the next
+    ``device_intent_reconciler_loop`` tick (default 5 s). During that window
+    testkit's next ``webdriver.Remote(...)`` can still land on the same node.
     """
     device = await _create_available_device(db_session, default_host_id, "cooldown-inline")
     run = await _create_run(client)
@@ -390,7 +386,6 @@ async def test_cooldown_delivers_agent_reconfigure_inline(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=4321,
             active_connection_target=device.connection_target,
         )
@@ -496,7 +491,6 @@ async def test_cooldown_blocks_appium_node(client: AsyncClient, db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_grid_run_id=run_id,
@@ -543,7 +537,6 @@ async def test_expired_cooldown_restores_and_restarts_node(db_session: AsyncSess
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.stopped,
@@ -686,7 +679,6 @@ async def test_expired_cooldown_does_not_restart_in_maintenance(db_session: Asyn
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=1234,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.stopped,

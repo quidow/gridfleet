@@ -121,7 +121,6 @@ async def _read_appium_node(db: AsyncSession, device: Device) -> dict[str, Any] 
         "id": str(node.id),
         "device_id": str(node.device_id),
         "port": node.port,
-        "grid_url": node.grid_url,
         "pid": node.pid,
         "container_id": node.container_id,
         "active_connection_target": node.active_connection_target,

@@ -8,18 +8,23 @@ window. See app/services/lifecycle_policy.py for canonical usage.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect as sa_inspect
+
+from app.core import timeutil
 
 if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
 
 
+# ``now``/``parse_iso`` delegate to the shared app.core.timeutil (Q10); kept as named
+# wrappers here so the existing importers (policy.py, lifecycle_policy_summary.py) do not
+# change and mypy sees an explicit definition.
 def now() -> datetime:
-    return datetime.now(UTC)
+    return timeutil.now_utc()
 
 
 def now_iso() -> str:
@@ -27,12 +32,7 @@ def now_iso() -> str:
 
 
 def parse_iso(raw: object) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return timeutil.parse_iso(raw)
 
 
 def default_state() -> dict[str, Any]:
@@ -165,6 +165,101 @@ def clear_maintenance_recovery_suppression(device: Device) -> None:
     next_state["recovery_suppressed_reason"] = None
     set_action(next_state, "maintenance_exited")
     write_state(device, next_state)
+
+
+def clear_operator_start_suppression(device: Device) -> None:
+    """Clear recovery-suppression residue when an operator explicitly starts the node.
+
+    An operator stop records ``recovery_suppressed_reason`` (e.g. "Operator stopped
+    the node") plus a sticky RECOVERY-axis deny intent. The start path revokes the
+    intents but leaves the JSON suppression in place, so the device keeps deriving
+    ``recovery_state="suppressed"`` (presenter "blocked" / "Recovery Paused") even
+    though it is running and available. An explicit operator start overrides any
+    prior failure/suppression, so clear the suppression reason, the backoff window,
+    and the stale failure trail, then stamp a coherent action.
+
+    Leaves the maintenance-hold tautology
+    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched: a node cannot be started
+    while the device is held in maintenance, and that suppression is governed by
+    the maintenance-exit path instead. No-op when nothing is suppressed so an
+    already-clean device emits no spurious action churn.
+
+    Caller must hold the device row lock and is responsible for the commit; this
+    helper performs an in-memory read-modify-write through ``write_state``.
+    """
+    next_state = state(device)
+    suppression = next_state.get("recovery_suppressed_reason")
+    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
+        return
+    backoff_active = bool(next_state.get("backoff_until")) or bool(next_state.get("recovery_backoff_attempts"))
+    if not suppression and not backoff_active and not next_state.get("last_failure_reason"):
+        return
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    next_state["last_failure_source"] = None
+    next_state["last_failure_reason"] = None
+    set_action(next_state, "operator_started")
+    write_state(device, next_state)
+
+
+def clear_self_heal_suppression(device: Device, *, min_age_seconds: float) -> bool:
+    """Clear recovery-suppression residue when a device self-heals naturally.
+
+    A device can recover without any recovery path firing: an agent restart →
+    reconvergence leaves the node running, the device available, and the health
+    checks green, but neither ``attempt_auto_recovery`` (which short-circuits
+    when the node is already running) nor an operator start ran. The
+    ``recovery_suppressed_reason`` recorded by the last failed recovery attempt
+    (e.g. "Recovery probe failed") therefore lingers on the JSON forever, so the
+    device keeps deriving ``recovery_state="suppressed"`` (presenter "Recovery
+    Paused" → ``needs_attention=true``) despite being healthy.
+
+    Clears the suppression reason, the backoff window, and the stale failure
+    trail, then stamps ``self_healed``. Returns True when residue was actually
+    cleared so callers can record the self-heal exactly once.
+
+    Staleness gate (``min_age_seconds``): only clear residue whose recording
+    (``last_action_at``) is older than the threshold. A failure sequence still
+    in flight — verify-failure records ``recovery_suppressed`` seconds before
+    the auto-stop lands, and a concurrent healthy connectivity tick can race
+    in between — must NOT be wiped (regression S10). Genuinely stale residue
+    (hours-old leftovers after a natural reconverge) is. A missing/unparseable
+    ``last_action_at`` is treated as not-yet-stale (returns False) so an
+    in-flight sequence is never cleared on a timestamp we cannot trust.
+
+    Leaves the maintenance-hold tautology
+    (``MAINTENANCE_HOLD_SUPPRESSION_REASON``) untouched — a device held in
+    maintenance is governed by the maintenance-exit path, not connectivity
+    self-heal. No-op (returns False) when nothing is suppressed so a clean
+    device emits no action churn on every connectivity cycle.
+
+    Caller must hold the device row lock, must gate on ``device.recovery_allowed``
+    (an active operator-stop deny intent makes the suppression legitimate and
+    sticky by design), and is responsible for the commit; this helper performs an
+    in-memory read-modify-write through ``write_state``.
+    """
+    next_state = state(device)
+    suppression = next_state.get("recovery_suppressed_reason")
+    if suppression == MAINTENANCE_HOLD_SUPPRESSION_REASON:
+        return False
+    has_residue = (
+        bool(suppression)
+        or next_state.get("last_action") == "recovery_suppressed"
+        or bool(next_state.get("backoff_until"))
+        or bool(next_state.get("recovery_backoff_attempts"))
+    )
+    if not has_residue:
+        return False
+    recorded_at = parse_iso(next_state.get("last_action_at"))
+    if recorded_at is None or (now() - recorded_at).total_seconds() < min_age_seconds:
+        return False
+    clear_backoff(next_state)
+    next_state["recovery_suppressed_reason"] = None
+    next_state["last_failure_source"] = None
+    next_state["last_failure_reason"] = None
+    set_action(next_state, "self_healed")
+    write_state(device, next_state)
+    return True
 
 
 def set_maintenance_reason(device: Device, reason: str) -> None:

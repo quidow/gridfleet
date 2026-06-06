@@ -145,7 +145,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             yield None
 
     _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
-    _pr_grid = Mock()
     _pr_publisher = AsyncMock()
 
     mock_property_refresh_svc = Mock()
@@ -157,7 +156,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     _pr_crud = DeviceCrudService(settings=_pr_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = PropertyRefreshLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_pr_grid),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_pr_publisher, settings=_pr_settings),
             property_refresh=mock_property_refresh_svc,
             groups=DeviceGroupsService(publisher=_pr_publisher, settings=_pr_settings, crud=_pr_crud),
@@ -185,7 +184,6 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,
-            grid=_pr_grid,
             session_factory=AsyncMock(),
             circuit_breaker=Mock(),
             health=AsyncMock(),

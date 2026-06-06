@@ -40,7 +40,6 @@ class AppiumStartRequest(BaseModel):
     extra_caps: Annotated[dict[str, Any] | None, Field(title="Extra Caps")] = None
     grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")] = None
     grid_slots: Annotated[list[str] | None, Field(title="Grid Slots")] = ["native"]
-    grid_url: Annotated[str, Field(min_length=1, title="Grid Url")]
     headless: Annotated[bool | None, Field(title="Headless")] = True
     insecure_features: Annotated[list[str] | None, Field(title="Insecure Features")] = []
     ip_address: Annotated[str | None, Field(title="Ip Address")] = None
@@ -57,7 +56,6 @@ class AppiumStartRequest(BaseModel):
     plugins: Annotated[list[str] | None, Field(title="Plugins")] = None
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
     session_override: Annotated[bool | None, Field(title="Session Override")] = True
-    stereotype_caps: Annotated[dict[str, Any] | None, Field(title="Stereotype Caps")] = None
     stop_pending: Annotated[bool | None, Field(title="Stop Pending")] = False
     workaround_env: Annotated[dict[str, str] | None, Field(title="Workaround Env")] = None
 
@@ -115,14 +113,6 @@ class FeatureActionResponse(BaseModel):
     data: Annotated[dict[str, Any] | None, Field(title="Data")] = None
     detail: Annotated[str | None, Field(title="Detail")] = None
     ok: Annotated[bool, Field(title="Ok")]
-
-
-class GridNodeReregisterRequest(BaseModel):
-    target_run_id: Annotated[UUID | None, Field(title="Target Run Id")] = None
-
-
-class GridNodeReregisterResponse(BaseModel):
-    grid_run_id: Annotated[UUID | None, Field(title="Grid Run Id")]
 
 
 class HealthCheckResult(BaseModel):

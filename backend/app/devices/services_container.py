@@ -26,7 +26,6 @@ if TYPE_CHECKING:
         TestDataProtocol,
     )
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +44,6 @@ class DeviceServices:
     health: DeviceHealthProtocol
     publisher: EventPublisher
     settings: SettingsReader
-    grid: GridServiceProtocol
     session_factory: async_sessionmaker[AsyncSession]
     circuit_breaker: CircuitBreakerProtocol
     # Carries the agent BasicAuth credentials for backend→agent calls (reconfigure

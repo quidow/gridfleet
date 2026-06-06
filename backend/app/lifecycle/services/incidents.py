@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from app.core.timeutil import parse_iso as _parse_datetime
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.schemas.lifecycle import LifecycleIncidentRead
@@ -39,17 +40,6 @@ def _parse_summary_state(raw: object) -> DeviceLifecyclePolicySummaryState:
         except ValueError:
             pass
     return DeviceLifecyclePolicySummaryState.idle
-
-
-def _parse_datetime(raw: object) -> datetime | None:
-    if isinstance(raw, datetime):
-        return raw
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def serialize_lifecycle_incident(event: DeviceEvent, device: Device) -> LifecycleIncidentRead:

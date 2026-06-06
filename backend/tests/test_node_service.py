@@ -218,7 +218,6 @@ async def test_remote_stop_node(client: AsyncClient, db_session: AsyncSession) -
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=9876,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -382,7 +381,6 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=9876,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -474,41 +472,6 @@ async def test_build_payload_headless_false_when_tag_set(client: AsyncClient, db
     )
 
     assert payload["headless"] is False
-
-
-@pytest.mark.asyncio
-async def test_build_payload_stereotype_caps_do_not_include_browser_name_for_android_mobile(
-    client: AsyncClient,
-    db_session: AsyncSession,
-) -> None:
-    """Chrome session routing is now handled by the agent emitting dual TOML relay
-    slots (one for native apps, one for Chrome).  The backend stereotype_caps must
-    NOT inject browserName so that native-app sessions can also be routed."""
-    host = await create_host(client, **HOST_PAYLOAD)
-    device = await create_device_record(
-        db_session,
-        host_id=host["id"],
-        identity_value="stereotype-android-001",
-        connection_target="emulator-5554",
-        name="Android Browser Device",
-    )
-
-    payload = build_agent_start_payload(
-        device,
-        4725,
-        settings=FakeSettingsReader({"grid.hub_url": "http://grid:4444", "appium.session_override": True}),
-    )
-
-    assert payload["extra_caps"] is None
-    # browserName is intentionally absent from stereotype_caps — the agent adds
-    # a second relay slot for Chrome when building the Grid node TOML.
-    assert "browserName" not in (payload["stereotype_caps"] or {})
-    # build_agent_start_payload emits the manager-owned slice of the stereotype
-    # (deviceId + run_id + tag fanout). Pack-derived routing keys
-    # (platformName, appium:platform, appium:os_version, …) are merged in by
-    # start_remote_node via build_pack_start_payload — not exercised here.
-    assert payload["stereotype_caps"]["appium:gridfleet:deviceId"] == str(device.id)
-    assert payload["stereotype_caps"]["gridfleet:run_id"] == "free"
 
 
 @pytest.mark.asyncio

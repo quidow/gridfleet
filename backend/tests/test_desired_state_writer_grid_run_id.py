@@ -39,7 +39,7 @@ async def _seed_device_with_node(db_session: AsyncSession, host: Host) -> tuple[
     db_session.add(device)
     await db_session.flush()
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid.example")
+        node = AppiumNode(device_id=device.id, port=4723)
     db_session.add(node)
     await db_session.commit()
     return device.id, node

@@ -35,7 +35,6 @@ async def test_node_health_failure_path_locks_appium_node(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=0,
@@ -69,7 +68,6 @@ async def test_node_health_failure_path_locks_appium_node(
                     settings=FakeSettingsReader({}),
                     pool=Mock(),
                     circuit_breaker=Mock(),
-                    grid=Mock(),
                     recovery_control=AsyncMock(),
                     health=AsyncMock(),
                     incidents=AsyncMock(),
@@ -78,7 +76,6 @@ async def test_node_health_failure_path_locks_appium_node(
                     locked_device.appium_node,
                     locked_device,
                     result=ProbeResult(status="refused"),
-                    grid_device_ids=set(),
                 )
             await session.commit()
 

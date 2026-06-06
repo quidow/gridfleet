@@ -1,8 +1,8 @@
 """
-Manual baseline example: connect to a Roku device through Selenium Grid and take a screenshot.
+Manual baseline example: connect to a Roku device through the WebDriver router and take a screenshot.
 
 Requires:
-    - Selenium Grid hub running on localhost:4444
+    - WebDriver router running on localhost:4444
     - A Roku device registered with Roku dev credentials in device config
     - Appium with the Roku driver installed (`appium driver install roku`)
     - The supported GridFleet testkit installed

@@ -9,6 +9,7 @@ def test_lifecycle_policy_service_has_methods() -> None:
         "handle_session_finished",
         "complete_deferred_stop_if_session_ended",
         "note_connectivity_loss",
+        "clear_suppression_on_self_heal",
         "clear_pending_auto_stop_on_recovery",
         "record_control_action",
     ):

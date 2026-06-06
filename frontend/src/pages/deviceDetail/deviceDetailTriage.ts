@@ -159,13 +159,13 @@ export function deriveDeviceDetailTriage(
       eyebrow = 'Node idle';
       title = reservation ? 'No Appium node configured — reserved by' : 'No Appium node configured';
       titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
-      detail = 'Start the node to register this device with Selenium Grid.';
+      detail = 'Start the node to make this device available for sessions.';
     } else {
       tone = 'warn';
       eyebrow = 'Device control';
       title = reservation ? 'Appium node is stopped — reserved by' : 'Appium node is stopped';
       titleLink = reservation ? { text: reservation.run_name, to: `/runs/${reservation.run_id}` } : undefined;
-      detail = 'Start the node to register this device with Selenium Grid.';
+      detail = 'Start the node to make this device available for sessions.';
     }
 
     return { tone, eyebrow, title, titleLink, detail, action: nodeAction };

@@ -20,7 +20,7 @@ class ProbeSessionFn(Protocol):
         capabilities: JsonObject,
         timeout_sec: int,
         *,
-        grid_url: str | None = None,
+        target: str | None = None,
     ) -> Awaitable[tuple[bool, str | None]]:
         raise NotImplementedError
 

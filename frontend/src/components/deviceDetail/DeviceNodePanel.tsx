@@ -92,7 +92,6 @@ export function DeviceNodePanel({ device }: Props) {
           <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2/60 px-3 py-2">
             <div>
               <h3 className="text-xs font-medium uppercase tracking-wide text-text-3">Appium Node</h3>
-              <p className="mt-0.5 text-sm font-medium text-text-1">{node.grid_url}</p>
             </div>
             <div className="flex items-center gap-2">
               <ForceClearRestartButton nodeId={node.id} transitionToken={node.transition_token} />

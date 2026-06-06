@@ -94,7 +94,7 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
             connection_type=ConnectionType.usb,
         )
     with state_write_guard.bypass():
-        node = AppiumNode(device_id=device.id, port=4723, grid_url="http://grid")
+        node = AppiumNode(device_id=device.id, port=4723)
     fake_db = MagicMock()
     fake_db.flush = AsyncMock()
     monkeypatch.setattr(
@@ -538,9 +538,7 @@ async def test_start_stop_restart_node_guard_paths(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
     )
     with state_write_guard.bypass():
-        node = AppiumNode(
-            device_id=device.id, port=4723, grid_url="http://grid", pid=1, active_connection_target="active"
-        )
+        node = AppiumNode(device_id=device.id, port=4723, pid=1, active_connection_target="active")
     db_session.add(node)
     await db_session.commit()
     device.appium_node = node
@@ -567,11 +565,9 @@ async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
 
     node_id = uuid.uuid4()
     with state_write_guard.bypass():
-        not_running = AppiumNode(device_id=device_id, port=4725, grid_url="http://grid")
+        not_running = AppiumNode(device_id=device_id, port=4725)
     with state_write_guard.bypass():
-        running_node = AppiumNode(
-            device_id=device_id, port=4725, grid_url="http://grid", pid=2, active_connection_target="dev"
-        )
+        running_node = AppiumNode(device_id=device_id, port=4725, pid=2, active_connection_target="dev")
     db.refresh.reset_mock()
     db.get = AsyncMock(side_effect=[not_running, running_node])
     monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
@@ -658,7 +654,6 @@ async def test_mark_node_started_stages_drain_reconfigure_on_cooldowned_restart(
         existing = AppiumNode(
             device_id=device.id,
             port=4724,
-            grid_url="http://grid",
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
             accepting_new_sessions=False,

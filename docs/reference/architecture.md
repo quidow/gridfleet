@@ -1,17 +1,18 @@
 # System Architecture
 
-GridFleet uses a host-first orchestration model to manage Appium and Selenium Grid workflows. Its responsibilities are split across three major layers.
+GridFleet uses a host-first orchestration model to manage Appium workflows. Its responsibilities are split across four major components: the backend control plane, the host agent, the WebDriver router, and the frontend dashboard.
 
 ## 1. Backend Control Plane (FastAPI + Postgres)
 
 The backend is a multi-worker stateless group of HTTP API servers. State is stored entirely in PostgreSQL. 
 
 ### Advisory Locks and Background Loops
-Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a production Compose setup), the backend uses **PostgreSQL Advisory Locks** to ensure exactly one leader evaluates background maintenance tasks. The `app.main` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, grid_event_bus_subscriber, node_health, device_connectivity, property_refresh, etc.), plus a leader keepalive and a separate non-leader leader watcher task, that:
+Because multiple Uvicorn/FastAPI workers can run simultaneously (e.g., in a production Compose setup), the backend uses **PostgreSQL Advisory Locks** to ensure exactly one leader evaluates background maintenance tasks. The `app.main` lifespan starts ~18 leader-owned background loops (heartbeat, session_sync, node_health, device_connectivity, property_refresh, grid_allocation_reaper, etc.), plus a leader keepalive and a separate non-leader leader watcher task, that:
 
 - Monitor missing Agent heartbeats.
-- Evaluate node health via Appium and Grid calls.
+- Evaluate node health via direct-to-Appium probes.
 - Sync stray sessions on Appium that don't belong to the internal state.
+- Expire stale router allocation tickets (`grid_allocation_reaper`).
 - Transition device maintenance lifecycles.
 
 ### Appium node lifecycle
@@ -45,7 +46,9 @@ API `effective_state` as the derived read model.
 
 ### Probe Sessions
 
-Session viability, node health, and device verification each run a sub-second probe against the Selenium Grid. Each probe is persisted as a single terminal `Session` row by its caller via `app.sessions.service_probes.record_probe_session`, not by the grid session-sync loop. Probe rows carry `test_name == "__gridfleet_probe__"` and a `requested_capabilities["gridfleet:probeCheckedBy"]` source attribution (`scheduled`, `manual`, `recovery`, or `verification`).
+Session viability, node health, and device verification each run a sub-second probe directly against the device's Appium server (no Grid involved). Each probe is persisted as a single terminal `Session` row by its caller via `app.sessions.service_probes.record_probe_session`, not by the session-sync observation loop. Probe rows carry `test_name == "__gridfleet_probe__"` and a `requested_capabilities["gridfleet:probeCheckedBy"]` source attribution (`scheduled`, `manual`, `recovery`, or `verification`).
+
+Because these probes — along with the session-observation sweep and force-terminate — open HTTP connections straight to `http://{host.ip}:{appium_port}` (via `app.grid.appium_direct`), the **backend (manager) must have direct network reach to the Appium port range on every device host**, the same requirement the router has for WebDriver proxying. Both the backend and the router need this edge; test clients and operators do not. See `docs/guides/security.md`.
 
 Probe rows are excluded from success-rate, throughput, utilization, error breakdown, and heatmap analytics via the existing `exclude_non_test_sessions` / `exclude_non_success_metric_sessions` filters keyed on `test_name`. Probe persistence does **not** emit `session.started` or `session.ended` events — webhooks and the event stream see no probe traffic. Operators surface probes on the Sessions page via the `include_probes` query parameter (off by default). Probes have their own retention window via `retention.probe_sessions_days` (default 7 days).
 
@@ -58,11 +61,14 @@ The PostgreSQL 18 migration is a fresh baseline. Environments that have already 
 Agents run on physical lab hosts or VMs where devices are attached. Unlike the centralized Backend, Agents run on the 'edge' and govern physical connections.
 
 - **Discovery**: Runs pack-aware probes and adapters, then reports discovered candidates through manager-owned intake flows.
-- **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial.
-- **Selenium Grid Registration**: Once Appium is healthy, the Agent starts an in-process Python Grid Node service. The service registers with the central Selenium Hub over the Grid event bus and reverse-proxies WebDriver traffic to local Appium.
+- **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial. The agent runs no Grid relay node; WebDriver traffic reaches Appium via the router (below).
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 
-## 3. Frontend Operator Dashboard
+## 3. WebDriver Router (Rust / Pingora)
+
+The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/*`) to allocate and confirm a device, then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, and capability matching; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
+
+## 4. Frontend Operator Dashboard
 
 The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operators.
 
@@ -77,6 +83,6 @@ The Frontend (`frontend/src`) acts as the single pane of glass for Fleet Operato
 2. The Agent discovers it through the relevant driver-pack probe and reports candidates to the manager-owned discovery flow.
 3. The Operator views the Intake drawer in the Dashboard and "Registers" the device.
 4. The Backend records desired Appium-node intent for that device.
-5. The reconciler drives the Agent to start Appium and attach the complementary Grid Node to the Hub.
+5. The reconciler drives the Agent to start Appium for that device.
 6. A CI runner makes a reservation via `/api/runs`.
-7. Testing traffic is sent directly to the Hub (`http://localhost:4444`), where Selenium routing matches it by capabilities to the Python Grid Node, which proxies WebDriver traffic to the local Appium server and device.
+7. Testing traffic is sent to the router (`http://localhost:4444`), which allocates a matching device via the backend internal grid API and proxies WebDriver traffic directly to that device's local Appium server.

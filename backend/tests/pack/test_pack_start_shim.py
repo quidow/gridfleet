@@ -4,8 +4,32 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceType
-from app.packs.services.start_shim import PackStartPayloadError, build_pack_start_payload, resolve_pack_for_device
+from app.packs.services.start_shim import (
+    PackStartPayloadError,
+    _ensure_session_discovery,
+    build_pack_start_payload,
+    resolve_pack_for_device,
+)
 from tests.pack.factories import seed_test_packs
+
+
+def _has_session_discovery(features: list[str]) -> bool:
+    return any(f == "session_discovery" or f.endswith(":session_discovery") for f in features)
+
+
+def test_ensure_session_discovery_injects_when_missing() -> None:
+    # C10: a pack manifest that omits session_discovery must still get it so grid
+    # orphan reaping works.
+    out = _ensure_session_discovery(["uiautomator2:chromedriver_autodownload"], pack_id="some-pack")
+    assert _has_session_discovery(out)
+    assert "uiautomator2:chromedriver_autodownload" in out
+
+
+def test_ensure_session_discovery_leaves_existing_entry_untouched() -> None:
+    existing = ["uiautomator2:session_discovery"]
+    assert _ensure_session_discovery(existing, pack_id="some-pack") == existing
+    bare = ["session_discovery"]
+    assert _ensure_session_discovery(bare, pack_id="some-pack") == bare
 
 
 def _make_device(platform_id: str, device_type: DeviceType, pack_id: str | None = None) -> MagicMock:
@@ -51,8 +75,7 @@ async def test_build_pack_start_payload_includes_rendered_stereotype(db_session:
     assert payload is not None
     assert payload["pack_id"] == "appium-uiautomator2"
     assert payload["platform_id"] == "android_mobile"
-    assert payload["stereotype_caps"]["platformName"] == "Android"
-    assert payload["stereotype_caps"]["appium:automationName"] == "UiAutomator2"
+    assert payload["appium_platform_name"] == "Android"
 
 
 @pytest.mark.asyncio

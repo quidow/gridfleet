@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.1
+release: 2026.06.3
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -23,6 +23,8 @@ appium_driver:
   version: "==10.33.0"
   recommended: "10.33.0"
   known_bad: []
+insecure_features:
+  - "*:session_discovery"
 workarounds:
   - id: tvos_devicectl_preference
     applies_when:

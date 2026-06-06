@@ -62,7 +62,6 @@ async def test_clear_expired_transition_token_does_not_emit_override_metric(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://localhost:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             transition_token=expired_token,

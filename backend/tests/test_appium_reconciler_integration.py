@@ -60,7 +60,6 @@ async def test_reconciler_starts_agent_when_desired_running_and_no_observed(
         node = AppiumNode(
             device_id=device.id,
             port=0,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,
@@ -106,7 +105,6 @@ async def test_reconciler_does_not_reuse_stale_running_db_row_when_agent_reports
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=111,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -150,7 +148,6 @@ async def test_reconciler_stops_agent_when_desired_stopped_and_observed(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             desired_state=AppiumDesiredState.stopped,
             desired_port=None,
@@ -197,7 +194,6 @@ async def test_reconciler_stop_intent_clears_restart_transition_token(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=12345,
             desired_state=AppiumDesiredState.stopped,
             transition_token=uuid.uuid4(),
@@ -245,7 +241,6 @@ async def test_reconciler_restarts_agent_and_clears_transition_token(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=111,
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
@@ -308,7 +303,6 @@ async def test_reconciler_failed_start_sets_backoff_and_success_resets_it(
         node = AppiumNode(
             device_id=device.id,
             port=settings_service.get("appium.port_range_start"),
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,
@@ -378,7 +372,6 @@ async def test_reconciler_stop_failure_preserves_restart_token(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=111,
             desired_state=AppiumDesiredState.running,
             desired_port=4724,
@@ -428,7 +421,6 @@ async def test_reconciler_touches_backed_off_rows_when_host_responds(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,
@@ -465,7 +457,6 @@ async def test_reconciler_rejects_zero_port_start_result(
         node = AppiumNode(
             device_id=device.id,
             port=0,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,
@@ -518,7 +509,6 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
         first_node = AppiumNode(
             device_id=first.id,
             port=start_port,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,
@@ -528,7 +518,6 @@ async def test_reconciler_allocates_distinct_ports_for_two_same_host_starts(
         second_node = AppiumNode(
             device_id=second.id,
             port=start_port + 1,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,

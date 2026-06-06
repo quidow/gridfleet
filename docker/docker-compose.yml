@@ -15,19 +15,19 @@ services:
       timeout: 5s
       retries: 5
 
-  selenium-hub:
-    image: selenium/hub:4.43.0-20260404
+  router:
+    build:
+      context: ..
+      dockerfile: router/Dockerfile
     ports:
-      - "4442:4442"
-      - "4443:4443"
       - "4444:4444"
+    environment:
+      GRIDFLEET_ROUTER_LISTEN: 0.0.0.0:4444
+      GRIDFLEET_ROUTER_BACKEND: http://backend:8000
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      - backend
 
   backend:
     build:
@@ -35,13 +35,10 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       GRIDFLEET_DATABASE_URL: postgresql+asyncpg://gridfleet:gridfleet@postgres:5432/gridfleet
-      GRIDFLEET_GRID_HUB_URL: http://selenium-hub:4444
     ports:
       - "8000:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      selenium-hub:
         condition: service_healthy
     volumes:
       - driver-pack-storage:/var/lib/gridfleet/driver-packs

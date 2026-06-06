@@ -99,7 +99,6 @@ from app.runs import service_reservation as run_reservation_service
 from app.runs.models import TestRun
 from app.runs.schemas import DeviceRequirement
 from app.sessions import protocols as session_viability_protocols
-from app.sessions import service_viability as session_viability
 from app.settings import registry as settings_registry
 from app.settings import service_config as config_service
 from app.settings.service_config import SettingsConfigService
@@ -166,7 +165,6 @@ def test_device_readiness_effective_state_branches() -> None:
         AppiumNodeRead(
             id=uuid.uuid4(),
             port=4723,
-            grid_url="http://grid",
             pid=None,
             container_id=None,
             active_connection_target=None,
@@ -180,7 +178,6 @@ def test_device_readiness_effective_state_branches() -> None:
         AppiumNodeRead(
             id=uuid.uuid4(),
             port=4723,
-            grid_url="http://grid",
             pid=123,
             container_id=None,
             active_connection_target=None,
@@ -532,13 +529,6 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             }
         ),
     ).cleanup_old_data(cleanup_db)
-
-    assert session_viability._format_http_error(
-        session_viability.httpx.RequestError(
-            "",
-            request=session_viability.httpx.Request("GET", "http://grid/session"),
-        )
-    ) == ("RequestError while calling http://grid/session")
 
     class Result:
         def __init__(self, value: object) -> None:

@@ -75,7 +75,6 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -233,7 +232,6 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -315,7 +313,6 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4725,
             pid=27765,
@@ -352,7 +349,6 @@ async def test_operator_stop_active_tracks_sticky_stop(
         node = AppiumNode(
             device_id=device.id,
             port=4726,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4726,
             pid=27800,
@@ -393,7 +389,6 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
         node = AppiumNode(
             device_id=device.id,
             port=4725,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.stopped,
         )
     db_session.add(node)
@@ -435,3 +430,120 @@ async def test_operator_start_revokes_blocking_health_failure_stop(
     assert remaining == [], "operator start did not revoke the blocking health_failure:node stop intent"
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
+
+
+async def test_request_start_pins_existing_node_port(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Operator start on a device with an existing AppiumNode row must pin the
+    node's current port — NOT re-run candidate_ports, which re-offers the lowest
+    free port (4723) during the pid-NULL gap and reallocates the node, inducing
+    the two-supervisor 4723<->4725 oscillation (thrash fix #1).
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="pin-existing-port", verified=True)
+    # Node sits on 4725 with pid NULL and desired_state=stopped, so candidate_ports
+    # would offer 4723 first (lowest free in the default 4723..4823 range).
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            desired_state=AppiumDesiredState.stopped,
+            desired_port=None,
+            pid=None,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
+    await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
+    await db_session.commit()
+    await db_session.refresh(node)
+
+    assert node.desired_port == 4725, (
+        f"operator start must pin the existing node port (4725), not reallocate to a lower free port; "
+        f"got {node.desired_port}"
+    )
+
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.payload["desired_port"] == 4725, "operator:start intent must carry the pinned port"
+
+
+async def test_request_start_first_allocation_uses_candidate_ports(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """First-time start (no AppiumNode row) must allocate via candidate_ports —
+    the lowest free port in the configured range (4723)."""
+    device = await create_device(db_session, host_id=db_host.id, name="first-alloc", verified=True)
+    # Prime the relationship to a known-empty state so request_start's
+    # ``device.appium_node`` read is the in-session value (no lazy IO).
+    device.appium_node = None
+
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+    )
+    node = await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
+    await db_session.commit()
+    await db_session.refresh(node)
+
+    assert node.port == 4723, f"first allocation must use candidate_ports()[0]=4723; got {node.port}"
+    assert node.desired_port == 4723
+
+
+async def test_request_restart_moved_port_node_converges_without_oscillation(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Restart of a node whose agent-side process moved ports (the kill-window
+    respawn) must converge on the node's own port — write_desired_state is called
+    with node.port, not a reallocated low port — so the desired/observed ports do
+    not oscillate.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="restart-moved-port", verified=True)
+    # Node is observed running on 4725 (agent respawned here after a kill -9 on
+    # 4723). candidate_ports would still re-offer 4723 first.
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=27765,
+            active_connection_target=device.connection_target,
+        )
+    db_session.add(node)
+    await db_session.flush()
+    device.appium_node = node
+
+    svc = OperatorNodeLifecycleService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({"appium_reconciler.restart_window_sec": 120}),
+        publisher=event_bus,
+    )
+    await svc.request_restart(db_session, device, caller="operator_restart", reason="operator restart")
+    await db_session.commit()
+    await db_session.refresh(node)
+
+    assert node.desired_port == 4725, (
+        f"restart must converge on the running port (4725), not reallocate; got {node.desired_port}"
+    )
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"operator:start:{device.id}",
+            )
+        )
+    ).scalar_one()
+    assert intent.payload["desired_port"] == 4725

@@ -315,7 +315,6 @@ async def seed_host_and_running_node(
         node = AppiumNode(
             device_id=device.id,
             port=port,
-            grid_url="http://hub.invalid:4444",
             pid=12345,
             active_connection_target=device.connection_target,
             desired_state=AppiumDesiredState.running,

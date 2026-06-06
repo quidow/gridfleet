@@ -139,7 +139,6 @@ class RunCreateResponse(BaseModel):
     name: str
     state: RunState
     devices: list[ReservedDeviceInfo]
-    grid_url: str
     ttl_minutes: int
     heartbeat_timeout_sec: int
     created_at: datetime

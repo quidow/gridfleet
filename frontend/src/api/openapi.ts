@@ -2314,8 +2314,6 @@ export interface components {
              * @enum {string}
              */
             readonly effective_state: "starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error";
-            /** Grid Url */
-            grid_url: string;
             /** Health Running */
             health_running?: boolean | null;
             /** Health State */
@@ -4921,8 +4919,6 @@ export interface components {
             created_at: string;
             /** Devices */
             devices: components["schemas"]["ReservedDeviceInfo"][];
-            /** Grid Url */
-            grid_url: string;
             /** Heartbeat Timeout Sec */
             heartbeat_timeout_sec: number;
             /**
@@ -5261,7 +5257,7 @@ export interface components {
          * SessionStatus
          * @enum {string}
          */
-        SessionStatus: "running" | "passed" | "failed" | "error";
+        SessionStatus: "running" | "passed" | "failed" | "error" | "pending";
         /** SessionStatusUpdate */
         SessionStatusUpdate: {
             status: components["schemas"]["SessionStatus"];

@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.reconfigure_delivery import (
@@ -13,6 +13,7 @@ from app.agent_comm.reconfigure_delivery import (
     deliver_agent_reconfigures,
 )
 from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services.node_viability import node_viable_predicate
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.intent import IntentService
@@ -76,16 +77,7 @@ async def _find_matching_devices(
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
-        .where(
-            or_(
-                AppiumNode.id.is_(None),
-                and_(
-                    AppiumNode.pid.is_not(None),
-                    AppiumNode.active_connection_target.is_not(None),
-                    AppiumNode.transition_token.is_(None),
-                ),
-            )
-        )
+        .where(node_viable_predicate())
         .where(Device.pack_id == requirement.pack_id)
         .where(Device.platform_id == requirement.platform_id)
         .where(~active_reservation_exists)
@@ -115,16 +107,7 @@ async def _find_matching_devices(
         .where(Device.id.in_(candidate_ids))
         .where(Device.operational_state == DeviceOperationalState.available)
         .where(Device.review_required.is_(False))
-        .where(
-            or_(
-                AppiumNode.id.is_(None),
-                and_(
-                    AppiumNode.pid.is_not(None),
-                    AppiumNode.active_connection_target.is_not(None),
-                    AppiumNode.transition_token.is_(None),
-                ),
-            )
-        )
+        .where(node_viable_predicate())
         .where(~active_reservation_exists)
         .order_by(Device.created_at, Device.id)
         .with_for_update(of=Device, skip_locked=True)

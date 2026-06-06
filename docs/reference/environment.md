@@ -28,8 +28,18 @@ These are read directly by `backend/app/core/config.py` and domain config module
 | `GRIDFLEET_AGENT_AUTH_PASSWORD` | unset | backend process | Password sent on backend → agent calls. Required together with `GRIDFLEET_AGENT_AUTH_USERNAME`. |
 | `GRIDFLEET_RECONCILER_CONVERGENCE_ENABLED` | `true` (when unset) | backend process | When set to anything other than `1`/`true`/`yes`/`on`, disables Appium reconciler desired-state convergence. |
 | `GRIDFLEET_DRIVER_PACK_STORAGE_DIR` | `/var/lib/gridfleet/driver-packs` | backend process | Filesystem root where verified driver-pack tarballs are stored (`PackStorageService`). |
-| `GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL` | `tcp://selenium-hub:4442` | backend process | ZMQ XPUB URL (hub `:4442`) the manager's event-bus subscriber loop connects to for session-created/closed events. |
-| `GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL` | `tcp://selenium-hub:4443` | backend process | ZMQ XSUB URL (hub `:4443`) the manager would publish to; reserved for injecting events into the hub bus. No backend code currently emits events, so this knob is effectively unused at runtime. |
+
+## Router Process Variables
+
+These configure the standalone Rust WebDriver router (`router/`). Each has an equivalent CLI flag; prefer the env var so credentials stay out of `ps` / `docker inspect`-visible argv.
+
+| Variable | Default | Used by | Notes |
+| --- | --- | --- | --- |
+| `GRIDFLEET_ROUTER_LISTEN` | required (`0.0.0.0:4444` in compose) | router process | `host:port` the router binds for inbound WebDriver traffic. |
+| `GRIDFLEET_ROUTER_BACKEND` | required (`http://backend:8000` in compose) | router process | Backend base URL the router calls for device allocation (`/internal/grid/*`). |
+| `GRIDFLEET_ROUTER_BACKEND_AUTH` | empty (absent) | router process | HTTP Basic credentials `user:pass` for backend calls. Empty means no auth header is sent. |
+| `GRIDFLEET_ROUTER_PROXY_TIMEOUT` | `300` | router process | Per-command upstream Appium timeout, in seconds. |
+| `GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT` | `330` | router process | Overall cap on a new-session request including queueing, in seconds. |
 
 ## Backend Settings-Registry Fallback Variables
 
@@ -39,16 +49,16 @@ These are not the authoritative settings store. They only provide the initial se
 | --- | --- | --- | --- |
 | `GRIDFLEET_HEARTBEAT_INTERVAL_SEC` | `general.heartbeat_interval_sec` | `15` | Agent heartbeat loop cadence |
 | `GRIDFLEET_MAX_MISSED_HEARTBEATS` | `general.max_missed_heartbeats` | `3` | Missed heartbeats before host becomes offline |
-| `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `general.session_queue_timeout_sec` | `300` | Grid session queue timeout |
+| `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `general.session_queue_timeout_sec` | `300` | Session queue timeout |
 | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `general.device_cooldown_max_sec` | `3600` | Maximum run-scoped device cooldown accepted from clients |
 | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `general.device_cooldown_escalation_threshold` | `3` | Seeds the registry default for fresh installs; `0` disables escalation |
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
 | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `general.node_check_interval_sec` | `30` | Appium node health-check cadence |
 | `GRIDFLEET_NODE_MAX_FAILURES` | `general.node_max_failures` | `3` | Failed node health checks before auto-restart |
 | `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `general.device_check_interval_sec` | `60` | Device connectivity verification cadence |
-| `GRIDFLEET_GRID_HUB_URL` | `grid.hub_url` | `http://selenium-hub:4444` | Grid hub URL used by the backend |
-| `GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL` | `grid.event_bus_subscribe_url` | `tcp://selenium-hub:4442` | Seeds the registry default. The live event-bus subscriber loop reads the `GridConfig` process value, not the registry copy, so changing this registry key at runtime has no effect on the running subscriber. |
-| `GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL` | `grid.event_bus_publish_url` | `tcp://selenium-hub:4443` | Seeds the registry default. See the subscribe-URL note above; the live process reads the `GridConfig` value rather than the registry copy. |
+| `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `grid.queue_timeout_sec` | `300` | How long a queued new-session request waits for a device before failing |
+| `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `grid.claim_window_sec` | `120` | How long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it |
+| `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `grid.session_first_command_grace_sec` | `180` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep reaps it; measured from the allocation claim |
 | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `appium.port_range_start` | `4723` | Managed Appium port range start |
 | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `appium.port_range_end` | `4823` | Managed Appium port range end |
 | `GRIDFLEET_MIN_AGENT_VERSION` | `agent.min_version` | `0.1.0` | Empty string disables minimum-version enforcement |
@@ -75,18 +85,10 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_API_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username; required together with `AGENT_API_AUTH_PASSWORD`. When set, the agent enforces HTTP Basic on all `/agent/*` HTTP routes. |
 | `AGENT_API_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password; required together with `AGENT_API_AUTH_USERNAME`. |
 | `AGENT_AGENT_PORT` | `5100` | agent process | Agent listen port |
-| `AGENT_GRID_HUB_URL` | `http://localhost:4444` | agent process | Grid hub URL used for manager-provided launch specs |
-| `AGENT_GRID_PUBLISH_URL` | `tcp://localhost:4442` | agent process | Grid event-bus publish URL |
-| `AGENT_GRID_SUBSCRIBE_URL` | `tcp://localhost:4443` | agent process | Grid event-bus subscribe URL |
-| `AGENT_GRID_NODE_HEARTBEAT_SEC` | `5` | agent process | Seconds between Python Grid Node `NODE_STATUS` heartbeats. |
-| `AGENT_GRID_NODE_SESSION_TIMEOUT_SEC` | `1800` | agent process | Maximum session age before the Python Grid Node asks Appium to delete the session and frees the slot. Raise for workflows that quietly block on external-login or post-test artifact collection between WebDriver calls; the previous 300s default closed legitimate idle gaps as `session timed out due to inactivity`. |
-| `AGENT_GRID_NODE_PROXY_TIMEOUT_SEC` | `60` | agent process | Upstream Appium request timeout for proxied Grid Node HTTP commands. |
 | `AGENT_RUNTIME_ROOT` | `/opt/gridfleet-agent/runtimes` | agent process | Root directory where the agent installs isolated Appium runtime environments (`APPIUM_HOME` per `runtime_id`). The installer overrides this to `<agent_dir>/runtimes` in the generated service environment; the fallback default only applies when the agent is started outside the installer. |
 | `AGENT_APPIUM_PORT_RANGE_START` | `4723` | agent process | Start of Appium server port range |
 | `AGENT_APPIUM_PORT_RANGE_END` | `4823` | agent process | End of Appium server port range |
-| `AGENT_GRID_NODE_PORT_START` | `5555` | agent process | First Python Grid Node HTTP port assigned on the host |
-| `AGENT_GRID_NODE_BIND_HOST` | `0.0.0.0` | agent process | Local interface the Python Grid Node HTTP server binds. Independent of `AGENT_ADVERTISE_IP` (which is what the hub registers). The default wildcard works for every supported topology including docker-compose with `host.docker.internal` advertised. Set to a specific IP to restrict the listening interface. |
-| `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration and Python Grid Node startup. Accepts **any DNS name or IP** the backend and Selenium Hub can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from containers (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
+| `AGENT_ADVERTISE_IP` | unset | agent process | Optional externally reachable address advertised by the agent during registration. Accepts **any DNS name or IP** the backend and router can reach, not strictly an IPv4 address. Useful for co-located docker deployments where the host's LAN IP is unreachable from containers (e.g. set to `host.docker.internal` or `172.17.0.1`). Leave empty to use UDP-trick discovery. |
 
 ## Agent Installer Helper Variables
 
@@ -99,10 +101,6 @@ These are consumed by `scripts/install-agent.sh` or `gridfleet-agent install` wh
 | `--manager-url` | `http://localhost:8000` | installer CLI | Written into the generated service env/config |
 | `--manager-auth-username` | unset | installer CLI | Optional machine-auth username written into the generated service env/config |
 | `--manager-auth-password` | unset | installer CLI | Optional machine-auth password written into the generated service env/config |
-| `--grid-hub-url` | `http://localhost:4444` | installer CLI | Convenience input that becomes process `AGENT_GRID_HUB_URL` |
-| `--grid-publish-url` | `tcp://localhost:4442` | installer CLI | Convenience input that becomes process `AGENT_GRID_PUBLISH_URL` |
-| `--grid-subscribe-url` | `tcp://localhost:4443` | installer CLI | Convenience input that becomes process `AGENT_GRID_SUBSCRIBE_URL` |
-| `--grid-node-port-start` | `5555` | installer CLI | Convenience input that becomes process `AGENT_GRID_NODE_PORT_START` |
 | `--api-auth-username` | unset | installer CLI | Becomes process `AGENT_API_AUTH_USERNAME` in the generated service env; required together with `--api-auth-password` |
 | `--api-auth-password` | unset | installer CLI | Becomes process `AGENT_API_AUTH_PASSWORD` in the generated service env; required together with `--api-auth-username` |
 | `--advertise-ip` | unset | installer CLI | Becomes process `AGENT_ADVERTISE_IP` (hostname or IP the agent advertises, e.g. `host.docker.internal`) |
@@ -113,7 +111,7 @@ These variables are consumed by the supported testkit and example CI helpers.
 
 | Variable | Default | Used by | Notes |
 | --- | --- | --- | --- |
-| `GRID_URL` | `http://localhost:4444` | testkit / examples | Selenium Grid hub URL |
+| `GRID_URL` | `http://localhost:4444` | testkit / examples | WebDriver router URL (the `:4444` entrypoint clients send `POST /session` to) |
 | `GRIDFLEET_API_URL` | `http://localhost:8000/api` | testkit / examples | GridFleet API base used for run helpers, config lookup, and session reporting |
 
 ## Host Tool Discovery Variables

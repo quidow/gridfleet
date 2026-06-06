@@ -49,12 +49,12 @@ class VerificationRunnerService:
         capabilities: dict[str, Any],
         timeout_sec: int,
         *,
-        grid_url: str | None = None,
+        target: str | None = None,
     ) -> tuple[bool, str | None]:
-        return await self._viability.probe_session_via_grid(
+        return await self._viability.probe_session_direct(
             build_probe_capabilities(capabilities),
             timeout_sec,
-            grid_url=grid_url,
+            target=target,
         )
 
     async def _load_persisted_job(
@@ -101,8 +101,8 @@ class VerificationRunnerService:
                     db,
                     context,
                     http_client_factory=httpx.AsyncClient,
-                    probe_session_fn=lambda caps, timeout, grid_url=None: self._probe_session_via_gridfleet_marker(
-                        caps, timeout, grid_url=grid_url
+                    probe_session_fn=lambda caps, timeout, target=None: self._probe_session_via_gridfleet_marker(
+                        caps, timeout, target=target
                     ),
                 )
                 await finish_job(

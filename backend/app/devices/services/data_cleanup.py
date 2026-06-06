@@ -6,13 +6,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, or_, select
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.diagnostics.models import DeviceDiagnosticSnapshot
+from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -41,6 +42,7 @@ CleanupModel = (
     | type[HostResourceSample]
     | type[HostAgentLogEntry]
     | type[AnalyticsCapacitySnapshot]
+    | type[GridSessionQueueTicket]
 )
 
 
@@ -89,6 +91,7 @@ class DataCleanupService:
         capacity_snapshots_deleted = 0
         diagnostic_snapshots_deleted = 0
         agent_reconfigure_outbox_deleted = 0
+        grid_queue_tickets_deleted = 0
 
         # Sessions (only completed ones) — exclude probe rows; they have their own
         # retention.probe_sessions_days window below.
@@ -117,6 +120,28 @@ class DataCleanupService:
                 timestamp_column=Session.started_at,
                 cutoff=cutoff,
                 extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
+            )
+
+        # Terminal grid_session_queue tickets (reuses retention.sessions_days — a ticket
+        # never outlives its allocation Session). Purges cancelled/expired plus dangling
+        # `claimed` rows whose Session was already deleted (FK SET NULL) — legacy junk
+        # the harness G7 invariant flags. `updated_at` is when it reached its terminal.
+        if sessions_days > 0:
+            cutoff = now - timedelta(days=sessions_days)
+            grid_queue_tickets_deleted = await _delete_in_batches(
+                db,
+                model=GridSessionQueueTicket,
+                timestamp_column=GridSessionQueueTicket.updated_at,
+                cutoff=cutoff,
+                extra_predicates=(
+                    or_(
+                        GridSessionQueueTicket.status.in_((GridQueueStatus.cancelled, GridQueueStatus.expired)),
+                        and_(
+                            GridSessionQueueTicket.status == GridQueueStatus.claimed,
+                            GridSessionQueueTicket.session_row_id.is_(None),
+                        ),
+                    ),
+                ),
             )
 
         # ConfigAuditLog
@@ -214,7 +239,7 @@ class DataCleanupService:
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
             "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
-            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d",
+            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d, grid_queue_tickets=%d",
             sessions_deleted,
             probe_sessions_deleted,
             audit_deleted,
@@ -225,6 +250,7 @@ class DataCleanupService:
             capacity_snapshots_deleted,
             diagnostic_snapshots_deleted,
             agent_reconfigure_outbox_deleted,
+            grid_queue_tickets_deleted,
         )
         await self._publisher.publish(
             "system.cleanup_completed",
@@ -239,6 +265,7 @@ class DataCleanupService:
                 "capacity_snapshots_deleted": capacity_snapshots_deleted,
                 "diagnostic_snapshots_deleted": diagnostic_snapshots_deleted,
                 "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
+                "grid_queue_tickets_deleted": grid_queue_tickets_deleted,
             },
         )
 

@@ -32,7 +32,6 @@ async def _seed_node(db_session: AsyncSession, device_id: uuid.UUID) -> AppiumNo
         node = AppiumNode(
             device_id=device_id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.stopped,
         )
     db_session.add(node)
@@ -305,7 +304,6 @@ async def test_forced_release_registers_run_active_precondition(
     _release_svc = RunReleaseService(
         publisher=_pub,
         settings=FakeSettingsReader({}),
-        grid=_AsyncMock(),
         deferred_stop=_AsyncMock(),
     )
     await _release_svc.clear_desired_grid_run_id_for_run(
@@ -405,7 +403,6 @@ async def test_node_health_registers_node_running_precondition(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        grid=Mock(),
         recovery_control=AsyncMock(),
         health=AsyncMock(),
         incidents=AsyncMock(),
@@ -433,7 +430,6 @@ async def test_sweep_deletes_operator_start_intent_when_node_observed_running(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             pid=12345,
             active_connection_target="dev-1",
@@ -494,7 +490,6 @@ async def test_verification_node_not_stopped_when_operator_start_intent_swept(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
             pid=12345,

@@ -45,6 +45,20 @@ repos:
         pass_filenames: false
         files: ^(agent/agent_app/.*\.py|backend/app/agent_comm/generated\.py|backend/scripts/(generate|check)_agent_schemas\.py)$
 
+      - id: router-fmt
+        name: router rustfmt
+        entry: bash -c 'cd router && cargo fmt --check'
+        language: system
+        pass_filenames: false
+        files: ^router/
+
+      - id: router-clippy
+        name: router clippy
+        entry: bash -c 'cd router && cargo clippy --all-targets -- -D warnings'
+        language: system
+        pass_filenames: false
+        files: ^router/
+
       - id: no-default-arg-depends
         name: forbid default-arg Depends() in routers
         entry: scripts/check_no_default_arg_depends.sh

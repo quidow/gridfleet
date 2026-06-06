@@ -117,8 +117,7 @@ export function getGridHealth(status: GridStatus | null | undefined): GridHealth
   const nodeCount = status.grid.value?.nodes?.length ?? 0;
   const registeredDevices = status.registry.device_count ?? 0;
   const ready = status.grid.value?.ready ?? status.grid.ready ?? false;
-  const rawMessage = status.grid.value?.message ?? status.grid.message ?? null;
-  const message = rawMessage === 'Selenium Grid not ready.' ? null : rawMessage;
+  const message = status.grid.value?.message ?? status.grid.message ?? null;
   const error = status.grid.error ?? null;
 
   if (ready) return { tone: 'ready', label: 'Ready', detail: message ?? 'Accepting traffic' };

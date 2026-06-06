@@ -9,7 +9,6 @@ def test_parse_running_nodes_returns_typed_entries() -> None:
                 "pid": 1000,
                 "connection_target": "test-target-a",
                 "platform_id": "test_platform",
-                "grid_node_status": "up",
             },
             {
                 "port": 5002,
@@ -29,14 +28,12 @@ def test_parse_running_nodes_returns_typed_entries() -> None:
             pid=1000,
             connection_target="test-target-a",
             platform_id="test_platform",
-            grid_node_status="up",
         ),
         RunningAppiumNode(
             port=5002,
             pid=2000,
             connection_target="test-target-b",
             platform_id="test_platform",
-            grid_node_status=None,
         ),
     ]
 

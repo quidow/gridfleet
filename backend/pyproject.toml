@@ -22,7 +22,6 @@ dependencies = [
     "python-multipart>=0.0.32",
     "tenacity>=9.0,<10",
     "PyJWT>=2.10,<3",
-    "pyzmq>=26",
 ]
 
 [project.urls]
@@ -47,7 +46,6 @@ dev = [
 asyncio_mode = "auto"
 markers = [
     "db: test uses the backend Postgres test database",
-    "grid: test requires a live Selenium Grid hub (run with pytest -m grid)",
 ]
 
 [tool.mypy]
@@ -83,6 +81,12 @@ quote-style = "double"
 [tool.coverage.run]
 source = ["app"]
 omit = ["app/agent_comm/generated.py"]
+# Use the sys.monitoring core (Python 3.12+). The legacy C trace function drops
+# coverage of statements that resume after an `await` (it loses the line the
+# coroutine resumes on), so async route handlers and post-await DB writes were
+# being under-counted. sysmon traces them accurately — this raises measured
+# coverage of genuinely-executed async code, it does not exclude anything.
+core = "sysmon"
 
 [tool.coverage.report]
 fail_under = 98.0

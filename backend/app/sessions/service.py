@@ -10,14 +10,16 @@ from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
+from app.core.errors import AppError
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
 from app.devices.services.state import set_operational_state
 from app.runs import service as run_service
-from app.runs.models import RunState
+from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -26,25 +28,34 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
+    from app.runs.models import TestRun
     from app.sessions.protocols import DeviceSessionLifecycle
 
 
+class DeviceLiveSessionConflictError(AppError):
+    """The target device already has a different live session (register_session, harness P1).
+
+    Surfaced as HTTP 409 by the global ``AppError`` handler: registering a second
+    live session for a device the grid router is mid-confirming (or that another
+    client already holds) would double-bind the hardware. The session_id idempotency
+    check keys on session_id, not the device, so it does not catch this.
+    """
+
+    status_code = 409
+    code = "DEVICE_BUSY"
+
+
 async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    """Return True if the device currently has a live (running, not-ended) session row.
+    """Return True if the device currently has a live (running or pending, not-ended) session row.
 
     Shared gating helper: a live session means an Appium node is actively serving a
     client, so allocation-class actions (e.g. verification, which tears the node
-    down) must be refused — spec §14.1.
+    down) must be refused — spec §14.1. ``pending`` is the grid allocate->confirm
+    window: a device with a pending row is already claimed by the router (the Appium
+    create is in flight), so it must gate the same as ``running`` — otherwise
+    verification can start a probe on an allocated device and double-bind it.
     """
-    result = await db.execute(
-        select(Session.id)
-        .where(
-            Session.device_id == device_id,
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
-        )
-        .limit(1)
-    )
+    result = await db.execute(select(Session.id).where(live_session_predicate(device_id)).limit(1))
     return result.first() is not None
 
 
@@ -139,6 +150,71 @@ def queue_session_ended_event(
         build_session_ended_event_payload(session, device=device),
         severity=_session_ended_severity(str(session.status), session.error_type),
     )
+
+
+def _apply_session_terminal_status(session: Session, *, attached_run: TestRun | None) -> None:
+    """Decide and stamp the terminal status for a session being closed.
+
+    A session whose owning run reached a non-``completed`` terminal state was
+    aborted out from under it → ``error`` with a run-released reason. Otherwise
+    the W3C teardown carries no outcome, so we default to ``passed`` (real
+    outcomes are owned by run/test reporting). Shared by every session-close
+    path (session_sync liveness + grid mark_ended) so they cannot drift.
+    """
+    if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
+        session.status = SessionStatus.error
+        session.error_type = "run_released"
+        # Prefer the run's own error (e.g. an operator's force-release reason); fall back
+        # to a generic run-state message when the run carries none.
+        session.error_message = (
+            attached_run.error
+            if attached_run.error
+            else f"Run ended while session was still running ({attached_run.state.value})"
+        )
+    else:
+        session.status = SessionStatus.passed
+
+
+async def close_running_session(
+    db: AsyncSession,
+    session: Session,
+    *,
+    attached_run: TestRun | None,
+    publisher: EventPublisher,
+) -> None:
+    """Close one running session: stamp ended_at + terminal status, emit the
+    ended event, and revoke the active-session intent + reconcile its device.
+
+    The single shared close path used by both the session_sync liveness sweep
+    and the grid router's ``mark_ended`` handler. ``session.device`` must be
+    loaded for the event payload; ``attached_run`` carries the run-terminal
+    decision (pass the eager-loaded ``session.run``).
+    """
+    from app.grid.allocation import expire_tickets_for_session  # noqa: PLC0415
+
+    sid = session.session_id
+    # A row still ``pending`` at close was never confirmed: ``session.started`` is queued
+    # only at confirm (allocation.py), and the row carries a placeholder ``alloc-<uuid>``
+    # session_id no consumer ever saw start. Emitting ``session.ended`` for it would be an
+    # unpaired event (a spurious "session ended" toast in the UI), so suppress it —
+    # matching the reaper's silent close of the same pending class (C12). A confirmed
+    # (``running``) row always emits ended.
+    never_confirmed = session.status == SessionStatus.pending
+    session.ended_at = datetime.now(UTC)
+    _apply_session_terminal_status(session, attached_run=attached_run)
+    if not never_confirmed:
+        queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+    # Terminalize any allocation ticket whose claim minted this session (router DELETE
+    # + session_sync sweep both flow through here); a no-op for non-allocation sessions.
+    await expire_tickets_for_session(db, session.id)
+    await db.flush()
+    if session.device_id is not None:
+        await IntentService(db).revoke_intents_and_reconcile(
+            device_id=session.device_id,
+            sources=[f"active_session:{sid}"],
+            reason=f"Session {sid} ended",
+            publisher=publisher,
+        )
 
 
 def _older_than_cursor(cursor: CursorToken) -> ColumnElement[bool]:
@@ -429,6 +505,24 @@ class SessionCrudService:
             )
             if device is None and (device_id is not None or connection_target is not None):
                 raise ValueError("No matching device found for running session target")
+            if device is not None:
+                # Device-level live-session guard (harness P1). The row lock is held;
+                # recheck for a live (running|pending) session bound to this device
+                # whose session_id differs from ours. The grid allocator commits a
+                # ``pending`` placeholder row while the device still derives
+                # ``available``, so without this recheck a concurrent register_session
+                # for a different id would insert a second live row and double-bind the
+                # device the router is mid-confirming. Same session_id is the legitimate
+                # idempotent re-register and is allowed through.
+                conflicting = await db.scalar(
+                    select(Session.session_id)
+                    .where(live_session_predicate(device.id), Session.session_id != session_id)
+                    .limit(1)
+                )
+                if conflicting is not None:
+                    raise DeviceLiveSessionConflictError(
+                        f"device {device.id} already has a live session ({conflicting})"
+                    )
         else:
             device = await _resolve_device_for_session(
                 db,

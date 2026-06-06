@@ -7,7 +7,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
 | `general` | General | 29 |
-| `grid` | Appium & Grid | 14 |
+| `grid` | Appium & Grid | 13 |
 | `notifications` | Notifications | 3 |
 | `agent` | Agent | 10 |
 | `reservations` | Reservations | 4 |
@@ -28,7 +28,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.node_check_interval_sec` | `general` | `int` | `30` | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `10..600` | Interval for managed Appium node health checks |
 | `general.node_max_failures` | `general` | `int` | `3` | `GRIDFLEET_NODE_MAX_FAILURES` | `1..20` | Consecutive failed node checks before restart or suppression logic runs |
 | `general.device_check_interval_sec` | `general` | `int` | `60` | `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `10..600` | Interval for host-reported device connectivity checks |
-| `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for Grid session queueing |
+| `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for session queueing |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |
 | `general.device_cooldown_escalation_threshold` | `general` | `int` | `3` | `GRIDFLEET_DEVICE_COOLDOWN_ESCALATION_THRESHOLD` | `0..100` | Number of cooldowns for the same device within one run before the device is escalated to maintenance and excluded from the run; `0` disables escalation |
 | `general.property_refresh_interval_sec` | `general` | `int` | `600` | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `60..7200` | Interval for background property refresh |
@@ -41,7 +41,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.host_resource_telemetry_window_minutes` | `general` | `int` | `60` | none | `5..1440` | Default Host Detail telemetry time window |
 | `general.session_viability_interval_sec` | `general` | `int` | `3600` | none | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | none | `10..600` | Timeout for a session-viability probe |
-| `general.session_viability_failure_threshold` | `general` | `int` | `3` | none | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Grid hiccups |
+| `general.session_viability_failure_threshold` | `general` | `int` | `3` | none | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Appium hiccups |
 | `general.fleet_capacity_snapshot_interval_sec` | `general` | `int` | `60` | none | `10..3600` | How often fleet capacity snapshots are recorded |
 | `general.background_loop_flush_interval_sec` | `general` | `int` | `15` | none | `1..300` | How often the leader flushes in-memory background-loop heartbeat snapshots to the control-plane state table |
 | `general.lifecycle_recovery_backoff_base_sec` | `general` | `int` | `60` | none | `1..3600` | Base delay for lifecycle automatic recovery backoff |
@@ -50,10 +50,11 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `device_checks.ip_ping.consecutive_fail_threshold` | `device_checks` | `int` | `3` | none | `1..50` | Consecutive ICMP-ping misses before an opted-in device is marked unhealthy; set to 1 for strict, no-hysteresis behaviour |
 | `device_checks.ip_ping.timeout_sec` | `device_checks` | `float` | `2.0` | none | `0.5..30.0` | Per-attempt ICMP-ping timeout used by the adapter |
 | `device_checks.ip_ping.count_per_cycle` | `device_checks` | `int` | `1` | none | `1..10` | Number of ICMP echo requests sent per cycle inside the adapter probe |
-| `grid.hub_url` | `grid` | `string` | `http://selenium-hub:4444` | `GRIDFLEET_GRID_HUB_URL` | none | Selenium Grid hub URL used by the manager and managed nodes |
-| `grid.session_poll_interval_sec` | `grid` | `int` | `30` | none | `1..60` | Drift-reconciler interval; real-time session sync is driven by the leader-owned bus subscriber, and this poll only fixes state the bus missed |
-| `grid.event_bus_subscribe_url` | `grid` | `string` | `tcp://selenium-hub:4442` | `GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL` | none | ZMQ URL the manager subscribes to for hub event-bus messages |
-| `grid.event_bus_publish_url` | `grid` | `string` | `tcp://selenium-hub:4443` | `GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL` | none | ZMQ URL the manager publishes to (handshake only; no events emitted) |
+| `grid.session_poll_interval_sec` | `grid` | `int` | `30` | none | `1..300` | Interval for the direct-to-Appium session observation sweep that reconciles `Session` rows against live Appium state |
+| `grid.queue_timeout_sec` | `grid` | `int` | `300` | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `5..3600` | How long a queued new-session request may wait for a device before failing |
+| `grid.session_idle_timeout_sec` | `grid` | `int` | `1800` | `GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC` | `60..86400` | How long a running session may go without reported client activity before the observation sweep terminates it. Replaces the relay's idle timeout (Appium does not reliably enforce `newCommandTimeout` idle kills), so an abandoned client cannot pin its device busy forever |
+| `grid.session_first_command_grace_sec` | `grid` | `int` | `180` | `GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC` | `30..3600` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep terminates it. Measured from the allocation claim (`started_at`), so Appium session-create time eats into the grace. Bounds abandoned-client zombie sessions well below the full idle timeout |
+| `grid.claim_window_sec` | `grid` | `int` | `120` | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `5..600` | How long an allocated (pending) session may remain unconfirmed before the `grid_allocation_reaper` fails it. Must exceed worst-case Appium session-creation time |
 | `appium.port_range_start` | `grid` | `int` | `4723` | `GRIDFLEET_APPIUM_PORT_RANGE_START` | `1024..65535` | Start of the managed Appium node port range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `GRIDFLEET_APPIUM_PORT_RANGE_END` | `1024..65535` | End of the managed Appium node port range |
 | `appium.default_plugins` | `grid` | `string` | empty string | none | none | Comma-separated Appium plugins added to every managed node |

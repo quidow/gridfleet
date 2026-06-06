@@ -99,6 +99,8 @@ There is no manifest `discovery` block (the `Platform` model uses `extra="forbid
 
 Use `requires.host_os` for packs that can only run on specific agent operating systems. For example, Apple-only XCUITest packs should set `host_os: [macos]` so Linux agents do not install them during desired-state sync.
 
+A pack **must** request the `session_discovery` insecure feature (e.g. `insecure_features: ["*:session_discovery"]`) for orphan-session reaping to work. The backend observation sweep enumerates a node's live Appium sessions via `GET /appium/sessions`, which Appium only exposes when the driver is started with `--allow-insecure …:session_discovery`. The agent appends `--allow-insecure` only for the features listed here. A pack that omits it silently disables orphan reaping: a leaked Appium session with no DB row can pin its device busy until the idle timeout (`grid.session_idle_timeout_sec`). Upload does not reject such a pack, but ingest logs a `pack_ingest_missing_session_discovery` warning.
+
 ### Adapter Wheel Constraints
 
 The agent loads adapter wheels by extracting each archive member with `zipfile.ZipFile` via a path-traversal-guarded `_safe_extract_zip` (no `extractall`) into a runtime directory, followed by a dynamic `importlib` import. **pip is not involved.** This means:

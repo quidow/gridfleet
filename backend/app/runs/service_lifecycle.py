@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
     from app.runs.protocols import RunReleaseProtocol
 
 
@@ -34,12 +33,10 @@ class RunLifecycleService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        grid: GridServiceProtocol,
         release: RunReleaseProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._grid = grid
         self._release = release
 
     async def signal_ready(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:

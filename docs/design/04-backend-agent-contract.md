@@ -17,7 +17,7 @@ flowchart LR
     backend["FastAPI backend<br/>multi-worker, leader-elected"]:::be
     agent1["Host agent A<br/>FastAPI 5100"]:::ag
     agent2["Host agent B<br/>FastAPI 5100"]:::ag
-    grid["Selenium Grid hub<br/>4444"]:::ext
+    router["WebDriver router<br/>4444"]:::ext
     appium1["Appium<br/>4723 to 4823"]:::ext
     appium2["Appium<br/>4723 to 4823"]:::ext
 
@@ -27,11 +27,12 @@ flowchart LR
     agent2 -->|"desired packs, status, host registration"| backend
     agent1 -.spawns.-> appium1
     agent2 -.spawns.-> appium2
-    appium1 --> grid
-    appium2 --> grid
+    router -->|"allocate (internal grid API)"| backend
+    router --> appium1
+    router --> appium2
 ```
 
-The CI runner / test client speaks **only** to the Selenium Grid hub for sessions. The backend never proxies WebDriver traffic. Routing of WebDriver requests to the right Appium relay is owned by Grid's capability matcher, not by the backend.
+The CI runner / test client speaks **only** to the WebDriver router for sessions. The backend never proxies WebDriver traffic. For each new session the router calls the backend's internal grid API to allocate a device by capability match, then proxies the session's commands directly to that device's Appium server. Allocation and capability matching are owned by the backend; request forwarding is owned by the router.
 
 ## Auth surface
 
@@ -61,7 +62,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. The wrapper module is 
 | POST | `/agent/pack/features/{feat}/actions/{act}` | feature dispatch | dispatch arbitrary pack feature action | 2xx required |
 | POST | `/agent/appium/start` | `reconciler_agent` (`appium_start`, via the `start_node` service method) | spawn an Appium node | 2xx → `{pid, port, connection_target}` |
 | POST | `/agent/appium/stop` | `reconciler_agent` (`appium_stop`, via the `stop_node` service method) and the orphan-reconcile `_stop` helper in `reconciler` | kill an Appium node | wrapper returns `httpx.Response`; consumers call `response.raise_for_status()`, so 2xx → success and transport/HTTP error raises |
-| POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / Grid run scope | 2xx → `dict` |
+| POST | `/agent/appium/{port}/reconfigure` | `reconfigure_delivery` (wrapper `agent_appium_reconfigure`) | toggle accepting-new-sessions / stop-pending / run scope | 2xx → `dict` |
 | GET | `/agent/appium/{port}/status` | `node_health` reconcile path | "is the Appium on this port up?" | 200 → `{running: bool}`; non-200 → `None` |
 | GET | `/agent/appium/{port}/logs` | host detail UI | return last N lines | 2xx required |
 | GET | `/agent/plugins` | plugin sync flow | currently-installed plugins | 2xx required |
@@ -72,15 +73,18 @@ Most rows have a typed function in `agent_operations.py`. The function signature
 
 ### `/agent/appium/start` cap surfaces
 
-The Appium start payload carries three distinct capability surfaces. They have separate sources of truth and separate consumers; keep them disentangled when extending the contract.
+The Appium start payload sends two capability surfaces to the agent. They have separate sources of truth and separate consumers; keep them disentangled when extending the contract.
 
 | Field             | Source of truth                                                                                                                                                             | Consumer                                                                                |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `stereotype_caps` | Pack manifest `capabilities.stereotype` (with `{device.*}` interpolation) + manager-owned sentinels (`appium:gridfleet:deviceId`, `gridfleet:run_id`) + tag fanout          | Selenium Grid hub: stored per-slot, matched against client requests, exposed on `/status` |
-| `extra_caps`      | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py` — full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent relay: merged into Appium `/session` request body (`agent/agent_app/appium/process.py`) |
+| `extra_caps`      | `_build_session_aligned_start_caps(...)` in `app/appium_nodes/services/reconciler_agent.py` — full device dump (platform, os_version, manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`, tags, allocated caps) | Agent: merged into the Appium `/session` request body (`agent/agent_app/appium/process.py`) |
 | `allocated_caps`  | `appium_node_resource_service.get_capabilities(...)` (UDID + reserved ports)                                                                                                | Agent → Appium driver                                                                   |
 
-**Cross-component invariant.** The Grid slot stereotype is the routing surface. Backend MUST NOT include Appium-only device metadata (manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`) in `stereotype_caps`. That metadata MUST flow via `extra_caps` only. The agent enforces the same separation in `agent_app/grid_node/protocol.build_slots` and `agent_app/appium/process.AppiumProcessManager._start_grid_node_service`. The `gridfleet:available` sentinel was removed in release 2026.05 — `AppiumNode.accepting_new_sessions` plus Selenium `NodeStatus.availability` cover the routing-suppression cases.
+The start payload also carries `accepting_new_sessions`, `stop_pending`, and `grid_run_id` — the agent records these but does not route on them; new-session suppression and run scoping are enforced by the backend allocation service, not at the node.
+
+**Backend-internal routing surface.** Capability matching now happens in the backend, not on the node: `pack_slot_stereotype` (`app/grid/allocation.py`, built from the pack manifest stereotype plus `build_grid_stereotype_caps`'s deviceId + tag fanout) is the per-device routing stereotype the allocation service matches incoming session requests against when the router asks it to allocate a device. It is **not** part of the start payload and is never sent to the agent.
+
+**Cross-component invariant.** Keep the routing stereotype and the driver caps disjoint. The backend MUST NOT include Appium-only device metadata (manufacturer, model, ip, deviceName, sanitized `device_config.appium_caps`) in the routing stereotype. That metadata MUST flow to the driver via `extra_caps` only.
 
 ## Endpoint catalog (agent → backend)
 
@@ -200,7 +204,7 @@ The agent endpoint whose result is a tri-state probe (`/agent/appium/{port}/stat
 
 - **`appium_stop`**. `agent_operations.appium_stop` returns the raw response. The consumers bridge into the DB-flip rule by calling `response.raise_for_status()`: the `_stop` helper in `app/appium_nodes/services/reconciler.py` does this on the orphan-reconcile path before calling `mark_node_stopped` (defined in `reconciler_agent.py`), and the `stop_node` service method in `reconciler_agent.py` is the other `appium_stop` consumer. Success → proceed; `AgentCallError` or `httpx.HTTPError` → the stop did not take and the DB flip is skipped.
 
-The agent does not expose a WebDriver session probe endpoint. Probe sessions are created by the backend through Selenium Grid so health checks exercise the same routing path as CI clients.
+The agent does not expose a WebDriver session probe endpoint. Probe sessions are created by the backend directly against the device's Appium node (`probe_session_direct`, targeting `node_target(device)`), exercising the same Appium endpoint a router-proxied CI session lands on — minus the router hop.
 
 When you add a new state-changing endpoint, follow this pattern: pick an explicit return type (`bool`, `bool | None`, or a dataclass) and document the projection from HTTP into that type at the wrapper layer. Do not let the lifecycle code do its own HTTP error handling — that is what `agent_operations.py` is for.
 
@@ -286,5 +290,5 @@ The exception classes below are defined in `agent_app/appium/exceptions.py`; the
 
 - Internal node state machine — see Doc 2.
 - Loop cadence and reconciliation pattern — see Doc 3.
-- Owner allocations, port pools, Grid sessions — see Doc 5.
+- Owner allocations, port pools, WebDriver sessions — see Doc 5.
 - Operator-facing onboarding flows — see `docs/guides/host-onboarding.md`.

@@ -33,6 +33,11 @@
       "package-name": "gridfleet-frontend",
       "include-component-in-tag": true
     },
+    "router": {
+      "release-type": "rust",
+      "package-name": "gridfleet-router",
+      "include-component-in-tag": true
+    },
     "testkit": {
       "release-type": "python",
       "package-name": "gridfleet-testkit",

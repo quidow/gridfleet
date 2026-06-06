@@ -9,11 +9,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
-    from app.grid.protocols import GridServiceProtocol
+    from app.grid.allocation import AllocationService
 
 
 @dataclass(frozen=True, slots=True)
 class GridServices:
-    grid: GridServiceProtocol
     settings: SettingsReader
     session_factory: async_sessionmaker[AsyncSession]
+    allocation: AllocationService

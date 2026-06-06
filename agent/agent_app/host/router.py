@@ -40,7 +40,7 @@ async def health(
         "registered": registered,
         "missing_prerequisites": capabilities.get("missing_prerequisites", []),
         "capabilities": capabilities,
-        "appium_processes": mgr.process_snapshot(),
+        "appium_processes": await mgr.process_snapshot(),
         "version_guidance": version_guidance,
     }
 

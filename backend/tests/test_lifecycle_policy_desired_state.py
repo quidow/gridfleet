@@ -36,7 +36,6 @@ async def test_attempt_auto_recovery_registers_auto_recovery_intent(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_port=None,
             pid=None,
             active_connection_target=None,
@@ -143,7 +142,6 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
         node = AppiumNode(
             device_id=device.id,
             port=4757,
-            grid_url="http://hub:4444",
             desired_port=None,
             pid=12345,
             active_connection_target="127.0.0.1:4757",
@@ -209,7 +207,6 @@ async def test_attempt_auto_recovery_revokes_connectivity_intent_when_node_alrea
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             desired_port=4723,
             pid=12345,
             active_connection_target="127.0.0.1:4723",
@@ -274,7 +271,6 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             active_connection_target="",
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -326,7 +322,6 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://hub:4444",
             pid=None,
             active_connection_target=None,
             desired_state=AppiumDesiredState.running,

@@ -76,7 +76,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      placeholder: "OS, Python, Node, Docker, Appium, Selenium Grid versions if relevant"
+      placeholder: "OS, Python, Node, Docker, Appium, gridfleet-router versions if relevant"
   - type: textarea
     id: logs
     attributes:

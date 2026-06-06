@@ -180,14 +180,6 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
                 "machine",
                 "--manager-auth-password",
                 "secret",
-                "--grid-hub-url",
-                "http://grid:4444",
-                "--grid-publish-url",
-                "tcp://grid:4442",
-                "--grid-subscribe-url",
-                "tcp://grid:4443",
-                "--grid-node-port-start",
-                "6000",
             ]
         )
         == 0
@@ -198,10 +190,6 @@ def test_install_args_build_expected_config(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.user == "gridfleet"
     assert config.manager_auth_username == "machine"
     assert config.manager_auth_password == "secret"
-    assert config.grid_hub_url == "http://grid:4444"
-    assert config.grid_publish_url == "tcp://grid:4442"
-    assert config.grid_subscribe_url == "tcp://grid:4443"
-    assert config.grid_node_port_start == 6000
 
 
 def test_status_prints_collected_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

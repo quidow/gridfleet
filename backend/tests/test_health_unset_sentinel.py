@@ -41,7 +41,6 @@ async def _seed_device_with_error_node(db_session: AsyncSession, db_host: Host, 
         node = AppiumNode(
             device_id=device.id,
             port=4760,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4760,
             pid=1,

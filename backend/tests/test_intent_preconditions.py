@@ -146,7 +146,6 @@ async def test_node_running_expected_false_satisfied_when_stopped(db_session: As
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.stopped,
         )
     db_session.add(node)
@@ -172,7 +171,6 @@ async def test_node_running_expected_false_unsatisfied_when_running(db_session: 
             port=4723,
             pid=1234,
             active_connection_target="http://grid:4444",
-            grid_url="http://grid:4444",
             desired_state=AppiumDesiredState.running,
         )
     db_session.add(node)

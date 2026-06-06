@@ -118,7 +118,6 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
         sync=Mock(),
         viability=viability_mock,
         settings=FakeSettingsReader({}),
-        grid=Mock(),
         session_factory=_Session,
         publisher=event_bus,
     )
@@ -139,7 +138,6 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
         sync=mock_sync,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
-        grid=Mock(),
         session_factory=_Session,
         publisher=event_bus,
     )
@@ -160,7 +158,6 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
         sync=mock_sync,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
-        grid=Mock(),
         session_factory=_Session,
         publisher=event_bus,
     )
@@ -178,7 +175,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     _fc_settings = FakeSettingsReader({})
-    _fc_grid = Mock()
     _fc_publisher = AsyncMock()
     _fc_maintenance = MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
@@ -186,7 +182,7 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
     _fc_crud = DeviceCrudService(settings=_fc_settings, identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = fleet_capacity.FleetCapacityLoop(
         services=DeviceServices(
-            fleet_capacity=FleetCapacityService(grid=_fc_grid),
+            fleet_capacity=FleetCapacityService(),
             data_cleanup=DataCleanupService(publisher=_fc_publisher, settings=_fc_settings),
             property_refresh=PropertyRefreshService(discovery=Mock()),
             groups=DeviceGroupsService(publisher=_fc_publisher, settings=_fc_settings, crud=_fc_crud),
@@ -214,7 +210,6 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
             ),
             publisher=_fc_publisher,
             settings=_fc_settings,
-            grid=_fc_grid,
             session_factory=_Session,
             circuit_breaker=Mock(),
             health=AsyncMock(),
@@ -322,7 +317,6 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
         sync=mock_sync,
         viability=Mock(),
         settings=FakeSettingsReader({"grid.session_poll_interval_sec": 0.01}),
-        grid=Mock(),
         session_factory=_Session,
         publisher=event_bus,
     )

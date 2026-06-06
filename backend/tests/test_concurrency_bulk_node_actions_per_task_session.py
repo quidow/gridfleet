@@ -73,7 +73,6 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             node = AppiumNode(
                 device_id=dev.id,
                 port=4720 + (1 if dev.id == device_a_id else 2),
-                grid_url="http://grid.example.test:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4720,
                 pid=0,

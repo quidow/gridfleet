@@ -271,7 +271,7 @@ _DEFINITIONS: list[SettingDefinition] = [
         default=3,
         description=(
             "Consecutive session_viability failures required before the manager "
-            "parks the device. Tolerates transient Selenium Grid hiccups."
+            "parks the device. Tolerates transient Appium session hiccups."
         ),
         min_value=1,
         max_value=20,
@@ -363,40 +363,70 @@ _DEFINITIONS: list[SettingDefinition] = [
     ),
     # ── Appium & Grid ──
     SettingDefinition(
-        key="grid.hub_url",
-        category="grid",
-        setting_type="string",
-        default="http://selenium-hub:4444",
-        description="Selenium Grid hub URL",
-        env_var="GRIDFLEET_GRID_HUB_URL",
-    ),
-    SettingDefinition(
         key="grid.session_poll_interval_sec",
         category="grid",
         setting_type="int",
         default=30,
         description=(
-            "Drift-reconciler interval. The leader-owned bus subscriber drives "
-            "real-time session sync; this poll only fixes any state the bus missed."
+            "Interval of the direct-to-Appium session observation sweep (liveness probes and orphan-session cleanup)."
         ),
         min_value=1,
         max_value=300,
     ),
     SettingDefinition(
-        key="grid.event_bus_subscribe_url",
+        key="grid.queue_timeout_sec",
         category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4442",
-        description="ZMQ URL the manager subscribes to for hub event-bus messages.",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_SUBSCRIBE_URL",
+        setting_type="int",
+        default=300,
+        description="How long a queued new-session request may wait for a device before failing",
+        env_var="GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC",
+        min_value=5,
+        max_value=3600,
     ),
     SettingDefinition(
-        key="grid.event_bus_publish_url",
+        key="grid.session_idle_timeout_sec",
         category="grid",
-        setting_type="string",
-        default="tcp://selenium-hub:4443",
-        description="ZMQ URL the manager publishes to (handshake only; no events emitted).",
-        env_var="GRIDFLEET_GRID_EVENT_BUS_PUBLISH_URL",
+        setting_type="int",
+        default=1800,
+        description=(
+            "How long a running session may go without reported client activity before the observation sweep "
+            "terminates it. Replaces the relay's idle timeout (Appium does not enforce newCommandTimeout idle kills "
+            "reliably), so an abandoned client that crashes without a DELETE cannot pin its device busy forever."
+        ),
+        env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC",
+        min_value=60,
+        max_value=86400,
+    ),
+    SettingDefinition(
+        key="grid.session_first_command_grace_sec",
+        category="grid",
+        setting_type="int",
+        default=180,
+        description=(
+            "How long a running session whose client has never issued a command (NULL last_activity_at) may live "
+            "before the observation sweep terminates it. Measured from the allocation claim (started_at), so Appium "
+            "session-create time eats into the grace. Bounds abandoned-client zombie sessions that claim a device but "
+            "never route any WebDriver traffic, well below the full idle timeout."
+        ),
+        env_var="GRIDFLEET_GRID_SESSION_FIRST_COMMAND_GRACE_SEC",
+        min_value=30,
+        max_value=3600,
+    ),
+    SettingDefinition(
+        key="grid.claim_window_sec",
+        category="grid",
+        setting_type="int",
+        default=120,
+        description=(
+            "How long an allocated (pending) session may remain unconfirmed before it is failed. "
+            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create. "
+            "The reaper adds a fixed +60s confirm grace on top of this window to absorb router confirm retries. "
+            "The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets "
+            "the orphan sweep race a real in-creation session."
+        ),
+        env_var="GRIDFLEET_GRID_CLAIM_WINDOW_SEC",
+        min_value=30,
+        max_value=600,
     ),
     SettingDefinition(
         key="appium.port_range_start",

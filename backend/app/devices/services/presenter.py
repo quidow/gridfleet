@@ -71,6 +71,7 @@ class DevicePresenterService:
             readiness.readiness_state,
             health_healthy=health_summary.get("healthy") if health_summary else None,
             hardware_health_status=hardware_status,
+            review_required=bool(device.review_required),
         )
 
         emulator_state_value: str | None = None
@@ -188,7 +189,6 @@ def _serialize_appium_node_for_detail(device: Device) -> dict[str, Any] | None:
     return {
         "id": node.id,
         "port": node.port,
-        "grid_url": node.grid_url,
         "pid": node.pid,
         "container_id": node.container_id,
         "active_connection_target": node.active_connection_target,

@@ -84,12 +84,6 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
 
         return _P()
 
-    async def _fake_start_grid_node_service(
-        self: AppiumProcessManager,
-        spec: AppiumLaunchSpec,
-    ) -> None:
-        return None
-
     mgr = AppiumProcessManager()
     registry = RuntimeRegistry()
     registry.set_for_pack(
@@ -104,15 +98,12 @@ async def test_start_routes_pack_id_through_launch_spec(monkeypatch: pytest.Monk
     )
     mgr.set_runtime_registry(registry)
     monkeypatch.setattr(AppiumProcessManager, "_start_appium_server", _fake_start_appium_server)
-    monkeypatch.setattr(AppiumProcessManager, "_start_grid_node_service", _fake_start_grid_node_service)
 
     await mgr.start(
         connection_target="ABCD1234",
         port=4723,
-        grid_url="http://hub:4444",
         plugins=None,
         extra_caps=None,
-        stereotype_caps={"platformName": "Android"},
         device_type="real_device",
         ip_address=None,
         headless=False,
@@ -162,16 +153,13 @@ async def test_pack_start_default_caps_use_appium_platform_name(
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
     monkeypatch.setattr(mgr, "_is_appium_port_bindable", lambda port: True)
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
-    monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 
     await mgr.start(
         connection_target="SERIAL1",
         appium_platform_name="Android",
         port=4723,
-        grid_url="http://grid:4444",
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
-        manage_grid_node=False,
     )
 
     cmd = captured["cmd"]
@@ -234,18 +222,15 @@ async def test_pack_emulator_start_uses_adapter_lifecycle_boot(monkeypatch: pyte
     monkeypatch.setattr(mgr, "_can_connect_to_appium", AsyncMock(return_value=False))
     monkeypatch.setattr(mgr, "_is_appium_port_bindable", lambda port: True)
     monkeypatch.setattr(mgr, "_wait_for_readiness", AsyncMock(return_value=True))
-    monkeypatch.setattr(mgr, "_start_grid_node_service", AsyncMock(return_value=None))
 
     info = await mgr.start(
         connection_target="Pixel_8_API_35",
         appium_platform_name="Android",
         port=4723,
-        grid_url="http://grid:4444",
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         lifecycle_actions=[{"id": "boot"}],
         device_type="emulator",
-        manage_grid_node=False,
     )
 
     args, _kwargs = lifecycle_action.await_args

@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
+from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 if TYPE_CHECKING:
     import uuid
@@ -14,7 +16,6 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
-    from app.grid.protocols import GridServiceProtocol
     from app.runs.models import TestRun
     from app.runs.protocols import DeviceDeferredStop
 
@@ -28,6 +29,10 @@ from app.devices.services.intent_types import (
 )
 from app.devices.services.reservation_query import device_is_reserved
 from app.devices.services.state import ready_operational_state, set_operational_state
+from app.grid import appium_direct
+from app.grid.allocation import resolve_router_target
+from app.sessions import service as session_service
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -39,12 +44,10 @@ class RunReleaseService:
         *,
         publisher: EventPublisher,
         settings: SettingsReader,
-        grid: GridServiceProtocol,
         deferred_stop: DeviceDeferredStop,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
-        self._grid = grid
         self._deferred_stop = deferred_stop
 
     async def release_devices(
@@ -105,8 +108,9 @@ class RunReleaseService:
             if not was_reserved and device.operational_state != DeviceOperationalState.busy:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            if device.operational_state == DeviceOperationalState.busy and await self._device_has_running_session(
-                db, device.id
+            if (
+                device.operational_state == DeviceOperationalState.busy
+                and await session_service.device_has_running_session(db, device.id)
             ):
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
@@ -190,46 +194,82 @@ class RunReleaseService:
         *,
         terminate_grid_sessions: bool,
     ) -> None:
+        del released_at  # close_running_session stamps ended_at itself
         if not terminate_grid_sessions:
             # complete_run path: session lifecycle is owned by the testkit/operator.
-            # Leaving running rows untouched keeps _device_has_running_session honest
+            # Leaving running rows untouched keeps device_has_running_session honest
             # so devices with live Grid sessions are not freed under the run.
             return
 
-        stmt = select(Session).where(
-            Session.run_id == run.id,
-            Session.status == SessionStatus.running,
-            Session.ended_at.is_(None),
+        # ``pending`` is the grid allocate->confirm window. A run cancelled while a
+        # session is pending must terminalize that row too (#3): otherwise the pending
+        # row lingers, the device is freed by release_devices, and the router's later
+        # confirm double-allocates it. Closing the pending row makes the confirm's
+        # status='pending'-guarded UPDATE miss (rowcount 0) and 409, so the router rolls
+        # back the freshly-created Appium session.
+        stmt = (
+            select(Session)
+            .options(selectinload(Session.device), selectinload(Session.run))
+            .where(
+                Session.run_id == run.id,
+                live_session_predicate(),
+            )
         )
         result = await db.execute(stmt)
         sessions = result.scalars().all()
         if not sessions:
             return
 
-        error_message = run.error if run.error else f"Run ended while session was still running ({run.state.value})"
         for session in sessions:
-            if not await self._grid.terminate_session(session.session_id):
-                logger.warning(
-                    "Leaving session %s running because Grid deletion failed during run %s release",
-                    session.session_id,
-                    run.id,
-                )
-                continue
-
-            session.status = SessionStatus.error
-            session.ended_at = released_at
-            session.error_type = "run_released"
-            session.error_message = error_message
-
-    async def _device_has_running_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        stmt = (
-            select(Session.id)
-            .where(
-                Session.device_id == device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
+            if session.status == SessionStatus.running:
+                # A live Appium session: best-effort DELETE on the node before closing
+                # the DB row. With no reachable target or a failed delete, leave the row
+                # running so it is not falsely marked ended (the idle reaper backstops).
+                target = await self._session_node_target(db, session)
+                if target is None:
+                    logger.warning(
+                        "Leaving session %s running because no Appium node target was resolvable during run %s release",
+                        session.session_id,
+                        run.id,
+                    )
+                    continue
+                if not await appium_direct.terminate_session(target, session.session_id):
+                    logger.warning(
+                        "Leaving session %s running because Appium deletion failed during run %s release",
+                        session.session_id,
+                        run.id,
+                    )
+                    continue
+            # pending rows carry a placeholder session_id (no real Appium session yet),
+            # so they skip the DELETE and are closed directly.
+            #
+            # Route through close_running_session so the run-terminal close emits
+            # session.ended + reconciles the device (#12) instead of stamping status
+            # inline. The run reached a non-completed terminal state here, so
+            # close_running_session stamps error/run_released and expires the
+            # allocation ticket — unifying with the session_sync + router close paths.
+            await session_service.close_running_session(
+                db, session, attached_run=session.run, publisher=self._publisher
             )
-            .limit(1)
+
+    async def _session_node_target(self, db: AsyncSession, session: Session) -> str | None:
+        if session.device_id is None:
+            return None
+        # Read-only target resolution: the caller awaits a 10s Appium DELETE next, so a
+        # row lock here would serialize the reconciler and every state writer on this
+        # device against Appium latency. Plain load with the eager-loaded
+        # appium_node/host. Resolve via resolve_router_target so a session whose node
+        # port was transiently stale-cleared (recovery backoff) still resolves via the
+        # router_target stored at allocation (#9).
+        stmt = (
+            select(Device)
+            .options(selectinload(Device.appium_node), selectinload(Device.host))
+            .where(Device.id == session.device_id)
         )
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        device = (await db.execute(stmt)).scalars().first()
+        if device is None:
+            return None
+        # resolve_router_target reads session.device for the live target; attach the
+        # freshly-loaded device so it sees the eager-loaded node/host.
+        set_committed_value(session, "device", device)
+        return resolve_router_target(session)

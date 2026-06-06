@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import logging
 import tarfile
 import uuid
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,8 @@ from app.packs.models import (
     PackState,
 )
 from app.packs.services.storage import PackStorageError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,6 +153,18 @@ async def ingest_pack_tarball(
     payload_sha = hashlib.sha256(data).hexdigest()
     pack_id = manifest.id
     release_id = manifest.release
+
+    # Non-fatal validation note: orphan-session reaping (session_sync's _kill_orphans)
+    # depends on Appium's session_discovery insecure feature to enumerate live sessions.
+    # A pack that does not request it silently disables that reaping path — a leaked
+    # session can pin a device busy until the idle timeout. Warn but do not reject.
+    if not any(feature.endswith(":session_discovery") for feature in manifest.insecure_features):
+        logger.warning(
+            "pack_ingest_missing_session_discovery pack=%s release=%s: insecure_features lacks a "
+            "':session_discovery' entry; orphan-session reaping is disabled for this pack",
+            pack_id,
+            release_id,
+        )
 
     existing = (
         await session.execute(

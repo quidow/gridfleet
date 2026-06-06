@@ -130,7 +130,6 @@ async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "o
         node = AppiumNode(
             device_id=device.id,
             port=4723,
-            grid_url="http://grid:4444",
             pid=12345,
             desired_state=AppiumDesiredState.running,
             desired_port=4723,
@@ -1021,7 +1020,6 @@ async def test_device_detail_surfaces_blocked_appium_effective_state(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
             )

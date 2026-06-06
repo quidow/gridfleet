@@ -75,7 +75,6 @@ async def _seed_verifying_device(db: AsyncSession, host_id: uuid.UUID, *, identi
         node = AppiumNode(
             device_id=device.id,
             port=4733,
-            grid_url="http://hub:4444",
             desired_state=AppiumDesiredState.running,
             desired_port=4733,
             pid=4242,
@@ -114,7 +113,7 @@ async def test_recovery_probe_admits_verifying_and_clears_lease(
             return_value={"platformName": "Android"},
         ),
         patch(
-            "app.sessions.service_viability.SessionViabilityService.probe_session_via_grid",
+            "app.sessions.service_viability.SessionViabilityService.probe_session_direct",
             new_callable=AsyncMock,
             return_value=(True, None),
         ),

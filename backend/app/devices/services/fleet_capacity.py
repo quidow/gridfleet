@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, or_, select, text
 
@@ -13,15 +13,16 @@ from app.appium_nodes.models import AppiumNode
 from app.core.observability import get_logger, observe_background_loop
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.reservation_query import active_reservation_exists
+from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host, HostStatus
 from app.sessions.filters import exclude_non_test_sessions
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services_container import DeviceServices
-    from app.grid.protocols import GridServiceProtocol
 
 logger = get_logger(__name__)
 LOOP_NAME = "fleet_capacity_collector"
@@ -139,26 +140,22 @@ async def _rejected_unfulfilled_counts_by_bucket(
     return counts
 
 
-def _extract_grid_counts(grid_data: dict[str, Any]) -> tuple[int, int] | None:
-    value = grid_data.get("value")
-    if not isinstance(value, dict):
-        return None
-    if grid_data.get("error") and not value.get("ready", False):
-        return None
+async def _count_active_sessions(db: AsyncSession) -> int:
+    # Count ``pending`` too: state derivation derives a pending-claimed device
+    # ``busy`` and counts it in total_capacity_slots, so omitting pending here
+    # over-reports available headroom during create bursts (C13). Shared via
+    # live_session_predicate.
+    stmt = select(func.count()).select_from(Session).where(live_session_predicate())
+    return int((await db.execute(stmt)).scalar_one() or 0)
 
-    nodes = value.get("nodes", [])
-    active_sessions = 0
-    if isinstance(nodes, list):
-        active_sessions = sum(
-            1
-            for node in nodes
-            if isinstance(node, dict)
-            for slot in node.get("slots", [])
-            if isinstance(slot, dict) and slot.get("session")
-        )
-    queue_requests = value.get("sessionQueueRequests", [])
-    queued_requests = len(queue_requests) if isinstance(queue_requests, list) else 0
-    return active_sessions, queued_requests
+
+async def _count_queued_requests(db: AsyncSession) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(GridSessionQueueTicket)
+        .where(GridSessionQueueTicket.status == GridQueueStatus.waiting)
+    )
+    return int((await db.execute(stmt)).scalar_one() or 0)
 
 
 async def _count_schedulable_capacity(db: AsyncSession) -> int:
@@ -202,9 +199,6 @@ async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
 
 
 class FleetCapacityService:
-    def __init__(self, *, grid: GridServiceProtocol) -> None:
-        self._grid = grid
-
     async def get_fleet_capacity_timeline(
         self,
         db: AsyncSession,
@@ -339,13 +333,8 @@ class FleetCapacityService:
         *,
         captured_at: datetime | None = None,
     ) -> AnalyticsCapacitySnapshot | None:
-        grid_data = await self._grid.get_status()
-        grid_counts = _extract_grid_counts(grid_data)
-        if grid_counts is None:
-            logger.warning("Fleet capacity snapshot skipped because Grid status was unavailable")
-            return None
-
-        active_sessions, queued_requests = grid_counts
+        active_sessions = await _count_active_sessions(db)
+        queued_requests = await _count_queued_requests(db)
         total_capacity_slots = await _count_schedulable_capacity(db)
         hosts_total, hosts_online = await _count_hosts(db)
         devices_total, devices_available, devices_offline, devices_maintenance = await _count_devices(db)

@@ -1,5 +1,6 @@
 import uuid
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,9 @@ from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.lifecycle_policy_state import (
+    MAINTENANCE_HOLD_SUPPRESSION_REASON,
+    clear_operator_start_suppression,
+    clear_self_heal_suppression,
     set_maintenance_reason,
 )
 from app.devices.services.lifecycle_policy_state import (
@@ -172,7 +176,6 @@ async def test_start_node_already_running(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="emulator-5554",
                 desired_state=AppiumDesiredState.running,
@@ -207,7 +210,6 @@ async def test_start_node_recovers_down_but_desired_running_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=None,
                 active_connection_target=None,
                 desired_state=AppiumDesiredState.running,
@@ -244,7 +246,6 @@ async def test_stop_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 desired_state=AppiumDesiredState.running,
                 desired_port=4723,
@@ -287,7 +288,6 @@ async def test_restart_node(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -322,7 +322,6 @@ async def test_restart_node_converges_immediately(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target=connection_target,
                 desired_state=AppiumDesiredState.running,
@@ -414,7 +413,6 @@ async def test_restart_node_clears_stale_recovery_suppression(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -447,6 +445,186 @@ async def test_restart_node_clears_stale_recovery_suppression(
 
     await db_session.refresh(locked)
     assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Node restart failed"
+
+
+async def test_start_node_clears_operator_stop_suppression(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+) -> None:
+    """An explicit operator start must clear the ``recovery_suppressed_reason``
+    residue left behind by a prior operator stop.
+
+    Operator stop registers a sticky RECOVERY-axis deny intent; the recovery
+    loop then records ``recovery_suppressed_reason="Operator stopped the node"``
+    onto ``lifecycle_policy_state``. The start path revokes the deny intent but
+    must also clear the JSON residue, otherwise the device keeps deriving
+    ``lifecycle_policy_summary.state == "suppressed"`` (and ``needs_attention``)
+    while it is actually running and available.
+    """
+    device = await _create_device(db_session, default_host_id, operational_state="available")
+    device_id = device["id"]
+    remote_manager_client.post.return_value = _mock_agent_response(
+        {"pid": 12345, "port": 4723, "connection_target": "emulator-5554"}
+    )
+
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device_id))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            "last_failure_source": "node_health",
+            "last_failure_reason": "Node health checks recovered",
+            "last_action": "recovery_suppressed",
+            "last_action_at": "2026-05-10T18:00:00+00:00",
+            "stop_pending": False,
+            "stop_pending_reason": None,
+            "stop_pending_since": None,
+            "recovery_suppressed_reason": "Operator stopped the node",
+            "backoff_until": None,
+            "recovery_backoff_attempts": 0,
+        },
+    )
+    await db_session.commit()
+
+    # Sanity: the residue derives a suppressed summary before the start.
+    before = await client.get(f"/api/devices/{device_id}")
+    assert before.json()["lifecycle_policy_summary"]["state"] == "suppressed"
+    assert before.json()["needs_attention"] is True
+
+    resp = await client.post(f"/api/devices/{device_id}/node/start")
+    assert resp.status_code == 200
+
+    await db_session.refresh(locked)
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "operator_started"
+
+    after = await client.get(f"/api/devices/{device_id}")
+    # Lifecycle no longer derives "suppressed", so it no longer drives
+    # needs_attention. (Any residual attention here is the transient
+    # node-still-starting health signal — pid is not yet observed in this
+    # harness — not the suppression residue this fix targets.)
+    assert after.json()["lifecycle_policy_summary"]["state"] != "suppressed"
+
+
+async def test_clear_operator_start_suppression_preserves_maintenance_tautology(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """The maintenance-hold suppression is governed by the maintenance-exit path,
+    not by node start (start is blocked in maintenance), so it must survive."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
+    )
+    clear_operator_start_suppression(locked)
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
+
+
+async def test_clear_operator_start_suppression_noop_on_clean_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with no suppression/backoff/failure residue emits no action churn."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
+    clear_operator_start_suppression(locked)
+    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
+
+
+async def test_clear_self_heal_suppression_preserves_maintenance_tautology(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """The maintenance-hold suppression is governed by the maintenance-exit path,
+    not by connectivity self-heal, so it must survive (returns False)."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {**locked.lifecycle_policy_state, "recovery_suppressed_reason": MAINTENANCE_HOLD_SUPPRESSION_REASON},
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == MAINTENANCE_HOLD_SUPPRESSION_REASON
+
+
+async def test_clear_self_heal_suppression_noop_on_clean_state(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A device with no suppression/backoff/failure residue emits no action churn."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(locked, {**locked.lifecycle_policy_state, "last_action": "sentinel"})
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["last_action"] == "sentinel"
+
+
+async def test_clear_self_heal_suppression_skips_fresh_residue(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue recorded just now (in-flight failure sequence) must NOT be cleared
+    by a racing healthy connectivity tick (regression S10)."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
+
+
+async def test_clear_self_heal_suppression_clears_aged_residue(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue older than the staleness threshold (hours-old leftover after a
+    natural reconverge) is cleared and stamps ``self_healed``."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(),
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
+    assert locked.lifecycle_policy_state["last_action"] == "self_healed"
+
+
+async def test_clear_self_heal_suppression_skips_residue_without_timestamp(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Residue with no parseable ``last_action_at`` is treated as not-yet-stale so
+    an in-flight sequence is never cleared on an untrusted timestamp."""
+    device = await _create_device(db_session, default_host_id)
+    locked = await device_locking.lock_device(db_session, uuid.UUID(device["id"]))
+    write_lifecycle_policy_state(
+        locked,
+        {
+            **locked.lifecycle_policy_state,
+            "recovery_suppressed_reason": "Recovery probe failed",
+            "last_action": "recovery_suppressed",
+            "last_action_at": None,
+        },
+    )
+    assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is False
+    assert locked.lifecycle_policy_state["recovery_suppressed_reason"] == "Recovery probe failed"
 
 
 async def test_port_allocation_increments(
@@ -570,7 +748,6 @@ async def test_restart_node_retries_next_port_when_preferred_port_conflicts(
             AppiumNode(
                 device_id=uuid.UUID(device["id"]),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,
@@ -627,7 +804,6 @@ async def test_maintenance_blocks_start_and_restart_but_not_stop(
             AppiumNode(
                 device_id=uuid.UUID(device_id),
                 port=4723,
-                grid_url="http://hub:4444",
                 pid=12345,
                 active_connection_target="",
                 desired_state=AppiumDesiredState.running,

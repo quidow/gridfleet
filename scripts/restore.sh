@@ -10,7 +10,7 @@ COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-${REPO_ROOT}/docker/.env}"
 POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-backend}"
 FRONTEND_SERVICE="${FRONTEND_SERVICE:-frontend}"
-GRID_SERVICE="${GRID_SERVICE:-selenium-hub}"
+ROUTER_SERVICE="${ROUTER_SERVICE:-router}"
 REQUIRE_CONFIRM_FLAG="${REQUIRE_CONFIRM_FLAG:---yes}"
 
 usage() {
@@ -118,7 +118,7 @@ echo "Running alembic migrations"
 compose run --rm --no-deps "${BACKEND_SERVICE}" sh -lc 'uv run alembic upgrade head'
 
 echo "Starting application services"
-compose up -d "${GRID_SERVICE}" "${BACKEND_SERVICE}" "${FRONTEND_SERVICE}"
+compose up -d "${ROUTER_SERVICE}" "${BACKEND_SERVICE}" "${FRONTEND_SERVICE}"
 
 health_url="$(backend_url)/health/ready"
 echo "Waiting for backend readiness at ${health_url}"

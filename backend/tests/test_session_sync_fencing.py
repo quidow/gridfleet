@@ -15,20 +15,11 @@ from app.devices.services import state_write_guard
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_sync import SessionSyncService
-from tests.fakes import FakeSettingsReader, make_fake_grid
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-
-_GRID_UP_EMPTY: dict[str, object] = {"value": {"ready": True, "nodes": []}}
-
-
-async def _sync_sessions(db: AsyncSession) -> None:
-    svc = SessionSyncService(
-        publisher=event_bus, settings=FakeSettingsReader({}), grid=make_fake_grid(_GRID_UP_EMPTY), lifecycle=AsyncMock()
-    )
-    await svc.sync(db)
 
 
 @pytest.mark.db
@@ -48,7 +39,6 @@ async def test_sync_sessions_aborts_after_grid_call_when_leadership_lost(
         svc = SessionSyncService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
             lifecycle=AsyncMock(),
         )
         await svc.sync(db_session)
@@ -107,7 +97,6 @@ async def test_sync_sessions_does_not_end_running_session_when_leadership_lost(
         svc = SessionSyncService(
             publisher=event_bus,
             settings=FakeSettingsReader({}),
-            grid=make_fake_grid({"value": {"ready": True, "nodes": []}}),
             lifecycle=AsyncMock(),
         )
         await svc.sync(db_session)

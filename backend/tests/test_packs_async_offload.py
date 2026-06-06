@@ -78,6 +78,7 @@ async def test_ingest_validates_tarball_and_stores_artifact_off_event_loop(monke
         template_id=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     monkeypatch.setattr(pack_ingest, "load_manifest_yaml", lambda _text: manifest)
     record_upload = AsyncMock()

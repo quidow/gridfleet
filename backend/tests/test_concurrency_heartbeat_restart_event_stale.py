@@ -29,7 +29,6 @@ async def test_ingest_appium_restart_events_skips_when_node_changes_before_lock(
             AppiumNode(
                 device_id=device.id,
                 port=4723,
-                grid_url="http://hub:4444",
                 health_running=False,
                 health_state="error",
             )

@@ -26,7 +26,6 @@ from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.events.dependencies import get_event_services
 from app.events.services_container import EventServices
-from app.grid.service import GridService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.main import app
@@ -86,7 +85,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
 
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
-            _grid_svc = GridService(settings=settings_service)
             _maintenance_svc = MaintenanceService(
                 review=build_review_service(), settings=settings_service, publisher=event_bus
             )
@@ -94,7 +92,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 settings=settings_service, identity=DeviceIdentityConflictService(), publisher=event_bus
             )
             return DeviceServices(
-                fleet_capacity=FleetCapacityService(grid=_grid_svc),
+                fleet_capacity=FleetCapacityService(),
                 data_cleanup=DataCleanupService(publisher=event_bus, settings=settings_service),
                 property_refresh=PropertyRefreshService(discovery=Mock()),
                 groups=DeviceGroupsService(publisher=event_bus, settings=settings_service, crud=_crud_svc),
@@ -122,7 +120,6 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 ),
                 publisher=event_bus,
                 settings=settings_service,
-                grid=_grid_svc,
                 session_factory=sf,
                 circuit_breaker=test_circuit_breaker,
                 health=AsyncMock(),
@@ -156,16 +153,12 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             )
 
         def _override_run_services() -> RunServices:
-            grid = GridService(settings=settings_service)
             run_release = RunReleaseService(
                 publisher=event_bus,
                 settings=settings_service,
-                grid=grid,
                 deferred_stop=AsyncMock(),
             )
-            run_lifecycle = RunLifecycleService(
-                publisher=event_bus, settings=settings_service, grid=grid, release=run_release
-            )
+            run_lifecycle = RunLifecycleService(publisher=event_bus, settings=settings_service, release=run_release)
             run_allocator = RunAllocatorService(
                 publisher=event_bus,
                 settings=settings_service,

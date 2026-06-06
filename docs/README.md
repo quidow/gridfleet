@@ -63,7 +63,7 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
 ### Runbooks
 
 - `runbooks/slow-system.md`
-  - Queue pressure, metrics, Grid, and Postgres checks for system-wide slowness.
+  - Queue pressure, metrics, router, and Postgres checks for system-wide slowness.
 - `runbooks/agent-not-connecting.md`
   - Manager-to-agent reachability and agent service recovery workflow.
 - `runbooks/stuck-devices.md`
@@ -73,13 +73,13 @@ New documentation should prefer `docs/guides/` for narrative workflow material, 
 - `runbooks/backend-deploy-restart-rollback.md`
   - Manual deployment, restart, and rollback flow for the production compose stack.
 - `runbooks/appium-node-desync.md`
-  - Recovery when Appium nodes desync from the Grid hub.
+  - Recovery when a node's derived state diverges from the host agent's running Appium process.
 - `runbooks/device-export-import.md`
   - Bulk device export and re-import workflow.
 - `runbooks/device-ip-ping-recovery.md`
   - IP connectivity recovery for unreachable devices.
 - `runbooks/grid-version.md`
-  - Checking and upgrading the Selenium Grid version.
+  - Rebuilding and rolling out the WebDriver router service.
 - `runbooks/heartbeat-flapping.md`
   - Diagnosis and resolution of flapping agent heartbeats.
 - `runbooks/lifecycle-stuck-deferred-stop.md`

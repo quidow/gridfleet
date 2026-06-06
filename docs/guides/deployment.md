@@ -22,7 +22,7 @@ For incident-response playbooks after the system is already unhealthy, use [../r
 
 - Docker with `docker compose`
 - a checked-out copy of this repository on the manager host
-- ports `3000`, `4442`, `4443`, `4444`, and `8000` reachable where needed
+- ports `3000`, `4444`, and `8000` reachable where needed
 
 ### Bootstrap
 
@@ -39,7 +39,7 @@ Review `.env` before first boot. The most important values are:
 - `GRIDFLEET_MACHINE_AUTH_USERNAME`, `GRIDFLEET_MACHINE_AUTH_PASSWORD`
 - `BACKEND_PORT`
 - `FRONTEND_PORT`
-- `GRID_HUB_PORT`, `GRID_PUBLISH_PORT`, `GRID_SUBSCRIBE_PORT`
+- `GRIDFLEET_ROUTER_PORT` (host port published for the WebDriver router, default `4444`)
 
 Production auth and host trust:
 
@@ -65,7 +65,7 @@ The production stack runs four services:
 | --- | --- | --- |
 | `frontend` | `3000` | nginx-served operator UI |
 | `backend` | `8000` | FastAPI API, readiness, metrics |
-| `selenium-hub` | `4442`, `4443`, `4444` | Grid event bus + hub |
+| `router` | `4444` | Rust WebDriver router (allocates a device via the backend and proxies sessions to Appium) |
 | `postgres` | none | Internal-only container on the `internal` network |
 
 ### Verify The Stack
@@ -81,10 +81,10 @@ curl -s -u "$GRIDFLEET_MACHINE_AUTH_USERNAME:$GRIDFLEET_MACHINE_AUTH_PASSWORD" h
 ### Production Compose Notes
 
 - `postgres` is only attached to the internal network and is not published to the host by default.
-- `backend` and `selenium-hub` sit on both the public and internal networks because external agents and test clients must reach them.
+- `backend` and `router` sit on both the public and internal networks because external agents must reach the backend and test clients must reach the router.
 - all services use `restart: unless-stopped`
 - all services define health checks
-- Postgres, backend, frontend, and Grid all define memory/CPU limits
+- Postgres, backend, frontend, and the router all define memory/CPU limits
 - the compose file configures JSON log drivers with bounded file rotation
 
 ## 3. Agent Host Installation
@@ -101,10 +101,7 @@ From the repo root on the device host:
 VERSION=0.3.0 bash scripts/install-agent.sh \
   --manager-url http://MANAGER_IP:8000 \
   --manager-auth-username gridfleet-machine \
-  --manager-auth-password change-me \
-  --grid-hub-url http://MANAGER_IP:4444 \
-  --grid-publish-url tcp://MANAGER_IP:4442 \
-  --grid-subscribe-url tcp://MANAGER_IP:4443
+  --manager-auth-password change-me
 ```
 
 Verify:
@@ -132,10 +129,7 @@ From the repo root on the device host:
 VERSION=0.3.0 bash scripts/install-agent.sh \
   --manager-url http://MANAGER_IP:8000 \
   --manager-auth-username gridfleet-machine \
-  --manager-auth-password change-me \
-  --grid-hub-url http://MANAGER_IP:4444 \
-  --grid-publish-url tcp://MANAGER_IP:4442 \
-  --grid-subscribe-url tcp://MANAGER_IP:4443
+  --manager-auth-password change-me
 ```
 
 Verify:
@@ -219,7 +213,7 @@ Main local endpoints:
 
 - UI: `http://localhost:3000`
 - Backend API: `http://localhost:8000`
-- Selenium Grid: `http://localhost:4444`
+- WebDriver router: `http://localhost:4444`
 
 ## 6. CI And Test Integration
 
