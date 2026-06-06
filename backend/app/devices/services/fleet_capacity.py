@@ -16,6 +16,7 @@ from app.devices.services.reservation_query import active_reservation_exists
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host, HostStatus
 from app.sessions.filters import exclude_non_test_sessions
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
@@ -140,11 +141,11 @@ async def _rejected_unfulfilled_counts_by_bucket(
 
 
 async def _count_active_sessions(db: AsyncSession) -> int:
-    stmt = (
-        select(func.count())
-        .select_from(Session)
-        .where(Session.status == SessionStatus.running, Session.ended_at.is_(None))
-    )
+    # Count ``pending`` too: state derivation derives a pending-claimed device
+    # ``busy`` and counts it in total_capacity_slots, so omitting pending here
+    # over-reports available headroom during create bursts (C13). Shared via
+    # live_session_predicate.
+    stmt = select(func.count()).select_from(Session).where(live_session_predicate())
     return int((await db.execute(stmt)).scalar_one() or 0)
 
 

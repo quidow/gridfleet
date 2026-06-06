@@ -37,3 +37,8 @@ class GridSessionQueueTicket(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+    # Liveness heartbeat: stamped on every ``try_allocate`` poll so the FIFO veto and
+    # the reaper can treat a waiting ticket not re-polled within a few poll intervals
+    # as a dead (half-closed) client. NULL until the first poll. ``updated_at`` cannot
+    # serve this — its ``onupdate`` also fires on status transitions.
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

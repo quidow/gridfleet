@@ -30,7 +30,8 @@ from app.devices.services.lifecycle_policy_state import (
 from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 if TYPE_CHECKING:
     import uuid
@@ -388,15 +389,13 @@ class LifecyclePolicyActionsService:
         write_state(device, fresh)
 
     async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        stmt = (
-            select(func.count())
-            .select_from(Session)
-            .where(
-                Session.device_id == device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-            )
-        )
+        # Include ``pending``: a device in the grid allocate->confirm window is
+        # already claimed by the router (the Appium create is in flight). This gates
+        # auto-recovery (disruptive node restart) and auto-stop; restarting the node
+        # mid-create yields "session not created" for the client (C7). Shared via
+        # live_session_predicate so the gate cannot drift from the other live-session
+        # sites.
+        stmt = select(func.count()).select_from(Session).where(live_session_predicate(device_id))
         result = await db.execute(stmt)
         return bool(result.scalar_one())
 

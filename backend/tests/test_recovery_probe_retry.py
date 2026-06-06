@@ -233,3 +233,66 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(db_session: AsyncS
         )
 
     assert probe_called, "_run_recovery_probe was not called during attempt_auto_recovery"
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_attempt_auto_recovery_suppressed_by_pending_session(db_session: AsyncSession, db_host: Host) -> None:
+    """C7: a ``pending`` grid session (allocate->confirm window) must suppress the
+    disruptive auto-recovery node restart, exactly as a ``running`` session does.
+    Before the shared live-session predicate, ``has_running_client_session`` filtered
+    ``running`` only, so auto-recovery could restart the node mid-create."""
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services import state_write_guard
+    from app.events.protocols import EventPublisher
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+    from app.sessions.models import Session, SessionStatus
+    from tests.helpers import create_device
+
+    device = await create_device(db_session, host_id=db_host.id, name="dw-pending-suppress", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_port=4723,
+            pid=12345,
+            active_connection_target="127.0.0.1:4723",
+            desired_state=AppiumDesiredState.running,
+        )
+    db_session.add(node)
+    db_session.add(Session(session_id="alloc-pending", device_id=device.id, status=SessionStatus.pending))
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    publisher = AsyncMock(spec=EventPublisher)
+    probe_called: list[bool] = []
+
+    async def _capture_probe(self_arg: object, db: object, dev: object) -> dict[str, Any]:
+        probe_called.append(True)
+        return {"status": "passed"}
+
+    svc = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=publisher,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=publisher,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=Mock(),
+        node_manager=AsyncMock(),
+    )
+    with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=_capture_probe):
+        await svc.attempt_auto_recovery(
+            db_session,
+            device,
+            source="connectivity",
+            reason="test",
+        )
+
+    assert not probe_called, "auto-recovery probe ran despite a pending session claiming the device"

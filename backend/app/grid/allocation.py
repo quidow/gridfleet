@@ -14,6 +14,7 @@ from typing import Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
 
@@ -64,6 +65,55 @@ class AllocationNotPendingError(Exception):
     def __init__(self, allocation_id: uuid.UUID) -> None:
         super().__init__(f"allocation {allocation_id} is not pending")
         self.allocation_id = allocation_id
+
+
+# A waiting ticket whose client half-closed cannot be detected by the router's
+# allocate long-poll, so without a liveness signal it FIFO-vetoes every younger
+# waiter until ``grid.queue_timeout_sec``. ``try_allocate`` stamps
+# ``last_polled_at`` on every poll; a waiting ticket not re-polled within this
+# many poll intervals is treated as dead — both ignored by the FIFO veto and
+# expired by the reaper. 10 intervals (~10s at the 1s router poll) is comfortably
+# longer than a single slow poll but far shorter than the 300s queue timeout.
+TICKET_STALE_POLL_INTERVALS = 10
+# Local copy of the router long-poll re-attempt cadence. router_internal owns the
+# authoritative LONG_POLL/RETRY constants, but importing them here would create an
+# allocation<-router_internal cycle (router_internal already imports allocation);
+# the staleness window only needs the poll cadence, so it is duplicated with a note.
+RETRY_INTERVAL_SEC = 1.0
+
+
+def _ticket_liveness_cutoff(now: datetime) -> datetime:
+    """Waiting tickets last polled before this instant are considered dead clients."""
+    return now - timedelta(seconds=RETRY_INTERVAL_SEC * TICKET_STALE_POLL_INTERVALS)
+
+
+def _legal_ticket_transition(current: GridQueueStatus, to: GridQueueStatus) -> bool:
+    """Whether moving a ticket from *current* to *to* is a legal transition.
+
+    ``waiting`` is the only non-terminal source. The terminal states
+    (claimed/cancelled/expired) are sinks: a terminalized ticket never changes
+    again, except the deliberate ``claimed -> waiting`` rewind in ``resume_claimed``
+    when the claimed Session was reaped while its Allocated response was lost.
+    """
+    if current == to:
+        return True
+    if current == GridQueueStatus.waiting:
+        return to in (GridQueueStatus.claimed, GridQueueStatus.cancelled, GridQueueStatus.expired)
+    return current == GridQueueStatus.claimed and to == GridQueueStatus.waiting
+
+
+def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, reason: str) -> None:
+    """Single seam for every ticket status mutation (harness Q3).
+
+    Asserts the source->target transition is legal (catching the "forgot to
+    terminalize on this exit seam" class of bug that scattered ad-hoc assignments
+    produced) and emits one debug log. Direct ``ticket.status = ...`` assignment is
+    forbidden outside this helper.
+    """
+    if not _legal_ticket_transition(ticket.status, to):
+        raise ValueError(f"illegal ticket transition {ticket.status} -> {to} (ticket={ticket.id}, reason={reason})")
+    logger.debug("grid_ticket_transition ticket=%s %s->%s reason=%s", ticket.id, ticket.status, to, reason)
+    ticket.status = to
 
 
 IntentFactory = Callable[[DbSession], IntentService]
@@ -164,14 +214,26 @@ class AllocationService:
         session after ``grid.session_first_command_grace_sec`` (measured from the
         claim-time ``started_at``).
         """
-        result = await db.execute(
-            update(Session)
-            .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
-            .values(
-                session_id=appium_session_id,
-                status=SessionStatus.running,
+        try:
+            result = await db.execute(
+                update(Session)
+                .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
+                .values(
+                    session_id=appium_session_id,
+                    status=SessionStatus.running,
+                )
             )
-        )
+            await db.flush()
+        except IntegrityError:
+            # A running row already carries this Appium session id (the partial unique
+            # ux_sessions_session_id_running) — e.g. the legacy register_session API
+            # inserted running(X) for the same session while this alloc row still held
+            # its 'alloc-<uuid>' placeholder. That is exactly the conflict the 409 path
+            # exists for: roll the failed UPDATE back (it left the transaction poisoned)
+            # and surface it as not-pending so the router rolls back the Appium session
+            # via 409 — never as an unhandled 500 that wedges the allocation.
+            await db.rollback()
+            raise AllocationNotPendingError(allocation_id) from None
         if int(getattr(result, "rowcount", 0) or 0) == 0:
             # Idempotent retry: a first confirm committed but its response was lost, so
             # the router resent the same confirm. Accept it iff the row is already
@@ -187,7 +249,6 @@ class AllocationService:
             # The first confirm already promoted the row and emitted session.started;
             # the retry is a no-op success and must not re-emit the event.
             return
-        await db.flush()
         # This is the authoritative creation point for router-issued sessions (spec
         # §8): emit session.started here so consumers fire for clients that never hit
         # the legacy register API (Appium Inspector, plain WebDriver). Reload with the

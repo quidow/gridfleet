@@ -412,6 +412,17 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
             for idx in range(3)
         ]
     )
+    # C13: a pending grid session (allocate->confirm window) derives the device
+    # ``busy`` and occupies a capacity slot, so it must be counted as active too —
+    # otherwise available headroom is over-reported during create bursts.
+    db_session.add(
+        Session(
+            session_id="alloc-pending",
+            device_id=busy.id,
+            status=SessionStatus.pending,
+            started_at=datetime(2026, 4, 18, 11, 50, tzinfo=UTC),
+        )
+    )
     db_session.add_all([GridSessionQueueTicket(requested_body={}, status=GridQueueStatus.waiting) for _ in range(2)])
     await db_session.commit()
 
@@ -422,7 +433,7 @@ async def test_capacity_snapshot_collector_counts_verified_running_nodes(
 
     assert snapshot is not None
     assert snapshot.total_capacity_slots == 2
-    assert snapshot.active_sessions == 3
+    assert snapshot.active_sessions == 4
     assert snapshot.queued_requests == 2
     assert snapshot.available_capacity_slots == 0
 
