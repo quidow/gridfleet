@@ -15,7 +15,6 @@ class RunningAppiumNode:
     pid: int
     connection_target: str
     platform_id: str
-    grid_node_status: str | None = None
 
 
 def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[RunningAppiumNode]:
@@ -36,14 +35,12 @@ def parse_running_nodes(appium_processes_payload: dict[str, Any]) -> list[Runnin
             continue
         if not isinstance(connection_target, str) or not isinstance(platform_id, str):
             continue
-        grid = entry.get("grid_node_status")
         nodes.append(
             RunningAppiumNode(
                 port=port,
                 pid=pid,
                 connection_target=connection_target,
                 platform_id=platform_id,
-                grid_node_status=grid if isinstance(grid, str) else None,
             )
         )
     return nodes

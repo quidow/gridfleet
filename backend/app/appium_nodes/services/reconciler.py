@@ -706,7 +706,6 @@ class ReconcilerService:
                             port=entry.port,
                             pid=entry.pid,
                             connection_target=entry.connection_target,
-                            grid_node_status=entry.grid_node_status,
                         )
                         for entry in running
                     ]
@@ -1059,7 +1058,6 @@ class ReconcilerService:
                 port=entry.port,
                 pid=entry.pid,
                 connection_target=entry.connection_target,
-                grid_node_status=entry.grid_node_status,
             )
             for entry in parse_running_nodes(appium_processes)
         ]
