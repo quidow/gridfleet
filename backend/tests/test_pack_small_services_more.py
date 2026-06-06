@@ -118,6 +118,7 @@ async def test_pack_ingest_existing_release_storage_conflict(monkeypatch: pytest
         license=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     release = SimpleNamespace(release="1", artifact_sha256="different", artifact_path=None)
     existing = SimpleNamespace(
@@ -152,6 +153,7 @@ async def test_pack_ingest_existing_release_restores_missing_artifact(monkeypatc
         license=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     release = SimpleNamespace(release="1", artifact_sha256=payload_sha, artifact_path=None)
     existing = SimpleNamespace(
@@ -196,6 +198,7 @@ async def test_pack_ingest_existing_release_storage_error_becomes_conflict(monke
         license=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     release = SimpleNamespace(release="1", artifact_sha256=payload_sha, artifact_path=None)
     existing = SimpleNamespace(id="test-pack", current_release=None, releases=[release])
@@ -243,6 +246,7 @@ async def test_pack_ingest_new_release_storage_and_manifest_dict_errors(monkeypa
         license=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     no_existing = SimpleNamespace(scalar_one_or_none=lambda: None)
     session = MagicMock()
@@ -285,6 +289,7 @@ async def test_pack_ingest_existing_pack_without_release_adds_new_release(monkey
         license=None,
         platforms=[],
         features={},
+        insecure_features=[],
     )
     existing = SimpleNamespace(id="test-pack", current_release=None, releases=[SimpleNamespace(release="1")])
     first = SimpleNamespace(scalar_one_or_none=lambda: existing)

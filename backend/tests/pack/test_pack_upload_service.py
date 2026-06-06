@@ -210,3 +210,35 @@ async def test_re_upload_with_changed_bytes_at_same_release_raises_409(
     altered = _build_tarball(extra={"NOTES.txt": b"changed"})
     with pytest.raises(PackUploadConflictError):
         await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=altered)
+
+
+@pytest.mark.asyncio
+async def test_upload_warns_when_session_discovery_missing(
+    db_session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F3: a pack whose insecure_features lacks ':session_discovery' ingests but logs a
+    non-fatal warning (orphan-session reaping is disabled for it)."""
+    storage = PackStorageService(root=tmp_path)
+    with caplog.at_level("WARNING", logger="app.packs.services.ingest"):
+        await upload_pack(
+            db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball()
+        )
+    assert any("pack_ingest_missing_session_discovery" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_upload_no_warning_when_session_discovery_present(
+    db_session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F3: a pack that requests session_discovery ingests with no missing-feature warning."""
+    storage = PackStorageService(root=tmp_path)
+    manifest = _MANIFEST + 'insecure_features:\n  - "*:session_discovery"\n'
+    with caplog.at_level("WARNING", logger="app.packs.services.ingest"):
+        await upload_pack(
+            db_session,
+            storage=storage,
+            username="alice",
+            origin_filename="x.tar.gz",
+            data=_build_tarball(manifest=manifest),
+        )
+    assert not any("pack_ingest_missing_session_discovery" in r.message for r in caplog.records)
