@@ -278,6 +278,12 @@ class SessionSyncService:
         # while ANY pending row exists, regardless of age — the allocation reaper owns
         # expiring stale pending rows (claim window + confirm grace), so the sweep must
         # not race it by killing a still-confirming session on an over-age row.
+        #
+        # Accepted trade-off (#7): a router-crash orphan on a pending device — an Appium
+        # session created before the router died but never confirmed — is NOT cleaned by
+        # this sweep while the pending row lives. It persists at most claim_window +
+        # confirm_grace, until the reaper fails the pending row and frees the device; the
+        # next sweep tick (the device no longer skipped) then terminates the orphan.
         routable: list[tuple[Device, str]] = []
         for device in devices:
             node = device.appium_node

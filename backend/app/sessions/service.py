@@ -31,17 +31,20 @@ if TYPE_CHECKING:
 
 
 async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> bool:
-    """Return True if the device currently has a live (running, not-ended) session row.
+    """Return True if the device currently has a live (running or pending, not-ended) session row.
 
     Shared gating helper: a live session means an Appium node is actively serving a
     client, so allocation-class actions (e.g. verification, which tears the node
-    down) must be refused — spec §14.1.
+    down) must be refused — spec §14.1. ``pending`` is the grid allocate->confirm
+    window: a device with a pending row is already claimed by the router (the Appium
+    create is in flight), so it must gate the same as ``running`` — otherwise
+    verification can start a probe on an allocated device and double-bind it.
     """
     result = await db.execute(
         select(Session.id)
         .where(
             Session.device_id == device_id,
-            Session.status == SessionStatus.running,
+            Session.status.in_((SessionStatus.running, SessionStatus.pending)),
             Session.ended_at.is_(None),
         )
         .limit(1)
@@ -154,7 +157,13 @@ def _apply_session_terminal_status(session: Session, *, attached_run: TestRun | 
     if attached_run is not None and attached_run.state in TERMINAL_STATES - {RunState.completed}:
         session.status = SessionStatus.error
         session.error_type = "run_released"
-        session.error_message = f"Run ended while session was still running ({attached_run.state.value})"
+        # Prefer the run's own error (e.g. an operator's force-release reason); fall back
+        # to a generic run-state message when the run carries none.
+        session.error_message = (
+            attached_run.error
+            if attached_run.error
+            else f"Run ended while session was still running ({attached_run.state.value})"
+        )
     else:
         session.status = SessionStatus.passed
 

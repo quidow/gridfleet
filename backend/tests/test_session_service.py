@@ -595,5 +595,30 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     assert device.operational_state == DeviceOperationalState.offline
 
 
+async def test_device_has_running_session_counts_pending(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    # #2: a device whose only session is a grid ``pending`` row (the allocate->confirm
+    # window) is already claimed and must gate allocation-class actions the same as a
+    # running session, so verification cannot start a probe on an allocated device.
+    from app.sessions.service import device_has_running_session
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="dhrs-pending",
+        connection_target="dhrs-pending",
+        name="Pending gate device",
+        os_version="14",
+        operational_state="busy",
+    )
+    db_session.add(
+        Session(session_id=f"alloc-{datetime.now(UTC).timestamp()}", device_id=device.id, status=SessionStatus.pending)
+    )
+    await db_session.commit()
+    assert await device_has_running_session(db_session, device.id) is True
+
+
 def test_session_crud_service_satisfies_protocol() -> None:
     assert issubclass(SessionCrudService, SessionCrudProtocol)

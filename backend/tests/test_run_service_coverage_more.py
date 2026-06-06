@@ -687,6 +687,147 @@ async def test_session_node_target_no_device_returns_none(db_session: AsyncSessi
     assert await svc._session_node_target(db_session, missing_device) is None
 
 
+@pytest.mark.db
+async def test_session_node_target_falls_back_to_stored_router_target(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """#9: a released session whose live node target is unresolvable (node row cleared
+    during recovery backoff) still resolves a target via the router_target stored at
+    allocation, so the session gets terminated rather than left running."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Stale Node Port Device",
+        identity_value="run-release-staleport-001",
+        operational_state=DeviceOperationalState.busy,
+    )
+    # No AppiumNode row -> node_target() returns None; resolve_router_target must fall
+    # back to the target stored at allocation.
+    session = Session(
+        session_id="staleport-sess",
+        device_id=device.id,
+        status=SessionStatus.running,
+        router_target="http://10.0.0.99:4723",
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    target = await svc._session_node_target(db_session, session)
+    assert target == "http://10.0.0.99:4723"
+
+
+@pytest.mark.db
+async def test_mark_running_sessions_released_closes_pending_session(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """#3: a run cancelled while a grid session is still ``pending`` (allocate->confirm
+    window) terminalizes the pending row — without an Appium DELETE (placeholder id) —
+    so the device is not double-allocated when the router's later confirm 409s."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Pending Release Device",
+        identity_value="run-release-pending-001",
+        operational_state=DeviceOperationalState.busy,
+    )
+    run = await create_reserved_run(db_session, name="release-pending-run", devices=[device], state=RunState.cancelled)
+    pending = Session(
+        session_id=f"alloc-{uuid.uuid4()}",
+        device_id=device.id,
+        run_id=run.id,
+        status=SessionStatus.pending,
+    )
+    db_session.add(pending)
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(
+        requested_body={"capabilities": {"alwaysMatch": {}, "firstMatch": [{}]}},
+        status=GridQueueStatus.claimed,
+        session_row_id=pending.id,
+    )
+    db_session.add(ticket)
+    await db_session.commit()
+
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    # The pending device must still be considered busy by the release gate (#3).
+    assert await svc._device_has_running_session(db_session, device.id) is True
+
+    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+    assert pending.status == SessionStatus.error
+    assert pending.error_type == "run_released"
+    assert pending.ended_at is not None
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.expired
+
+
+@pytest.mark.db
+async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#12: run-release routes the session close through close_running_session so it
+    emits session.ended and reconciles the device instead of stamping status inline."""
+    import app.sessions.service as sessions_service
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Ended Event Device",
+        identity_value="run-release-endedevent-001",
+        operational_state=DeviceOperationalState.busy,
+    )
+    run = await create_reserved_run(
+        db_session, name="release-endedevent-run", devices=[device], state=RunState.cancelled
+    )
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=1,
+                active_connection_target="",
+            )
+        )
+    session = Session(session_id="endedevent-sess", device_id=device.id, run_id=run.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    queued: list[str] = []
+    orig_queue = event_bus.queue_for_session
+
+    def _spy(db: object, event_type: str, data: dict, **kwargs: object) -> None:
+        queued.append(event_type)
+        return orig_queue(db, event_type, data, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(event_bus, "queue_for_session", _spy)
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle_release.appium_direct.terminate_session",
+        AsyncMock(return_value=True),
+    )
+
+    reconciled: list[uuid.UUID] = []
+    orig_revoke = sessions_service.IntentService.revoke_intents_and_reconcile
+
+    async def _spy_revoke(self: object, *, device_id: uuid.UUID, **kwargs: object) -> object:
+        reconciled.append(device_id)
+        return await orig_revoke(self, device_id=device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sessions_service.IntentService, "revoke_intents_and_reconcile", _spy_revoke)
+
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+
+    assert session.status == SessionStatus.error
+    assert session.error_type == "run_released"
+    assert "session.ended" in queued
+    assert device.id in reconciled
+
+
 async def test_report_preparation_failure_and_cooldown_escalation_paths(
     db_session: AsyncSession,
     db_host: Host,
