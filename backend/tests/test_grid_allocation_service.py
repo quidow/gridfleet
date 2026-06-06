@@ -169,6 +169,35 @@ async def test_fifo_fairness_blocks_younger_ticket(
 
 
 @pytest.mark.db
+async def test_reserved_device_younger_run_ticket_not_blocked_by_older_runless(
+    db_session: AsyncSession, seeded_reserved_device: ReservedDevice, allocation_service: AllocationService
+) -> None:
+    """Reservation-aware FIFO veto (#5): an OLDER run-less waiter that the
+    reservation gate would reject for the reserved device must NOT block the run's
+    own YOUNGER ticket — the younger run-owned ticket allocates immediately."""
+    now = datetime.now(UTC)
+    older_runless = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        created_at=now - timedelta(seconds=10),
+    )
+    younger_run_owned = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(seeded_reserved_device.reservation_run_id)}),
+        created_at=now,
+    )
+    db_session.add_all([older_runless, younger_run_owned])
+    await db_session.flush()
+
+    # The older run-less ticket cannot take the reserved device, so it must not veto.
+    result = await allocation_service.try_allocate(db_session, ticket=younger_run_owned)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.run_id == seeded_reserved_device.reservation_run_id
+    # The older run-less ticket still cannot allocate the reserved device.
+    assert await allocation_service.try_allocate(db_session, ticket=older_runless) is None
+
+
+@pytest.mark.db
 async def test_concurrent_allocation_single_winner(
     db_session_maker: async_sessionmaker[AsyncSession], seeded_available_device: Device
 ) -> None:
