@@ -426,3 +426,19 @@ async def test_stale_older_ticket_does_not_veto_younger_live_waiter(
     # The dead older ticket is presumed dead and cannot block; the younger allocates.
     result = await allocation_service.try_allocate(db_session, ticket=live_younger)
     assert result is not None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_free_sentinel_run_id_is_silent_free_session(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """gridfleet:run_id="free" is the testkit's explicit free-session sentinel
+    (relay-era contract), not a malformed id — no warning, no association."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{RUN_ID_CAP: "free"}))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None and row.run_id is None

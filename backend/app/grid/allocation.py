@@ -456,6 +456,10 @@ class AllocationService:
         raw = candidate.get(RUN_ID_CAP)
         if not isinstance(raw, str):
             return None
+        if raw == "free":
+            # The testkit's explicit free-session sentinel (relay-era contract:
+            # free sessions always send gridfleet:run_id="free") — not malformed.
+            return None
         try:
             run_id = uuid.UUID(raw)
         except ValueError:
