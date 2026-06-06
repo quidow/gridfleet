@@ -31,6 +31,15 @@ class Session(Base):
             unique=True,
             postgresql_where=text("status = 'running' AND ended_at IS NULL"),
         ),
+        # Serves the live-session scans (live_session_predicate, /routes, liveness sweep):
+        # partial on the small live set, keyed device_id-first for per-device existence
+        # checks with status in-index. See migration c3d4e5f6a7b8.
+        Index(
+            "ix_sessions_live",
+            "device_id",
+            "status",
+            postgresql_where=text("ended_at IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
