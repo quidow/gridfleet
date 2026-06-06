@@ -181,6 +181,10 @@ class SessionSyncService:
 
         probe_results = await asyncio.gather(*[_probe(s) for s in sessions_with_device])
 
+        # Re-fence after the slow probe phase (node_health pattern): another backend
+        # may have taken leadership while we awaited Appium — drop the write phase.
+        await assert_current_leader(db, settings=self._settings)
+
         device_ids_to_restore: set[uuid.UUID] = set()
         for session, alive in zip(sessions_with_device, probe_results, strict=True):
             device = session.device
@@ -312,6 +316,10 @@ class SessionSyncService:
                 return await appium_direct.list_sessions(target)
 
         live_id_lists = await asyncio.gather(*[_enumerate(target, device.host_id) for device, target in candidates])
+
+        # Re-fence after the slow enumeration phase (node_health pattern) before the
+        # terminate/write loop below.
+        await assert_current_leader(db, settings=self._settings)
 
         # Resolve the known (running/pending) session ids for every candidate device in
         # one IN-query, grouped by device (#12), before the write loop.
