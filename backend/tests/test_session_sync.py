@@ -13,7 +13,7 @@ allocation API.
 """
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -301,6 +301,75 @@ async def test_orphan_spared_when_pending_row_exists(
     await _make_sync_service().sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []
+
+
+async def test_orphan_spared_during_alloc_confirm_window(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """The allocate→confirm window: the pending row holds an ``alloc-`` placeholder
+    while the real Appium id is live. The live id is absent from known_ids, so the
+    sweep would kill the in-creation session. An in-window pending row spares the
+    whole device."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-window", operational_state=DeviceOperationalState.busy
+    )
+    pending = Session(session_id="alloc-placeholder-uuid", device_id=device.id, status=SessionStatus.pending)
+    db_session.add(pending)
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    # The freshly-created Appium session, whose id never matches the placeholder.
+    _stub_appium_direct["list"][target] = ["real-appium-sess-id"]
+    await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+
+
+async def test_orphan_killed_when_pending_row_over_age(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """An over-age pending row (past claim_window) is the reaper's to fail; the sweep
+    proceeds and an unknown live session is terminated."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-overage", operational_state=DeviceOperationalState.busy
+    )
+    stale_pending = Session(
+        session_id="alloc-stale-uuid",
+        device_id=device.id,
+        status=SessionStatus.pending,
+        started_at=datetime.now(UTC) - timedelta(seconds=600),  # well past the 120s default
+    )
+    db_session.add(stale_pending)
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    _stub_appium_direct["list"][target] = ["real-appium-sess-id"]
+    await _make_sync_service().sync(db_session)
+
+    assert (target, "real-appium-sess-id") in _stub_appium_direct["terminated"]
+
+
+async def test_orphan_kill_metric_not_incremented_when_terminate_fails(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orphan-kill counter only advances on a successful termination (#11)."""
+    await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-metric", operational_state=DeviceOperationalState.busy
+    )
+    await db_session.commit()
+
+    async def fake_terminate_fail(target: str, session_id: str, **_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate_fail)
+    target = f"http://{db_host.ip}:4723"
+    _stub_appium_direct["list"][target] = ["ghost-sess"]
+
+    before = service_sync.GRID_ORPHAN_SESSIONS_KILLED_TOTAL._value.get()
+    await _make_sync_service().sync(db_session)
+    after = service_sync.GRID_ORPHAN_SESSIONS_KILLED_TOTAL._value.get()
+
+    assert after == before
 
 
 async def test_orphan_with_inflight_probe_spared(

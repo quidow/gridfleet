@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from prometheus_client import Counter
@@ -205,6 +205,7 @@ class SessionSyncService:
 
     async def _kill_orphans(self, db: AsyncSession) -> None:
         """Terminate Appium sessions with no tracking DB row, per running node."""
+        claim_window = int(self._settings.get("grid.claim_window_sec"))
         device_stmt = (
             select(Device).options(selectinload(Device.appium_node), selectinload(Device.host)).join(Device.appium_node)
         )
@@ -215,6 +216,21 @@ class SessionSyncService:
                 continue
             target = node_target(device)
             if target is None:
+                continue
+            # Allocate→confirm window: a pending row holds a placeholder session_id
+            # while the real Appium id is being created. The live Appium session is
+            # absent from known_ids (placeholders only), so the sweep would kill an
+            # in-creation session. Skip the whole device while any in-window pending
+            # row exists — the allocation reaper owns that window (an over-age pending
+            # row is the reaper's to fail, so we let the sweep proceed once it expires).
+            window_start = datetime.now(UTC) - timedelta(seconds=claim_window)
+            pending_in_window_stmt = select(Session.id).where(
+                Session.device_id == device.id,
+                Session.status == SessionStatus.pending,
+                Session.ended_at.is_(None),
+                Session.started_at >= window_start,
+            )
+            if (await db.execute(pending_in_window_stmt)).first() is not None:
                 continue
             live_ids = await appium_direct.list_sessions(target)
             if live_ids is None:
@@ -234,7 +250,8 @@ class SessionSyncService:
                 if live_id in known_ids:
                     continue
                 terminated = await appium_direct.terminate_session(target, live_id)
-                GRID_ORPHAN_SESSIONS_KILLED_TOTAL.inc()
+                if terminated:
+                    GRID_ORPHAN_SESSIONS_KILLED_TOTAL.inc()
                 logger.warning(
                     "grid_orphan_session_killed session=%s device=%s target=%s terminated=%s",
                     live_id,
