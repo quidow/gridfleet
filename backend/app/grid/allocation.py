@@ -16,7 +16,6 @@ from prometheus_client import Counter, Gauge
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm.util import identity_key
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
@@ -31,7 +30,7 @@ from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import render_stereotype
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs import service as run_service
-from app.runs.models import RunState
+from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.models import Session, SessionStatus
 
@@ -46,6 +45,12 @@ GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
     "Waiting tickets in grid_session_queue.",
 )
+
+# Extra budget on top of grid.claim_window_sec before the reaper fails a pending row.
+# Covers the router's confirm retries (a confirm whose response was lost re-posts the
+# same confirm, which can outlive the create cap): the router-side confirm budget is
+# being tightened in parallel to fit inside this grace.
+CONFIRM_GRACE_SEC = 60
 
 
 class AllocationNotPendingError(Exception):
@@ -127,20 +132,41 @@ class AllocationService:
 
         The status transition is a conditional UPDATE guarded on ``status='pending'``
         so the reaper failing the row mid-confirm loses the race deterministically:
-        rowcount 0 means the row is no longer pending and we raise (the router rolls
-        back the Appium session).
+        rowcount 0 means the row is no longer pending. Before raising we check for the
+        lost-response retry case: a first confirm committed, its response was lost, and
+        the router retried the same confirm. If the row is already ``running`` with the
+        SAME ``appium_session_id`` we return success (idempotent). Any other state — a
+        different id, or a row failed/reaped — is a genuine conflict and still raises
+        (the router rolls back the Appium session via 409).
+
+        ``last_activity_at`` is stamped at confirm so the idle clock starts when the
+        session becomes live, not at the claim-time ``started_at`` (which precedes a
+        possibly multi-minute Appium create).
         """
         result = await db.execute(
             update(Session)
             .where(Session.id == allocation_id, Session.status == SessionStatus.pending)
-            .values(session_id=appium_session_id, status=SessionStatus.running)
+            .values(
+                session_id=appium_session_id,
+                status=SessionStatus.running,
+                last_activity_at=datetime.now(UTC),
+            )
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
-            raise AllocationNotPendingError(allocation_id)
-        # Keep any ORM-mapped instance coherent with the Core write.
-        row = db.identity_map.get(identity_key(Session, allocation_id), None)
-        if row is not None:
-            await db.refresh(row)
+            # Idempotent retry: a first confirm committed but its response was lost, so
+            # the router resent the same confirm. Accept it iff the row is already
+            # running with the same Appium id; otherwise it is a real conflict (409).
+            existing_session_id = await db.scalar(
+                select(Session.session_id).where(
+                    Session.id == allocation_id,
+                    Session.status == SessionStatus.running,
+                )
+            )
+            if existing_session_id != appium_session_id:
+                raise AllocationNotPendingError(allocation_id)
+            # The first confirm already promoted the row and emitted session.started;
+            # the retry is a no-op success and must not re-emit the event.
+            return
         await db.flush()
         # This is the authoritative creation point for router-issued sessions (spec
         # §8): emit session.started here so consumers fire for clients that never hit
@@ -223,7 +249,7 @@ class AllocationService:
         pending_stmt = select(Session.id).where(
             Session.status == SessionStatus.pending,
             Session.ended_at.is_(None),
-            Session.started_at < now - timedelta(seconds=claim_window),
+            Session.started_at < now - timedelta(seconds=claim_window + CONFIRM_GRACE_SEC),
         )
         pending_failed = 0
         for (session_pk,) in (await db.execute(pending_stmt)).all():
@@ -255,17 +281,21 @@ class AllocationService:
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
         eligible = await self._eligible_devices(db)
+        # Batch the reservation load for every eligible device once instead of one
+        # SELECT per device per long-poll tick (#11).
+        reservation_map = await run_service.get_device_reservation_map(db, [d.id for d in eligible])
         # Memoize the pack-rendered stereotype per device within this attempt: the
         # render hits the DB per device, and the device loop below may re-touch a
-        # device. Cross-tick caching is deliberately avoided — stereotypes follow pack
-        # releases (#13).
+        # device. The render interpolates per-device context (udid, os_version), so it
+        # is NOT poolable across same-pack devices; cross-tick caching is also avoided —
+        # stereotypes follow pack releases (#13).
         stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
         for device in eligible:
             stereotype = stereotype_cache.get(device.id)
             if stereotype is None:
                 stereotype = await self._stereotype_provider(db, device)
                 stereotype_cache[device.id] = stereotype
-            reservation_run_id = await self._load_reservation_run_id(db, device)
+            reservation_run_id = self._reservation_run_id(reservation_map.get(device.id), device.id)
             for candidate in candidates:
                 if not candidate_matches_stereotype(candidate, stereotype):
                     continue
@@ -316,9 +346,7 @@ class AllocationService:
         ):
             ticket.status = GridQueueStatus.waiting
             return None
-        # Prefer the live target; fall back to the target stored at allocation if the
-        # node port was transiently stale-cleared (#6).
-        target = node_target(row.device) or row.router_target
+        target = resolve_router_target(row)
         if target is None:
             # The device lost its node/host association and no target was ever stored;
             # treat like a reaped claim and let the client wait for a fresh allocation
@@ -345,20 +373,20 @@ class AllocationService:
         )
         return list((await db.execute(stmt)).scalars().all())
 
-    async def _load_reservation_run_id(self, db: DbSession, device: Device) -> uuid.UUID | None:
-        """Return the active reservation's run id for *device*, or ``None`` if the
+    @staticmethod
+    def _reservation_run_id(reservation_run: TestRun | None, device_id: uuid.UUID) -> uuid.UUID | None:
+        """Return the active reservation's run id for *device_id*, or ``None`` if the
         device carries no admitting reservation (open to any ticket).
 
-        An active, non-excluded reservation gates the device to its owning run
-        (spec §3); anything else (no reservation, non-active run, excluded entry)
-        leaves it unreserved.
+        Pure projection over the run loaded once by ``get_device_reservation_map``: an
+        active, non-excluded reservation gates the device to its owning run (spec §3);
+        anything else (no reservation, non-active run, excluded entry) leaves it
+        unreserved.
         """
-        reservation_run, reservation_entry = await run_service.get_device_reservation_with_entry(db, device.id)
-        if (
-            reservation_run is None
-            or reservation_run.state != RunState.active
-            or run_service.reservation_entry_is_excluded(reservation_entry)
-        ):
+        if reservation_run is None or reservation_run.state != RunState.active:
+            return None
+        entry = run_service.get_reservation_entry_for_device(reservation_run, device_id)
+        if run_service.reservation_entry_is_excluded(entry):
             return None
         return reservation_run.id
 
@@ -490,6 +518,16 @@ async def pack_slot_stereotype(db: DbSession, device: Device) -> dict[str, Any]:
             stereotype = {}
     stereotype.update(build_grid_stereotype_caps(device, pack_stereotype=None))
     return stereotype
+
+
+def resolve_router_target(row: Session) -> str | None:
+    """Routing target for a Session row: prefer the live node target, fall back to the
+    target stored at allocation when the device's node port was transiently stale-cleared
+    during recovery backoff (#6). A future routing policy (staleness guard, recovery
+    preference) lands here once for every consumer.
+    """
+    live = node_target(row.device) if row.device is not None else None
+    return live or row.router_target
 
 
 def node_target(device: Device) -> str | None:

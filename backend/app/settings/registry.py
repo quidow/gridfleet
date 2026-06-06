@@ -404,10 +404,13 @@ _DEFINITIONS: list[SettingDefinition] = [
         default=120,
         description=(
             "How long an allocated (pending) session may remain unconfirmed before it is failed. "
-            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create."
+            "Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create. "
+            "The reaper adds a fixed +60s confirm grace on top of this window to absorb router confirm retries. "
+            "The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets "
+            "the orphan sweep race a real in-creation session."
         ),
         env_var="GRIDFLEET_GRID_CLAIM_WINDOW_SEC",
-        min_value=5,
+        min_value=30,
         max_value=600,
     ),
     SettingDefinition(

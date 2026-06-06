@@ -13,11 +13,12 @@ behavior within 1 s, no cross-worker wake needed.
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import Table, bindparam, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +28,7 @@ from app.grid.allocation import (
     GRID_ALLOCATION_OUTCOME_TOTAL,
     AllocationNotPendingError,
     AllocationResult,
-    node_target,
+    resolve_router_target,
 )
 from app.grid.dependencies import GridServicesDep
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -67,6 +68,15 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
     allocation = services.allocation
     deadline = time.monotonic() + LONG_POLL_SEC
     ticket_id = payload.ticket
+
+    def _allocated(result: AllocationResult) -> AllocateResponse:
+        return AllocateResponse(
+            status="allocated",
+            allocation_id=result.allocation_id,
+            target=result.target,
+            claim_window_sec=int(cast("int", services.settings.get("grid.claim_window_sec"))),
+        )
+
     while True:
         result: AllocationResult | None
         async with services.session_factory() as db:
@@ -85,13 +95,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 resumed = await allocation.resume_claimed(db, ticket=ticket)
                 if resumed is not None:
                     await db.commit()
-                    claim_window_sec = int(cast("int", services.settings.get("grid.claim_window_sec")))
-                    return AllocateResponse(
-                        status="allocated",
-                        allocation_id=resumed.allocation_id,
-                        target=resumed.target,
-                        claim_window_sec=claim_window_sec,
-                    )
+                    return _allocated(resumed)
             result = await allocation.try_allocate(db, ticket=ticket)
             # try_allocate cancels the ticket on an invalid body; re-read past
             # mypy's narrowing from the early returns above.
@@ -100,13 +104,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
         if cancelled:
             return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
         if result is not None:
-            claim_window_sec = int(cast("int", services.settings.get("grid.claim_window_sec")))
-            return AllocateResponse(
-                status="allocated",
-                allocation_id=result.allocation_id,
-                target=result.target,
-                claim_window_sec=claim_window_sec,
-            )
+            return _allocated(result)
         if time.monotonic() >= deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
             return AllocateResponse(status="queued", ticket=ticket_id)
@@ -163,7 +161,7 @@ async def routes(db: DbDep) -> RoutesResponse:
         # running session whose device's node port was transiently stale-cleared
         # (recovery backoff) does not vanish from the route table mid-flight (#6). Only
         # skip when both are null.
-        target = (node_target(row.device) if row.device is not None else None) or row.router_target
+        target = resolve_router_target(row)
         if target is None:
             continue
         entries.append(RouteEntry(session_id=row.session_id, target=target))
@@ -174,20 +172,15 @@ async def routes(db: DbDep) -> RoutesResponse:
 async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     if not payload.sessions:
         return Response(status_code=204)
-    # One executemany round trip instead of N serial UPDATEs: a Core UPDATE against
-    # the Session table (not the ORM mapper, whose bulk path would demand PK values)
-    # parameterized on the matched session_id and the new timestamp, fed the per-
-    # session bind list.
-    table = Session.__table__
-    assert isinstance(table, Table)  # mypy narrowing; always true for a mapped model
-    stmt = (
-        update(table)
-        .where(table.c.session_id == bindparam("b_session_id"), table.c.status == SessionStatus.running)
-        .values(last_activity_at=bindparam("b_last_activity_at"))
-    )
+    # The payload means "these sessions were active"; we ignore the caller-supplied
+    # datetimes (the router host's wall clock — clock skew there would otherwise extend
+    # or defeat idle reaping, which is judged against this host's clock) and stamp a
+    # single server-side now() for every reported session. One UPDATE over an IN-set.
+    now = datetime.now(UTC)
     await db.execute(
-        stmt,
-        [{"b_session_id": session_id, "b_last_activity_at": ts} for session_id, ts in payload.sessions.items()],
+        update(Session)
+        .where(Session.session_id.in_(list(payload.sessions.keys())), Session.status == SessionStatus.running)
+        .values(last_activity_at=now)
     )
     await db.commit()
     return Response(status_code=204)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -175,6 +176,90 @@ async def test_confirm_unknown_allocation_is_409(client: AsyncClient, seeded_ava
 
 
 @pytest.mark.db
+async def test_confirm_retry_with_same_appium_id_is_idempotent_success(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """F2: a confirm whose response was lost is retried with the SAME appium_session_id;
+    the row is already running, so the retry returns 204 (no rollback)."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    first = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-x"}
+    )
+    assert first.status_code == 204
+    retry = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-x"}
+    )
+    assert retry.status_code == 204
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.status == SessionStatus.running
+    assert row.session_id == "appium-x"
+
+
+@pytest.mark.db
+async def test_confirm_conflicting_appium_id_after_success_is_409(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """F2: a second confirm carrying a DIFFERENT appium_session_id is a genuine conflict
+    and must still 409 (the original running session is untouched)."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    assert (
+        await client.post(f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-a"})
+    ).status_code == 204
+    conflict = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-b"}
+    )
+    assert conflict.status_code == 409
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.session_id == "appium-a"
+
+
+@pytest.mark.db
+async def test_confirm_after_reaper_failed_row_is_409(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """F2: a confirm after the reaper already failed the pending row is a genuine
+    conflict (the row is error, not running) and must 409, not be accepted."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    # Simulate the reaper failing the still-pending row out from under the confirm.
+    await client.post(f"/internal/grid/sessions/{allocation_id}/fail", json={"message": "claim window expired"})
+
+    late = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-late"}
+    )
+    assert late.status_code == 409
+
+
+@pytest.mark.db
+async def test_confirm_stamps_last_activity_at(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """F9: confirm starts the idle clock — last_activity_at is set at confirm, not left
+    null until the first activity flush."""
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+    assert (
+        await client.post(f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-c"})
+    ).status_code == 204
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.last_activity_at is not None
+
+
+@pytest.mark.db
 async def test_fail_releases_allocation(
     client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
 ) -> None:
@@ -208,15 +293,19 @@ async def test_activity_updates_last_activity_at(
 
 
 @pytest.mark.db
-async def test_activity_bulk_update_round_trips_distinct_timestamps(
+async def test_activity_stamps_server_now_ignoring_caller_timestamps(
     client: AsyncClient, db_session: AsyncSession, two_running_sessions: tuple[str, str]
 ) -> None:
-    """Rider #21: the single executemany activity write must land each session's own
-    timestamp (no cross-talk between rows)."""
+    """F5: the activity write ignores caller-supplied datetimes (router clock skew must
+    not extend/defeat idle reaping) and stamps a single server-side now() for every
+    reported session, freshly >= the request time."""
     sid_a, sid_b = two_running_sessions
+    request_time = datetime.now(UTC)
     resp = await client.post(
         "/internal/grid/activity",
-        json={"sessions": {sid_a: "2026-06-05T12:00:00Z", sid_b: "2026-06-05T13:30:00Z"}},
+        # Wildly skewed caller timestamps (one far past, one far future) must both be
+        # ignored in favor of the server clock.
+        json={"sessions": {sid_a: "2000-01-01T00:00:00Z", sid_b: "2099-12-31T23:59:59Z"}},
     )
     assert resp.status_code == 204
 
@@ -224,11 +313,13 @@ async def test_activity_bulk_update_round_trips_distinct_timestamps(
     by_sid = {row.session_id: row for row in (await db_session.execute(stmt)).scalars().all()}
     for row in by_sid.values():
         await db_session.refresh(row)
-    assert by_sid[sid_a].last_activity_at is not None
-    assert by_sid[sid_b].last_activity_at is not None
-    # Distinct timestamps proves per-row binding, not a single shared value.
-    assert by_sid[sid_a].last_activity_at != by_sid[sid_b].last_activity_at
-    assert by_sid[sid_b].last_activity_at > by_sid[sid_a].last_activity_at
+    for sid in (sid_a, sid_b):
+        stamped = by_sid[sid].last_activity_at
+        assert stamped is not None
+        # Server now(), not the caller value: at or after the request, never the future
+        # caller datetime.
+        assert stamped >= request_time - timedelta(seconds=5)
+        assert stamped < datetime(2099, 1, 1, tzinfo=UTC)
 
 
 @pytest.mark.db
