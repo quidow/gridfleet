@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Select, and_, asc, desc, func, or_, select, text
+from sqlalchemy import Select, and_, asc, desc, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session as SyncSession
 from sqlalchemy.orm import selectinload
@@ -653,8 +653,23 @@ class SessionCrudService:
         if session.ended_at is not None:
             return session
 
-        session.ended_at = now_utc()
-        await db.flush()
+        # Claim the close with a conditional UPDATE (wave-5 re-review B3): the
+        # read above takes no row lock, so a concurrent closer (the session_sync
+        # sweep on another worker) committing between our SELECT and our write
+        # would otherwise go unnoticed — both closers stamp the row and
+        # double-run the revoke + lifecycle bookkeeping below. rowcount 0 means
+        # another worker already terminalized the row; refresh and return it
+        # untouched. This is what makes the idempotency documented above true
+        # at the database level.
+        result = await db.execute(
+            update(Session).where(Session.id == session.id, Session.ended_at.is_(None)).values(ended_at=now_utc())
+        )
+        if int(getattr(result, "rowcount", 0) or 0) == 0:
+            # READ COMMITTED: the refresh statement sees the winner's committed
+            # row even inside our open transaction.
+            await db.refresh(session)
+            return session
+        await db.refresh(session)
 
         if session.device_id is not None:
             # Mirror the ``update_session_status`` revoke path. Without this,
