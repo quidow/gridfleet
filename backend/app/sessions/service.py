@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, and_, asc, desc, func, or_, select, text
@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AppError
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
@@ -200,7 +201,7 @@ async def close_running_session(
     # matching the reaper's silent close of the same pending class (C12). A confirmed
     # (``running``) row always emits ended.
     never_confirmed = session.status == SessionStatus.pending
-    session.ended_at = datetime.now(UTC)
+    session.ended_at = now_utc()
     _apply_session_terminal_status(session, attached_run=attached_run)
     if not never_confirmed:
         queue_session_ended_event(db, session, device=session.device, publisher=publisher)
@@ -462,7 +463,7 @@ class SessionCrudService:
         *,
         days: int,
     ) -> list[tuple[datetime, SessionStatus]]:
-        window_start = datetime.now(UTC) - timedelta(days=days)
+        window_start = now_utc() - timedelta(days=days)
         stmt = (
             select(Session.started_at, Session.status)
             .where(
@@ -602,8 +603,8 @@ class SessionCrudService:
         # Pin ``started_at`` and ``ended_at`` to the same Python timestamp so a
         # late-registered terminal session never persists with ``ended_at <
         # started_at`` (the column default is ``server_default=func.now()`` which
-        # fires later than ``datetime.now(UTC)``, producing negative durations).
-        now = datetime.now(UTC)
+        # fires later than ``now_utc()``, producing negative durations).
+        now = now_utc()
         session = Session(
             session_id=session_id,
             device_id=device.id if device is not None else None,
@@ -652,7 +653,7 @@ class SessionCrudService:
         if session.ended_at is not None:
             return session
 
-        session.ended_at = datetime.now(UTC)
+        session.ended_at = now_utc()
         await db.flush()
 
         if session.device_id is not None:
@@ -705,7 +706,7 @@ class SessionCrudService:
         )
         session.status = status
         if status != SessionStatus.running and session.ended_at is None:
-            session.ended_at = datetime.now(UTC)
+            session.ended_at = now_utc()
 
         if status != SessionStatus.running and session.device_id is not None:
             # Revoke the active_session intent for this specific session before

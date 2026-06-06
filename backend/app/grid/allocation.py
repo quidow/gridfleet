@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge
@@ -22,6 +22,7 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.core.protocols import SettingsReader
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
@@ -300,7 +301,7 @@ class AllocationService:
                 status=SessionStatus.error,
                 error_type="allocation_failed",
                 error_message=message,
-                ended_at=datetime.now(UTC),
+                ended_at=now_utc(),
             )
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
@@ -376,7 +377,7 @@ class AllocationService:
             raise RuntimeError("AllocationService.reap_expired requires a settings reader")
         claim_window = int(cast("int", self._settings.get("grid.claim_window_sec")))
         queue_timeout = int(cast("int", self._settings.get("grid.queue_timeout_sec")))
-        now = datetime.now(UTC)
+        now = now_utc()
 
         pending_stmt = select(Session.id).where(
             Session.status == SessionStatus.pending,
@@ -417,7 +418,7 @@ class AllocationService:
         # The FIFO veto and the reaper read last_polled_at to expire abandoned tickets
         # long before queue_timeout (harness C8). Stamp before any early return so even
         # an invalid-body ticket records that its client was present this tick.
-        ticket.last_polled_at = datetime.now(UTC)
+        ticket.last_polled_at = now_utc()
         try:
             candidates = merge_candidates(ticket.requested_body)
         except CapabilityMergeError:
@@ -592,7 +593,7 @@ class AllocationService:
         not-yet-polled ticket (last_polled_at IS NULL) only blocks while its
         created_at is itself within the window — i.e. it really is a fresh waiter.
         """
-        cutoff = _ticket_liveness_cutoff(datetime.now(UTC))
+        cutoff = _ticket_liveness_cutoff(now_utc())
         stmt = (
             select(GridSessionQueueTicket)
             .where(

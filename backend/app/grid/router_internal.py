@@ -13,7 +13,6 @@ behavior within 1 s, no cross-worker wake needed.
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import APIRouter
@@ -23,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbDep
+from app.core.timeutil import now_utc
 from app.devices.models import Device
 from app.grid.allocation import (
     GRID_ALLOCATION_OUTCOME_TOTAL,
@@ -185,7 +185,7 @@ async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     # datetimes (the router host's wall clock — clock skew there would otherwise extend
     # or defeat idle reaping, which is judged against this host's clock) and stamp a
     # single server-side now() for every reported session. One UPDATE over an IN-set.
-    now = datetime.now(UTC)
+    now = now_utc()
     await db.execute(
         update(Session)
         .where(Session.session_id.in_(list(payload.sessions.keys())), Session.status == SessionStatus.running)

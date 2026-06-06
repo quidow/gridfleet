@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
 
 from prometheus_client import Counter
@@ -14,6 +14,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader.advisory import LeadershipLost, assert_current_leader
 from app.core.observability import get_logger, observe_background_loop
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services import intent as intent_service
@@ -201,9 +202,9 @@ class SessionSyncService:
            device busy forever.
         """
         idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
-        idle_cutoff = datetime.now(UTC) - timedelta(seconds=idle_timeout)
+        idle_cutoff = now_utc() - timedelta(seconds=idle_timeout)
         grace = int(self._settings.get("grid.session_first_command_grace_sec"))
-        grace_cutoff = datetime.now(UTC) - timedelta(seconds=grace)
+        grace_cutoff = now_utc() - timedelta(seconds=grace)
 
         running_stmt = (
             select(Session)
