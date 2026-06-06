@@ -18,12 +18,12 @@ from unittest.mock import AsyncMock
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationService
+from app.grid.allocation import AllocationNotPendingError, AllocationService
 from app.grid.matching import RUN_ID_CAP
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from app.sessions.service import SessionCrudService
+from app.sessions.service import DeviceLiveSessionConflictError, SessionCrudService
 from tests.helpers import drain_handlers, recent_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
@@ -297,3 +297,132 @@ async def test_allocate_confirm_register_emits_session_started_once(
 
     started = await _started_events_for("dedup-ssn")
     assert len(started) == 1
+
+
+@pytest.mark.db
+async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """C5: a running(X) row already carrying the Appium session id (e.g. inserted by
+    the legacy register API while the alloc row still held its placeholder) must make
+    confirm() raise AllocationNotPendingError (router -> 409 rollback), NOT an
+    unhandled IntegrityError 500 that wedges the allocation."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+
+    # A DIFFERENT running session already owns the Appium id (the partial unique index
+    # ux_sessions_session_id_running will reject confirm's UPDATE).
+    db_session.add(
+        Session(
+            id=uuid.uuid4(),
+            session_id="conflict-ssn",
+            device_id=None,
+            status=SessionStatus.running,
+        )
+    )
+    await db_session.flush()
+
+    with pytest.raises(AllocationNotPendingError):
+        await allocation_service.confirm(
+            db_session, allocation_id=result.allocation_id, appium_session_id="conflict-ssn"
+        )
+
+
+@pytest.mark.db
+async def test_unreserved_device_honors_valid_run_id_cap(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """C6: an UNRESERVED device must still associate a client-supplied gridfleet:run_id
+    that names a real active run, so the session joins that run's release/terminal
+    sweeps instead of escaping its lifecycle."""
+    run = TestRun(
+        id=uuid.uuid4(),
+        name="grid-unreserved-run",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(run.id)}),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.run_id == run.id
+
+
+@pytest.mark.db
+async def test_unreserved_device_invalid_run_id_cap_allocates_free(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """C6: an unreserved device with a bogus gridfleet:run_id is NOT rejected — the
+    device is genuinely free, so the session allocates as a free (run-less) session."""
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(uuid.uuid4())}),
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.run_id is None
+
+
+@pytest.mark.db
+async def test_register_session_rejects_different_id_when_device_has_pending(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """P1: a device already holding a live (pending) grid allocation must reject a
+    legacy register_session for a DIFFERENT session id — otherwise the device is
+    double-bound while the router is mid-confirm."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None  # device now carries a pending row
+
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    with pytest.raises(DeviceLiveSessionConflictError):
+        await crud.register_session(
+            db_session,
+            session_id="some-other-id",
+            test_name="intruder",
+            device_id=seeded_available_device.id,
+            status=SessionStatus.running,
+        )
+
+
+@pytest.mark.db
+async def test_stale_older_ticket_does_not_veto_younger_live_waiter(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """C8: an older waiting ticket whose client stopped polling (stale last_polled_at)
+    must NOT FIFO-veto a younger live waiter — otherwise one dead client starves the
+    queue for up to grid.queue_timeout_sec."""
+    now = datetime.now(UTC)
+    dead_older = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        created_at=now - timedelta(seconds=30),
+        last_polled_at=now - timedelta(seconds=60),  # client gone (>> 10x1s window)
+    )
+    live_younger = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        created_at=now,
+    )
+    db_session.add_all([dead_older, live_younger])
+    await db_session.flush()
+
+    # The dead older ticket is presumed dead and cannot block; the younger allocates.
+    result = await allocation_service.try_allocate(db_session, ticket=live_younger)
+    assert result is not None

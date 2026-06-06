@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +33,7 @@ from app.packs.services.start_shim import build_device_context, resolve_pack_for
 from app.runs import service as run_service
 from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
+from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -90,16 +91,19 @@ def _ticket_liveness_cutoff(now: datetime) -> datetime:
 def _legal_ticket_transition(current: GridQueueStatus, to: GridQueueStatus) -> bool:
     """Whether moving a ticket from *current* to *to* is a legal transition.
 
-    ``waiting`` is the only non-terminal source. The terminal states
-    (claimed/cancelled/expired) are sinks: a terminalized ticket never changes
-    again, except the deliberate ``claimed -> waiting`` rewind in ``resume_claimed``
-    when the claimed Session was reaped while its Allocated response was lost.
+    ``waiting`` is the active source: it advances to ``claimed`` (a device was
+    found), ``cancelled`` (invalid body) or ``expired`` (reaper). ``resume_claimed``
+    rewinds a terminalized ticket back to ``waiting`` when the client is still
+    long-polling but its claimed Session was reaped — and that reaping path
+    (``fail`` -> ``expire_tickets_for_session``) moves the ticket ``claimed ->
+    expired`` first, so the rewind source is ``claimed`` OR ``expired``.
+    ``cancelled`` (invalid body) is a true sink — it is never resumed.
     """
     if current == to:
         return True
     if current == GridQueueStatus.waiting:
         return to in (GridQueueStatus.claimed, GridQueueStatus.cancelled, GridQueueStatus.expired)
-    return current == GridQueueStatus.claimed and to == GridQueueStatus.waiting
+    return current in (GridQueueStatus.claimed, GridQueueStatus.expired) and to == GridQueueStatus.waiting
 
 
 def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, reason: str) -> None:
@@ -179,6 +183,23 @@ def _candidate_passes_reservation(
     if candidate.get(RUN_ID_CAP) == str(reservation_run_id):
         return True, reservation_run_id
     return False, None
+
+
+def _candidate_can_take(
+    candidate: dict[str, Any], stereotype: dict[str, Any], reservation_run_id: uuid.UUID | None
+) -> tuple[bool, uuid.UUID | None]:
+    """Shared two-step candidate gate (harness Q14): does *candidate* match the
+    device's *stereotype* AND clear its reservation state?
+
+    Used by both ``try_allocate`` (to claim) and ``_older_waiter_blocks`` (the FIFO
+    veto), which must apply identical admission rules or an older waiter could veto a
+    device it could never actually take. Returns ``(allowed, run_id_to_associate)``;
+    the run id is the reservation's run for a reserved device, else ``None`` (the
+    unreserved run-id-honoring path is resolved separately because it needs the DB).
+    """
+    if not candidate_matches_stereotype(candidate, stereotype):
+        return False, None
+    return _candidate_passes_reservation(candidate, reservation_run_id)
 
 
 class AllocationService:
@@ -338,24 +359,40 @@ class AllocationService:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="claim_expired").inc()
             pending_failed += 1
 
+        # Expire waiting tickets that are either past the queue timeout (the client
+        # waited too long) OR not re-polled within a few poll intervals (a dead /
+        # half-closed client the router's long-poll cannot detect). The second
+        # condition keeps an abandoned ticket from FIFO-vetoing live younger waiters
+        # for the full queue timeout (harness C8). A ticket never polled yet
+        # (last_polled_at IS NULL) is only a few created_at-old at most — covered by
+        # the queue-timeout arm, so NULL is not treated as stale.
+        stale_cutoff = _ticket_liveness_cutoff(now)
         tickets_stmt = select(GridSessionQueueTicket).where(
             GridSessionQueueTicket.status == GridQueueStatus.waiting,
-            GridSessionQueueTicket.created_at < now - timedelta(seconds=queue_timeout),
+            or_(
+                GridSessionQueueTicket.created_at < now - timedelta(seconds=queue_timeout),
+                GridSessionQueueTicket.last_polled_at < stale_cutoff,
+            ),
         )
         tickets_expired = 0
         for stale in (await db.execute(tickets_stmt)).scalars():
-            stale.status = GridQueueStatus.expired
+            transition_ticket(stale, GridQueueStatus.expired, reason="reaper_queue_timeout_or_stale_poll")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired").inc()
             tickets_expired += 1
         await db.flush()
         return {"pending_failed": pending_failed, "tickets_expired": tickets_expired}
 
     async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
+        # Liveness heartbeat: a still-polling client proves it is alive on every tick.
+        # The FIFO veto and the reaper read last_polled_at to expire abandoned tickets
+        # long before queue_timeout (harness C8). Stamp before any early return so even
+        # an invalid-body ticket records that its client was present this tick.
+        ticket.last_polled_at = datetime.now(UTC)
         try:
             candidates = merge_candidates(ticket.requested_body)
         except CapabilityMergeError:
             logger.warning("grid_allocation_invalid_body ticket=%s", ticket.id)
-            ticket.status = GridQueueStatus.cancelled
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
             return None
         # Hoist the older-waiter load + per-ticket candidate merge out of the
@@ -382,22 +419,57 @@ class AllocationService:
                 stereotype_cache[device.id] = stereotype
             reservation_run_id = self._reservation_run_id(reservation_map.get(device.id), device.id)
             for candidate in candidates:
-                if not candidate_matches_stereotype(candidate, stereotype):
-                    continue
-                allowed, run_id = _candidate_passes_reservation(candidate, reservation_run_id)
+                allowed, run_id = _candidate_can_take(candidate, stereotype, reservation_run_id)
                 if not allowed:
                     continue
                 # FIFO veto, reservation-aware: only count older waiters that could
-                # actually take THIS device — i.e. whose candidate matches the
-                # stereotype AND clears the same reservation gate. An older
-                # run-less waiter cannot block this device when it is reserved.
+                # actually take THIS device — i.e. whose candidate both matches the
+                # stereotype AND clears the same reservation gate. An older run-less
+                # waiter cannot block this device when it is reserved.
                 if self._older_waiter_blocks(older_candidate_sets, stereotype, reservation_run_id):
                     continue
+                # On an UNRESERVED device the reservation gate associates no run, but a
+                # client-supplied gridfleet:run_id must still be honored so the session
+                # joins that run's lifecycle/release — otherwise it escapes the run and
+                # lingers until the idle reaper (harness C6). Validate it here (needs the
+                # DB); an invalid/inactive run id is treated as a free session (warn).
+                if run_id is None:
+                    run_id = await self._resolve_unreserved_run_id(db, candidate)
                 result = await self._claim(db, ticket=ticket, device=device, candidate=candidate, run_id=run_id)
                 if result is not None:
                     GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
                     return result
         return None
+
+    @staticmethod
+    async def _resolve_unreserved_run_id(db: DbSession, candidate: dict[str, Any]) -> uuid.UUID | None:
+        """Resolve the run id to associate for a candidate landing on an UNRESERVED device.
+
+        Policy (harness C6): honor a client-supplied ``gridfleet:run_id`` when it names
+        a real, ``active`` run — the session then participates in that run's release and
+        terminal-close sweeps. A missing cap means a free session. An invalid or
+        non-active run id is NOT a hard reject (the device is genuinely free and the
+        new-session request is otherwise legitimate); we proceed as a free session and
+        log a warning so a stale/typo'd run id is visible rather than silently dropping
+        the session out of its intended run.
+        """
+        raw = candidate.get(RUN_ID_CAP)
+        if not isinstance(raw, str):
+            return None
+        try:
+            run_id = uuid.UUID(raw)
+        except ValueError:
+            logger.warning("grid_allocation_run_id_malformed run_id=%s (treated as free session)", raw)
+            return None
+        run = await run_service.get_run(db, run_id)
+        if run is None or run.state != RunState.active:
+            logger.warning(
+                "grid_allocation_run_id_not_active run_id=%s state=%s (treated as free session)",
+                run_id,
+                run.state if run is not None else "missing",
+            )
+            return None
+        return run_id
 
     async def resume_claimed(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
         """Idempotently resume a ``claimed`` ticket whose Allocated response was lost.
@@ -414,7 +486,7 @@ class AllocationService:
           continuation.
         """
         if ticket.session_row_id is None:
-            ticket.status = GridQueueStatus.waiting
+            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_session_row")
             return None
         stmt = (
             select(Session)
@@ -429,14 +501,14 @@ class AllocationService:
             or row.status not in (SessionStatus.pending, SessionStatus.running)
             or row.device is None
         ):
-            ticket.status = GridQueueStatus.waiting
+            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_session_reaped")
             return None
         target = resolve_router_target(row)
         if target is None:
             # The device lost its node/host association and no target was ever stored;
             # treat like a reaped claim and let the client wait for a fresh allocation
             # rather than hand back a dead target.
-            ticket.status = GridQueueStatus.waiting
+            transition_ticket(ticket, GridQueueStatus.waiting, reason="resume_no_target")
             return None
         return AllocationResult(allocation_id=row.id, target=target)
 
@@ -446,15 +518,7 @@ class AllocationService:
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
             .where(Device.operational_state == DeviceOperationalState.available)
             .where(node_viable_predicate())
-            .where(
-                ~select(Session.id)
-                .where(
-                    Session.device_id == Device.id,
-                    Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                    Session.ended_at.is_(None),
-                )
-                .exists()
-            )
+            .where(~select(Session.id).where(Session.device_id == Device.id, live_session_predicate()).exists())
         )
         return list((await db.execute(stmt)).scalars().all())
 
@@ -485,12 +549,25 @@ class AllocationService:
         is deliberately unbounded — queue depth is bounded by
         grid.queue_timeout_sec reaping; revisit only if metrics show it dominating.
         Tickets with an invalid body are dropped (they cannot block anyone).
+
+        Stale-polled tickets are excluded (harness C8): a ticket whose client
+        half-closed cannot be detected by the router long-poll, and the reaper has
+        not yet expired it, so without this filter one dead client would FIFO-veto
+        every younger live waiter for up to grid.queue_timeout_sec. A ticket not
+        re-polled within the liveness window is presumed dead and cannot block. A
+        not-yet-polled ticket (last_polled_at IS NULL) only blocks while its
+        created_at is itself within the window — i.e. it really is a fresh waiter.
         """
+        cutoff = _ticket_liveness_cutoff(datetime.now(UTC))
         stmt = (
             select(GridSessionQueueTicket)
             .where(
                 GridSessionQueueTicket.status == GridQueueStatus.waiting,
                 GridSessionQueueTicket.created_at < ticket.created_at,
+                or_(
+                    GridSessionQueueTicket.last_polled_at >= cutoff,
+                    (GridSessionQueueTicket.last_polled_at.is_(None)) & (GridSessionQueueTicket.created_at >= cutoff),
+                ),
             )
             .order_by(GridSessionQueueTicket.created_at)
         )
@@ -516,9 +593,7 @@ class AllocationService:
         """
         for older_candidates in older_candidate_sets:
             for c in older_candidates:
-                if not candidate_matches_stereotype(c, stereotype):
-                    continue
-                allowed, _ = _candidate_passes_reservation(c, reservation_run_id)
+                allowed, _ = _candidate_can_take(c, stereotype, reservation_run_id)
                 if allowed:
                     return True
         return False
@@ -539,13 +614,7 @@ class AllocationService:
             return None
         if not device_node_is_viable(locked):
             return None
-        recheck = await db.execute(
-            select(Session.id).where(
-                Session.device_id == locked.id,
-                Session.status.in_((SessionStatus.running, SessionStatus.pending)),
-                Session.ended_at.is_(None),
-            )
-        )
+        recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:
             return None
         target = node_target(locked)
@@ -576,7 +645,7 @@ class AllocationService:
         # relationship between the two mappers, so the unit of work would not
         # order the INSERT before the FK-bearing UPDATE on its own.
         await db.flush()
-        ticket.status = GridQueueStatus.claimed
+        transition_ticket(ticket, GridQueueStatus.claimed, reason="device_claimed")
         ticket.session_row_id = row.id
         await db.flush()
         intent = self._intent_factory(db)

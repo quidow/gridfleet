@@ -29,6 +29,7 @@ from app.grid.allocation import (
     AllocationNotPendingError,
     AllocationResult,
     resolve_router_target,
+    transition_ticket,
 )
 from app.grid.dependencies import GridServicesDep
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -115,7 +116,7 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
 async def cancel_ticket(ticket_id: uuid.UUID, db: DbDep) -> Response:
     ticket = await db.get(GridSessionQueueTicket, ticket_id)
     if ticket is not None and ticket.status == GridQueueStatus.waiting:
-        ticket.status = GridQueueStatus.cancelled
+        transition_ticket(ticket, GridQueueStatus.cancelled, reason="router_cancelled")
         await db.commit()
     return Response(status_code=204)
 
