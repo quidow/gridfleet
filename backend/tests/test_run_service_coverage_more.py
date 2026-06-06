@@ -15,6 +15,7 @@ from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
+from app.events.event_bus import EventBus
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -798,13 +799,17 @@ async def test_mark_running_sessions_released_emits_ended_event_and_reconciles(
     await db_session.commit()
 
     queued: list[str] = []
-    orig_queue = event_bus.queue_for_session
+    orig_queue = EventBus.queue_for_session
 
-    def _spy(db: object, event_type: str, data: dict, **kwargs: object) -> None:
+    def _spy(self: EventBus, db: object, event_type: str, data: dict, **kwargs: object) -> None:
         queued.append(event_type)
-        return orig_queue(db, event_type, data, **kwargs)  # type: ignore[arg-type]
+        return orig_queue(self, db, event_type, data, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(event_bus, "queue_for_session", _spy)
+    # Patch the class, not the shared instance: monkeypatch.setattr on an instance
+    # whose attribute resolves via the class restores by re-setting an instance
+    # attribute (it does not delete it), permanently shadowing later class-level
+    # patches of the same shared test_event_bus and leaking across xdist workers.
+    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", _spy)
     monkeypatch.setattr(
         "app.runs.service_lifecycle_release.appium_direct.terminate_session",
         AsyncMock(return_value=True),

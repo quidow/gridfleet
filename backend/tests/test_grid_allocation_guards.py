@@ -194,12 +194,19 @@ async def test_pack_slot_stereotype_tolerates_missing_pack(
 
     _, device = await seed_host_and_device(db_session, identity=f"grid-guard-nopack-{uuid.uuid4().hex[:8]}")
     before = GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get()
-    with caplog.at_level("WARNING"):
+    # Scope capture to the exact logger so it is independent of the suite-wide
+    # root-logger level/propagation state that get_logger()/configure_logging()
+    # may have mutated by the time this test runs under xdist. Match on
+    # getMessage() (the interpolated string) rather than .message, which is the
+    # raw %-template until a handler formats the record.
+    with caplog.at_level("WARNING", logger="app.grid.allocation"):
         stereotype = await pack_slot_stereotype(db_session, device)
     assert stereotype.get("appium:gridfleet:deviceId") == str(device.id)
     assert "platformName" not in stereotype
     assert GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL._value.get() == before + 1
-    assert any("grid_stereotype_lookup_error" in r.message and str(device.id) in r.message for r in caplog.records)
+    assert any(
+        "grid_stereotype_lookup_error" in r.getMessage() and str(device.id) in r.getMessage() for r in caplog.records
+    )
 
 
 @pytest.mark.db
