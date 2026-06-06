@@ -8,18 +8,23 @@ window. See app/services/lifecycle_policy.py for canonical usage.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect as sa_inspect
+
+from app.core import timeutil
 
 if TYPE_CHECKING:
     from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
 
 
+# ``now``/``parse_iso`` delegate to the shared app.core.timeutil (Q10); kept as named
+# wrappers here so the existing importers (policy.py, lifecycle_policy_summary.py) do not
+# change and mypy sees an explicit definition.
 def now() -> datetime:
-    return datetime.now(UTC)
+    return timeutil.now_utc()
 
 
 def now_iso() -> str:
@@ -27,12 +32,7 @@ def now_iso() -> str:
 
 
 def parse_iso(raw: object) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return timeutil.parse_iso(raw)
 
 
 def default_state() -> dict[str, Any]:

@@ -16,6 +16,7 @@ import structlog
 
 from app.core.database import async_session
 from app.core.metrics_recorders import record_background_loop_error, record_background_loop_run
+from app.core.timeutil import parse_iso
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
@@ -192,12 +193,9 @@ def clear_request_context() -> None:
 
 
 def parse_timestamp(raw: object) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    # Thin re-export of the shared ISO parser (Q10); kept under this name so the host
+    # telemetry services that import it from observability do not change.
+    return parse_iso(raw)
 
 
 def loop_heartbeat_fresh(

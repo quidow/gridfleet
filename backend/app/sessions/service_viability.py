@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.probe_result import ProbeResult
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop
+from app.core.timeutil import parse_iso as _parse_timestamp
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import readiness as device_readiness
@@ -384,15 +385,6 @@ class SessionViabilityService:
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _parse_timestamp(raw: object) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 # A viability probe holds its lock for at most one ``session_viability_timeout_sec``
