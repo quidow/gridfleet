@@ -112,7 +112,7 @@ async def run_device_intent_reconciler_once(
     await _reconcile_terminal_run_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    from app.devices.services.intent_preconditions import (  # noqa: PLC0415
+    from app.devices.services.intent_evaluator import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
 

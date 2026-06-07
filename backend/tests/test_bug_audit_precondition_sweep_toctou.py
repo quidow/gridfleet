@@ -3,7 +3,7 @@
 See ``docs/superpowers/specs/2026-05-20-backend-bug-audit.md#bug-5``.
 
 ``reconcile_unsatisfied_preconditions`` reads all intents with a
-precondition at ``intent_preconditions.py:40`` without a row lock,
+precondition at ``intent_evaluator.py`` without a row lock,
 checks ``is_satisfied`` against the in-memory snapshot, and deletes
 the row if unsatisfied. Between the snapshot read and the delete, a
 concurrent producer can upsert the same intent (same ``(device_id,
@@ -23,8 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.devices.models import DeviceOperationalState
-from app.devices.services import intent_preconditions
-from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+from app.devices.services import intent_evaluator
+from app.devices.services.intent_evaluator import reconcile_unsatisfied_preconditions
 from app.devices.services.intent_types import NODE_PROCESS
 from tests.helpers import create_device, create_host
 
@@ -78,7 +78,7 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
     db_session.add(seed_intent)
     await db_session.commit()
 
-    original_is_satisfied = intent_preconditions.is_satisfied
+    original_is_satisfied = intent_evaluator.is_satisfied
     triggered = False
 
     async def _check_then_race(db: AsyncSession, intent_row: DeviceIntent) -> bool:
@@ -123,12 +123,12 @@ async def test_precondition_sweep_deletes_concurrently_reregistered_intent(
                 await side.commit()
         return result
 
-    intent_preconditions.is_satisfied = _check_then_race  # type: ignore[assignment]
+    intent_evaluator.is_satisfied = _check_then_race  # type: ignore[assignment]
     try:
         await reconcile_unsatisfied_preconditions(db_session)
         await db_session.commit()
     finally:
-        intent_preconditions.is_satisfied = original_is_satisfied
+        intent_evaluator.is_satisfied = original_is_satisfied
 
     # Re-read the intent on a fresh session. Fixed behavior: the sweep
     # would re-validate the precondition under a row lock (or use a

@@ -660,7 +660,7 @@ async def test_auto_recovery_start_intent_survives_sweep_when_observed_running_i
     ``expires_at`` rather than the unreliable observed-running precondition),
     mirroring ``exit_maintenance``.
     """
-    from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+    from app.devices.services.intent_evaluator import reconcile_unsatisfied_preconditions
 
     with state_write_guard.bypass():
         device = Device(

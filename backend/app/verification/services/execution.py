@@ -406,7 +406,7 @@ async def _register_verification_node_intent(
     which makes them ineligible for the ``baseline:idle`` standing intent
     injected by ``reconcile_device``. Without this guard, the moment
     ``observed_running`` flips to True the precondition sweep in
-    ``intent_preconditions.reconcile_unsatisfied_preconditions`` deletes the
+    ``intent_evaluator.reconcile_unsatisfied_preconditions`` deletes the
     ``operator:start:{device_id}`` intent registered by ``start_node`` —
     leaving zero active node_process intents, so ``evaluate_node_process``
     derives ``desired_state=stopped`` and the appium reconciler kills the

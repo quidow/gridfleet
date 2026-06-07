@@ -8,7 +8,7 @@ import pytest
 
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
-from app.devices.services.intent_preconditions import is_satisfied
+from app.devices.services.intent_evaluator import is_satisfied
 from app.devices.services.intent_types import NODE_PROCESS
 from app.runs.models import RunState
 from tests.helpers import create_device, create_reserved_run
