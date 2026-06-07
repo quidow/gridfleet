@@ -41,6 +41,7 @@ export type SessionDetail = Omit<
   requested_platform_id: string | null;
   run_id: string | null;
 };
+export type SessionKillResult = Schemas['SessionKillResult'];
 export type DeviceVerificationCreate = Omit<Schemas['DeviceVerificationCreate'], 'os_version'> & {
   os_version?: string;
 };
@@ -97,6 +98,7 @@ export type SessionListParams = {
   cursor?: string;
   direction?: CursorDirection;
   include_probes?: boolean;
+  active?: boolean;
 };
 
 // Open-dict shapes (backend JSON columns).

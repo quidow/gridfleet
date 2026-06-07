@@ -345,9 +345,14 @@ impl GridRouter {
         &self,
         allocation_id: &str,
         session_id: &str,
+        appium_capabilities: Option<&serde_json::Value>,
     ) -> reqwest::Result<()> {
         for attempt in 1..=3 {
-            match self.backend.confirm(allocation_id, session_id).await {
+            match self
+                .backend
+                .confirm(allocation_id, session_id, appium_capabilities)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(e) if is_permanent_confirm_error(&e) => return Err(e),
                 Err(e) if attempt == 3 => return Err(e),
@@ -587,6 +592,7 @@ impl GridRouter {
                 let status = r.status().as_u16();
                 let body = r.bytes().await.unwrap_or_default().to_vec();
                 let session_id = w3c::extract_session_id(&body).unwrap_or_default();
+                let actual_caps = w3c::extract_session_capabilities(&body);
                 if session_id.is_empty() {
                     crate::metrics::metrics()
                         .create_missing_session_id_total
@@ -621,7 +627,10 @@ impl GridRouter {
                 // handing the client a session. A failed confirm means the
                 // backend may consider the allocation dead, so we roll back the
                 // Appium session rather than serve a session it does not track.
-                if let Err(e) = self.confirm_with_retry(&allocation_id, &session_id).await {
+                if let Err(e) = self
+                    .confirm_with_retry(&allocation_id, &session_id, actual_caps.as_ref())
+                    .await
+                {
                     log::warn!(
                         "confirm failed for {allocation_id}, rolling back session {session_id}: {e}"
                     );

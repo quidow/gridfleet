@@ -30,6 +30,20 @@ async def test_terminate_session_404_is_success(monkeypatch: pytest.MonkeyPatch)
     assert await appium_direct.terminate_session(TARGET, "sess-1") is False
 
 
+async def test_terminate_session_percent_encodes_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The operator kill endpoint made terminate reachable with request-supplied
+    ids (CodeQL py/partial-ssrf): a crafted id must not alter the URL path."""
+    seen: list[str] = []
+
+    def record(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.raw_path.decode())
+        return httpx.Response(200, json={})
+
+    _patch_transport(monkeypatch, record)
+    assert await appium_direct.terminate_session(TARGET, "../grid/evil?x=1#f") is True
+    assert seen == ["/session/..%2Fgrid%2Fevil%3Fx%3D1%23f"]
+
+
 async def test_session_alive_true_on_200_false_on_invalid_session(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_transport(monkeypatch, lambda req: httpx.Response(200, json={"value": {}}))
     assert await appium_direct.session_alive(TARGET, "sess-1") is True

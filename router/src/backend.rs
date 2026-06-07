@@ -143,7 +143,12 @@ impl BackendClient {
         &self,
         allocation_id: &str,
         appium_session_id: &str,
+        appium_capabilities: Option<&serde_json::Value>,
     ) -> reqwest::Result<()> {
+        let mut body = serde_json::json!({"appium_session_id": appium_session_id});
+        if let Some(caps) = appium_capabilities {
+            body["appium_capabilities"] = caps.clone();
+        }
         self.req(
             reqwest::Method::POST,
             &format!("/internal/grid/sessions/{allocation_id}/confirm"),
@@ -152,7 +157,7 @@ impl BackendClient {
         // worst-case retry budget (3 attempts + 2s sleeps) stays inside the
         // backend reaper's confirm grace rather than 3×40s.
         .timeout(std::time::Duration::from_secs(10))
-        .json(&serde_json::json!({"appium_session_id": appium_session_id}))
+        .json(&body)
         .send()
         .await?
         .error_for_status()?;

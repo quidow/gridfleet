@@ -110,13 +110,18 @@ async fn confirm_ended_fail_activity_roundtrip() {
         req.as_reader().read_to_string(&mut body).unwrap();
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["appium_session_id"], "appium-xyz");
+        assert_eq!(v["appium_capabilities"]["platformName"], "Android");
         req.respond(tiny_http::Response::empty(204)).unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(
         &addr,
         Some(("user".to_string(), "pass".to_string())),
     );
-    client.confirm("alloc-1", "appium-xyz").await.unwrap();
+    let caps = serde_json::json!({"platformName": "Android"});
+    client
+        .confirm("alloc-1", "appium-xyz", Some(&caps))
+        .await
+        .unwrap();
 
     // fail
     let (server, addr) = stub_backend();

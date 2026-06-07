@@ -130,7 +130,12 @@ async def cancel_ticket(ticket_id: uuid.UUID, db: DbDep) -> Response:
 @router.post("/sessions/{allocation_id}/confirm", status_code=204)
 async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, services: GridServicesDep) -> Response:
     try:
-        await services.allocation.confirm(db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id)
+        await services.allocation.confirm(
+            db,
+            allocation_id=allocation_id,
+            appium_session_id=payload.appium_session_id,
+            appium_capabilities=payload.appium_capabilities,
+        )
     except AllocationNotPendingError:
         # The router rolls the just-created Appium session back best-effort on 409.
         # Record the reported id on the terminal row first (wave-5 #7) so the orphan

@@ -34,6 +34,7 @@ class SessionCrudProtocol(Protocol):
         sort_by: str = "started_at",
         sort_dir: str = "desc",
         include_probes: bool = False,
+        active: bool = False,
     ) -> tuple[list[Session], int]: ...
 
     async def list_sessions_cursor(
@@ -50,6 +51,7 @@ class SessionCrudProtocol(Protocol):
         cursor: str | None = None,
         direction: str = "older",
         include_probes: bool = False,
+        active: bool = False,
     ) -> CursorPage[Session]: ...
 
     async def get_session(self, db: AsyncSession, session_id: str) -> Session | None: ...

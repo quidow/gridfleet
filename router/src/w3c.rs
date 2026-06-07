@@ -46,6 +46,14 @@ pub fn extract_session_id(body: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// value.capabilities from a W3C create-session response. `None` for any
+/// unexpected shape — capabilities capture must never fail a session create.
+pub fn extract_session_capabilities(body: &[u8]) -> Option<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let caps = v["value"]["capabilities"].clone();
+    caps.is_object().then_some(caps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +90,23 @@ mod tests {
     fn extract_session_id_garbage_is_none() {
         assert!(extract_session_id(b"not json").is_none());
         assert!(extract_session_id(br#"{"value":{}}"#).is_none());
+    }
+
+    #[test]
+    fn extract_session_capabilities_w3c_shape() {
+        let body = br#"{"value":{"sessionId":"app-1","capabilities":{"platformName":"Android"}}}"#;
+        let caps = extract_session_capabilities(body).expect("caps");
+        assert_eq!(caps["platformName"], "Android");
+    }
+
+    #[test]
+    fn extract_session_capabilities_garbage_is_none() {
+        assert!(extract_session_capabilities(b"not json").is_none());
+        assert!(extract_session_capabilities(br#"{"value":{"sessionId":"x"}}"#).is_none());
+        assert!(
+            extract_session_capabilities(br#"{"value":{"capabilities":"not-an-object"}}"#)
+                .is_none()
+        );
     }
 
     #[test]
