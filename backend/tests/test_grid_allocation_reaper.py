@@ -35,7 +35,11 @@ async def _stereotype_stub(db: AsyncSession, device: Device, *, template_cache: 
 
 class _SettingsStub:
     def get(self, key: str) -> int:
-        return {"grid.claim_window_sec": 30, "grid.queue_timeout_sec": 300}[key]
+        return {
+            "grid.claim_window_sec": 30,
+            "grid.queue_timeout_sec": 300,
+            "general.session_viability_timeout_sec": 120,
+        }[key]
 
 
 @pytest.fixture

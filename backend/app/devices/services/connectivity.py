@@ -17,6 +17,9 @@ from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models.event import DeviceEventType
+from app.devices.services import link_repair
+from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import _reconcile_expired_intents, reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_CONNECTIVITY_LOST, IntentRegistration
@@ -24,6 +27,7 @@ from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host, HostStatus
+from app.packs.models.pack import DriverPack, PackState
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
@@ -51,6 +55,7 @@ logger = get_logger(__name__)
 # this flag.  Keep as long as lifecycle_policy.attempt_auto_recovery uses the reason.
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
+PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
 
@@ -362,6 +367,9 @@ class ConnectivityService:
         ip_ping_entry: dict[str, Any] | None,
         ip_ping_threshold: int,
     ) -> None:
+        # A healthy probe re-arms link repair: clear the failed-attempt budget so a
+        # later genuine link death can dispatch a fresh round.
+        await link_repair.reset_repair_attempts(db, device.identity_value)
         counter = (
             await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
             if ip_ping_entry is not None
@@ -374,6 +382,108 @@ class ConnectivityService:
         )
         await self._health.update_device_checks(db, device, healthy=True, summary=summary)
         await self._maybe_auto_recover(db, device)
+
+    async def _maybe_dispatch_repair(
+        self,
+        db: AsyncSession,
+        device: Device,
+        health_result: dict[str, Any],
+    ) -> bool:
+        """If the probe recommends a manifest-declared action and the pack is not
+        draining, dispatch it (bounded). Returns True if a re-probe then showed the
+        device healthy (caller should take the healthy path).
+
+        Driver-agnostic: the adapter decided whether and which action remediates;
+        this only validates the action exists, bounds retries, and dispatches.
+        """
+        action = health_result.get("recommended_action")
+        if not isinstance(action, str) or not action:
+            return False
+        try:
+            resolved = await resolve_pack_platform(
+                db,
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=device.device_type.value if device.device_type else None,
+            )
+        except LookupError:
+            return False
+        if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
+            return False
+        pack_state = await db.scalar(select(DriverPack.state).where(DriverPack.id == device.pack_id))
+        if pack_state == PackState.draining:
+            return False  # pack runtime going away — do not dispatch
+
+        attempt = await link_repair.next_repair_attempt(db, device.identity_value)
+        if attempt is None:
+            await record_event(
+                db, device.id, DeviceEventType.repair_failed, {"action": action, "reason": "attempt budget exhausted"}
+            )
+            metrics.record_device_repair_attempt(action=action, outcome="budget_exhausted")
+            return False
+
+        try:
+            result = await link_repair.dispatch_recommended_action(
+                device, action, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+            )
+        except AgentCallError:
+            result = {"success": False}
+        success = bool(result.get("success"))
+        await record_event(
+            db, device.id, DeviceEventType.repair_attempted, {"action": action, "attempt": attempt, "success": success}
+        )
+        metrics.record_device_repair_attempt(action=action, outcome="success" if success else "failed")
+        if not success:
+            return False
+
+        reprobe = await _get_device_health(
+            device,
+            ip_ping_timeout_sec=None,
+            ip_ping_count=None,
+            settings=self._settings,
+            circuit_breaker=self._circuit_breaker,
+            pool=self._pool,
+        )
+        if reprobe is None:
+            return False
+        # Evaluate the re-probe WITHOUT _evaluate_health_result so the once-per-cycle
+        # ip_ping hysteresis counter/metrics are not applied twice; the repair verdict
+        # never hinges on ip_ping.
+        checks = reprobe.get("checks") or []
+        others = [c for c in checks if isinstance(c, dict) and c.get("check_id") != IP_PING_CHECK_ID]
+        # Default False (BUG-2): post-repair recovery requires POSITIVE evidence. A
+        # malformed/empty re-probe (missing ``healthy``, no non-ip_ping checks) must
+        # not reset the repair budget and declare a dead-link device recovered.
+        healthy = bool(reprobe.get("healthy", False)) if not others else all(bool(c.get("ok")) for c in others)
+        if healthy:
+            await link_repair.reset_repair_attempts(db, device.identity_value)
+        return healthy
+
+    async def _note_unanswered_probe(self, db: AsyncSession, device: Device, host: Host, *, threshold: int) -> bool:
+        """Count consecutive unanswered probes (AgentCallError → health_result None).
+
+        On threshold, mark the device unhealthy via the normal failure machinery
+        instead of silently skipping it — a dead-link device whose agent channel
+        also errs would otherwise sit ``available`` indefinitely. Returns True when
+        it took over (caller continues to the next device)."""
+        # Read-modify-write is safe: the connectivity loop is leader-owned (one
+        # serialized writer per device). The only overlap is a brief leader
+        # handoff, where a lost count shifts the threshold by one tick — harmless
+        # for a consecutive-failure counter. Mirrors the ip_ping counter pattern.
+        current = await control_plane_state_store.get_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+        counter = int(current) + 1 if isinstance(current, int) else 1
+        await control_plane_state_store.set_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value, counter)
+        metrics.set_probe_unanswered_consecutive(
+            device_identity=device.identity_value, host=host.hostname, value=counter
+        )
+        if counter < threshold:
+            return False
+        summary = "Health probe unanswered (agent/adapter error)"
+        was_offline = device.operational_state == DeviceOperationalState.offline
+        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
+        if not was_offline:
+            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+        return True
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
         if device.operational_state != DeviceOperationalState.offline:
@@ -420,6 +530,9 @@ class ConnectivityService:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
         ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
         ip_ping_count = int(self._settings.get("device_checks.ip_ping.count_per_cycle"))
+        probe_unanswered_threshold = int(
+            self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
+        )
 
         stmt = select(Host).where(Host.status == HostStatus.online)
         result = await db.execute(stmt)
@@ -455,12 +568,24 @@ class ConnectivityService:
                     pool=self._pool,
                 )
                 await assert_current_leader(db, settings=self._settings)
+                if health_result is None:
+                    flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
+                    if flipped:
+                        continue
+                else:
+                    await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
                 healthy = False
                 ip_ping_entry: dict[str, Any] | None = None
                 if health_result is not None:
                     healthy, ip_ping_entry = await self._evaluate_health_result(
                         db, device, host, health_result, ip_ping_threshold=ip_ping_threshold
                     )
+
+                if not healthy and health_result is not None:
+                    repaired = await self._maybe_dispatch_repair(db, device, health_result)
+                    if repaired:
+                        healthy = True
+                        ip_ping_entry = None
 
                 if healthy:
                     # A device answering its own health probe is present — no

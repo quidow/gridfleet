@@ -25,8 +25,10 @@ StopMode = Literal["hard", "graceful", "defer"]
 
 @dataclass(frozen=True)
 class NodeProcessDecision:
+    # Note: intents may carry a `desired_port` payload key (a registration-time audit
+    # snapshot of node.port), but it is deliberately NOT part of the decision — the
+    # applier pins the live node.port (see evaluate_and_apply in intent_reconciler.py).
     desired_state: NodeProcessState
-    desired_port: int | None
     stop_mode: StopMode | None
     reason: str
     transition_token: uuid.UUID | None = None
@@ -62,7 +64,6 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
     if not active:
         return NodeProcessDecision(
             desired_state="stopped",
-            desired_port=None,
             stop_mode=None,
             reason="no active node_process intent",
         )
@@ -80,7 +81,6 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
         metrics_recorders.INTENT_RECONCILER_CONFLICTS.inc()
         return NodeProcessDecision(
             desired_state="stopped",
-            desired_port=None,
             stop_mode="hard",
             reason=f"same priority node_process conflict at priority {highest_priority}",
         )
@@ -102,7 +102,6 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
             transition_token = None
         return NodeProcessDecision(
             desired_state="running",
-            desired_port=_optional_int(winner.payload.get("desired_port")),
             stop_mode=None,
             reason=_intent_reason(winner),
             transition_token=transition_token,
@@ -118,7 +117,6 @@ def evaluate_node_process(intents: list[DeviceIntent], now: datetime) -> NodePro
         desired_state = "stopped"
     return NodeProcessDecision(
         desired_state=desired_state,
-        desired_port=None,
         stop_mode=stop_mode,
         reason=_intent_reason(winner),
     )

@@ -18,6 +18,11 @@ type QueryParams = QueryParamTypes | None
 type JsonBody = object | None
 type RequestHeaders = HeaderTypes | None
 
+# Methods safe to retry once on a stale-keepalive disconnect: the server closed
+# the pooled connection before reading the request, so re-sending cannot cause a
+# duplicate side effect.
+_IDEMPOTENT_METHODS = frozenset({"get", "head"})
+
 
 class AgentHttpClient(Protocol):
     async def __aenter__(self) -> Self:
@@ -128,7 +133,21 @@ async def request(
                 response = cast("httpx.Response", await requester(url, **request_kwargs))
         else:
             requester = getattr(client, method_name)
-            response = cast("httpx.Response", await requester(url, **request_kwargs))
+            try:
+                response = cast("httpx.Response", await requester(url, **request_kwargs))
+            except httpx.RemoteProtocolError:
+                # Stale keepalive reuse: the agent's uvicorn keep-alive (uvicorn
+                # default 5s) is shorter than our pool idle
+                # (agent.http_pool_idle_seconds, up to 600s), so the pool can
+                # return a connection the server already closed -> it disconnects
+                # before reading our request. httpx has evicted the dead
+                # connection, so one retry reuses the pool on a fresh one. Only
+                # idempotent methods are safe (the request never reached the
+                # server).
+                if method_name not in _IDEMPOTENT_METHODS:
+                    raise
+                client_mode = "pooled_retried"
+                response = cast("httpx.Response", await requester(url, **request_kwargs))
         status_code = getattr(response, "status_code", None)
         if isinstance(status_code, int) and status_code >= 500:
             outcome = "http_error"

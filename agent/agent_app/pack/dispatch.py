@@ -86,10 +86,15 @@ class _TelemetryCtx:
 
 
 def _adapter_health_payload(results: list[HealthCheckResult]) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "healthy": all(r.ok for r in results),
         "checks": [{"check_id": r.check_id, "ok": r.ok, "message": r.detail} for r in results],
     }
+    for r in results:
+        if r.recommended_action:
+            payload["recommended_action"] = r.recommended_action
+            break
+    return payload
 
 
 def _adapter_lifecycle_payload(result: LifecycleActionResult) -> dict[str, Any]:

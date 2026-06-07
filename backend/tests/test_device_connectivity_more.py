@@ -233,7 +233,13 @@ async def test_connected_offline_device_clears_control_plane_state_when_not_read
             health=AsyncMock(),
         ).check_connectivity(db_session)
 
-    assert delete_value.await_count == 1
+    # The healthy probe also clears the repair-attempt and probe-unanswered keys; this
+    # test asserts the specific "previously offline" clear for the not-ready device.
+    from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE
+
+    assert any(
+        call.args[1] == CONNECTIVITY_NAMESPACE and call.args[2] == "not-ready" for call in delete_value.await_args_list
+    )
 
 
 async def test_virtual_device_connectivity_updates_emulator_state(

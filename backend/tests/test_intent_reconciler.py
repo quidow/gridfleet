@@ -849,3 +849,38 @@ async def test_no_intent_stop_holds_node_running_while_session_active(db_session
     assert node.desired_state == AppiumDesiredState.running
     assert node.accepting_new_sessions is False
     assert node.stop_pending is True
+
+
+async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """N11 churn co-defect (2026-06-07): a persistent start intent pins desired_port in its
+    payload at registration time. A fallback start later moves the node (observation updates
+    node.port and clears desired_port), after which re-applying the snapshot flips desired_port
+    against the live port on every reconcile (the 4724<->4725 storm) and convergence
+    force-restarts the node onto the stale port. The node row is the single source of port
+    truth — the applier must pin live node.port, not the payload snapshot."""
+    device = await create_device(db_session, host_id=db_host.id, name="port-pin", verified=True)
+    node = await _seed_node(db_session, device.id)
+    with state_write_guard.bypass():
+        node.port = 4725  # fallback start moved the node here; payload below predates the move
+    await db_session.commit()
+    await IntentService(db_session).register_intents(
+        device_id=device.id,
+        reason="operator start",
+        intents=[
+            IntentRegistration(
+                source=f"operator:start:{device.id}",
+                axis=NODE_PROCESS,
+                payload={"action": "start", "priority": 20, "desired_port": 4723},
+            )
+        ],
+    )
+
+    await reconcile_device(db_session, device.id, publisher=event_bus)
+
+    await db_session.refresh(node)
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.desired_port == 4725, (
+        f"applier must pin live node.port over the stale payload snapshot; got {node.desired_port}"
+    )

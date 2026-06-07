@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.operations import appium_status as fetch_appium_status
 from app.agent_comm.probe_result import ProbeResult, from_status_response
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
@@ -114,7 +114,15 @@ class NodeHealthService:
     async def check_nodes(self, db: AsyncSession) -> None:
         stmt = (
             select(AppiumNode)
-            .where(AppiumNode.pid.is_not(None), AppiumNode.active_connection_target.is_not(None))
+            .where(
+                AppiumNode.pid.is_not(None),
+                AppiumNode.active_connection_target.is_not(None),
+                # Don't probe nodes we are intentionally stopping (I1); a refused
+                # probe during teardown is expected, not a health failure. The
+                # locked re-check in _process_node_health covers the race where
+                # desired_state flips to stopped during the probe gather.
+                AppiumNode.desired_state == AppiumDesiredState.running,
+            )
             .options(
                 selectinload(AppiumNode.device).selectinload(Device.host),
                 selectinload(AppiumNode.device).selectinload(Device.appium_node),
@@ -276,6 +284,17 @@ class NodeHealthService:
         node = locked_node
 
         if locked_node.pid is None or locked_node.active_connection_target is None:
+            return
+
+        if locked_node.desired_state == AppiumDesiredState.stopped:
+            # Intentional-stop veto (I1): the node is being torn down on purpose
+            # (desired_state=stopped) but is still observed_running until the stop
+            # propagates. A refused/failed probe in that window is EXPECTED
+            # teardown, not a health failure — counting it would escalate an
+            # auto-recovery restart that fights the stop. The reconciler owns
+            # driving it to stopped. Re-checked here under the row lock because
+            # desired_state can flip to stopped during the async probe gather,
+            # after check_nodes' (unlocked) SELECT filtered on it.
             return
 
         if result.status == "indeterminate":

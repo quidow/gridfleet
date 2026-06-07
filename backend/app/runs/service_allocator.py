@@ -278,6 +278,7 @@ class RunAllocatorService:
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
                     pool=self._pool,
+                    publisher=self._publisher,
                 )
             except InlineReconfigureDeliveryFailedError:
                 deferred.append(info.device_id)

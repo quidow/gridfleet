@@ -26,6 +26,86 @@ def _noop_breaker() -> AsyncMock:
     return breaker
 
 
+def _pooled_client(method: str, side_effect: list[object]) -> MagicMock:
+    """A pooled client whose `method` returns/raises each item in side_effect in turn."""
+    client = MagicMock()
+    setattr(client, method, AsyncMock(side_effect=side_effect))
+    return client
+
+
+@pytest.mark.asyncio
+async def test_pooled_get_retries_once_on_stale_keepalive_disconnect() -> None:
+    # The agent's uvicorn keep-alive (default 5s) is shorter than our pool idle
+    # (agent.http_pool_idle_seconds, up to 600s), so the pool can hand back a
+    # connection the server already closed -> RemoteProtocolError before the
+    # request is processed. One retry on a fresh connection must recover it.
+    ok = httpx.Response(status_code=200)
+    client = _pooled_client(
+        "get",
+        [httpx.RemoteProtocolError("Server disconnected without sending a response"), ok],
+    )
+    breaker = _noop_breaker()
+    response = await agent_request(
+        "GET",
+        "http://1.2.3.4:5100/agent/health",
+        endpoint="agent_health",
+        host="1.2.3.4",
+        client=client,
+        client_mode="pooled",
+        circuit_breaker=breaker,
+    )
+    assert response is ok
+    assert client.get.await_count == 2
+    breaker.record_success.assert_awaited_once()
+    breaker.record_failure.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pooled_post_not_retried_on_disconnect() -> None:
+    # POST is not idempotent; a disconnect must NOT trigger a silent retry.
+    client = _pooled_client(
+        "post",
+        [httpx.RemoteProtocolError("Server disconnected without sending a response")],
+    )
+    breaker = _noop_breaker()
+    with pytest.raises(AgentUnreachableError):
+        await agent_request(
+            "POST",
+            "http://1.2.3.4:5100/agent/appium/start",
+            endpoint="appium_start",
+            host="1.2.3.4",
+            client=client,
+            client_mode="pooled",
+            circuit_breaker=breaker,
+        )
+    assert client.post.await_count == 1
+    breaker.record_failure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pooled_get_retry_exhaustion_raises() -> None:
+    client = _pooled_client(
+        "get",
+        [
+            httpx.RemoteProtocolError("Server disconnected without sending a response"),
+            httpx.RemoteProtocolError("Server disconnected without sending a response"),
+        ],
+    )
+    breaker = _noop_breaker()
+    with pytest.raises(AgentUnreachableError):
+        await agent_request(
+            "GET",
+            "http://1.2.3.4:5100/agent/health",
+            endpoint="agent_health",
+            host="1.2.3.4",
+            client=client,
+            client_mode="pooled",
+            circuit_breaker=breaker,
+        )
+    assert client.get.await_count == 2
+    breaker.record_failure.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_timeout_sets_transport_outcome_timeout() -> None:
     factory = _factory_raising(httpx.ReadTimeout("boom"))

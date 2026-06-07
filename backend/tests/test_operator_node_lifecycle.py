@@ -65,10 +65,13 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Pre-PR-#301-shape stale operator:start intent must not overwrite a freshly
-    allocated desired_port. Repro for the Roku flip observed on 2026-05-18:
-    stale payload re-asserted desired_port=4724 every intent_reconciler tick,
-    while start_node had just allocated port 4725.
+    """A stale operator:start payload port must never reach AppiumNode.desired_port.
+
+    Repro for the Roku flip observed on 2026-05-18 (pre-PR-#301 row shape) and the
+    FireTV 4724<->4725 churn storm of 2026-06-07 (current-shape intent gone stale
+    after a fallback start moved the node): the applier pins the live node.port, so
+    the snapshot in the payload is audit-only and the flip cannot recur — with NO
+    operator action required.
     """
     device = await create_device(db_session, host_id=db_host.id, name="roku-flip-repro", verified=True)
     with state_write_guard.bypass():
@@ -105,22 +108,19 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     db_session.add(stale_intent)
     await db_session.commit()
 
-    # Run reconcile WITHOUT any operator action — the stale intent must continue
-    # to mis-assert desired_port=4724 because the precondition/expires_at sweeps
-    # both skip rows where those columns are NULL. This documents the bug class
-    # that pre-#301 stale rows fall into.
+    # Run reconcile WITHOUT any operator action — the applier pins the live
+    # node.port, so the stale payload's 4724 must never be written even though the
+    # precondition/expires_at sweeps both skip this row (NULL columns, pre-#301
+    # shape). Before the 2026-06-07 applier fix this reconcile mis-asserted 4724.
     await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.refresh(node)
-    assert node.desired_port == 4724, (
-        "pre-fix sanity check: the stale pre-#301 row should still mis-assert "
-        "desired_port=4724 before any operator action refreshes the intent"
+    assert node.desired_port == 4725, (
+        f"the stale payload port must be ignored in favor of live node.port; got {node.desired_port}"
     )
 
-    # Now simulate an operator pressing Restart through the unified path. This
-    # upserts the operator:start intent with a fresh transition_token,
-    # transition_deadline, expires_at, AND precondition — overwriting the stale
-    # payload. Reconcile inside register_intents_and_reconcile then writes the
-    # AppiumNode desired_port from the fresh payload (= node.port = 4725).
+    # An operator Restart through the unified path still refreshes the intent row
+    # (fresh transition_token, transition_deadline, expires_at, precondition) and
+    # keeps desired_port on the live port.
     await OperatorNodeLifecycleService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
     ).request_restart(db_session, device, caller="operator_restart", reason="operator restart")

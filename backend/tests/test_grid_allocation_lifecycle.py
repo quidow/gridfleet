@@ -47,7 +47,13 @@ def allocation_service() -> AllocationService:
         intent_factory=IntentService,
         publisher=event_bus,
         stereotype_provider=_stereotype_stub,
-        settings=_SettingsStub({"grid.claim_window_sec": 30, "grid.queue_timeout_sec": 300}),
+        settings=_SettingsStub(
+            {
+                "grid.claim_window_sec": 30,
+                "grid.queue_timeout_sec": 300,
+                "general.session_viability_timeout_sec": 120,
+            }
+        ),
     )
 
 

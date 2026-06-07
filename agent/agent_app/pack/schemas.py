@@ -73,6 +73,7 @@ class PackDeviceHealthResponse(BaseModel):
 
     healthy: bool | None
     checks: list[HealthCheckResult] = Field(default_factory=list)
+    recommended_action: str | None = None
 
 
 class PackDeviceTelemetryResponse(BaseModel):
