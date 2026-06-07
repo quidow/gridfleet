@@ -97,6 +97,9 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.appium_nodes.services.reconciler_agent",
             "app.devices.services.capability",
             "app.verification.services.execution",
+            # restart_succeeded eager-fills the viability marker so a restarted node is
+            # allocatable immediately, not one reconciler poll later (I11/N15).
+            "app.appium_nodes.services.heartbeat",
         }
     ),
     ("appium_nodes", "health_running"): frozenset({"app.devices.services.health"}),
