@@ -55,6 +55,7 @@ logger = get_logger(__name__)
 # this flag.  Keep as long as lifecycle_policy.attempt_auto_recovery uses the reason.
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
+PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
 
@@ -455,6 +456,28 @@ class ConnectivityService:
             await link_repair.reset_repair_attempts(db, device.identity_value)
         return healthy
 
+    async def _note_unanswered_probe(self, db: AsyncSession, device: Device, host: Host, *, threshold: int) -> bool:
+        """Count consecutive unanswered probes (AgentCallError → health_result None).
+
+        On threshold, mark the device unhealthy via the normal failure machinery
+        instead of silently skipping it — a dead-link device whose agent channel
+        also errs would otherwise sit ``available`` indefinitely. Returns True when
+        it took over (caller continues to the next device)."""
+        current = await control_plane_state_store.get_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+        counter = int(current) + 1 if isinstance(current, int) else 1
+        await control_plane_state_store.set_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value, counter)
+        metrics.set_probe_unanswered_consecutive(
+            device_identity=device.identity_value, host=host.hostname, value=counter
+        )
+        if counter < threshold:
+            return False
+        summary = "Health probe unanswered (agent/adapter error)"
+        was_offline = device.operational_state == DeviceOperationalState.offline
+        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
+        if not was_offline:
+            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+        return True
+
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
         if device.operational_state != DeviceOperationalState.offline:
             # Healthy without being offline: clear any stale previously-offline
@@ -500,6 +523,9 @@ class ConnectivityService:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
         ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
         ip_ping_count = int(self._settings.get("device_checks.ip_ping.count_per_cycle"))
+        probe_unanswered_threshold = int(
+            self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
+        )
 
         stmt = select(Host).where(Host.status == HostStatus.online)
         result = await db.execute(stmt)
@@ -535,6 +561,12 @@ class ConnectivityService:
                     pool=self._pool,
                 )
                 await assert_current_leader(db, settings=self._settings)
+                if health_result is None:
+                    flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
+                    if flipped:
+                        continue
+                else:
+                    await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
                 healthy = False
                 ip_ping_entry: dict[str, Any] | None = None
                 if health_result is not None:

@@ -1847,3 +1847,59 @@ async def test_repair_budget_exhausts_then_records_failed(db_session: AsyncSessi
 
     dispatch.assert_not_awaited()
     assert "repair_failed" in await _device_event_types(db_session, device.id)
+
+
+# ---------------------------------------------------------------------------
+# Unanswered-probe fact (Task 8)
+# ---------------------------------------------------------------------------
+
+
+async def test_unanswered_probe_marks_unhealthy_on_threshold(db_session: AsyncSession) -> None:
+    """N consecutive None probes (AgentCallError) → device marked unhealthy and
+    handle_health_failure invoked, instead of being silently skipped."""
+    _host, _device, _ = await _setup_host_and_device(db_session, with_node=True)
+    lifecycle_policy = AsyncMock()
+    svc = ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    )
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
+    ):
+        await svc.check_connectivity(db_session)
+        await svc.check_connectivity(db_session)
+        lifecycle_policy.handle_health_failure.assert_not_awaited()  # 2 of 3, below threshold
+        await svc.check_connectivity(db_session)
+
+    lifecycle_policy.handle_health_failure.assert_awaited()  # threshold reached
+
+
+async def test_answered_probe_resets_unanswered_counter(db_session: AsyncSession) -> None:
+    """An answered probe resets the unanswered counter so isolated probe errors
+    never accumulate to the threshold."""
+    _host, _device, _ = await _setup_host_and_device(db_session, with_node=True)
+    lifecycle_policy = AsyncMock()
+    svc = ConnectivityService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    )
+    # None, None, healthy (reset), None -> never reaches threshold of 3
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[None, None, {"healthy": True}, None],
+        ),
+    ):
+        for _ in range(4):
+            await svc.check_connectivity(db_session)
+
+    lifecycle_policy.handle_health_failure.assert_not_awaited()
