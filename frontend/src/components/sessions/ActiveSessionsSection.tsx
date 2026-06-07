@@ -54,7 +54,7 @@ export function ActiveSessionsSection({ onUpdatedAt }: { onUpdatedAt: (t: number
     ...buildSessionColumns(),
     {
       key: 'kill',
-      header: '',
+      header: <span className="sr-only">Actions</span>,
       align: 'right',
       render: (s) =>
         s.status === 'running' ? (

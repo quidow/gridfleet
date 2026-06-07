@@ -225,7 +225,7 @@ export function buildExpanderColumn(
 ): DataTableColumn<SessionDetail, SessionSortKey> {
   return {
     key: 'expand',
-    header: '',
+    header: <span className="sr-only">Expand</span>,
     width: '2.5rem',
     render: (s) => (
       <button

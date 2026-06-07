@@ -17,6 +17,7 @@ type SessionRow = {
   requested_device_type: string | null;
   requested_connection_type: string | null;
   requested_capabilities: Record<string, unknown> | null;
+  actual_capabilities: Record<string, unknown> | null;
   error_type: string | null;
   error_message: string | null;
   run_id: string | null;
@@ -45,6 +46,7 @@ async function mockSessionsSurface(page: Page) {
         platformName: 'Android',
         'appium:automationName': 'UiAutomator2',
       },
+      actual_capabilities: null,
       error_type: 'RuntimeError',
       error_message: 'Session could not be created',
       run_id: null,
@@ -59,13 +61,15 @@ async function mockSessionsSurface(page: Page) {
       test_name:
         index === 0 ? 'login.spec.ts' : index === 1 ? 'checkout.spec.ts' : `history-test-${String(index).padStart(2, '0')}`,
       started_at: new Date(Date.UTC(2026, 3, 1, 9 - index, 0, 0)).toISOString(),
-      ended_at: new Date(Date.UTC(2026, 3, 1, 9 - index, 12, 0)).toISOString(),
-      status: index % 3 === 0 ? 'passed' : index % 3 === 1 ? 'failed' : 'running',
+      // The first row is the live running session used by the active-tab tests.
+      ended_at: index === 0 ? null : new Date(Date.UTC(2026, 3, 1, 9 - index, 12, 0)).toISOString(),
+      status: index === 0 ? 'running' : index % 3 === 0 ? 'passed' : index % 3 === 1 ? 'failed' : 'running',
       requested_pack_id: null,
       requested_platform_id: null,
       requested_device_type: null,
       requested_connection_type: null,
-      requested_capabilities: null,
+      requested_capabilities: index === 0 ? { platformName: 'Android' } : null,
+      actual_capabilities: index === 0 ? { 'appium:systemPort': 8201 } : null,
       error_type: null,
       error_message: null,
       run_id: null,
@@ -122,6 +126,7 @@ async function mockSessionsSurface(page: Page) {
       requested_device_type: null,
       requested_connection_type: null,
       requested_capabilities: { 'gridfleet:probeCheckedBy': 'scheduled' },
+      actual_capabilities: null,
       error_type: null,
       error_message: null,
       run_id: null,
@@ -138,6 +143,17 @@ async function mockSessionsSurface(page: Page) {
     const cursor = urlObject.searchParams.get('cursor');
     const direction = urlObject.searchParams.get('direction') ?? 'older';
     const includeProbes = urlObject.searchParams.get('include_probes') === 'true';
+    const activeOnly = urlObject.searchParams.get('active') === 'true';
+
+    if (activeOnly) {
+      const live = sessions.filter((session) => session.ended_at === null);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: live, limit, next_cursor: null, prev_cursor: null }),
+      });
+      return;
+    }
 
     const source = includeProbes ? [...probeSessions, ...sessions] : sessions;
     const filtered = source.filter((session) => {
@@ -174,6 +190,19 @@ async function mockSessionsSurface(page: Page) {
       }),
     });
   });
+
+  await page.route((url) => /^\/api\/sessions\/[^/]+\/kill$/.test(new URL(url).pathname), async (route) => {
+    const sessionId = decodeURIComponent(new URL(route.request().url()).pathname.split('/')[3]);
+    const row = sessions.find((session) => session.session_id === sessionId);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        terminated: true,
+        session: { ...row, status: 'error', error_type: 'operator_kill', ended_at: new Date().toISOString() },
+      }),
+    });
+  });
 }
 
 test.describe('Sessions page', () => {
@@ -182,7 +211,7 @@ test.describe('Sessions page', () => {
   });
 
   test('loads filters and uses the paginated sessions contract', async ({ page }) => {
-    await page.goto('/sessions');
+    await page.goto('/sessions?tab=history');
 
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole('option', { name: 'All Devices' })).toBeAttached();
@@ -194,7 +223,7 @@ test.describe('Sessions page', () => {
   });
 
   test('shows shortened session IDs with copy action and relative start time', async ({ page }) => {
-    await page.goto('/sessions');
+    await page.goto('/sessions?tab=history');
 
     await expect(page.getByText('error-se...bb2222')).toBeVisible();
     await expect(page.getByText('2 hours ago', { exact: true })).toBeVisible();
@@ -206,7 +235,7 @@ test.describe('Sessions page', () => {
   });
 
   test('surfaces requested lane and failure detail for device-less setup failures', async ({ page }) => {
-    await page.goto('/sessions');
+    await page.goto('/sessions?tab=history');
 
     await expect(page.getByText('Setup failure')).toBeVisible();
     await expect(page.getByText('Android Mobile • Real Device • Network')).toBeVisible();
@@ -215,7 +244,7 @@ test.describe('Sessions page', () => {
   });
 
   test('hides probe sessions by default and reveals them when the toggle is enabled', async ({ page }) => {
-    await page.goto('/sessions');
+    await page.goto('/sessions?tab=history');
 
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('__gridfleet_probe__')).toHaveCount(0);
@@ -229,7 +258,7 @@ test.describe('Sessions page', () => {
   });
 
   test('navigates through cursor history and restores state from the URL', async ({ page }) => {
-    await page.goto('/sessions');
+    await page.goto('/sessions?tab=history');
 
     await page.getByRole('button', { name: 'Older' }).click();
     await expect(page).toHaveURL(/cursor=session-49/);
@@ -245,5 +274,23 @@ test.describe('Sessions page', () => {
     await page.getByRole('button', { name: 'Back to newest' }).click();
     await expect(page).not.toHaveURL(/cursor=/);
     await expect(page.getByText('Newest results first')).toBeVisible();
+  });
+
+  test('active tab lists running sessions and expands capabilities', async ({ page }) => {
+    await page.goto('/sessions');
+    await expect(page.getByRole('button', { name: 'Active' })).toBeVisible();
+    // Only live rows render on the active tab.
+    await expect(page.getByText('login.spec.ts')).toBeVisible();
+    await expect(page.getByText('checkout.spec.ts')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Expand capabilities' }).first().click();
+    await expect(page.getByText('Actual capabilities')).toBeVisible();
+    await expect(page.getByText('"appium:systemPort": 8201')).toBeVisible();
+  });
+
+  test('kill flow confirms then terminates', async ({ page }) => {
+    await page.goto('/sessions');
+    await page.getByRole('button', { name: /kill session session-aaaa1111bbbb2222/i }).click();
+    await page.getByRole('button', { name: 'Kill session', exact: true }).click();
+    await expect(page.getByText('Session killed')).toBeVisible();
   });
 });
