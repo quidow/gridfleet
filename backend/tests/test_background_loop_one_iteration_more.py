@@ -83,9 +83,11 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
-    monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     heartbeat_mock = Mock(run_cycle=AsyncMock())
     services = AppiumNodeServices(
@@ -280,11 +282,13 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.background_loop as background_loop
+
     def fake_exit(code: int) -> None:
         raise RuntimeError(f"exit {code}")
 
-    monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(appium_reconciler.os, "_exit", fake_exit)
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
         await AppiumReconcilerLoop(
             services=AppiumNodeServices(
@@ -297,9 +301,9 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             )
         ).run()
 
-    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
-    monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
         await HeartbeatLoop(
             services=AppiumNodeServices(
@@ -311,8 +315,6 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
                 session_factory=_Session,
             )
         ).run()
-
-    import app.core.background_loop as background_loop
 
     monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
