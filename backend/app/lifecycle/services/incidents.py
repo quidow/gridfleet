@@ -15,6 +15,13 @@ from app.devices.services.event import record_event
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.events.catalog import EventSeverity
+    from app.events.protocols import EventPublisher
+
+# SSE event published for every lifecycle incident (F1). Registered in the public
+# event catalog under ``device_and_node_lifecycle``.
+LIFECYCLE_INCIDENT_EVENT_TYPE = "device.lifecycle_incident"
+
 LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_deferred_stop: "Stopping Soon",
     DeviceEventType.lifecycle_auto_stopped: "Auto-Stopped",
@@ -29,6 +36,18 @@ LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
 }
 
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)
+
+# SSE severity per incident type. A recovered/rejoined device is good news (success);
+# a failed recovery is operator-actionable (critical); auto-stop / paused / extended
+# cooldown warrant a warning; the rest are informational. Default: info.
+_LIFECYCLE_INCIDENT_SEVERITY: dict[DeviceEventType, EventSeverity] = {
+    DeviceEventType.lifecycle_recovered: "success",
+    DeviceEventType.lifecycle_run_restored: "success",
+    DeviceEventType.lifecycle_recovery_failed: "critical",
+    DeviceEventType.lifecycle_auto_stopped: "warning",
+    DeviceEventType.lifecycle_recovery_suppressed: "warning",
+    DeviceEventType.lifecycle_run_cooldown_escalated: "warning",
+}
 
 
 def _parse_summary_state(raw: object) -> DeviceLifecyclePolicySummaryState:
@@ -74,6 +93,11 @@ def serialize_lifecycle_incident(event: DeviceEvent, device: Device) -> Lifecycl
 class LifecycleIncidentService:
     """Container-held facade for the device lifecycle-incident surface."""
 
+    def __init__(self, publisher: EventPublisher | None = None) -> None:
+        # Optional so the ~88 no-arg test construction sites keep working; production
+        # (composition.py) injects the event bus so incidents reach SSE (F1).
+        self._publisher = publisher
+
     async def record_lifecycle_incident(
         self,
         db: AsyncSession,
@@ -115,7 +139,31 @@ class LifecycleIncidentService:
         elif expires_at is not None:
             details["expires_at"] = expires_at
 
-        return await record_event(db, device.id, event_type, details)
+        event = await record_event(db, device.id, event_type, details)
+
+        # F1: also publish to the event bus so operators get a live SSE signal of recovery
+        # failing/backing off, not just a row in the device_events audit table. Queued to
+        # dispatch after the caller's transaction commits (dropped on rollback).
+        if self._publisher is not None:
+            self._publisher.queue_for_session(
+                db,
+                LIFECYCLE_INCIDENT_EVENT_TYPE,
+                {
+                    "device_id": str(device.id),
+                    "device_name": device.name,
+                    "event_type": event_type.value,
+                    "label": LIFECYCLE_INCIDENT_LABELS.get(event_type),
+                    "summary_state": summary_state.value,
+                    "reason": reason,
+                    "detail": detail,
+                    "source": source,
+                    "run_id": str(run_id) if run_id is not None else None,
+                    "run_name": run_name,
+                },
+                severity=_LIFECYCLE_INCIDENT_SEVERITY.get(event_type, "info"),
+            )
+
+        return event
 
     async def list_lifecycle_incidents_paginated(
         self,

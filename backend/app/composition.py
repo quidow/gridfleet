@@ -180,7 +180,7 @@ def compose_app(
     diagnostics_services = DiagnosticsServices(export=diagnostics_export_svc)
     review_svc = ReviewService(diagnostics=diagnostics_export_svc)
     reservation_svc = RunReservationService(review=review_svc)
-    incidents_svc = LifecycleIncidentService()
+    incidents_svc = LifecycleIncidentService(publisher=bus)
     lifecycle_actions_svc = LifecyclePolicyActionsService(
         publisher=bus, reservation=reservation_svc, incidents=incidents_svc
     )
