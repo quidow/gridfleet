@@ -221,6 +221,47 @@ async def test_health_changed_event_skipped_when_derived_unchanged(
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_health_changed_fires_on_any_verdict_status_change(
+    db_with_device: tuple[AsyncSession, Device],
+    event_bus_capture: list[tuple[str, dict[str, object]]],
+) -> None:
+    # Overall is already "failed" via viability; a device verdict flip
+    # (unknown→failed) must still fire under the per-verdict contract.
+    db, device = db_with_device
+    device.session_viability_status = "failed"
+    device.session_viability_error = "probe boom"
+    await db.commit()
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
+    await db.commit()
+    await _drain_after_commit_tasks()
+    payloads = [payload for name, payload in event_bus_capture if name == "device.health_changed"]
+    assert len(payloads) == 1
+    event = payloads[0]
+    assert set(event) == {"device_id", "overall", "device", "node", "viability"}
+    assert event["overall"] == "failed"
+    assert event["device"]["status"] == "failed"  # type: ignore[index]
+    assert event["viability"]["status"] == "failed"  # type: ignore[index]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_health_changed_not_fired_when_only_details_change(
+    db_with_device: tuple[AsyncSession, Device],
+    event_bus_capture: list[tuple[str, dict[str, object]]],
+) -> None:
+    db, device = db_with_device
+    device.device_checks_healthy = False
+    device.device_checks_summary = "boom"
+    await db.commit()
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom 2")
+    await db.commit()
+    await _drain_after_commit_tasks()
+    names = [name for name, _payload in event_bus_capture]
+    assert "device.health_changed" not in names
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_health_changed_event_dropped_on_rollback(
     db_with_device: tuple[AsyncSession, Device],
     event_bus_capture: list[tuple[str, dict[str, object]]],
