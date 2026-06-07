@@ -41,6 +41,7 @@ from .client import (
     _default_api_url,
     _default_grid_url,
     register_run_cleanup,
+    run_grid_url,
 )
 from .sessions import build_error_session_payload, resolve_device_handle_from_driver
 
@@ -72,6 +73,7 @@ __all__ = [
     "hydrate_allocated_device_from_driver",
     "register_run_cleanup",
     "resolve_device_handle_from_driver",
+    "run_grid_url",
 ]
 
 

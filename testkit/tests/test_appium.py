@@ -166,7 +166,6 @@ def test_create_appium_driver_uses_factory_options(monkeypatch: pytest.MonkeyPat
                 "platformName": "Android",
                 "appium:platform": "firetv_real",
                 "appium:automationName": "UiAutomator2",
-                "gridfleet:run_id": "free",
                 "gridfleet:testName": "manual-smoke",
             },
         )
