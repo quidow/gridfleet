@@ -327,6 +327,7 @@ class SessionCrudService:
         sort_by: str = "started_at",
         sort_dir: str = "desc",
         include_probes: bool = False,
+        active: bool = False,
     ) -> tuple[list[Session], int]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
@@ -346,6 +347,9 @@ class SessionCrudService:
             stmt = stmt.where(Session.started_at <= started_before)
         if run_id is not None:
             stmt = stmt.where(Session.run_id == run_id)
+        if active:
+            # Live set: served by the ix_sessions_live partial index.
+            stmt = stmt.where(Session.ended_at.is_(None))
 
         count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
         total = int((await db.execute(count_stmt)).scalar_one())
@@ -389,6 +393,7 @@ class SessionCrudService:
         cursor: str | None = None,
         direction: str = "older",
         include_probes: bool = False,
+        active: bool = False,
     ) -> CursorPage[Session]:
         stmt = select(Session).options(selectinload(Session.device)).outerjoin(Device)
         stmt = exclude_reserved_sessions(stmt) if include_probes else exclude_non_test_sessions(stmt)
@@ -407,6 +412,9 @@ class SessionCrudService:
             stmt = stmt.where(Session.started_at <= started_before)
         if run_id is not None:
             stmt = stmt.where(Session.run_id == run_id)
+        if active:
+            # Live set: served by the ix_sessions_live partial index.
+            stmt = stmt.where(Session.ended_at.is_(None))
 
         page_stmt = stmt
         cursor_token = decode_cursor(cursor) if cursor else None

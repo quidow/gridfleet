@@ -1118,3 +1118,30 @@ def test_confirm_request_drops_oversized_capabilities() -> None:
 
     absent = ConfirmRequest(appium_session_id="s1")
     assert absent.appium_capabilities is None
+
+
+async def test_list_sessions_active_filter(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    from app.sessions.models import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+    live = Session(session_id="active-1", device_id=device["id"], status=SessionStatus.running)
+    pending = Session(session_id="active-2", device_id=device["id"], status=SessionStatus.pending)
+    done = Session(
+        session_id="ended-1",
+        device_id=device["id"],
+        status=SessionStatus.passed,
+        ended_at=datetime.now(UTC),
+    )
+    db_session.add_all([live, pending, done])
+    await db_session.commit()
+
+    resp = await client.get("/api/sessions", params={"active": "true"})
+    assert resp.status_code == 200
+    ids = {item["session_id"] for item in resp.json()["items"]}
+    assert ids == {"active-1", "active-2"}
+
+    # Cursor mode honors the filter too.
+    resp = await client.get("/api/sessions", params={"active": "true", "direction": "older"})
+    assert resp.status_code == 200
+    ids = {item["session_id"] for item in resp.json()["items"]}
+    assert ids == {"active-1", "active-2"}
