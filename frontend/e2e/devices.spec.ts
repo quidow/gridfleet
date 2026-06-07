@@ -95,9 +95,10 @@ const DEFAULT_DEVICE = {
     backoff_until: null,
   },
   health_summary: {
-    healthy: true,
-    summary: 'Healthy',
-    last_checked_at: '2026-03-30T10:00:03Z',
+    device: { status: 'ok', detail: null, checked_at: '2026-03-30T10:00:03Z' },
+    node: { status: 'ok', detail: 'running', checked_at: null },
+    viability: { status: 'ok', detail: 'passed', checked_at: null },
+    overall: 'ok',
   },
   emulator_state: null,
   created_at: '2026-03-30T10:00:03Z',
@@ -124,8 +125,14 @@ const DEFAULT_HEATMAP_ROWS = [
   { timestamp: '2026-03-30T15:00:00Z', status: 'error' },
 ] as const;
 
-function mockHealthSummary(healthy = false, summary = healthy ? 'Healthy' : 'Unavailable') {
-  return { healthy, summary };
+function mockHealthSummary(healthy = false, detail: string | null = null) {
+  const status = healthy ? 'ok' : 'failed';
+  return {
+    device: { status, detail: healthy ? null : detail || 'Unavailable', checked_at: null },
+    node: { status, detail: healthy ? 'running' : 'error', checked_at: null },
+    viability: { status: 'unknown', detail: 'not run', checked_at: null },
+    overall: status,
+  };
 }
 
 function devicesResponseBody(devices: unknown[], requestUrl: URL): unknown {
@@ -574,6 +581,11 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('columnheader', { name: 'Identity', exact: true })).toHaveCount(0);
     await expect(page.getByRole('columnheader', { name: 'Target', exact: true })).toHaveCount(0);
     await expect(page.getByText(/Showing \d+( of \d+)? devices?/)).toBeVisible();
+
+    // Health cell exposes one aria-labelled dot per verdict signal
+    await expect(page.getByLabel('Device ok').first()).toBeVisible();
+    await expect(page.getByLabel('Node ok').first()).toBeVisible();
+    await expect(page.getByLabel('Viability ok').first()).toBeVisible();
   });
 
   test('shows registered devices', async ({ page }) => {
@@ -1245,7 +1257,9 @@ test.describe('Devices page', () => {
     await expect(page.getByRole('heading', { name: 'Devices', exact: true })).toBeVisible({ timeout: 15_000 });
 
     await expect(page.getByRole('columnheader', { name: 'Health' })).toBeVisible();
-    await expect(firstDeviceRow(page).getByText(/Healthy/i)).toBeVisible();
+    await expect(firstDeviceRow(page).getByLabel('Device ok')).toBeVisible();
+    await expect(firstDeviceRow(page).getByLabel('Node ok')).toBeVisible();
+    await expect(firstDeviceRow(page).getByLabel('Viability ok')).toBeVisible();
     await firstDeviceRow(page).getByRole('button', { name: /Health details/ }).click();
     await expect(page.getByRole('dialog', { name: /Health details/ }).getByText('84% · Charging')).toBeVisible();
   });
@@ -1315,12 +1329,11 @@ test.describe('Devices page', () => {
 
     await expect(page.getByRole('heading', { name: DEFAULT_DEVICE.name })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('Android · 14 · linux-host')).toBeVisible();
-    // Only Hardware and Connectivity pills remain (Readiness and Lifecycle were removed).
+    // Hardware plus the three verdict pills (Device / Node / Viability).
     await expect(page.getByText('Hardware', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText('Connectivity', { exact: true })).toBeVisible();
-    await expect(page.getByLabel(/^(Hardware|Connectivity) /)).toHaveCount(2);
+    await expect(page.getByLabel(/^(Hardware|Device|Node|Viability) /)).toHaveCount(4);
 
-    await page.getByRole('link', { name: /Connectivity.*OK/i }).click();
+    await page.getByRole('link', { name: /^Node running/i }).click();
     await expect(page).toHaveURL(/\/devices\/device-default\?tab=triage(#device-health)?$/);
     await expect(page.getByText('Device Health')).toBeVisible({ timeout: 15_000 });
   });
@@ -2481,11 +2494,11 @@ test.describe('Devices page', () => {
     await expect(page.locator('h1.heading-page')).toBeVisible();
 
     const header = page.locator('header').first();
-    const pills = header.getByLabel(/^(Hardware|Connectivity) /);
-    // Only Hardware and Connectivity pills remain (Readiness and Lifecycle were removed).
-    await expect(pills).toHaveCount(2);
+    const pills = header.getByLabel(/^(Hardware|Device|Node|Viability) /);
+    // Hardware plus the three verdict pills (Device / Node / Viability).
+    await expect(pills).toHaveCount(4);
     await expect(header.getByText('Hardware', { exact: true })).toBeVisible();
-    await expect(header.getByText('Connectivity', { exact: true })).toBeVisible();
+    await expect(header.getByText('Node', { exact: true })).toBeVisible();
   });
 
   test('device detail surfaces actions in their contextual panels', async ({ page }) => {
