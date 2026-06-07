@@ -195,6 +195,7 @@ class PackDeviceHealthResponse(BaseModel):
     )
     checks: Annotated[list[HealthCheckResult] | None, Field(title="Checks")] = None
     healthy: Annotated[bool | None, Field(title="Healthy")]
+    recommended_action: Annotated[str | None, Field(title="Recommended Action")] = None
 
 
 class PackDeviceLifecycleResponse(BaseModel):
