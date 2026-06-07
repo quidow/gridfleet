@@ -149,7 +149,6 @@ def discover_tools(
     *,
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
-    os_name: str | None = None,
 ) -> ToolDiscovery:
     resolved_env = os.environ if env is None else env
     resolved_home = home or _operator_home(resolved_env)

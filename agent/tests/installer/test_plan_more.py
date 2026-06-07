@@ -45,7 +45,7 @@ def test_find_node_bin_dir_missing_everything(tmp_path: Path, monkeypatch: pytes
 
 def test_discover_tools_warns_when_tools_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: None)
-    discovery = discover_tools(env={}, home=tmp_path, os_name="Linux")
+    discovery = discover_tools(env={}, home=tmp_path)
     assert len(discovery.warnings) == 1
     assert "Node.js not found" in discovery.warnings[0]
 
