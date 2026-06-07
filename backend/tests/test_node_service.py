@@ -679,7 +679,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None
     assert loaded.appium_node.observed_running
-    assert device_health.build_public_summary(loaded)["healthy"] is True
+    assert device_health.build_public_summary(loaded)["node"]["status"] == "ok"
 
 
 async def test_stop_remote_node_returns_false_on_agent_unreachable() -> None:

@@ -138,7 +138,7 @@ async def test_availability_excludes_unhealthy_devices(
     assert device_resp.status_code == 200
     device_data = device_resp.json()
     assert device_data["operational_state"] == DeviceOperationalState.offline.value
-    assert device_data["health_summary"]["healthy"] is False
+    assert device_data["health_summary"]["overall"] == "failed"
 
 
 async def test_availability_restores_when_unhealthy_offline_device_recovers(
