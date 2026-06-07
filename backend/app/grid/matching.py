@@ -19,9 +19,11 @@ IDENTITY_KEYS = frozenset(
     }
 )
 TAG_PREFIX = "appium:gridfleet:tag:"
-# Requested-capability key the testkit sends (testkit appium.py); the allocator
-# parses it to join the session to a run ("free" sentinel = explicit free session).
-RUN_ID_CAP = "gridfleet:run_id"
+# Tombstone for the retired capability-borne run binding (pre run-scoped
+# endpoint). Bodies still carrying it are REJECTED at allocation with a
+# pointer to the /run/{run_id} endpoint — a loud clean break instead of a
+# silent queue timeout for stale clients.
+LEGACY_RUN_ID_CAP = "gridfleet:run_id"
 
 
 class CapabilityMergeError(ValueError):
@@ -58,5 +60,5 @@ def candidate_matches_stereotype(candidate: dict[str, Any], stereotype: dict[str
             key not in stereotype or stereotype[key] != requested
         ):
             return False
-        # All other keys (appium:* options, gridfleet:run_id) do not constrain slot identity.
+        # All other keys (appium:* options) do not constrain slot identity.
     return True

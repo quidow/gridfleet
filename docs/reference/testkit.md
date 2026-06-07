@@ -126,7 +126,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
-| `GRIDFLEET_RUN_ID` | `free` | Sets the injected `gridfleet:run_id` capability the router uses to route sessions to devices reserved for a run (`free` when unset) |
+| `GRIDFLEET_RUN_ID` | unset | Optional run id. When set, drivers are created through the run-scoped grid endpoint `GRID_URL/run/{id}` so sessions land only on devices reserved for the run. Unset = free session on unreserved devices. Set externally by the run launcher/CI. |
 
 ## Client Surface
 
@@ -280,7 +280,7 @@ The manager enforces a maximum TTL via `general.device_cooldown_max_sec` (defaul
 
 ## Device Handles
 
-Router-routed runs no longer use per-worker claim/release calls. The pytest plugin injects `gridfleet:run_id` into Appium capabilities, so the router routes new sessions to devices reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
+Router-routed runs no longer use per-worker claim/release calls. The pytest plugin composes the run-scoped grid endpoint (`GRID_URL/run/{run_id}`) from `GRIDFLEET_RUN_ID` and creates Appium sessions through it, so the router admits each session only to devices reserved for that run. Once a session is running, resolve the assigned manager device row from the driver's runtime connection target.
 
 ```python
 from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver

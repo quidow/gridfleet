@@ -31,6 +31,17 @@ def _default_grid_url() -> str:
     return os.getenv("GRID_URL", DEFAULT_GRID_URL)
 
 
+def run_grid_url(run_id: str, *, base: str | None = None) -> str:
+    """Run-scoped WebDriver endpoint for *run_id* (``{base}/run/{run_id}``).
+
+    Sessions created through it are admitted only to devices reserved for the
+    run; free sessions use the bare grid URL. Replaces the retired
+    ``gridfleet:run_id`` capability.
+    """
+    root = (base or _default_grid_url()).rstrip("/")
+    return f"{root}/run/{run_id}"
+
+
 def _default_api_url() -> str:
     return os.getenv("GRIDFLEET_API_URL", DEFAULT_GRIDFLEET_API_URL)
 

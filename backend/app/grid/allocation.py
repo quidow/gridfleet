@@ -28,7 +28,7 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
 from app.grid.constants import RETRY_INTERVAL_SEC
-from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
+from app.grid.matching import LEGACY_RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
@@ -140,6 +140,13 @@ class AllocationResult:
     target: str
 
 
+class RunNotActiveError(Exception):
+    """A run-bound allocate names a run that is missing or no longer active."""
+
+    def __init__(self, run_id: uuid.UUID, state: str) -> None:
+        super().__init__(f"run {run_id} is {state}; only active runs can create sessions")
+
+
 async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -> int:
     """Terminalize any ``claimed`` ticket still pointing at *session_row_id*.
 
@@ -165,38 +172,26 @@ async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -
     return int(getattr(result, "rowcount", 0) or 0)
 
 
-def _candidate_passes_reservation(
-    candidate: dict[str, Any], reservation_run_id: uuid.UUID | None
-) -> tuple[bool, uuid.UUID | None]:
-    """Reservation gate for one candidate against a device's reservation state.
-
-    ``reservation_run_id`` is the device's admitting reservation run (``None`` when
-    unreserved). An unreserved device admits any candidate. A reserved device
-    admits only the owning run's sessions (spec §3): the candidate must present
-    the run's id in ``gridfleet:run_id``. Returns ``(allowed, run_id_to_associate)``.
-    """
-    if reservation_run_id is None:
-        return True, None
-    if candidate.get(RUN_ID_CAP) == str(reservation_run_id):
-        return True, reservation_run_id
-    return False, None
+def _ticket_passes_reservation(ticket_run_id: uuid.UUID | None, reservation_run_id: uuid.UUID | None) -> bool:
+    """Strict symmetric admission (run-scoped-endpoint spec §1/§3): a run-bound
+    ticket may take only devices reserved for its run; a free ticket may take
+    only unreserved devices. No spillover in either direction."""
+    return ticket_run_id == reservation_run_id
 
 
 def _candidate_can_take(
-    candidate: dict[str, Any], stereotype: dict[str, Any], reservation_run_id: uuid.UUID | None
-) -> tuple[bool, uuid.UUID | None]:
-    """Shared two-step candidate gate (harness Q14): does *candidate* match the
-    device's *stereotype* AND clear its reservation state?
-
-    Used by both ``try_allocate`` (to claim) and ``_older_waiter_blocks`` (the FIFO
-    veto), which must apply identical admission rules or an older waiter could veto a
-    device it could never actually take. Returns ``(allowed, run_id_to_associate)``;
-    the run id is the reservation's run for a reserved device, else ``None`` (the
-    unreserved run-id-honoring path is resolved separately because it needs the DB).
-    """
+    candidate: dict[str, Any],
+    stereotype: dict[str, Any],
+    ticket_run_id: uuid.UUID | None,
+    reservation_run_id: uuid.UUID | None,
+) -> bool:
+    """Shared two-step gate (harness Q14): does *candidate* match the device's
+    *stereotype* AND does its ticket clear the device's reservation state? Used
+    by both ``try_allocate`` (to claim) and ``_older_waiter_blocks`` (the FIFO
+    veto), which must apply identical admission rules."""
     if not candidate_matches_stereotype(candidate, stereotype):
-        return False, None
-    return _candidate_passes_reservation(candidate, reservation_run_id)
+        return False
+    return _ticket_passes_reservation(ticket_run_id, reservation_run_id)
 
 
 class AllocationService:
@@ -419,6 +414,18 @@ class AllocationService:
         # long before queue_timeout (harness C8). Stamp before any early return so even
         # an invalid-body ticket records that its client was present this tick.
         ticket.last_polled_at = now_utc()
+        # A run-bound ticket is only as alive as its run: re-check every tick so a
+        # run cancelled/completed mid-queue fails its waiters NOW with a clear
+        # message instead of stranding them until the queue timeout (spec §4).
+        # This same check is the creation-time validation — the allocate endpoint
+        # calls try_allocate in the request that creates the ticket.
+        if ticket.run_id is not None:
+            run = await run_service.get_run(db, ticket.run_id)
+            if run is None or run.state != RunState.active:
+                state = run.state.value if run is not None else "missing"
+                transition_ticket(ticket, GridQueueStatus.cancelled, reason="run_not_active")
+                GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+                raise RunNotActiveError(ticket.run_id, state)
         try:
             candidates = merge_candidates(ticket.requested_body)
         except CapabilityMergeError as e:
@@ -430,6 +437,14 @@ class AllocationService:
             # instead of a generic text (wave-5 #26). The ticket is already
             # cancelled; the caller commits before responding.
             raise
+        # Clean-break tombstone (spec §1): reject cap-era clients loudly.
+        if any(LEGACY_RUN_ID_CAP in c for c in candidates):
+            transition_ticket(ticket, GridQueueStatus.cancelled, reason="legacy_run_id_cap")
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
+            raise CapabilityMergeError(
+                "the gridfleet:run_id capability is no longer supported; "
+                "create run sessions through the router's /run/{run_id} endpoint"
+            )
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
@@ -454,61 +469,18 @@ class AllocationService:
                 stereotype_cache[device.id] = stereotype
             reservation_run_id = self._reservation_run_id(reservation_map.get(device.id), device.id)
             for candidate in candidates:
-                allowed, run_id = _candidate_can_take(candidate, stereotype, reservation_run_id)
-                if not allowed:
+                if not _candidate_can_take(candidate, stereotype, ticket.run_id, reservation_run_id):
                     continue
                 # FIFO veto, reservation-aware: only count older waiters that could
-                # actually take THIS device — i.e. whose candidate both matches the
-                # stereotype AND clears the same reservation gate. An older run-less
-                # waiter cannot block this device when it is reserved.
+                # actually take THIS device — i.e. whose ticket clears the same
+                # reservation gate and whose candidate matches the stereotype.
                 if self._older_waiter_blocks(older_candidate_sets, stereotype, reservation_run_id):
                     continue
-                # On an UNRESERVED device the reservation gate associates no run, but a
-                # client-supplied gridfleet:run_id must still be honored so the session
-                # joins that run's lifecycle/release — otherwise it escapes the run and
-                # lingers until the idle reaper (harness C6). Validate it here (needs the
-                # DB); an invalid/inactive run id is treated as a free session (warn).
-                if run_id is None:
-                    run_id = await self._resolve_unreserved_run_id(db, candidate)
-                result = await self._claim(db, ticket=ticket, device=device, candidate=candidate, run_id=run_id)
+                result = await self._claim(db, ticket=ticket, device=device, candidate=candidate, run_id=ticket.run_id)
                 if result is not None:
                     GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
                     return result
         return None
-
-    @staticmethod
-    async def _resolve_unreserved_run_id(db: DbSession, candidate: dict[str, Any]) -> uuid.UUID | None:
-        """Resolve the run id to associate for a candidate landing on an UNRESERVED device.
-
-        Policy (harness C6): honor a client-supplied ``gridfleet:run_id`` when it names
-        a real, ``active`` run — the session then participates in that run's release and
-        terminal-close sweeps. A missing cap means a free session. An invalid or
-        non-active run id is NOT a hard reject (the device is genuinely free and the
-        new-session request is otherwise legitimate); we proceed as a free session and
-        log a warning so a stale/typo'd run id is visible rather than silently dropping
-        the session out of its intended run.
-        """
-        raw = candidate.get(RUN_ID_CAP)
-        if not isinstance(raw, str):
-            return None
-        if raw == "free":
-            # The testkit's explicit free-session sentinel (relay-era contract:
-            # free sessions always send gridfleet:run_id="free") — not malformed.
-            return None
-        try:
-            run_id = uuid.UUID(raw)
-        except ValueError:
-            logger.warning("grid_allocation_run_id_malformed run_id=%s (treated as free session)", raw)
-            return None
-        run = await run_service.get_run(db, run_id)
-        if run is None or run.state != RunState.active:
-            logger.warning(
-                "grid_allocation_run_id_not_active run_id=%s state=%s (treated as free session)",
-                run_id,
-                run.state if run is not None else "missing",
-            )
-            return None
-        return run_id
 
     async def resume_claimed(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
         """Idempotently resume a ``claimed`` ticket whose Allocated response was lost.
@@ -580,7 +552,7 @@ class AllocationService:
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
-    ) -> list[list[dict[str, Any]]]:
+    ) -> list[tuple[uuid.UUID | None, list[dict[str, Any]]]]:
         """Pre-merge the firstMatch candidates of every older waiting ticket once.
 
         Computed once per ``try_allocate`` call (not per device x candidate) and
@@ -610,30 +582,30 @@ class AllocationService:
             )
             .order_by(GridSessionQueueTicket.created_at)
         )
-        sets: list[list[dict[str, Any]]] = []
+        sets: list[tuple[uuid.UUID | None, list[dict[str, Any]]]] = []
         for older in (await db.execute(stmt)).scalars():
             try:
-                sets.append(merge_candidates(older.requested_body))
+                sets.append((older.run_id, merge_candidates(older.requested_body)))
             except CapabilityMergeError:
                 continue
         return sets
 
     @staticmethod
     def _older_waiter_blocks(
-        older_candidate_sets: list[list[dict[str, Any]]],
+        older_candidate_sets: list[tuple[uuid.UUID | None, list[dict[str, Any]]]],
         stereotype: dict[str, Any],
         reservation_run_id: uuid.UUID | None,
     ) -> bool:
         """FIFO veto: does any older waiter have a candidate that could take this
-        device? Reservation-aware — an older candidate counts only if it both
-        matches the stereotype AND clears the device's reservation gate, so a
-        run-less older waiter never blocks a younger run-owned ticket on a reserved
-        device.
-        """
-        for older_candidates in older_candidate_sets:
+        device? Reservation-aware — an older waiter counts only if its ticket
+        clears the device's reservation gate AND a candidate matches the
+        stereotype, so a free older waiter never blocks a reserved device and a
+        run-bound older waiter never blocks an unreserved one."""
+        for older_run_id, older_candidates in older_candidate_sets:
+            if not _ticket_passes_reservation(older_run_id, reservation_run_id):
+                continue
             for c in older_candidates:
-                allowed, _ = _candidate_can_take(c, stereotype, reservation_run_id)
-                if allowed:
+                if candidate_matches_stereotype(c, stereotype):
                     return True
         return False
 

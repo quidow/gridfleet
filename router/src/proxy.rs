@@ -13,7 +13,7 @@ use pingora::proxy::{ProxyHttp, Session};
 
 use crate::activity::ActivityTracker;
 use crate::backend::BackendClient;
-use crate::classify::{classify, RouteClass};
+use crate::classify::{classify, peel_run_prefix, RouteClass, RunPrefix};
 use crate::routes::{RouteMap, Upstream};
 use crate::w3c;
 
@@ -22,6 +22,9 @@ pub struct RouterCtx {
     pub session_id: Option<String>,
     pub is_delete: bool,
     pub started: Instant,
+    /// Prefix-stripped URI to forward upstream when the request arrived on the
+    /// run-scoped endpoint (commands carry the client's base URL prefix).
+    pub stripped_uri: Option<http::Uri>,
 }
 
 pub struct GridRouter {
@@ -76,15 +79,32 @@ impl ProxyHttp for GridRouter {
             session_id: None,
             is_delete: false,
             started: Instant::now(),
+            stripped_uri: None,
         }
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut RouterCtx) -> Result<bool> {
-        // Borrow method/path for classification; owned copies are only needed in
-        // the Unknown arm's error body (wave-5 #22).
-        let class = {
+        // Peel the optional run-scoped prefix first (spec §2): the run id feeds
+        // NewSession allocation; for everything else the prefix is just stripped
+        // so Appium sees pure W3C paths. An invalid segment routes as Unknown.
+        let (run_id, class) = {
             let req = session.req_header();
-            classify(req.method.as_str(), req.uri.path())
+            let path = req.uri.path();
+            let (prefix, stripped) = peel_run_prefix(path);
+            match prefix {
+                RunPrefix::Invalid => (None, RouteClass::Unknown),
+                RunPrefix::None => (None, classify(req.method.as_str(), path)),
+                RunPrefix::Run(id) => {
+                    let class = classify(req.method.as_str(), stripped);
+                    if matches!(
+                        class,
+                        RouteClass::SessionCommand { .. } | RouteClass::DeleteSession { .. }
+                    ) {
+                        ctx.stripped_uri = Some(rebuild_uri(stripped, req.uri.query()));
+                    }
+                    (Some(id), class)
+                }
+            }
         };
         let m = crate::metrics::metrics();
         match &class {
@@ -106,7 +126,7 @@ impl ProxyHttp for GridRouter {
             RouteClass::Metrics => {
                 respond(session, 200, crate::metrics::render(), "text/plain").await
             }
-            RouteClass::NewSession => self.handle_new_session(session, ctx).await,
+            RouteClass::NewSession => self.handle_new_session(session, ctx, run_id).await,
             RouteClass::SessionCommand { session_id } => {
                 self.route_session(session, ctx, session_id, false).await
             }
@@ -150,6 +170,20 @@ impl ProxyHttp for GridRouter {
             peer.options.write_timeout = Some(self.proxy_timeout);
         }
         Ok(peer)
+    }
+
+    async fn upstream_request_filter(
+        &self,
+        _session: &mut Session,
+        upstream_request: &mut pingora::http::RequestHeader,
+        ctx: &mut RouterCtx,
+    ) -> Result<()> {
+        // Run-scoped requests carry the /run/{uuid} prefix on every command;
+        // forward the stripped W3C path upstream.
+        if let Some(uri) = ctx.stripped_uri.take() {
+            upstream_request.set_uri(uri);
+        }
+        Ok(())
     }
 
     async fn response_filter(
@@ -423,6 +457,7 @@ impl GridRouter {
         &self,
         session: &mut Session,
         _ctx: &mut RouterCtx,
+        run_id: Option<String>,
     ) -> Result<bool> {
         // 1. Buffer the raw body (new-session bodies are small; cap at 1 MiB).
         let mut raw = Vec::new();
@@ -455,7 +490,11 @@ impl GridRouter {
         let deadline = Instant::now() + self.new_session_timeout;
         let mut ticket: Option<String> = None;
         let allocation = loop {
-            match self.backend.allocate(&raw, ticket.as_deref()).await {
+            match self
+                .backend
+                .allocate(&raw, ticket.as_deref(), run_id.as_deref())
+                .await
+            {
                 Ok(crate::backend::AllocateOutcome::Allocated {
                     allocation_id,
                     target,
@@ -716,6 +755,15 @@ impl GridRouter {
     }
 }
 
+/// Rebuild the upstream URI from the prefix-stripped path, preserving the query.
+fn rebuild_uri(path: &str, query: Option<&str>) -> http::Uri {
+    let pq = match query {
+        Some(q) => format!("{path}?{q}"),
+        None => path.to_string(),
+    };
+    pq.parse().expect("stripped path is a valid URI path")
+}
+
 /// Shared plain reqwest client for creating Appium sessions (no auth, no base).
 /// connect_timeout is set here so unboundedness isn't load-bearing on
 /// per-call-site `.timeout()`.
@@ -776,6 +824,18 @@ mod tests {
         // The registry min is 5; max(5-5, 5) = 5 keeps a sane create budget.
         let pt = Duration::from_secs(300);
         assert_eq!(create_timeout(pt, Some(5)), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn rebuild_uri_preserves_query() {
+        assert_eq!(
+            super::rebuild_uri("/session/abc", None).to_string(),
+            "/session/abc"
+        );
+        assert_eq!(
+            super::rebuild_uri("/session/abc", Some("a=1&b=2")).to_string(),
+            "/session/abc?a=1&b=2"
+        );
     }
 
     #[test]

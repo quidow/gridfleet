@@ -81,7 +81,7 @@ The package supports Python 3.10 through 3.14.
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
-| `GRIDFLEET_RUN_ID` | `free` | Optional run id injected into Appium capabilities as `gridfleet:run_id`. The pytest plugin sets this automatically when sessions are created inside a reserved run. |
+| `GRIDFLEET_RUN_ID` | unset | Optional run id. When set, drivers are created through the run-scoped grid endpoint `GRID_URL/run/{id}` so sessions land only on devices reserved for the run. Unset = free session on unreserved devices. Set this in the environment that launches pytest (e.g. the run launcher or CI step); the testkit reads it but does not set it. |
 
 The package assumes a running GridFleet API, a reachable WebDriver router, and platform-specific Appium driver setup on the registered hosts. When auth is disabled on the manager, leave `GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` unset and the testkit will send no `Authorization` header.
 
@@ -117,7 +117,7 @@ If you need raw Appium control instead, omit `pack_id` and `platform_id`, then p
 
 - Creates an Appium session through `GRID_URL`
 - Injects `gridfleet:testName` with the pytest test name
-- Always injects `gridfleet:run_id`, taken from the `GRIDFLEET_RUN_ID` environment variable when set (for example, inside a reserved run), otherwise defaulting to `"free"`
+- Resolves the WebDriver endpoint from `GRIDFLEET_RUN_ID`: run-scoped URL inside a reserved run, bare grid URL otherwise. No GridFleet identity is injected into capabilities.
 - Reports final session status back to `GRIDFLEET_API_URL`
 - Exposes `device_config` for post-session config lookup using the runtime connection target
 - Exposes `device_test_data` for post-session operator-attached test data using the runtime connection target
@@ -222,7 +222,7 @@ The `gridfleet_worker_id` fixture is informational only: it returns the pytest-x
 
 ### Reservation Flow
 
-GridFleet runs are router-routed: once devices are reserved, the manager tags matching nodes with the run id, and the router's backend allocation routes new Appium sessions to those nodes automatically via the `gridfleet:run_id` capability. There are no per-worker claim or release calls.
+GridFleet runs are router-routed: once devices are reserved, the manager tags matching nodes with the run id, and the router routes new Appium sessions to those nodes automatically when they arrive through the run-scoped endpoint (`GRID_URL/run/{run_id}`). There are no per-worker claim or release calls.
 
 ```python
 from gridfleet_testkit import GridFleetClient, register_run_cleanup

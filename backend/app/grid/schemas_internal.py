@@ -14,6 +14,8 @@ from pydantic import BaseModel
 class AllocateRequest(BaseModel):
     body: dict[str, Any]
     ticket: uuid.UUID | None = None
+    # Run binding from the router's /run/{run_id} endpoint; None = free session.
+    run_id: uuid.UUID | None = None
 
 
 class AllocateResponse(BaseModel):

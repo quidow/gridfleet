@@ -143,9 +143,7 @@ export function RunDetail() {
   const isActive = run ? ACTIVE_RUN_STATES.has(run.state) : false;
   const { data: queue } = useGridQueue({ enabled: isActive });
   const runQueuedRequests = useMemo(
-    () => (queue?.requests ?? []).filter(
-      (r) => r.capabilities?.['gridfleet:run_id'] === id,
-    ),
+    () => (queue?.requests ?? []).filter((r) => r.runId === id),
     [queue, id],
   );
   usePageTitle(run?.name ?? 'Run');

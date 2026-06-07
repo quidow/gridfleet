@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 from appium import webdriver
 from appium.options.common import AppiumOptions
 
-from .client import GridFleetClient, _default_grid_url
+from .client import GridFleetClient, _default_grid_url, run_grid_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -102,7 +102,6 @@ def build_appium_options(
 ) -> AppiumOptions:
     """Build Appium options from driver-pack catalog platform metadata."""
     params = dict(capabilities or {})
-    params.setdefault("gridfleet:run_id", os.environ.get("GRIDFLEET_RUN_ID", "free"))
     explicit_platform_name = params.get("platformName")
     if explicit_platform_name is not None and (pack_id is not None or platform_id is not None):
         raise ValueError("Use either pack_id/platform_id or the raw platformName capability, not both.")
@@ -126,6 +125,18 @@ def build_appium_options(
     return options
 
 
+def _resolve_grid_url(grid_url: str | None) -> str:
+    """Executor resolution: explicit URL wins; GRIDFLEET_RUN_ID (set externally
+    by the run launcher or CI before pytest starts) composes the run-scoped
+    endpoint; otherwise the bare grid URL — an explicit free session."""
+    if grid_url is not None:
+        return grid_url
+    run_id = os.environ.get("GRIDFLEET_RUN_ID")
+    if run_id:
+        return run_grid_url(run_id)
+    return _default_grid_url()
+
+
 def create_appium_driver(
     *,
     pack_id: str | None = None,
@@ -143,7 +154,7 @@ def create_appium_driver(
         test_name=test_name,
         catalog_client=catalog_client,
     )
-    return webdriver.Remote(grid_url or _default_grid_url(), options=options)
+    return webdriver.Remote(_resolve_grid_url(grid_url), options=options)
 
 
 def get_connection_target_from_driver(driver: WebDriver) -> str:

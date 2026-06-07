@@ -217,7 +217,7 @@ Each device's stereotype is the **routing surface**. The backend allocation API 
 
 - `platformName`, `appium:automationName` — derived from the active pack/platform manifest.
 - `appium:gridfleet:deviceId` — the manager's device UUID, used to round-trip device identity.
-- `gridfleet:run_id` — `"free"` for the shared pool, or the active run UUID when the device is reserved for a run.
+- Run routing — sessions bound to a run are created through the run-scoped router endpoint (`/run/{run_id}`); the router extracts the run id from the URL path. Reserved devices admit only sessions from their run; unreserved devices admit only free (non-run) sessions. The legacy `gridfleet:run_id` capability is no longer supported and is rejected with an explicit error.
 - `appium:gridfleet:tag:<key>` — one entry per device tag (see the testkit README for tag-based routing).
 - Any other keys the pack manifest declares in its `capabilities.stereotype` block. String values support `{device.<attr>}` placeholders, evaluated per device against the live row (e.g. `appium:os_version: "{device.os_version}"`).
 

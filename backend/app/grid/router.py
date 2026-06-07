@@ -109,6 +109,7 @@ async def grid_queue(db: DbDep) -> dict[str, Any]:
             "requestId": str(ticket.id),
             "capabilities": _ticket_capabilities(ticket),
             "requestTimestamp": ticket.created_at.isoformat(),
+            "runId": str(ticket.run_id) if ticket.run_id is not None else None,
         }
         for ticket in waiting
     ]

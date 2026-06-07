@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.devices.models import DeviceOperationalState
 
@@ -30,6 +30,20 @@ class GridStatusRead(BaseModel):
     queue_size: int
 
 
+class GridQueueRequestRead(BaseModel):
+    """One waiting new-session ticket, Selenium-queue-shaped (camelCase keys)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    request_id: str = Field(alias="requestId")
+    capabilities: dict[str, Any]
+    request_timestamp: str = Field(alias="requestTimestamp")
+    # Run attribution comes from the ticket row (the run-scoped /run/{id}
+    # endpoint binding), not from capabilities — the gridfleet:run_id cap is
+    # retired. None = free session.
+    run_id: str | None = Field(default=None, alias="runId")
+
+
 class GridQueueRead(BaseModel):
     queue_size: int
-    requests: list[Any] = Field(default_factory=list)
+    requests: list[GridQueueRequestRead] = Field(default_factory=list)

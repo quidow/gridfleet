@@ -136,7 +136,7 @@ sequenceDiagram
     Run->>Pg: insert TestRun row
     Run->>Pg: SELECT FOR UPDATE SKIP LOCKED then insert DeviceReservation rows
     Note over Pg: Devices become reserved (computed is_reserved)
-    Client->>Router: WebDriver POST /session (gridfleet:run_id)
+    Client->>Router: WebDriver POST /session via run-scoped endpoint (/run/{run_id})
     Router->>Pg: allocate via internal grid API (capability + reservation match)
     Router->>Appium: proxy POST /session to allocated node
     Appium-->>Client: session id
@@ -167,9 +167,11 @@ Key facts:
 
 ### Run-routed sessions
 
-Run membership is enforced at allocation time by the backend rather than through per-worker reservation claims. When a session request reaches a device with an active reservation, the backend allocation gate (`AllocationService._reservation_gate`, `app/grid/allocation.py`) admits the candidate only if it presents the run's id in the `gridfleet:run_id` capability (`RUN_ID_CAP`); otherwise the candidate is rejected and the allocator moves on.
+Run membership is enforced at allocation time by the backend rather than through per-worker reservation claims. Sessions bound to a run are created through the run-scoped router endpoint (`/run/{run_id}`); the router extracts the run id from the URL path and passes it to the backend's internal grid allocate call. The backend allocation gate (`_ticket_passes_reservation` / `_candidate_can_take`, `app/grid/allocation.py`) admits a candidate only if the ticket's run id matches the device's active reservation; otherwise the candidate is rejected and the allocator moves on. Admission is strictly symmetric — a run-bound session is admitted only to devices reserved for that run, and a reserved device admits only sessions from its run.
 
-Testkit clients inject `gridfleet:run_id` into their Appium session requests (default `free` for the shared pool), so the backend performs the worker-to-device assignment without a manager-side claim/release API. The router carries the capability through to the backend's internal grid allocate call.
+The testkit composes the run-scoped URL automatically from `GRIDFLEET_RUN_ID` (set externally by the run launcher/CI), so the backend performs the worker-to-device assignment without a manager-side claim/release API. Sessions without `GRIDFLEET_RUN_ID` use the bare router URL and land on unreserved devices only. The legacy `gridfleet:run_id` capability is no longer supported and is rejected with an explicit error pointing at the run-scoped endpoint.
+
+Deploy order: upgrade the backend before (or together with) the router. A pre-run-scoped backend silently ignores the `run_id` field on the internal allocate call, so a new router against an old backend would mis-admit run-bound sessions as free sessions on unreserved devices.
 
 ## Failure-mode glossary (resource leaks)
 

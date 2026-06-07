@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from app.grid import router_internal
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
+from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import seed_host_and_running_node
 from tests.pack.factories import seed_test_packs
@@ -410,3 +411,50 @@ async def test_activity_stamps_server_now_ignoring_caller_timestamps(
 async def test_internal_routes_not_in_openapi(client: AsyncClient) -> None:
     spec = (await client.get("/openapi.json")).json()
     assert not any(p.startswith("/internal/grid") for p in spec["paths"])
+
+
+@pytest.mark.db
+async def test_allocate_rejects_unknown_run(client: AsyncClient, seeded_available_device: Device) -> None:
+    resp = await client.post(
+        "/internal/grid/allocate",
+        json={"body": _body(platformName="Android"), "run_id": str(uuid.uuid4())},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["status"] == "invalid"
+    assert "only active runs" in body["message"]
+
+
+@pytest.mark.db
+async def test_allocate_rejects_legacy_run_id_cap(client: AsyncClient, seeded_available_device: Device) -> None:
+    resp = await client.post(
+        "/internal/grid/allocate",
+        json={"body": _body(platformName="Android", **{"gridfleet:run_id": "free"})},
+    )
+    assert resp.status_code == 400
+    assert "no longer supported" in resp.json()["message"]
+
+
+@pytest.mark.db
+async def test_allocate_persists_run_binding_on_queued_ticket(client: AsyncClient, db_session: AsyncSession) -> None:
+    """No eligible device -> queued; the ticket row must carry the run binding."""
+    run = TestRun(
+        id=uuid.uuid4(),
+        name="internal-api-run-binding",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.commit()
+    resp = await client.post(
+        "/internal/grid/allocate",
+        json={"body": _body(platformName="Android"), "run_id": str(run.id)},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "queued"
+    ticket = await db_session.get(GridSessionQueueTicket, uuid.UUID(data["ticket"]))
+    assert ticket is not None and ticket.run_id == run.id
