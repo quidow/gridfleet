@@ -164,7 +164,7 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default
         requested_body={
             "capabilities": {
                 "alwaysMatch": {"platformName": "android", "appium:platformVersion": "14"},
-                "firstMatch": [{"gridfleet:run_id": "run-123"}],
+                "firstMatch": [{"appium:automationName": "UiAutomator2"}],
             }
         },
         status=GridQueueStatus.waiting,
@@ -190,5 +190,5 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default
     assert req["requestId"] == str(ticket.id)
     assert req["capabilities"]["platformName"] == "android"
     assert req["capabilities"]["appium:platformVersion"] == "14"
-    assert req["capabilities"]["gridfleet:run_id"] == "run-123"
+    assert req["capabilities"]["appium:automationName"] == "UiAutomator2"
     assert req["requestTimestamp"] == ticket.created_at.isoformat()

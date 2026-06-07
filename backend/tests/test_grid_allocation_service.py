@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationNotPendingError, AllocationService
-from app.grid.matching import RUN_ID_CAP, CapabilityMergeError
+from app.grid.allocation import AllocationNotPendingError, AllocationService, RunNotActiveError
+from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
@@ -141,26 +141,97 @@ async def test_invalid_body_cancels_ticket(
 
 
 @pytest.mark.db
-async def test_reserved_device_requires_run_id(
+async def test_reserved_device_admits_only_its_run_ticket(
     db_session: AsyncSession, seeded_reserved_device: ReservedDevice, allocation_service: AllocationService
 ) -> None:
-    # without run id -> no match
-    t1 = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
-    db_session.add(t1)
+    # Free ticket (no run binding) must NOT take a reserved device.
+    free_ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(free_ticket)
     await db_session.flush()
-    assert await allocation_service.try_allocate(db_session, ticket=t1) is None
-    # with the reservation's run id -> match
-    t2 = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(seeded_reserved_device.reservation_run_id)}),
-        created_at=datetime.now(UTC) - timedelta(seconds=10),  # older than t1 so FIFO fairness cannot block it
+    assert await allocation_service.try_allocate(db_session, ticket=free_ticket) is None
+
+    # Ticket bound to the reservation's run -> match, session joins the run.
+    bound = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        run_id=seeded_reserved_device.reservation_run_id,
     )
-    db_session.add(t2)
+    db_session.add(bound)
     await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=t2)
+    result = await allocation_service.try_allocate(db_session, ticket=bound)
     assert result is not None
     row = await db_session.get(Session, result.allocation_id)
     assert row is not None
     assert row.run_id == seeded_reserved_device.reservation_run_id
+
+
+@pytest.mark.db
+async def test_run_bound_ticket_rejected_on_unreserved_device(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """Spec §1: no spillover — a run ticket never lands on an unreserved device."""
+    run = TestRun(
+        id=uuid.uuid4(),
+        name="strict-no-spill-run",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"), run_id=run.id)
+    db_session.add(ticket)
+    await db_session.flush()
+    assert await allocation_service.try_allocate(db_session, ticket=ticket) is None
+    assert ticket.status == GridQueueStatus.waiting  # keeps waiting for its reservations
+
+
+@pytest.mark.db
+async def test_wrong_run_ticket_rejected_on_reserved_device(
+    db_session: AsyncSession, seeded_reserved_device: ReservedDevice, allocation_service: AllocationService
+) -> None:
+    other_run = TestRun(
+        id=uuid.uuid4(),
+        name="strict-wrong-run",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(other_run)
+    await db_session.flush()
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"), run_id=other_run.id)
+    db_session.add(ticket)
+    await db_session.flush()
+    assert await allocation_service.try_allocate(db_session, ticket=ticket) is None
+
+
+@pytest.mark.db
+async def test_run_not_active_cancels_ticket(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """A vanished/ended run fails the waiter NOW with a clear error, not at queue timeout."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"), run_id=uuid.uuid4())
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(RunNotActiveError, match="is missing"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+
+
+@pytest.mark.db
+async def test_legacy_run_id_cap_rejected(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """Clean-break tombstone: cap-era clients get a loud, actionable rejection."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{"gridfleet:run_id": "free"}))
+    db_session.add(ticket)
+    await db_session.flush()
+    with pytest.raises(CapabilityMergeError, match="no longer supported"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert ticket.status == GridQueueStatus.cancelled
 
 
 @pytest.mark.db
@@ -189,7 +260,8 @@ async def test_reserved_device_younger_run_ticket_not_blocked_by_older_runless(
         created_at=now - timedelta(seconds=10),
     )
     younger_run_owned = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(seeded_reserved_device.reservation_run_id)}),
+        requested_body=_body(platformName="Android"),
+        run_id=seeded_reserved_device.reservation_run_id,
         created_at=now,
     )
     db_session.add_all([older_runless, younger_run_owned])
@@ -260,7 +332,8 @@ async def test_confirm_emits_one_session_started_with_run_id(
     """A run-bound allocation emits exactly one session.started carrying the run id,
     proving consumers can attribute router sessions to their reservation (spec §8)."""
     ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(seeded_reserved_device.reservation_run_id)}),
+        requested_body=_body(platformName="Android"),
+        run_id=seeded_reserved_device.reservation_run_id,
     )
     db_session.add(ticket)
     await db_session.flush()
@@ -335,15 +408,13 @@ async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
 
 
 @pytest.mark.db
-async def test_unreserved_device_honors_valid_run_id_cap(
+async def test_older_run_waiter_does_not_veto_free_ticket_on_unreserved_device(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:
-    """C6: an UNRESERVED device must still associate a client-supplied gridfleet:run_id
-    that names a real active run, so the session joins that run's release/terminal
-    sweeps instead of escaping its lifecycle."""
+    """A run-bound older waiter can never take an unreserved device, so it must not veto."""
     run = TestRun(
         id=uuid.uuid4(),
-        name="grid-unreserved-run",
+        name="fifo-run-waiter",
         state=RunState.active,
         requirements=[],
         ttl_minutes=10,
@@ -352,34 +423,15 @@ async def test_unreserved_device_honors_valid_run_id_cap(
     )
     db_session.add(run)
     await db_session.flush()
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(run.id)}),
-    )
-    db_session.add(ticket)
+    older = GridSessionQueueTicket(requested_body=_body(platformName="Android"), run_id=run.id)
+    db_session.add(older)
     await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert result is not None
-    row = await db_session.get(Session, result.allocation_id)
-    assert row is not None
-    assert row.run_id == run.id
-
-
-@pytest.mark.db
-async def test_unreserved_device_invalid_run_id_cap_allocates_free(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    """C6: an unreserved device with a bogus gridfleet:run_id is NOT rejected — the
-    device is genuinely free, so the session allocates as a free (run-less) session."""
-    ticket = GridSessionQueueTicket(
-        requested_body=_body(platformName="Android", **{RUN_ID_CAP: str(uuid.uuid4())}),
-    )
-    db_session.add(ticket)
+    older.last_polled_at = datetime.now(UTC)  # live waiter
+    younger = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(younger)
     await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    result = await allocation_service.try_allocate(db_session, ticket=younger)
     assert result is not None
-    row = await db_session.get(Session, result.allocation_id)
-    assert row is not None
-    assert row.run_id is None
 
 
 @pytest.mark.db
@@ -429,19 +481,3 @@ async def test_stale_older_ticket_does_not_veto_younger_live_waiter(
     # The dead older ticket is presumed dead and cannot block; the younger allocates.
     result = await allocation_service.try_allocate(db_session, ticket=live_younger)
     assert result is not None
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_free_sentinel_run_id_is_silent_free_session(
-    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
-) -> None:
-    """gridfleet:run_id="free" is the testkit's explicit free-session sentinel
-    (relay-era contract), not a malformed id — no warning, no association."""
-    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android", **{RUN_ID_CAP: "free"}))
-    db_session.add(ticket)
-    await db_session.flush()
-    result = await allocation_service.try_allocate(db_session, ticket=ticket)
-    assert result is not None
-    row = await db_session.get(Session, result.allocation_id)
-    assert row is not None and row.run_id is None

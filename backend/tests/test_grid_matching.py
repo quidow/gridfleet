@@ -82,7 +82,7 @@ class TestCandidateMatchesStereotype:
             ({"appium:gridfleet:tag:pool": "dev"}, False),
             ({"appium:gridfleet:tag:missing": "x"}, False),  # requested tag absent from stereotype
             ({"appium:newCommandTimeout": 120}, True),  # non-identity appium caps are Appium's problem
-            ({"gridfleet:run_id": "some-run"}, True),  # run id does not constrain slot identity
+            ({"gridfleet:somethingCustom": "x"}, True),  # unknown vendor keys do not constrain slot identity
             ({"appium:deviceName": "whatever"}, False),  # identity key absent from stereotype -> no match
         ],
     )
