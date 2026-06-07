@@ -1919,6 +1919,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/kill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Kill Session */
+        post: operations["kill_session_api_sessions__session_id__kill_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{session_id}/status": {
         parameters: {
             query?: never;
@@ -5151,6 +5168,10 @@ export interface components {
         };
         /** SessionDetail */
         SessionDetail: {
+            /** Actual Capabilities */
+            actual_capabilities?: {
+                [key: string]: unknown;
+            } | null;
             /** Device Id */
             device_id?: string | null;
             /** Device Name */
@@ -5202,6 +5223,16 @@ export interface components {
             /** Test Name */
             test_name: string | null;
         };
+        /**
+         * SessionKillResult
+         * @description Outcome of an operator kill: the row is always terminalized; ``terminated``
+         *     reports whether the Appium DELETE actually succeeded.
+         */
+        SessionKillResult: {
+            session: components["schemas"]["SessionRead"];
+            /** Terminated */
+            terminated: boolean;
+        };
         /** SessionListRead */
         SessionListRead: {
             /** Items */
@@ -5228,6 +5259,10 @@ export interface components {
         };
         /** SessionRead */
         SessionRead: {
+            /** Actual Capabilities */
+            actual_capabilities?: {
+                [key: string]: unknown;
+            } | null;
             /** Ended At */
             ended_at: string | null;
             /** Error Message */
@@ -12358,6 +12393,7 @@ export interface operations {
                 sort_by?: "session_id" | "device" | "test_name" | "platform" | "started_at" | "duration" | "status";
                 sort_dir?: "asc" | "desc";
                 include_probes?: boolean;
+                active?: boolean;
             };
             header?: never;
             path?: never;
@@ -12547,6 +12583,64 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description State conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Request body validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    kill_session_api_sessions__session_id__kill_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionKillResult"];
+                };
             };
             /** @description Authentication required */
             401: {
