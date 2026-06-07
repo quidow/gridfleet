@@ -34,8 +34,8 @@ function availabilityTooltip(device: DeviceRead): string | undefined {
     return device.lifecycle_policy_summary.maintenance_reason || 'In maintenance';
   }
   if (status === 'offline') {
-    if (device.health_summary.connectivity_status === 'failed') return 'Connectivity failed';
-    if (device.health_summary.healthy === false) return 'Health check failed';
+    if (device.health_summary.device.status === 'failed') return device.health_summary.device.detail || 'Device checks failed';
+    if (device.health_summary.overall === 'failed') return 'Health check failed';
     return 'Offline';
   }
   return undefined;

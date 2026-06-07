@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 import { DeviceHealthCell } from './DeviceHealthCell';
 import type { DeviceRead } from '../../types';
 
+const healthSummary = (over: Partial<DeviceRead['health_summary']> = {}): DeviceRead['health_summary'] => ({
+  device: { status: 'ok', detail: null, checked_at: null },
+  node: { status: 'ok', detail: 'running', checked_at: null },
+  viability: { status: 'unknown', detail: 'not run', checked_at: null },
+  overall: 'ok',
+  ...over,
+});
+
 function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
   return {
     ...({
@@ -20,7 +28,7 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
       identity_value: '192.168.1.2',
       tags: {},
       sessions: [],
-      health_summary: { healthy: true, summary: '' },
+      health_summary: healthSummary(),
       lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null },
       missing_setup_fields: [],
       hardware_telemetry_state: 'unsupported',
@@ -37,28 +45,52 @@ function baseDevice(overrides: Partial<DeviceRead>): DeviceRead {
 }
 
 describe('DeviceHealthCell', () => {
-  it('renders inline label without min-height spacer when healthy', () => {
-    const { container } = render(<DeviceHealthCell device={baseDevice({})} />);
-    const root = container.firstElementChild as HTMLElement;
-    expect(root.className).not.toContain('min-h-12');
-  });
-
-  it('still renders the label for ok tone', () => {
-    render(<DeviceHealthCell device={baseDevice({})} />);
-    expect(screen.getByText(/Healthy|Available|Verified/i)).toBeInTheDocument();
-  });
-
-  it('shows the unhealthy reason after a healthy device-check prefix', async () => {
+  it('renders three dots with per-signal tones', () => {
     render(
       <DeviceHealthCell
         device={baseDevice({
-          health_summary: { healthy: false, summary: 'Healthy | Node: stopped' },
+          health_summary: healthSummary({ node: { status: 'failed', detail: 'error', checked_at: null } }),
+        })}
+      />,
+    );
+    expect(screen.getByLabelText(/device ok/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/node failed/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/viability unknown/i)).toBeInTheDocument();
+  });
+
+  it('opens popover with the three-row breakdown', async () => {
+    render(
+      <DeviceHealthCell
+        device={baseDevice({
+          health_summary: healthSummary({
+            device: { status: 'failed', detail: 'adb unreachable', checked_at: '2026-06-07T12:00:00Z' },
+          }),
         })}
       />,
     );
 
     await userEvent.click(screen.getByRole('button', { name: /health details for test/i }));
 
-    expect(screen.getByText('Node: stopped')).toBeInTheDocument();
+    expect(screen.getByText('Device')).toBeInTheDocument();
+    expect(screen.getByText('Node')).toBeInTheDocument();
+    expect(screen.getByText('Viability')).toBeInTheDocument();
+    expect(screen.getByText(/adb unreachable/)).toBeInTheDocument();
+    expect(screen.getByText(/checked/i)).toBeInTheDocument();
+  });
+
+  it('shows battery section in the popover when telemetry is present', async () => {
+    render(
+      <DeviceHealthCell
+        device={baseDevice({
+          hardware_telemetry_state: 'fresh',
+          battery_level_percent: 80,
+          charging_state: 'charging',
+        } as Partial<DeviceRead>)}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /health details for test/i }));
+
+    expect(screen.getByText('Battery')).toBeInTheDocument();
   });
 });
