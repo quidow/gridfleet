@@ -426,6 +426,57 @@ class AllocationService:
         await db.flush()
         return {"pending_failed": pending_failed, "tickets_expired": tickets_expired}
 
+    async def reap_orphaned_claims(self, db: DbSession) -> int:
+        """Expire ``claimed`` tickets whose client has abandoned them AND whose Session can
+        never become live again.
+
+        Defense-in-depth behind ``expire_tickets_for_session`` (which terminalizes a claim
+        synchronously when its Session ends). This sweep clears residue that a missed seam or
+        an older build leaked: ``claimed`` tickets left pointing at an ended/purged Session
+        that nothing else moves off ``claimed`` (harness G7). Both gates are required:
+
+        * **abandoned** — ``last_polled_at`` older than the liveness window. A still-polling
+          client is left for ``resume_claimed`` to rewind to ``waiting`` on its next poll, so
+          the sweep never races an honest resume.
+        * **not live** — ``session_row_id`` IS NULL (Session purged → FK ``SET NULL``), OR the
+          Session is missing / ended / not ``pending``|``running`` (the same predicate
+          ``resume_claimed`` treats as un-resumable).
+
+        An honest in-flight claim is spared by the not-live gate (its Session is
+        ``pending``/``running``). Returns the number of tickets transitioned.
+        """
+        stale_cutoff = _ticket_liveness_cutoff(now_utc())
+        # A Session that can never re-serve a claim: ended, or not pending/running. (A purged
+        # Session nulls session_row_id via FK SET NULL — caught by the IS NULL arm below — so a
+        # dangling FK to a missing row does not occur.)
+        not_live_session_ids = select(Session.id).where(
+            or_(
+                Session.ended_at.is_not(None),
+                Session.status.not_in((SessionStatus.pending, SessionStatus.running)),
+            )
+        )
+        # Bulk claimed -> expired, mirroring expire_tickets_for_session: the transition guard
+        # reserves this terminalization for the session-expiry seam, so a Core update (not
+        # transition_ticket) is the sanctioned path.
+        result = await db.execute(
+            update(GridSessionQueueTicket)
+            .where(
+                GridSessionQueueTicket.status == GridQueueStatus.claimed,
+                GridSessionQueueTicket.last_polled_at < stale_cutoff,
+                or_(
+                    GridSessionQueueTicket.session_row_id.is_(None),
+                    GridSessionQueueTicket.session_row_id.in_(not_live_session_ids),
+                ),
+            )
+            .values(status=GridQueueStatus.expired)
+            .execution_options(synchronize_session=False)
+        )
+        reaped = int(getattr(result, "rowcount", 0) or 0)
+        if reaped:
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="orphan_claim_reaped").inc(reaped)
+        await db.flush()
+        return reaped
+
     async def try_allocate(self, db: DbSession, *, ticket: GridSessionQueueTicket) -> AllocationResult | None:
         # Liveness heartbeat: a still-polling client proves it is alive on every tick.
         # The FIFO veto and the reaper read last_polled_at to expire abandoned tickets
