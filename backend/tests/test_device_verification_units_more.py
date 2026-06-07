@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appium_nodes.exceptions import NodeManagerError, NodeStopNotAcknowledgedError
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AgentCallError, AgentUnreachableError
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import state_write_guard
@@ -576,20 +577,19 @@ async def test_verification_execution_remaining_error_branches(
         name="Verify Remaining",
     )
 
-    fake_db = AsyncMock()
+    # The helper re-loads the device under the row lock (WI-1), so it needs real
+    # rows: a device with no node raises, a device with a running node stops it.
     with pytest.raises(NodeManagerError, match="No running node"):
-        await execution._stop_managed_node_for_verification(
-            fake_db,
-            SimpleNamespace(id=__import__("uuid").uuid4(), appium_node=None),
-        )
+        await execution._stop_managed_node_for_verification(db_session, device)
 
     with state_write_guard.bypass():
         node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
-    fake_device = SimpleNamespace(id=device.id, appium_node=node)
+    db_session.add(node)
+    await db_session.commit()
     monkeypatch.setattr("app.verification.services.execution.write_desired_state", AsyncMock())
-    stopped = await execution._stop_managed_node_for_verification(fake_db, fake_device)
-    assert stopped is node
-    assert node.pid is None
+    stopped = await execution._stop_managed_node_for_verification(db_session, device)
+    assert stopped.pid is None
+    assert stopped.active_connection_target is None
 
     nm_stop_already = AsyncMock()
     nm_stop_already.stop_node = AsyncMock(side_effect=NodeManagerError("already stopped"))
@@ -620,6 +620,51 @@ async def test_verification_execution_remaining_error_branches(
     )
     assert target.name == "Restored"
     assert target.device_config == {"a": 1}
+
+
+async def test_stop_managed_node_locks_device_before_desired_state_write(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # WI-1: the verification update path's stopped-state write MUST happen under
+    # the device row lock. Assert lock_device is acquired before
+    # write_desired_state fires, and the observation-column clears land on the
+    # locked row.
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="verify-lock-001",
+        connection_target="verify-lock-001",
+        name="Verify Lock",
+    )
+    with state_write_guard.bypass():
+        node = AppiumNode(device_id=device.id, port=4723, pid=123, active_connection_target="live")
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device, ["appium_node"])
+
+    calls: list[str] = []
+    real_lock = device_locking.lock_device
+    real_write = execution.write_desired_state
+
+    async def spy_lock(*args: object, **kwargs: object) -> object:
+        calls.append("lock_device")
+        return await real_lock(*args, **kwargs)  # type: ignore[arg-type]
+
+    async def spy_write(*args: object, **kwargs: object) -> object:
+        calls.append("write_desired_state")
+        return await real_write(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.devices.locking.lock_device", spy_lock)
+    monkeypatch.setattr("app.verification.services.execution.write_desired_state", spy_write)
+
+    stopped = await execution._stop_managed_node_for_verification(db_session, device)
+
+    assert calls == ["lock_device", "write_desired_state"]
+    assert stopped.pid is None
+    assert stopped.active_connection_target is None
 
 
 async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.MonkeyPatch) -> None:
