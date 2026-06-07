@@ -33,7 +33,6 @@ from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from app.sessions import service_sync as session_sync
-from app.sessions import service_viability as session_viability
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
@@ -107,8 +106,10 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_viability, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     viability_mock = Mock()
     viability_mock.check_due_devices = AsyncMock()
