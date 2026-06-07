@@ -62,6 +62,10 @@ class Session(Base):
     requested_device_type: Mapped[DeviceType | None] = mapped_column(Enum(DeviceType), nullable=True)
     requested_connection_type: Mapped[ConnectionType | None] = mapped_column(Enum(ConnectionType), nullable=True)
     requested_capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Negotiated capabilities from the Appium create-session response, captured by
+    # the router at confirm time. NULL for pre-feature rows and for sessions
+    # registered outside the router (testkit direct registration).
+    actual_capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
     run_id: Mapped[uuid.UUID | None] = mapped_column(
