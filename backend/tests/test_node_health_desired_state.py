@@ -95,3 +95,60 @@ async def test_node_health_auto_restart_registers_transition_token_intent(
         )
     ).scalar_one()
     assert intent.payload["transition_token"] == str(node.transition_token)
+
+
+async def test_node_health_skips_escalation_for_intentionally_stopping_node(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    # I1: a node being intentionally stopped (desired_state=stopped) is still
+    # observed_running until the stop propagates. A refused probe in that window
+    # is expected teardown, not a health failure — node_health must NOT count it
+    # or escalate an auto-recovery restart that fights the stop.
+    device = await create_device(db_session, host_id=db_host.id, name="dw-stopping", verified=True)
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            active_connection_target="live",
+            desired_state=AppiumDesiredState.stopped,
+            pid=88,
+            consecutive_health_failures=999,
+        )
+    db_session.add(node)
+    await db_session.commit()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+
+    from unittest.mock import Mock
+
+    from app.appium_nodes.services.node_health import NodeHealthService
+
+    svc = NodeHealthService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        recovery_control=AsyncMock(),
+        health=AsyncMock(),
+        incidents=AsyncMock(),
+    )
+    await svc._process_node_health(
+        db_session,
+        node,
+        device,
+        result=ProbeResult(status="refused", detail="teardown"),
+    )
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.transition_token is None  # no restart escalated
+    assert node.consecutive_health_failures == 999  # refused probe not counted
+    intent = (
+        await db_session.execute(
+            select(DeviceIntent).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"auto_recovery:node:{device.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert intent is None
