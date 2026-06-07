@@ -18,7 +18,7 @@ column.
    `IntentService.mark_dirty_and_reconcile` (or `mark_dirty`) to signal that the
    reconciler should re-derive state on its next tick.
 2. **Reconciler tick** calls `apply_derived_state` in
-   `app/devices/services/state_derivation.py`, which:
+   `app/devices/services/state.py`, which:
    - Gathers facts (`DeviceStateFacts`) via DB queries (session row, verification
      intent, reservation row, maintenance flag, readiness, stop-in-flight).
    - Evaluates `evaluate_operational_state(facts)` → `DeviceOperationalState`.

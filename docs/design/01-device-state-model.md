@@ -55,7 +55,7 @@ Reservation is tracked in a separate table, not on `Device`. Active reservations
 
 ### Sanctioned writers
 
-The authoritative runtime path is `app.devices.services.state_derivation.apply_derived_state`, whose **sole production caller** is the `device_intent_reconciler` loop (`app.devices.services.intent_reconciler`). It derives `operational_state` from durable facts (health flags, session rows, `maintenance_reason`) recorded by the observation loops.
+The authoritative runtime path is `app.devices.services.state.apply_derived_state`, whose **sole production caller** is the `device_intent_reconciler` loop (`app.devices.services.intent_reconciler`). It derives `operational_state` from durable facts (health flags, session rows, `maintenance_reason`) recorded by the observation loops.
 
 The single low-level writer it (and the direct callers) go through is `set_operational_state` in `app.devices.services.state`:
 

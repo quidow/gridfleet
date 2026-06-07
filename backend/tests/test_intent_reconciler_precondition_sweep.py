@@ -11,7 +11,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceIntent
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_preconditions import reconcile_unsatisfied_preconditions
+from app.devices.services.intent_evaluator import reconcile_unsatisfied_preconditions
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import NODE_PROCESS, IntentRegistration
 from app.runs.models import RunState

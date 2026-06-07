@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from app.devices.models import Device
 from app.devices.services import state_write_guard
-from app.devices.services.state_derivation import device_in_service
+from app.devices.services.state import device_in_service
 
 
 def _device(*, verified: bool = True, maintenance: bool = False, review: bool = False) -> Device:

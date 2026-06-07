@@ -34,7 +34,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.state_derivation import apply_derived_state, device_in_service
+from app.devices.services.state import apply_derived_state, device_in_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
@@ -112,7 +112,7 @@ async def run_device_intent_reconciler_once(
     await _reconcile_terminal_run_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
-    from app.devices.services.intent_preconditions import (  # noqa: PLC0415
+    from app.devices.services.intent_evaluator import (  # noqa: PLC0415
         reconcile_unsatisfied_preconditions,
     )
 

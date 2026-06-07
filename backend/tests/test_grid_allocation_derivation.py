@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
-from app.devices.services.state_derivation import apply_derived_state
+from app.devices.services.state import apply_derived_state
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
