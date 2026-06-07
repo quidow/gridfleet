@@ -713,11 +713,10 @@ class LifecyclePolicyService:
         if await self._actions.has_running_client_session(db, device.id):
             return DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
-        summary = device_health.build_public_summary(device)
         node = loaded_node(device)
         node_running = node is not None and node.observed_running
 
-        if summary.get("healthy") is True and node_running:
+        if device_health.merged_liveness(device) is True and node_running:
             # Defense in depth: ``clear_pending_auto_stop_on_recovery`` should
             # already have cleared the intent when health recovered. If anything
             # slipped the device into a healthy state without going through that

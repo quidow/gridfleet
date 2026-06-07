@@ -13,13 +13,15 @@ from app.devices import locking as device_locking
 from app.devices.services.health_view import (
     build_public_summary,
     device_allows_allocation,
-    node_summary_label,
+    merged_liveness,
+    node_running_signal,
 )
 from app.devices.services.intent import IntentService
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
     from app.events.protocols import EventPublisher
 
@@ -27,7 +29,14 @@ __all__ = [
     "DeviceHealthService",
     "build_public_summary",
     "device_allows_allocation",
+    "merged_liveness",
 ]
+
+
+def _node_reason_label(node: AppiumNode) -> str:
+    if node.health_state:
+        return node.health_state
+    return "running" if node_running_signal(node) else "stopped"
 
 
 def _now() -> datetime:
@@ -41,6 +50,15 @@ async def _lock(db: AsyncSession, device: Device) -> Device | None:
         return None
 
 
+def _status_snapshot(summary: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        summary["overall"],
+        summary["device"]["status"],
+        summary["node"]["status"],
+        summary["viability"]["status"],
+    )
+
+
 def _maybe_emit_health_changed(
     db: AsyncSession,
     device: Device,
@@ -49,15 +67,17 @@ def _maybe_emit_health_changed(
     publisher: EventPublisher,
 ) -> None:
     nxt = build_public_summary(device)
-    if previous.get("healthy") == nxt.get("healthy"):
+    if _status_snapshot(previous) == _status_snapshot(nxt):
         return
     publisher.queue_for_session(
         db,
         "device.health_changed",
         {
             "device_id": str(device.id),
-            "healthy": nxt.get("healthy"),
-            "summary": nxt.get("summary"),
+            "overall": nxt["overall"],
+            "device": nxt["device"],
+            "node": nxt["node"],
+            "viability": nxt["viability"],
         },
     )
 
@@ -144,13 +164,13 @@ class DeviceHealthService:
         if should_reconcile:
             await IntentService(db).mark_dirty_and_reconcile(
                 locked.id,
-                reason=reason or f"node: {node_summary_label(locked_node)}",
+                reason=reason or f"node: {_node_reason_label(locked_node)}",
                 publisher=self._publisher,
             )
         else:
             await IntentService(db).mark_dirty(
                 locked.id,
-                reason=reason or f"node: {node_summary_label(locked_node)}",
+                reason=reason or f"node: {_node_reason_label(locked_node)}",
             )
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 

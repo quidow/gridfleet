@@ -1,20 +1,39 @@
-"""Pure projections of device health columns into the public summary.
+"""Pure projections of device health columns into the public verdicts.
 
-Split out from ``device_health`` so that callers which need to *read* the
-combined health view (e.g. ``device_state.ready_operational_state``) can
-import it without pulling in the state writers, which themselves depend on
-``device_state``.
+Two distinct concerns live here, deliberately separated:
+
+- ``build_public_summary`` — the display/API projection (three verdicts +
+  ``overall``). Consumed by the presenter and the devices API.
+- ``merged_liveness`` / ``device_allows_allocation`` — the allocation-gating
+  predicate with the historical truth table (a present-but-not-running node
+  blocks allocation). Consumed by ``ready_operational_state``, the run
+  allocator, grid allocation, and deferred-stop recovery. NOT part of the
+  public API shape.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Literal
+
+from app.appium_nodes.services.effective_state import compute_effective_state
+from app.hosts import service_hardware_telemetry as hardware_telemetry
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from app.appium_nodes.models import AppiumNode
     from app.devices.models import Device
+
+HealthVerdictStatus = Literal["ok", "warn", "failed", "unknown"]
+
+_NODE_STATE_TO_STATUS: dict[str, HealthVerdictStatus] = {
+    "running": "ok",
+    "starting": "warn",
+    "stopping": "warn",
+    "restarting": "warn",
+    "error": "failed",
+    "blocked": "failed",
+    "stopped": "unknown",
+}
 
 
 def node_running_signal(node: AppiumNode) -> bool:
@@ -23,72 +42,97 @@ def node_running_signal(node: AppiumNode) -> bool:
     return node.pid is not None and node.active_connection_target is not None
 
 
-def node_summary_label(node: AppiumNode) -> str:
-    if node.health_state:
-        return node.health_state
-    return "running" if node_running_signal(node) else "stopped"
-
-
-def _summary_parts(device: Device) -> list[str]:
-    parts: list[str] = []
-    if device.device_checks_summary:
-        parts.append(device.device_checks_summary)
-    node = device.appium_node
-    if node is not None:
-        parts.append(f"Node: {node_summary_label(node)}")
-    if device.session_viability_status == "failed":
-        err = device.session_viability_error
-        parts.append(f"Session: failed ({err})" if err else "Session: failed")
-    elif device.session_viability_status == "passed":
-        parts.append("Session: passed")
-    return parts
-
-
-def build_public_summary(device: Device) -> dict[str, Any]:
-    node = device.appium_node
-    healthy: bool | None = True
-    has_signal = False
-
-    connectivity_status: str | None = None
-    node_status_val: str | None = None
-    session_status: str | None = None
-
-    if isinstance(device.device_checks_healthy, bool):
-        healthy = healthy and device.device_checks_healthy
-        has_signal = True
-        connectivity_status = "ok" if device.device_checks_healthy else "failed"
-
-    if node is not None:
-        healthy = healthy and node_running_signal(node)
-        has_signal = True
-        node_status_val = node_summary_label(node)
-
-    if device.session_viability_status in {"passed", "failed"}:
-        healthy = healthy and device.session_viability_status == "passed"
-        has_signal = True
-        session_status = device.session_viability_status
-
-    parts = _summary_parts(device)
-    summary_text = " | ".join(parts) if parts else ("Healthy" if healthy and has_signal else "Unknown")
-
-    timestamps: list[datetime] = []
-    if device.device_checks_checked_at is not None:
-        timestamps.append(device.device_checks_checked_at)
-    if device.session_viability_checked_at is not None:
-        timestamps.append(device.session_viability_checked_at)
-    if node is not None and node.last_health_checked_at is not None:
-        timestamps.append(node.last_health_checked_at)
-    last_checked = max(timestamps) if timestamps else None
-
+def _verdict(status: HealthVerdictStatus, detail: str | None, checked_at: datetime | None) -> dict[str, Any]:
     return {
-        "healthy": healthy if has_signal else None,
-        "summary": summary_text,
-        "connectivity_status": connectivity_status,
-        "node_status": node_status_val,
-        "session_status": session_status,
-        "last_checked_at": last_checked.isoformat() if last_checked is not None else None,
+        "status": status,
+        "detail": detail,
+        "checked_at": checked_at.isoformat() if checked_at is not None else None,
     }
 
 
+def _device_verdict(device: Device) -> dict[str, Any]:
+    hardware = hardware_telemetry.current_hardware_health_status(device)
+    checked_at = device.device_checks_checked_at
+    if device.device_checks_healthy is False:
+        return _verdict("failed", device.device_checks_summary or "Device checks failed", checked_at)
+    if hardware.value == "critical":
+        return _verdict("failed", "Hardware critical", checked_at)
+    if hardware.value == "warning":
+        return _verdict("warn", "Hardware warning", checked_at)
+    if device.device_checks_healthy is True:
+        return _verdict("ok", device.device_checks_summary, checked_at)
+    return _verdict("unknown", "not checked", None)
+
+
+def _node_verdict(device: Device) -> dict[str, Any]:
+    node = device.appium_node
+    if node is None:
+        return _verdict("unknown", "no node", None)
+    effective = compute_effective_state(
+        pid=node.pid,
+        desired_state=node.desired_state.value,
+        health_running=node.health_running,
+        health_state=node.health_state,
+        transition_token=node.transition_token,
+        transition_deadline=node.transition_deadline,
+        lifecycle_policy_state=device.lifecycle_policy_state,
+        now=datetime.now(UTC),
+    )
+    detail = node.health_state if node.health_state and node.health_state != effective else effective
+    return _verdict(_NODE_STATE_TO_STATUS[effective], detail, node.last_health_checked_at)
+
+
+def _viability_verdict(device: Device) -> dict[str, Any]:
+    checked_at = device.session_viability_checked_at
+    if device.session_viability_status == "failed":
+        return _verdict("failed", device.session_viability_error or "session probe failed", checked_at)
+    if device.session_viability_status == "passed":
+        return _verdict("ok", "passed", checked_at)
+    return _verdict("unknown", "not run", None)
+
+
+def _overall(statuses: list[HealthVerdictStatus]) -> HealthVerdictStatus:
+    if "failed" in statuses:
+        return "failed"
+    if "warn" in statuses:
+        return "warn"
+    if all(status == "unknown" for status in statuses):
+        return "unknown"
+    return "ok"
+
+
+def build_public_summary(device: Device) -> dict[str, Any]:
+    device_v = _device_verdict(device)
+    node_v = _node_verdict(device)
+    viability_v = _viability_verdict(device)
+    return {
+        "device": device_v,
+        "node": node_v,
+        "viability": viability_v,
+        "overall": _overall([device_v["status"], node_v["status"], viability_v["status"]]),
+    }
+
+
+def merged_liveness(device: Device) -> bool | None:
+    """Historical merged-health truth table. Allocation gating only — not display.
+
+    ``False`` ⇔ any present signal fails, where a present-but-not-running node
+    counts as failing. ``None`` ⇔ no signals present.
+    """
+    healthy = True
+    has_signal = False
+    if isinstance(device.device_checks_healthy, bool):
+        healthy = healthy and device.device_checks_healthy
+        has_signal = True
+    node = device.appium_node
+    if node is not None:
+        healthy = healthy and node_running_signal(node)
+        has_signal = True
+    if device.session_viability_status in {"passed", "failed"}:
+        healthy = healthy and device.session_viability_status == "passed"
+        has_signal = True
+    return healthy if has_signal else None
+
+
 def device_allows_allocation(device: Device) -> bool:
-    return build_public_summary(device).get("healthy") is not False
+    return merged_liveness(device) is not False
