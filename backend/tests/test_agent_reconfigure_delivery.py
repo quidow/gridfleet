@@ -611,6 +611,58 @@ async def test_404_no_process_on_moved_port_consumes_row_without_clearing(
     assert stored.delivered_at is not None
 
 
+async def test_404_mark_node_stopped_failure_records_delivery_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-1: if mark_node_stopped raises in the 404 path, the row must be recorded
+    as a delivery failure (attempts incremented, not consumed) so it can eventually
+    be abandoned — never left at attempts=0 to re-select and re-call the agent forever."""
+    device = await create_device(db_session, host_id=db_host.id, name="stopfail-404")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=4242,
+            active_connection_target=device.connection_target,
+            generation=4,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4725,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=None,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(
+            side_effect=AgentResponseError(
+                db_host.ip, "Agent reconfigure Appium node failed (HTTP 404)", http_status=404
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.appium_nodes.services.reconciler_agent.mark_node_stopped",
+        AsyncMock(side_effect=RuntimeError("deadlock in mark_dirty_and_reconcile")),
+    )
+
+    # Must not propagate the mark_node_stopped failure out of the delivery loop.
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivery_attempts == 1, "mark_node_stopped failure must count as a delivery attempt"
+    assert stored.delivered_at is None, "a row whose cleanup failed must stay retryable, not be consumed"
+
+
 async def test_non_404_response_error_keeps_failure_path(
     db_session: AsyncSession,
     db_host: Host,

@@ -1,19 +1,49 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.leader import state_store
+from app.devices.services import link_repair
 from app.devices.services.link_repair import (
     REPAIR_ATTEMPTS_NAMESPACE,
     REPAIR_MAX_ATTEMPTS,
+    dispatch_recommended_action,
     next_repair_attempt,
     reset_repair_attempts,
 )
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@pytest.mark.asyncio
+async def test_dispatch_passes_only_driver_agnostic_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Driver-agnostic core must not inject adb-specific args (e.g. port 5555);
+    # the adapter owns the platform default. Capture the args forwarded to the
+    # agent dispatch and assert no adb port leaks through.
+    captured: dict[str, object] = {}
+
+    async def fake_dispatch(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"success": True}
+
+    monkeypatch.setattr(link_repair, "pack_device_lifecycle_action", fake_dispatch)
+    device = SimpleNamespace(
+        host=SimpleNamespace(ip="10.0.0.5", agent_port=5100),
+        connection_target="10.0.0.20:5555",
+        ip_address="10.0.0.20",
+        pack_id="appium-uiautomator2",
+        platform_id="firetv_real",
+    )
+
+    await dispatch_recommended_action(device, "reconnect", settings=AsyncMock(), circuit_breaker=AsyncMock(), pool=None)
+
+    assert captured["args"] == {"ip_address": "10.0.0.20"}
+    assert "port" not in captured["args"]  # type: ignore[operator]
 
 
 @pytest.mark.db

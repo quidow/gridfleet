@@ -469,6 +469,17 @@ async def _stop_verification_node_if_running(
     node: AppiumNode | None,
     node_manager: RemoteNodeManager,
 ) -> str | None:
+    """Stop the verification node and clear its observation columns.
+
+    PRECONDITION: the caller MUST already hold the device row lock (the cleanup
+    clears ``pid``/``active_connection_target``, which are protected observation
+    columns — see the device-row-locking contract and the sibling
+    ``_stop_managed_node_for_verification``, which re-locks for the same reason).
+    Today's callers satisfy this: ``_finalize_failure`` (update mode) locks before
+    calling, and create mode operates on a throwaway device that is rolled back.
+    A new caller that does not hold the lock must add one — do not write these
+    columns unlocked.
+    """
     if node is None:
         return None
     try:

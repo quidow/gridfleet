@@ -1737,6 +1737,47 @@ async def test_recommended_action_dispatches_repair_for_available_device(db_sess
     assert "repair_attempted" in await _device_event_types(db_session, device.id)
 
 
+async def test_repair_reprobe_missing_healthy_key_is_not_treated_as_recovered(db_session: AsyncSession) -> None:
+    """BUG-2: after a successful repair dispatch, a malformed/empty re-probe (no
+    ``healthy`` key, no non-ip_ping checks) must NOT be read as healthy — otherwise
+    the device is declared recovered with a still-dead link and the repair budget is
+    reset. Conservative default: missing positive evidence => not healthy."""
+    from app.core.leader import state_store
+    from app.devices.services.link_repair import REPAIR_ATTEMPTS_NAMESPACE
+
+    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "adb_connected", "ok": False}],
+        "recommended_action": "reconnect",
+    }
+    dispatch = AsyncMock(return_value={"success": True})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy, {}],  # re-probe came back empty
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_awaited_once()
+    # Budget consumed and NOT reset => the empty re-probe was not treated as recovery.
+    counter = await state_store.get_value(db_session, REPAIR_ATTEMPTS_NAMESPACE, device.identity_value)
+    assert counter == 1
+
+
 async def test_recommended_action_dispatches_for_offline_wedged_device(db_session: AsyncSession) -> None:
     """The wedge case: device already offline, probe still recommends reconnect →
     dispatch still happens (this is what un-wedges it)."""

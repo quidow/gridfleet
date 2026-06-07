@@ -169,15 +169,28 @@ async def deliver_agent_reconfigures(
                 # their node_running precondition and points probes at a dead port
                 # (N11, 2026-06-07), so clear it now instead of waiting.
                 metrics_recorders.AGENT_RECONFIGURE_OUTBOX_NO_PROCESS.inc()
-                row.delivered_at = datetime.now(UTC)
                 if node.pid is not None and node.port == row.port:
                     from app.appium_nodes.services.reconciler_agent import (  # noqa: PLC0415 — import cycle
                         mark_node_stopped,
                     )
 
-                    # mark_node_stopped commits (including the row consumption above).
-                    await mark_node_stopped(db, device, publisher=publisher)
+                    try:
+                        row.delivered_at = datetime.now(UTC)
+                        # mark_node_stopped commits (including the row consumption above).
+                        await mark_node_stopped(db, device, publisher=publisher)
+                    except Exception:  # noqa: BLE001 — any failure must not strand the row
+                        # BUG-1: if the stale-observation clear fails (e.g. a deadlock
+                        # in mark_dirty_and_reconcile), record a delivery failure so the
+                        # row eventually abandons instead of re-selecting at attempts=0
+                        # and re-calling the agent every tick. Rollback first so
+                        # delivered_at and the partial writes are discarded before we
+                        # increment on a clean transaction.
+                        await db.rollback()
+                        await db.refresh(row)  # rollback expired it; reload before mutating
+                        _record_delivery_failure(row)
+                        await db.commit()
                 else:
+                    row.delivered_at = datetime.now(UTC)
                     await db.commit()
                 continue
             _record_delivery_failure(row)

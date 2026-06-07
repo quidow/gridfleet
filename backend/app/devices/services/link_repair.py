@@ -35,6 +35,10 @@ async def next_repair_attempt(db: AsyncSession, identity_value: str) -> int | No
     probe interval. The counter resets on any healthy probe (see
     ``reset_repair_attempts``), so a later genuine recovery re-arms repair.
     """
+    # Read-modify-write is safe because the connectivity loop is leader-owned (a
+    # single serialized writer per device); the only overlap window is a brief
+    # leader handoff, where a lost increment merely shifts one attempt and the
+    # budget self-corrects on the next healthy probe (reset_repair_attempts).
     current = await state_store.get_value(db, REPAIR_ATTEMPTS_NAMESPACE, identity_value)
     used = int(current) if isinstance(current, int) else 0
     if used >= REPAIR_MAX_ATTEMPTS:
@@ -71,7 +75,9 @@ async def dispatch_recommended_action(
         pack_id=device.pack_id,
         platform_id=device.platform_id,
         action=action,
-        args={"ip_address": device.ip_address, "port": 5555},
+        # Driver-agnostic: pass only the generic target. Platform defaults (e.g.
+        # the android adapter's adb port 5555) belong to the adapter, not core.
+        args={"ip_address": device.ip_address},
         http_client_factory=httpx.AsyncClient,
         settings=settings,
         circuit_breaker=circuit_breaker,

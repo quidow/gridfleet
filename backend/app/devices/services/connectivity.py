@@ -451,7 +451,10 @@ class ConnectivityService:
         # never hinges on ip_ping.
         checks = reprobe.get("checks") or []
         others = [c for c in checks if isinstance(c, dict) and c.get("check_id") != IP_PING_CHECK_ID]
-        healthy = bool(reprobe.get("healthy", True)) if not others else all(bool(c.get("ok")) for c in others)
+        # Default False (BUG-2): post-repair recovery requires POSITIVE evidence. A
+        # malformed/empty re-probe (missing ``healthy``, no non-ip_ping checks) must
+        # not reset the repair budget and declare a dead-link device recovered.
+        healthy = bool(reprobe.get("healthy", False)) if not others else all(bool(c.get("ok")) for c in others)
         if healthy:
             await link_repair.reset_repair_attempts(db, device.identity_value)
         return healthy
@@ -463,6 +466,10 @@ class ConnectivityService:
         instead of silently skipping it — a dead-link device whose agent channel
         also errs would otherwise sit ``available`` indefinitely. Returns True when
         it took over (caller continues to the next device)."""
+        # Read-modify-write is safe: the connectivity loop is leader-owned (one
+        # serialized writer per device). The only overlap is a brief leader
+        # handoff, where a lost count shifts the threshold by one tick — harmless
+        # for a consecutive-failure counter. Mirrors the ip_ping counter pattern.
         current = await control_plane_state_store.get_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
         counter = int(current) + 1 if isinstance(current, int) else 1
         await control_plane_state_store.set_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value, counter)
