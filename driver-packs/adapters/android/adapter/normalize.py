@@ -13,6 +13,13 @@ from adapter.tools import find_adb, get_android_properties, get_running_emulator
 _IP_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 _IP_PORT_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+:\d+$")
 
+# A transiently-unreachable network device (e.g. a Fire TV in wifi power-save →
+# half-open TCP) makes ``adb connect`` block. Bound it well under the
+# adapter-hook deadline so a hung connect yields a field error instead of
+# consuming the whole hook budget and tripping AdapterHookTimeoutError. Matches
+# the 5s discovery timeout the other adb calls use.
+_ADB_CONNECT_TIMEOUT_SECONDS: float = 5.0
+
 
 def _network_adb_target(value: str) -> str:
     if _IP_PORT_RE.match(value):
@@ -27,7 +34,7 @@ def _is_network_target(value: str) -> bool:
 
 
 async def _ensure_network_target_connected(adb: str, target: str) -> str | None:
-    result = await run_cmd([adb, "connect", target])
+    result = await run_cmd([adb, "connect", target], timeout=_ADB_CONNECT_TIMEOUT_SECONDS)
     normalized = result.lower()
     if "connected" in normalized or "already connected" in normalized:
         return None
