@@ -30,6 +30,16 @@ pub enum AllocateOutcome {
     },
 }
 
+/// Allocate envelope: the raw W3C body plus the resume ticket and the run
+/// binding peeled from the /run/{run_id} endpoint (None = free session).
+fn allocate_payload(
+    body: serde_json::Value,
+    ticket: Option<&str>,
+    run_id: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({"body": body, "ticket": ticket, "run_id": run_id})
+}
+
 pub struct BackendClient {
     base: String,
     auth: Option<(String, String)>,
@@ -61,6 +71,7 @@ impl BackendClient {
         &self,
         raw_body: &[u8],
         ticket: Option<&str>,
+        run_id: Option<&str>,
     ) -> reqwest::Result<AllocateOutcome> {
         let body: serde_json::Value = match serde_json::from_slice(raw_body) {
             Ok(v) => v,
@@ -70,7 +81,7 @@ impl BackendClient {
                 })
             }
         };
-        let payload = serde_json::json!({"body": body, "ticket": ticket});
+        let payload = allocate_payload(body, ticket, run_id);
         let resp = self
             .req(reqwest::Method::POST, "/internal/grid/allocate")
             .json(&payload)
@@ -249,6 +260,16 @@ fn reject_detail(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::reject_detail;
+
+    #[test]
+    fn allocate_payload_carries_run_binding() {
+        let p =
+            super::allocate_payload(serde_json::json!({"capabilities": {}}), None, Some("rid-1"));
+        assert_eq!(p["run_id"], "rid-1");
+        let free = super::allocate_payload(serde_json::json!({}), Some("t-1"), None);
+        assert!(free["run_id"].is_null());
+        assert_eq!(free["ticket"], "t-1");
+    }
 
     #[test]
     fn reject_detail_prefers_message() {

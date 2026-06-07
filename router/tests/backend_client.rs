@@ -29,7 +29,7 @@ async fn allocate_allocated_roundtrip() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Allocated {
             allocation_id,
             target,
@@ -55,7 +55,7 @@ async fn allocate_allocated_without_claim_window_is_none() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Allocated {
             claim_window_sec, ..
         } => {
@@ -81,7 +81,11 @@ async fn allocate_queued_roundtrip() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, Some("ticket-123")).await.unwrap() {
+    match client
+        .allocate(raw, Some("ticket-123"), None)
+        .await
+        .unwrap()
+    {
         gridfleet_router::backend::AllocateOutcome::Queued { ticket } => {
             assert_eq!(ticket, "ticket-456");
         }
@@ -190,7 +194,7 @@ async fn allocate_400_returns_invalid() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
             assert_eq!(message, "bad caps");
         }
@@ -199,7 +203,7 @@ async fn allocate_400_returns_invalid() {
 
     // invalid JSON short-circuits before sending any request — use an unreachable port
     let client = gridfleet_router::backend::BackendClient::new("http://127.0.0.1:1", None);
-    match client.allocate(b"not json", None).await.unwrap() {
+    match client.allocate(b"not json", None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
             assert!(message.contains("invalid JSON"), "message was: {message}");
         }
@@ -220,7 +224,7 @@ async fn allocate_400_non_json_body_falls_back_to_raw() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
             assert_eq!(message, "plain crash dump");
         }
@@ -239,7 +243,7 @@ async fn allocate_410_returns_queue_timeout() {
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
     let raw = br#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::QueueTimeout => {}
         other => panic!("expected QueueTimeout, got {other:?}"),
     }
@@ -265,7 +269,7 @@ async fn allocate_unexpected_4xx_is_invalid_fail_fast() {
     // Valid JSON but not an object — passes the router's parse check, 422s on the
     // backend's AllocateRequest model.
     let raw = br#"[]"#;
-    match client.allocate(raw, None).await.unwrap() {
+    match client.allocate(raw, None, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
             assert!(
                 message.contains("422"),
