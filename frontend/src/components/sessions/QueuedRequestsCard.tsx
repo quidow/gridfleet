@@ -16,13 +16,6 @@ function extractPlatformLabel(caps: Record<string, unknown> | undefined): string
   return version ? `${platform} ${version}` : platform;
 }
 
-function extractRunId(caps: Record<string, unknown> | undefined): string | null {
-  if (!caps) return null;
-  const runId = caps['gridfleet:run_id'] as string | undefined;
-  if (!runId || runId === 'free') return null;
-  return runId;
-}
-
 function extractDeviceId(caps: Record<string, unknown> | undefined): string | null {
   if (!caps) return null;
   const deviceId = caps['gridfleet:deviceId'] as string | undefined;
@@ -52,7 +45,7 @@ export function QueuedRequestsCard({ requests }: QueuedRequestsCardProps) {
           </thead>
           <tbody className="divide-y divide-border">
             {requests.map((req, i) => {
-              const runId = extractRunId(req.capabilities);
+              const runId = req.runId ?? null;
               const deviceId = extractDeviceId(req.capabilities);
               return (
                 <tr key={req.requestId ?? i}>

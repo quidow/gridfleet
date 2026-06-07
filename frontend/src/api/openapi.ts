@@ -3659,7 +3659,23 @@ export interface components {
             /** Queue Size */
             queue_size: number;
             /** Requests */
-            requests?: unknown[];
+            requests?: components["schemas"]["GridQueueRequestRead"][];
+        };
+        /**
+         * GridQueueRequestRead
+         * @description One waiting new-session ticket, Selenium-queue-shaped (camelCase keys).
+         */
+        GridQueueRequestRead: {
+            /** Capabilities */
+            capabilities: {
+                [key: string]: unknown;
+            };
+            /** Requestid */
+            requestId: string;
+            /** Requesttimestamp */
+            requestTimestamp: string;
+            /** Runid */
+            runId?: string | null;
         };
         /** GridRegistryDeviceRead */
         GridRegistryDeviceRead: {

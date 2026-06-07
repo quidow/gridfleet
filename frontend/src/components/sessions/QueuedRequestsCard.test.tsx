@@ -28,15 +28,15 @@ describe('QueuedRequestsCard', () => {
     expect(screen.getByText('android 14')).toBeInTheDocument();
   });
 
-  it('links to run detail when gridfleet:run_id is a UUID', () => {
+  it('links to run detail when the request carries a runId', () => {
     const runId = '550e8400-e29b-41d4-a716-446655440000';
-    renderCard([{ capabilities: { platformName: 'ios', 'gridfleet:run_id': runId } }]);
+    renderCard([{ capabilities: { platformName: 'ios' }, runId }]);
     const link = screen.getByRole('link', { name: runId.slice(0, 8) });
     expect(link).toHaveAttribute('href', `/runs/${runId}`);
   });
 
-  it('shows "—" for run when gridfleet:run_id is "free"', () => {
-    renderCard([{ capabilities: { platformName: 'android', 'gridfleet:run_id': 'free' } }]);
+  it('shows "—" for run on a free request (runId null)', () => {
+    renderCard([{ capabilities: { platformName: 'android' }, runId: null }]);
     const cells = screen.getAllByText('—');
     expect(cells.length).toBeGreaterThan(0);
   });
