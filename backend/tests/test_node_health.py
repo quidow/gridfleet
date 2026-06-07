@@ -1323,6 +1323,8 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.background_loop as background_loop
+
     class Observation:
         @asynccontextmanager
         async def cycle(self) -> AsyncGenerator[None, None]:
@@ -1334,11 +1336,11 @@ async def test_node_health_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytes
 
     from tests.fakes import FakeSettingsReader
 
-    monkeypatch.setattr(node_health, "observe_background_loop", MagicMock(return_value=Observation()))
+    monkeypatch.setattr(background_loop, "observe_background_loop", MagicMock(return_value=Observation()))
     monkeypatch.setattr(NodeHealthService, "check_nodes", AsyncMock(side_effect=RuntimeError("boom")))
     monkeypatch.setattr(NodeHealthService, "wait_for_wake", AsyncMock(side_effect=asyncio.CancelledError))
     log_exception = MagicMock()
-    monkeypatch.setattr(node_health.logger, "exception", log_exception)
+    monkeypatch.setattr(background_loop.logger, "exception", log_exception)
 
     settings = FakeSettingsReader({"general.node_check_interval_sec": 1})
     node_health_svc = NodeHealthService(

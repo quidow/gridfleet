@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -21,9 +20,10 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services.common import node_state_severity
 from app.appium_nodes.services.reconciler_agent import require_management_host
+from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
-from app.core.observability import get_logger, observe_background_loop
+from app.core.leader.advisory import assert_current_leader
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl, LifecycleIncidentRecorder
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -382,32 +383,32 @@ class NodeHealthService:
             return
 
 
-class NodeHealthLoop:
+class NodeHealthLoop(BackgroundLoop):
+    """Background loop that checks Appium node health.
+
+    Wakes on either the doorbell (``wake()`` — currently no production
+    caller since the hub event-bus subscriber was removed; kept for a
+    future direct-observation trigger) or the registry-configured
+    timeout, whichever comes first. The poll runs as a drift reconciler.
+    """
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Node health check failed"
+
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that checks Appium node health.
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
 
-        Wakes on either the doorbell (``wake()`` — currently no production
-        caller since the hub event-bus subscriber was removed; kept for a
-        future direct-observation trigger) or the registry-configured
-        timeout, whichever comes first. The poll runs as a drift reconciler.
-        """
-        node_health = self._services.node_health
-        while True:
-            interval = float(self._services.settings.get("general.node_check_interval_sec"))
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await node_health.check_nodes(db)
-            except LeadershipLost as exc:
-                logger.error(
-                    "node_health_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Node health check failed")
-            woke = await node_health.wait_for_wake(interval)
-            NODE_HEALTH_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.node_check_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.node_health.check_nodes(db)
+
+    async def _wait(self, interval: float) -> None:
+        woke = await self._services.node_health.wait_for_wake(interval)
+        NODE_HEALTH_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
