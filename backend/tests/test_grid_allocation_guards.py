@@ -103,6 +103,65 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.db
+async def test_claim_defers_while_viability_probe_in_flight(
+    db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """Variant B (2026-06-07): a viability probe is a REAL Appium session on an
+    ``available`` device, posted directly to the node — no Session row exists until
+    the probe completes, so _claim's live-session recheck cannot see it. Its only
+    in-flight footprint is the control-plane probe lock. Claiming mid-probe races
+    the probe's uia2 startup for the device's static systemPort and fails the
+    client create ("local port #8200 is busy"); _claim must skip the device while
+    the lock is live and let the ticket retry on its next poll tick."""
+    from app.core.leader import state_store
+    from app.core.timeutil import now_utc
+    from app.sessions.probe_inflight import SESSION_VIABILITY_RUNNING_NAMESPACE
+
+    await state_store.try_claim_value(
+        db_session,
+        SESSION_VIABILITY_RUNNING_NAMESPACE,
+        str(seeded_available_device.id),
+        {"started_at": now_utc().isoformat(), "checked_by": "scheduled"},
+    )
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await _service()._claim(
+        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+    )
+    assert result is None
+    assert ticket.status == GridQueueStatus.waiting
+
+
+@pytest.mark.db
+async def test_claim_proceeds_when_probe_lock_is_stale(
+    db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    """A probe lock leaked by a dead probe process must not park the device out of
+    allocation: _claim applies the same staleness rule the probe's own reclaim path
+    uses, so a provably-old lock does not defer the claim."""
+    from datetime import timedelta
+
+    from app.core.leader import state_store
+    from app.core.timeutil import now_utc
+    from app.sessions.probe_inflight import SESSION_VIABILITY_RUNNING_NAMESPACE
+
+    await state_store.try_claim_value(
+        db_session,
+        SESSION_VIABILITY_RUNNING_NAMESPACE,
+        str(seeded_available_device.id),
+        {"started_at": (now_utc() - timedelta(hours=1)).isoformat(), "checked_by": "scheduled"},
+    )
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await _service()._claim(
+        db_session, ticket=ticket, device=seeded_available_device, candidate={}, run_id=None
+    )
+    assert result is not None
+
+
+@pytest.mark.db
 async def test_claim_declines_when_node_not_viable_under_lock(
     db_session: AsyncSession, seeded_available_device: Device
 ) -> None:

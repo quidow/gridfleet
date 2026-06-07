@@ -21,12 +21,20 @@ from app.grid import appium_direct
 from app.grid.allocation import node_target
 from app.sessions import probe_inflight
 from app.sessions.probe_constants import PROBE_TEST_NAME
+
+# Aliased re-export: the lock surface moved to ``probe_inflight`` (the allocator
+# consults it and must not import this module — circular via ``node_target``);
+# the historical private name stays importable for existing tests.
+from app.sessions.probe_inflight import (
+    SESSION_VIABILITY_RUNNING_NAMESPACE,
+)
+from app.sessions.probe_inflight import (
+    viability_lock_is_stale as _viability_lock_is_stale,
+)
 from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
@@ -75,7 +83,6 @@ class SessionViabilityProbeNotPermittedError(ValueError):
 
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
-SESSION_VIABILITY_RUNNING_NAMESPACE = "session_viability.running"
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
 # It validates an ``offline`` device coming back from a node failure, or a
@@ -385,28 +392,6 @@ class SessionViabilityService:
 
 def _now_iso() -> str:
     return now_utc().isoformat()
-
-
-# A viability probe holds its lock for at most one ``session_viability_timeout_sec``
-# window. A lock older than a generous multiple of that was leaked by a probe whose
-# process died between claim and release; it must be reclaimable or the device's
-# viability checks are blocked forever.
-_VIABILITY_LOCK_STALE_TIMEOUT_FACTOR = 2
-_VIABILITY_LOCK_STALE_MARGIN_SEC = 60
-
-
-def _viability_lock_is_stale(value: object, *, now: datetime, timeout_sec: int) -> bool:
-    # Reclaim a lock ONLY when we can prove it is old. A missing/unparseable
-    # ``started_at`` is treated as live (do not reclaim) — the probe always writes
-    # a valid ISO timestamp, so an unreasonable one is anomalous and reclaiming it
-    # could stomp a real in-progress probe.
-    if not isinstance(value, dict):
-        return False
-    started_at = _parse_timestamp(value.get("started_at"))
-    if started_at is None:
-        return False
-    threshold_sec = _VIABILITY_LOCK_STALE_TIMEOUT_FACTOR * timeout_sec + _VIABILITY_LOCK_STALE_MARGIN_SEC
-    return (now - started_at).total_seconds() > threshold_sec
 
 
 async def get_session_viability(db: AsyncSession, device: Device) -> dict[str, Any] | None:
