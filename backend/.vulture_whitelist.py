@@ -8,3 +8,6 @@ Additions require justification in the PR description.
 # Used in app/devices/services/state_write_guard.py::_make_listener
 oldvalue  # noqa: F821
 initiator  # noqa: F821
+
+# BackgroundLoop._on_cycle_end framework-hook parameter consumed by subclasses.
+elapsed_seconds  # noqa: F821
