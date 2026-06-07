@@ -101,15 +101,12 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                     return _allocated(resumed)
             try:
                 result = await allocation.try_allocate(db, ticket=ticket)
-            except CapabilityMergeError as e:
+            except (CapabilityMergeError, RunNotActiveError) as e:
                 # try_allocate already cancelled the ticket; persist that and put
-                # the descriptive merge message in the 400 body (wave-5 #26). A
-                # re-poll of the cancelled ticket gets the generic text above.
-                await db.commit()
-                return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
-            except RunNotActiveError as e:
-                # try_allocate already cancelled the ticket; persist and reject
-                # immediately — the router maps this to a W3C session-not-created.
+                # the descriptive message (merge error or inactive run) in the 400
+                # body (wave-5 #26) — the router maps it to a W3C
+                # session-not-created. A re-poll of the cancelled ticket gets the
+                # generic text above.
                 await db.commit()
                 return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
             await db.commit()
