@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Copy } from 'lucide-react';
+import { ChevronRight, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '../StatusBadge';
 import { PlatformIcon } from '../PlatformIcon';
@@ -215,4 +215,28 @@ export function buildSessionColumns(
   );
 
   return cols;
+}
+
+/** Leading chevron column that toggles the capabilities expansion. Shared by the
+ * Active and History tables; expansion state lives in the section component. */
+export function buildExpanderColumn(
+  isExpanded: (s: SessionDetail) => boolean,
+  onToggle: (s: SessionDetail) => void,
+): DataTableColumn<SessionDetail, SessionSortKey> {
+  return {
+    key: 'expand',
+    header: '',
+    width: '2.5rem',
+    render: (s) => (
+      <button
+        type="button"
+        onClick={() => onToggle(s)}
+        className="rounded p-1 text-text-3 hover:bg-surface-2 hover:text-text-1"
+        aria-label={isExpanded(s) ? 'Collapse capabilities' : 'Expand capabilities'}
+        aria-expanded={isExpanded(s)}
+      >
+        <ChevronRight size={16} className={`transition-transform ${isExpanded(s) ? 'rotate-90' : ''}`} />
+      </button>
+    ),
+  };
 }
