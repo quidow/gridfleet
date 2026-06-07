@@ -9,6 +9,7 @@ def test_actions_service_has_methods() -> None:
         "restore_run_if_needed",
         "handle_node_crash",
         "record_recovery_suppressed",
+        "record_recovery_skipped",
         "record_auto_stopped_incident",
         "record_ci_preparation_failed",
         "has_running_client_session",
