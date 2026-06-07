@@ -460,10 +460,10 @@ async def test_host_resource_telemetry_loop_logs_cycle_failure_and_sleeps() -> N
     )
 
     with (
-        patch("app.hosts.service_resource_telemetry.observe_background_loop", return_value=_Observation()),
+        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
         patch.object(resource_telemetry_svc, "poll_once", new=AsyncMock(side_effect=RuntimeError("boom"))),
-        patch("app.hosts.service_resource_telemetry.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.hosts.service_resource_telemetry.logger.exception") as log_exception,
+        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.core.background_loop.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
         await loop.run()
