@@ -83,6 +83,20 @@ async def _adb_connected(adb: str, serial: str) -> bool:
     return await run_cmd([adb, "-s", serial, "get-state"], timeout=5) == "device"
 
 
+async def _adb_unauthorized(adb: str, serial: str) -> bool:
+    """True if ``serial`` is present in ``adb devices`` marked ``unauthorized``.
+
+    Distinguishes a revoked-authorization device (TCP-reachable, but no retry of
+    ``adb connect`` can repair it — needs device-side approval) from a dead link.
+    """
+    raw = await run_cmd([adb, "devices"], timeout=5)
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == serial and parts[1] == "unauthorized":
+            return True
+    return False
+
+
 async def _adb_shell_echo(adb: str, serial: str) -> bool:
     return await run_cmd([adb, "-s", serial, "shell", "echo", "ok"], timeout=5) == "ok"
 

@@ -19,6 +19,32 @@ class _Ctx:
 
 
 @pytest.mark.asyncio
+async def test_adb_unauthorized_true_when_device_listed_unauthorized(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\tunauthorized\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    from adapter.health import _adb_unauthorized
+
+    assert await _adb_unauthorized("adb", "192.168.1.254:5555") is True
+
+
+@pytest.mark.asyncio
+async def test_adb_unauthorized_false_when_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\tdevice\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    from adapter.health import _adb_unauthorized
+
+    assert await _adb_unauthorized("adb", "192.168.1.254:5555") is False
+
+
+@pytest.mark.asyncio
 async def test_health_check_uses_manifest_check_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
         if cmd[-1] == "get-state":
