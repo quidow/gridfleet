@@ -41,14 +41,16 @@ describe('QueuedRequestsCard', () => {
     expect(cells.length).toBeGreaterThan(0);
   });
 
-  it('shows "Any" when no gridfleet:deviceId', () => {
+  it('shows "Any" when no appium:gridfleet:deviceId', () => {
     renderCard([{ capabilities: { platformName: 'android' } }]);
     expect(screen.getByText('Any')).toBeInTheDocument();
   });
 
-  it('links to device when gridfleet:deviceId is present', () => {
+  it('links to device when appium:gridfleet:deviceId is present', () => {
+    // The merged W3C candidate carries the prefixed cap (matching backend
+    // capability_keys.py / matching.py). The bare 'gridfleet:deviceId' never appears.
     const deviceId = 'dev-123';
-    renderCard([{ capabilities: { platformName: 'android', 'gridfleet:deviceId': deviceId } }]);
+    renderCard([{ capabilities: { platformName: 'android', 'appium:gridfleet:deviceId': deviceId } }]);
     const link = screen.getByRole('link', { name: deviceId });
     expect(link).toHaveAttribute('href', `/devices/${deviceId}`);
   });
