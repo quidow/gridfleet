@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.devices.models import DeviceOperationalState
-from app.devices.services.state_derivation import (
+from app.devices.services.state import (
     DeviceStateFacts,
     evaluate_operational_state,
     gather_device_state_facts,

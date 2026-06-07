@@ -34,7 +34,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
-from app.devices.services.state_derivation import apply_derived_state, device_in_service
+from app.devices.services.state import apply_derived_state, device_in_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 
