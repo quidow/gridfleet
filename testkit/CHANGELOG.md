@@ -2,6 +2,32 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.10.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.5...gridfleet-testkit-v0.10.0) (2026-06-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **testkit:** bind sessions to runs via the run-scoped grid url
+
+### Features
+
+* **testkit:** bind sessions to runs via the run-scoped grid url ([da34f10](https://github.com/quidow/gridfleet/commit/da34f10f095ed74b2733c0746f11632039bd109e))
+
+
+### Bug Fixes
+
+* **testkit:** route the pytest plugin driver fixture through the run-scoped url ([d976c8a](https://github.com/quidow/gridfleet/commit/d976c8afb7c10ade85b3b03fb1c7d40756e952ca))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /testkit in the python-dependencies group ([#513](https://github.com/quidow/gridfleet/issues/513)) ([f7e8fb9](https://github.com/quidow/gridfleet/commit/f7e8fb92da993155852e328dd2e8e174fe93bba7))
+
+
+### Documentation
+
+* **docs:** sweep selenium grid references for router architecture ([d086bcb](https://github.com/quidow/gridfleet/commit/d086bcb7c1619fb21cdf5e59499ab8221b18a0e4))
+
 ## [0.9.5](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.4...gridfleet-testkit-v0.9.5) (2026-06-04)
 
 
