@@ -32,8 +32,6 @@ from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from app.sessions import service_sync as session_sync
-from app.sessions import service_viability as session_viability
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
@@ -61,7 +59,9 @@ class _Session:
 
 
 async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", _Session)
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "_fetch_online_hosts", AsyncMock(return_value=[{"id": "bad"}]))
@@ -69,7 +69,7 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_rows", AsyncMock(return_value=[]))
     monkeypatch.setattr(appium_reconciler, "_fetch_backoff_until", AsyncMock(return_value={}))
     monkeypatch.setattr(appium_reconciler, "reconciler_convergence_enabled", lambda: True)
-    monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     services = AppiumNodeServices(
         settings=FakeSettingsReader({}),
@@ -85,9 +85,11 @@ async def test_appium_reconciler_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
-    monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     heartbeat_mock = Mock(run_cycle=AsyncMock())
     services = AppiumNodeServices(
@@ -107,8 +109,10 @@ async def test_heartbeat_loop_one_successful_iteration(monkeypatch: pytest.Monke
 
 
 async def test_session_viability_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_viability, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     viability_mock = Mock()
     viability_mock.check_due_devices = AsyncMock()
@@ -127,7 +131,9 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
     mock_sync.sync = AsyncMock()
     mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits the loop
@@ -147,7 +153,9 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
     mock_sync.sync = AsyncMock(side_effect=RuntimeError("boom"))
     mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits after error
@@ -276,11 +284,13 @@ async def test_control_plane_loops_one_iteration(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.background_loop as background_loop
+
     def fake_exit(code: int) -> None:
         raise RuntimeError(f"exit {code}")
 
-    monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(appium_reconciler.os, "_exit", fake_exit)
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
         await AppiumReconcilerLoop(
             services=AppiumNodeServices(
@@ -293,9 +303,9 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             )
         ).run()
 
-    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(heartbeat, "record_heartbeat_cycle", MagicMock())
-    monkeypatch.setattr(heartbeat.os, "_exit", fake_exit)
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     with pytest.raises(RuntimeError, match="exit 70"):
         await HeartbeatLoop(
             services=AppiumNodeServices(
@@ -308,8 +318,8 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             )
         ).run()
 
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync.os, "_exit", fake_exit)
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     mock_sync = Mock()
     mock_sync.sync = AsyncMock(side_effect=LeadershipLost("lost"))
     mock_sync.wait_for_wake = AsyncMock()

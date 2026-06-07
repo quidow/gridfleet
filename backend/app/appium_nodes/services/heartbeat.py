@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -20,11 +19,12 @@ from app.appium_nodes.services.heartbeat_outcomes import (
     HeartbeatOutcome,
     HeartbeatPingResult,
 )
+from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import LeadershipLost, assert_current_leader, control_plane_leader
 from app.core.metrics_recorders import record_heartbeat_cycle, record_heartbeat_ping
-from app.core.observability import get_logger, observe_background_loop
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.services.event import build_device_crashed_payload, record_event
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
-    from app.core.type_defs import AsyncTaskFactory
+    from app.core.type_defs import AsyncTaskFactory, SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -739,34 +739,25 @@ class HeartbeatService:
         await self._check_hosts(db)
 
 
-class HeartbeatLoop:
+class HeartbeatLoop(BackgroundLoop):
+    """Background loop that pings all host agents."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Heartbeat check failed"
+
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that pings all host agents."""
-        while True:
-            interval = float(self._services.settings.get("general.heartbeat_interval_sec"))
-            cycle_start = time.monotonic()
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.heartbeat.run_cycle(db)
-            except LeadershipLost as exc:
-                record_heartbeat_cycle(
-                    time.monotonic() - cycle_start,
-                    interval_seconds=interval,
-                )
-                logger.error(
-                    "heartbeat_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Heartbeat check failed")
-            finally:
-                record_heartbeat_cycle(
-                    time.monotonic() - cycle_start,
-                    interval_seconds=interval,
-                )
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.heartbeat_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.heartbeat.run_cycle(db)
+
+    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
+        record_heartbeat_cycle(elapsed_seconds, interval_seconds=interval)

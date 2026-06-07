@@ -196,8 +196,10 @@ async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: py
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(heartbeat, "observe_background_loop", lambda *args, **kwargs: Cycle())
-    monkeypatch.setattr(heartbeat.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     heartbeat_svc = Mock(run_cycle=AsyncMock(side_effect=RuntimeError("boom")))
     services = AppiumNodeServices(

@@ -9,7 +9,6 @@ convergence.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -44,9 +43,10 @@ from app.appium_nodes.services.reconciler_convergence import (
     reap_orphan_nodes,
     rows_needing_stale_clear,
 )
+from app.core.background_loop import BackgroundLoop
 from app.core.config import reconciler_convergence_enabled
 from app.core.database import async_session
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
+from app.core.leader.advisory import assert_current_leader
 from app.core.metrics_recorders import (
     APPIUM_RECONCILER_CYCLE_FAILURES,
     APPIUM_RECONCILER_HOST_CYCLE_SECONDS,
@@ -55,7 +55,7 @@ from app.core.metrics_recorders import (
     APPIUM_RECONCILER_START_FAILURES,
     APPIUM_RECONCILER_STOP_FAILURES,
 )
-from app.core.observability import get_logger, observe_background_loop
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.lifecycle_policy_state import state as lifecycle_policy_state
@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from app.agent_comm.snapshot import RunningAppiumNode
     from app.appium_nodes.services_container import AppiumNodeServices
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -257,32 +258,34 @@ async def appium_reconciler_loop_tick(
 LOOP_NAME = "appium_reconciler"
 
 
-class AppiumReconcilerLoop:
+class AppiumReconcilerLoop(BackgroundLoop):
+    """Leader-owned periodic loop."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "appium_reconciler_cycle_failed"
+
     def __init__(self, *, services: AppiumNodeServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Leader-owned periodic loop. See `backend/app/services/heartbeat.py:695` for the reference shape."""
-        while True:
-            interval = float(self._services.settings.get("appium_reconciler.interval_sec"))
-            cycle_start = time.monotonic()
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.reconciler.run_cycle(db)
-            except LeadershipLost as exc:
-                APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
-                logger.error(
-                    "appium_reconciler_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                APPIUM_RECONCILER_CYCLE_FAILURES.inc()
-                logger.exception("appium_reconciler_cycle_failed")
-            finally:
-                APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(time.monotonic() - cycle_start)
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _leadership_lost_event(self) -> str:
+        return "appium_reconciler_leadership_lost"  # historical name: no "_loop" segment
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("appium_reconciler.interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.reconciler.run_cycle(db)
+
+    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
+        APPIUM_RECONCILER_LAST_CYCLE_SECONDS.set(elapsed_seconds)
+
+    def _on_cycle_error(self) -> None:
+        APPIUM_RECONCILER_CYCLE_FAILURES.inc()
 
 
 async def _fetch_online_hosts(db: AsyncSession) -> list[dict[str, object]]:

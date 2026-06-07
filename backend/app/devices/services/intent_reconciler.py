@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -13,8 +11,9 @@ from app.agent_comm.reconfigure_delivery import deliver_agent_reconfigures, deli
 from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services.desired_state_writer import write_desired_grid_run_id, write_desired_state
 from app.core import metrics_recorders
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
-from app.core.observability import get_logger, observe_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.leader.advisory import assert_current_leader
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import (
     Device,
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.appium_nodes.models import AppiumNode
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.devices.services.observation_reason import ObservationReason
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
@@ -55,38 +55,37 @@ logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
 
 
-class DeviceIntentReconcilerLoop:
+class DeviceIntentReconcilerLoop(BackgroundLoop):
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "device_intent_reconciler_cycle_failed"
+
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
+        self._cycle = 0
 
-    async def run(self) -> None:
-        cycle = 0
-        while True:
-            interval = int(self._services.settings.get("general.intent_reconcile_interval_sec"))
-            try:
-                async with (
-                    observe_background_loop(LOOP_NAME, float(interval)).cycle(),
-                    self._services.session_factory() as db,
-                ):
-                    await run_device_intent_reconciler_once(
-                        db,
-                        cycle=cycle,
-                        settings=self._services.settings,
-                        circuit_breaker=self._services.circuit_breaker,
-                        publisher=self._services.publisher,
-                        pool=self._services.pool,
-                    )
-            except LeadershipLost as exc:
-                logger.error(
-                    "device_intent_reconciler_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("device_intent_reconciler_cycle_failed")
-            cycle += 1
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _leadership_lost_event(self) -> str:
+        return "device_intent_reconciler_leadership_lost"  # historical name: no "_loop" segment
+
+    def _interval(self) -> float:
+        return float(int(self._services.settings.get("general.intent_reconcile_interval_sec")))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await run_device_intent_reconciler_once(
+            db,
+            cycle=self._cycle,
+            settings=self._services.settings,
+            circuit_breaker=self._services.circuit_breaker,
+            publisher=self._services.publisher,
+            pool=self._services.pool,
+        )
+
+    def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
+        self._cycle += 1
 
 
 async def run_device_intent_reconciler_once(

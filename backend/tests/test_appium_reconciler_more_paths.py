@@ -240,6 +240,8 @@ async def test_reconcile_all_stop_callback_raises_for_agent_http_error(monkeypat
 
 
 async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.background_loop as background_loop
+
     class Cycle:
         def cycle(self) -> "Cycle":
             return self
@@ -257,10 +259,10 @@ async def test_reconciler_loop_logs_unexpected_cycle_failure(monkeypatch: pytest
         async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr(appium_reconciler, "observe_background_loop", lambda *args, **kwargs: Cycle())
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: Cycle())
     monkeypatch.setattr(appium_reconciler, "async_session", lambda: Session())
     monkeypatch.setattr(appium_reconciler, "assert_current_leader", AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr(appium_reconciler.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
 
     reconciler = Mock()
     reconciler.run_cycle = AsyncMock(side_effect=RuntimeError("boom"))
