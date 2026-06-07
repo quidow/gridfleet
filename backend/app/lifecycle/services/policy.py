@@ -696,7 +696,7 @@ class LifecyclePolicyService:
         # does not set ``stop_pending``, so nothing else clears the reason once the
         # session ends — the device renders as ``Unhealthy: A client session is still
         # running`` indefinitely (lifecycle_policy_summary maps the suppression to
-        # ``state=suppressed`` → frontend ``deriveUnifiedHealth`` tone=error).
+        # ``state=suppressed`` → rendered as an error-tone state in the frontend).
         if current_state.get("recovery_suppressed_reason") == CLIENT_SESSION_RUNNING_SUPPRESSION_REASON:
             current_state["recovery_suppressed_reason"] = None
             set_action(current_state, "recovery_unsuppressed_after_session_end")
