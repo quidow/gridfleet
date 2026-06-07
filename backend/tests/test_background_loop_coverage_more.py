@@ -56,13 +56,15 @@ async def _fake_session() -> AsyncGenerator[AsyncMock, None]:
 
 
 async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intent_reconciler, "observe_background_loop", Mock(return_value=_Observation()))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         intent_reconciler,
         "run_device_intent_reconciler_once",
         AsyncMock(side_effect=LeadershipLost("stale leader")),
     )
-    monkeypatch.setattr(intent_reconciler.os, "_exit", Mock(side_effect=SystemExit(70)))
+    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     _svc_settings_1 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_pub_1 = AsyncMock()
@@ -111,18 +113,20 @@ async def test_intent_reconciler_loop_exits_on_leadership_loss(monkeypatch: pyte
     with pytest.raises(SystemExit):
         await loop.run()
 
-    intent_reconciler.os._exit.assert_called_once_with(70)
+    background_loop.os._exit.assert_called_once_with(70)
 
 
 async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intent_reconciler, "observe_background_loop", Mock(return_value=_Observation()))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         intent_reconciler,
         "run_device_intent_reconciler_once",
         AsyncMock(side_effect=RuntimeError("boom")),
     )
     sleep = AsyncMock(side_effect=asyncio.CancelledError())
-    monkeypatch.setattr(intent_reconciler.asyncio, "sleep", sleep)
+    monkeypatch.setattr(background_loop.asyncio, "sleep", sleep)
 
     _svc_settings_2 = FakeSettingsReader({"general.intent_reconcile_interval_sec": 1})
     _svc_pub_2 = AsyncMock()
