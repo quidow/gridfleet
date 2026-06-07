@@ -183,6 +183,7 @@ class SessionRead(BaseModel):
     requested_device_type: DeviceType | None = None
     requested_connection_type: ConnectionType | None = None
     requested_capabilities: dict[str, Any] | None = None
+    actual_capabilities: dict[str, Any] | None = None
     error_type: str | None = None
     error_message: str | None = None
     run_id: uuid.UUID | None = None
@@ -367,6 +368,7 @@ class SessionDetail(SessionRead):
             requested_device_type=session.requested_device_type,
             requested_connection_type=session.requested_connection_type,
             requested_capabilities=session.requested_capabilities,
+            actual_capabilities=session.actual_capabilities,
             error_type=session.error_type,
             error_message=session.error_message,
             run_id=session.run_id,
@@ -417,6 +419,14 @@ class SessionCreate(BaseModel):
         if size > 32 * 1024:
             raise ValueError("requested_capabilities must serialize to 32 KB or less")
         return value
+
+
+class SessionKillResult(BaseModel):
+    """Outcome of an operator kill: the row is always terminalized; ``terminated``
+    reports whether the Appium DELETE actually succeeded."""
+
+    terminated: bool
+    session: SessionRead
 
 
 # --- Bulk operation schemas ---

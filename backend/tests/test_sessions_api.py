@@ -1080,3 +1080,41 @@ async def test_post_session_finished_ended_at_is_durable_after_request_closes(
             "the NO_PENDING lifecycle path returns without committing, so "
             "mark_session_finished must own the final db.commit()"
         )
+
+
+async def test_session_detail_exposes_actual_capabilities(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    from app.sessions.models import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+    session = Session(
+        session_id="caps-sess-001",
+        device_id=device["id"],
+        status=SessionStatus.running,
+        requested_capabilities={"platformName": "Android"},
+        actual_capabilities={"platformName": "Android", "appium:systemPort": 8201},
+    )
+    db_session.add(session)
+    await db_session.commit()
+    db_session.expunge(session)
+
+    resp = await client.get("/api/sessions/caps-sess-001")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["requested_capabilities"] == {"platformName": "Android"}
+    assert data["actual_capabilities"] == {"platformName": "Android", "appium:systemPort": 8201}
+
+
+def test_confirm_request_drops_oversized_capabilities() -> None:
+    from app.grid.schemas_internal import ConfirmRequest
+
+    ok = ConfirmRequest(appium_session_id="s1", appium_capabilities={"a": 1})
+    assert ok.appium_capabilities == {"a": 1}
+
+    # > 32 KB serialized -> dropped, NOT rejected: caps capture must never fail a confirm.
+    oversized = ConfirmRequest(appium_session_id="s1", appium_capabilities={"blob": "x" * (33 * 1024)})
+    assert oversized.appium_capabilities is None
+
+    absent = ConfirmRequest(appium_session_id="s1")
+    assert absent.appium_capabilities is None
