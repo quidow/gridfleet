@@ -69,9 +69,9 @@ that should clear when the operator exits maintenance.
 1. Add a `TypedDict` to `app/devices/services/intent_types.py` and extend the
    `Precondition` union.
 2. Add a `_eval_<kind>` helper in
-   `app/devices/services/intent_preconditions.py` and a branch in
+   `app/devices/services/intent_evaluator.py` and a branch in
    `is_satisfied`.
-3. Add per-kind unit tests in `tests/test_intent_preconditions.py`.
+3. Add per-kind unit tests in `tests/test_intent_evaluator_preconditions.py`.
 4. Set the precondition at every registration site that should use it.
 5. Update this catalog.
 
