@@ -18,7 +18,9 @@ The manager does not run your test suite itself. It protects and tracks the rese
 
 ## Router-Routed Device Assignment
 
-Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit injects `gridfleet:run_id` into Appium capabilities, and the router routes each new session to a device currently reserved for that run.
+Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit creates each Appium session through the run-scoped router endpoint (`GRID_URL/run/{run_id}`), which the router uses to admit the session only to devices reserved for that run. The endpoint URL is composed automatically from the `GRIDFLEET_RUN_ID` env var (set externally by the run launcher/CI).
+
+Admission is strictly symmetric: a run-bound session is admitted only to devices reserved for that run, and a reserved device admits only sessions from its run (no spillover in either direction). Two additional failure modes apply: a session request naming a missing or inactive run is rejected immediately (HTTP 400, "only active runs can create sessions"); any queued allocation tickets are cancelled when their run ends mid-queue.
 
 The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can resolve the assigned manager device row from the runtime connection target:
 

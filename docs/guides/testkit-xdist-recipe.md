@@ -7,7 +7,7 @@ This recipe shows one pytest-xdist shape for GridFleet runs:
 - the controller process creates and owns the run
 - the controller owns the heartbeat
 - workers read shared run state
-- workers resolve their router-routed device handle per test (no per-worker claim or release; the router routes sessions to the run's reserved devices via `gridfleet:run_id`)
+- workers resolve their router-routed device handle per test (the router admits the session to the run's reserved devices via the run-scoped `/run/{run_id}` endpoint)
 
 The policy decisions are intentionally visible. Tune the run-state path for your test suite.
 
@@ -130,7 +130,7 @@ def allocated_device(request: pytest.FixtureRequest):
 
 Tune this:
 
-- The testkit's `appium_driver` fixture injects `gridfleet:run_id` from the `GRIDFLEET_RUN_ID` env var (default `"free"`). Export `GRIDFLEET_RUN_ID = run["id"]` in `pytest_configure` (both the controller and worker branches above) so the router routes the session to a device reserved for the run; otherwise sessions land on `free`, unreserved devices.
+- Exporting `GRIDFLEET_RUN_ID = run["id"]` in `pytest_configure` (both the controller and worker branches above) makes the testkit compose the run-scoped grid URL (`GRID_URL/run/{run_id}`) so the router admits each session only to devices reserved for the run. Without it sessions are free and CANNOT use reserved devices.
 - Resolve device metadata after the session starts, when the driver exposes the runtime connection target.
 - Device-level failures should be reported with `report_preparation_failure(...)` before the session starts, or by normal session outcome reporting after the session exists.
 

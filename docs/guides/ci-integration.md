@@ -97,7 +97,7 @@ Roku is not installed by default; import the curated Roku driver or upload a Rok
 
 ## pytest-xdist Routing
 
-When a run reserves multiple devices, pytest-xdist workers create normal Appium sessions through the WebDriver router. The testkit injects `gridfleet:run_id` into the requested capabilities, and the router (via the backend allocation API) routes each worker to a device reserved for that run.
+When a run reserves multiple devices, pytest-xdist workers create Appium sessions through the run-scoped router endpoint (`GRID_URL/run/{run_id}`). The testkit composes that URL automatically from `GRIDFLEET_RUN_ID`, and the router (via the backend allocation API) admits each session only to a device reserved for that run.
 
 Practical notes:
 
@@ -223,7 +223,7 @@ jobs:
         env:
           GRID_URL: ${{ env.GRID_URL }}          # router URL, no /api suffix
           GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
-          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
+          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # testkit composes the run-scoped grid URL from this
         run: |
           pytest tests/firetv/ -n $WORKERS  # -n requires pytest-xdist (not a testkit dep)
 
@@ -336,7 +336,7 @@ jobs:
         env:
           GRID_URL: ${{ env.GRID_URL }}          # router URL, no /api suffix
           GRIDFLEET_API_URL: ${{ env.GRIDFLEET_URL }}/api  # client needs the /api suffix
-          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # injected as the gridfleet:run_id capability
+          GRIDFLEET_RUN_ID: ${{ env.RUN_ID }}    # testkit composes the run-scoped grid URL from this
         run: |
           pytest ${{ matrix.test_dir }} -n ${{ matrix.workers }}  # -n requires pytest-xdist (not a testkit dep)
 

@@ -11,17 +11,22 @@ import os
 from collections.abc import Generator
 
 import pytest
-from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver
+from gridfleet_testkit import GridFleetClient, hydrate_allocated_device, resolve_device_handle_from_driver, run_grid_url
 
 
 @pytest.fixture(scope="session")
 def gridfleet_client() -> GridFleetClient:
-    return GridFleetClient()
+    run_id = os.environ.get("GRIDFLEET_RUN_ID")
+    # When GRIDFLEET_RUN_ID is set the testkit creates sessions through the
+    # run-scoped endpoint (GRID_URL/run/{id}); sessions land only on devices
+    # reserved for that run. Without it sessions are free (unreserved devices).
+    grid_url = run_grid_url(run_id) if run_id else None
+    return GridFleetClient(grid_url=grid_url)
 
 
 @pytest.fixture
 def allocated_device(gridfleet_client: GridFleetClient, request: pytest.FixtureRequest) -> Generator[object, None, None]:
-    run_id = os.environ.get("GRIDFLEET_RUN_ID", "free")
+    run_id = os.environ.get("GRIDFLEET_RUN_ID")
     driver = request.getfixturevalue("appium_driver")
     device_handle = resolve_device_handle_from_driver(driver, client=gridfleet_client)
     # resolve_device_handle_from_driver returns the device-detail row keyed by `id`;
