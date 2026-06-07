@@ -9,6 +9,7 @@ import pytest
 from appium import webdriver
 
 from .appium import (
+    _resolve_grid_url,
     build_appium_options,
     get_device_config_for_driver,
     get_device_test_data_for_driver,
@@ -84,7 +85,7 @@ def appium_driver(
     options = _build_driver_options(request, gridfleet_client)
 
     try:
-        driver = webdriver.Remote(_default_grid_url(), options=options)
+        driver = webdriver.Remote(_resolve_grid_url(None), options=options)
     except Exception as exc:
         # Driver creation failed before a Grid session was established (e.g.
         # SessionNotCreatedException). Register a device-less error session so the

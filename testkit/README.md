@@ -81,7 +81,7 @@ The package supports Python 3.10 through 3.14.
 | `GRIDFLEET_TESTKIT_PASSWORD` | unset | Machine-auth password sent as HTTP Basic auth on every API call. Required when the manager runs with `GRIDFLEET_AUTH_ENABLED=true`. Use the same value as the manager's `GRIDFLEET_MACHINE_AUTH_PASSWORD`. |
 | `GRIDFLEET_TESTKIT_PACK_ID` | unset | Optional default driver pack id for Appium option building |
 | `GRIDFLEET_TESTKIT_PLATFORM_ID` | unset | Optional default platform id for Appium option building |
-| `GRIDFLEET_RUN_ID` | unset | Optional run id. When set, drivers are created through the run-scoped grid endpoint `GRID_URL/run/{id}` so sessions land only on devices reserved for the run. Unset = free session on unreserved devices. The pytest plugin sets this automatically inside a reserved run. |
+| `GRIDFLEET_RUN_ID` | unset | Optional run id. When set, drivers are created through the run-scoped grid endpoint `GRID_URL/run/{id}` so sessions land only on devices reserved for the run. Unset = free session on unreserved devices. Set this in the environment that launches pytest (e.g. the run launcher or CI step); the testkit reads it but does not set it. |
 
 The package assumes a running GridFleet API, a reachable WebDriver router, and platform-specific Appium driver setup on the registered hosts. When auth is disabled on the manager, leave `GRIDFLEET_TESTKIT_USERNAME` / `GRIDFLEET_TESTKIT_PASSWORD` unset and the testkit will send no `Authorization` header.
 

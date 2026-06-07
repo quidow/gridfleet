@@ -126,8 +126,8 @@ def build_appium_options(
 
 
 def _resolve_grid_url(grid_url: str | None) -> str:
-    """Executor resolution: explicit URL wins; a GRIDFLEET_RUN_ID env (exported
-    by the pytest plugin inside a reserved run) composes the run-scoped
+    """Executor resolution: explicit URL wins; GRIDFLEET_RUN_ID (set externally
+    by the run launcher or CI before pytest starts) composes the run-scoped
     endpoint; otherwise the bare grid URL — an explicit free session."""
     if grid_url is not None:
         return grid_url
