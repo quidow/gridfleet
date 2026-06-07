@@ -166,13 +166,15 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(
         fleet_capacity.FleetCapacityService,
         "collect_capacity_snapshot_once",
         AsyncMock(side_effect=[RuntimeError("boom"), None]),
     )
-    monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     _fc_settings = FakeSettingsReader({})
     _fc_publisher = AsyncMock()
