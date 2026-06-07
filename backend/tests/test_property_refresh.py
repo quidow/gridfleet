@@ -191,9 +191,9 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
     )
 
     with (
-        patch("app.devices.services.property_refresh.observe_background_loop", return_value=_Observation()),
-        patch("app.devices.services.property_refresh.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
-        patch("app.devices.services.property_refresh.logger.exception") as log_exception,
+        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
+        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)),
+        patch("app.core.background_loop.logger.exception") as log_exception,
         pytest.raises(asyncio.CancelledError),
     ):
         await loop.run()

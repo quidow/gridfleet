@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.core.observability import get_logger, observe_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.observability import get_logger
 from app.devices.models import Device, DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.devices.protocols import PackDevicePropertiesProvider
     from app.devices.services_container import DeviceServices
 
@@ -86,20 +88,22 @@ class PropertyRefreshService:
                 await db.rollback()
 
 
-class PropertyRefreshLoop:
+class PropertyRefreshLoop(BackgroundLoop):
+    """Background loop that periodically refreshes device properties."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
+    cycle_failed_message = "Property refresh cycle failed"
+
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that periodically refreshes device properties."""
-        while True:
-            interval = float(self._services.settings.get("general.property_refresh_interval_sec"))
-            try:
-                async with (
-                    observe_background_loop(LOOP_NAME, interval).cycle(),
-                    self._services.session_factory() as db,
-                ):
-                    await self._services.property_refresh.refresh_all_properties(db)
-            except Exception:
-                logger.exception("Property refresh cycle failed")
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.property_refresh_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.property_refresh.refresh_all_properties(db)
