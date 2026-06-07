@@ -170,6 +170,8 @@ async def test_get_db_uses_async_session_context(monkeypatch: MonkeyPatch) -> No
 
 
 async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
+    import app.core.background_loop as background_loop
+
     class _Observation:
         @asynccontextmanager
         async def cycle(self) -> AsyncGenerator[AsyncMock, None]:
@@ -187,13 +189,13 @@ async def test_run_reaper_loop_logs_initial_failure_and_retries() -> None:
         session_factory=fake_session,
     )
     with (
-        patch("app.runs.service_reaper.observe_background_loop", return_value=_Observation()),
+        patch.object(background_loop, "observe_background_loop", return_value=_Observation()),
         patch.object(
             run_reaper.RunReaperLoop,
             "_reap_stale_runs",
             new=AsyncMock(side_effect=[RuntimeError("boom"), RuntimeError("boom-again"), asyncio.CancelledError()]),
         ),
-        patch("app.runs.service_reaper.asyncio.sleep", new=AsyncMock()) as sleep,
+        patch.object(background_loop.asyncio, "sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
         loop = run_reaper.RunReaperLoop(services=mock_services)  # type: ignore[arg-type]
