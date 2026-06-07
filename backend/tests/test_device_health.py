@@ -80,8 +80,10 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
     await db.refresh(device, attribute_names=["appium_node"])
 
     summary = svc.build_public_summary(device)
-    assert summary["healthy"] is True
-    assert summary["summary"] != "Unknown"
+    assert summary["overall"] == "ok"
+    assert summary["device"]["status"] == "ok"
+    assert summary["node"]["status"] == "ok"
+    assert summary["viability"]["status"] == "ok"
 
 
 @pytest.mark.db
@@ -89,8 +91,7 @@ async def test_build_public_summary_healthy_when_all_signals_ok(
 async def test_build_public_summary_unknown_when_no_signals(db_with_device: tuple[AsyncSession, Device]) -> None:
     _, device = db_with_device
     summary = svc.build_public_summary(device)
-    assert summary["healthy"] is None
-    assert summary["summary"] == "Unknown"
+    assert summary["overall"] == "unknown"
 
 
 @pytest.mark.db
@@ -162,11 +163,13 @@ async def test_device_allows_allocation_false_when_checks_failed(db_with_device:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_last_checked_at_picks_max_of_signals_including_node(
+async def test_per_verdict_checked_at_timestamps(
     db_with_device: tuple[AsyncSession, Device],
 ) -> None:
     db, device = db_with_device
+    device.device_checks_healthy = True
     device.device_checks_checked_at = datetime.now(UTC) - timedelta(minutes=10)
+    device.session_viability_status = "passed"
     device.session_viability_checked_at = datetime.now(UTC) - timedelta(minutes=5)
     with state_write_guard.bypass():
         node = AppiumNode(
@@ -183,8 +186,10 @@ async def test_last_checked_at_picks_max_of_signals_including_node(
     await db.refresh(device, attribute_names=["appium_node"])
 
     summary = svc.build_public_summary(device)
-    assert summary["last_checked_at"] is not None
-    assert "T" in summary["last_checked_at"]
+    assert summary["node"]["checked_at"] is not None
+    assert "T" in summary["node"]["checked_at"]
+    assert summary["device"]["checked_at"] is not None
+    assert summary["viability"]["checked_at"] is not None
 
 
 @pytest.mark.db
@@ -213,6 +218,47 @@ async def test_health_changed_event_skipped_when_derived_unchanged(
     device.device_checks_healthy = True
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="still ok")
+    await db.commit()
+    await _drain_after_commit_tasks()
+    names = [name for name, _payload in event_bus_capture]
+    assert "device.health_changed" not in names
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_health_changed_fires_on_any_verdict_status_change(
+    db_with_device: tuple[AsyncSession, Device],
+    event_bus_capture: list[tuple[str, dict[str, object]]],
+) -> None:
+    # Overall is already "failed" via viability; a device verdict flip
+    # (unknown→failed) must still fire under the per-verdict contract.
+    db, device = db_with_device
+    device.session_viability_status = "failed"
+    device.session_viability_error = "probe boom"
+    await db.commit()
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
+    await db.commit()
+    await _drain_after_commit_tasks()
+    payloads = [payload for name, payload in event_bus_capture if name == "device.health_changed"]
+    assert len(payloads) == 1
+    event = payloads[0]
+    assert set(event) == {"device_id", "overall", "device", "node", "viability"}
+    assert event["overall"] == "failed"
+    assert event["device"]["status"] == "failed"  # type: ignore[index]
+    assert event["viability"]["status"] == "failed"  # type: ignore[index]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_health_changed_not_fired_when_only_details_change(
+    db_with_device: tuple[AsyncSession, Device],
+    event_bus_capture: list[tuple[str, dict[str, object]]],
+) -> None:
+    db, device = db_with_device
+    device.device_checks_healthy = False
+    device.device_checks_summary = "boom"
+    await db.commit()
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom 2")
     await db.commit()
     await _drain_after_commit_tasks()
     names = [name for name, _payload in event_bus_capture]
@@ -338,8 +384,8 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     await db.commit()
     await db.refresh(device, attribute_names=["appium_node"])
     summary = svc.build_public_summary(device)
-    assert summary["healthy"] is False
-    assert "relay_restart_exhausted" in summary["summary"]
+    assert summary["node"]["status"] == "failed"
+    assert summary["node"]["detail"] == "relay_restart_exhausted"
     assert device.appium_node.observed_running
 
 

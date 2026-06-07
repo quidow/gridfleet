@@ -996,7 +996,7 @@ async def test_indeterminate_probe_does_not_flip_columns_or_counter(db_session: 
     assert device.appium_node is not None
     assert device.appium_node.observed_running
     assert device.appium_node.health_running is None
-    assert device_health.build_public_summary(device)["healthy"] is True
+    assert device_health.build_public_summary(device)["node"]["status"] == "ok"
 
     # Device still available
     await db_session.refresh(device)

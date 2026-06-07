@@ -31,14 +31,18 @@ function makeDevice(overrides: Partial<DeviceRead>): DeviceRead {
   } as unknown as DeviceRead;
 }
 
-function wrapper({ children }: { children: ReactNode }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/devices?status=available']}>{children}</MemoryRouter>
-    </QueryClientProvider>
-  );
+function makeWrapper(initialEntry = '/devices?status=available') {
+  return function wrapper({ children }: { children: ReactNode }) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[initialEntry]}>{children}</MemoryRouter>
+      </QueryClientProvider>
+    );
+  };
 }
+
+const wrapper = makeWrapper();
 
 describe('useDevicesPageController', () => {
   beforeEach(() => {
@@ -66,5 +70,41 @@ describe('useDevicesPageController', () => {
     expect(result.current.summaryStats.busy).toBe(1);
     expect(result.current.summaryStats.offline).toBe(1);
     expect(result.current.summaryStats.attentionCount).toBe(1);
+  });
+
+  it('reads per-signal health filters from the URL and passes them to the devices query', () => {
+    vi.spyOn(useDevicesModule, 'useDevices').mockReturnValue({ data: [] } as unknown as ReturnType<typeof useDevicesModule.useDevices>);
+    const paginatedSpy = vi.spyOn(useDevicesModule, 'useDevicesPaginated').mockReturnValue({
+      data: { items: [], total: 0, limit: 50, offset: 0 },
+      isLoading: false,
+      dataUpdatedAt: 0,
+    } as unknown as ReturnType<typeof useDevicesModule.useDevicesPaginated>);
+
+    const { result } = renderHook(() => useDevicesPageController(), {
+      wrapper: makeWrapper('/devices?node_health=failed&device_health=ok&viability=unknown'),
+    });
+
+    expect(result.current.nodeHealthFilter).toBe('failed');
+    expect(result.current.deviceHealthFilter).toBe('ok');
+    expect(result.current.viabilityFilter).toBe('unknown');
+    expect(result.current.hasFilters).toBe(true);
+    expect(paginatedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ node_health: 'failed', device_health: 'ok', viability: 'unknown' }),
+    );
+  });
+
+  it('ignores invalid per-signal health filter values in the URL', () => {
+    vi.spyOn(useDevicesModule, 'useDevices').mockReturnValue({ data: [] } as unknown as ReturnType<typeof useDevicesModule.useDevices>);
+    vi.spyOn(useDevicesModule, 'useDevicesPaginated').mockReturnValue({
+      data: { items: [], total: 0, limit: 50, offset: 0 },
+      isLoading: false,
+      dataUpdatedAt: 0,
+    } as unknown as ReturnType<typeof useDevicesModule.useDevicesPaginated>);
+
+    const { result } = renderHook(() => useDevicesPageController(), {
+      wrapper: makeWrapper('/devices?node_health=bogus'),
+    });
+
+    expect(result.current.nodeHealthFilter).toBe('');
   });
 });

@@ -87,9 +87,11 @@ The manager publishes one shared event object shape:
 | `node.state_changed` | `device_id`, `device_name`, `old_state`, `new_state`, optional `port` | `info` | `info`, `success`, `warning` | node start/stop/recovery paths |
 | `node.crash` | `device_id`, `device_name`, `error`, `will_restart` | `critical` | `critical`, `warning` | node-health failure handling |
 | `device.crashed` | `device_id`, `device_name`, `source`, `reason`, `will_restart`, `process` | `critical` | `critical`, `warning` | persisted `node_crash` incidents |
-| `device.health_changed` | `device_id`, `healthy`, `summary` | `info` | `info`, `success`, `warning` | aggregate health flip |
+| `device.health_changed` | `device_id`, `overall`, `device`, `node`, `viability` | `info` | `info`, `success`, `warning` | any health verdict status change |
 | `config.updated` | `device_id`, `device_name`, `changed_by` | `neutral` | `neutral` | device config writes |
 | `test_data.updated` | `device_id`, `device_name`, `changed_by` | `neutral` | `neutral` | device test_data writes |
+> **Breaking change:** the `device.health_changed` payload changed in the next backend major — it was previously `device_id`, `healthy`, `summary`.
+
 
 ### `device.crashed`
 

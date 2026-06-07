@@ -6,42 +6,45 @@ from app.devices.services.attention import compute_needs_attention
 
 
 @pytest.mark.parametrize(
-    ("lifecycle_state", "readiness_state", "healthy", "hardware", "review_required", "expected"),
+    ("lifecycle_state", "readiness_state", "health_overall", "hardware", "review_required", "expected"),
     [
         # Lifecycle alone
-        (DeviceLifecyclePolicySummaryState.suppressed, "verified", True, HardwareHealthStatus.healthy, False, True),
-        (DeviceLifecyclePolicySummaryState.backoff, "verified", True, HardwareHealthStatus.healthy, False, False),
-        (DeviceLifecyclePolicySummaryState.deferred_stop, "verified", True, HardwareHealthStatus.healthy, False, False),
-        (DeviceLifecyclePolicySummaryState.excluded, "verified", True, HardwareHealthStatus.healthy, False, False),
-        (DeviceLifecyclePolicySummaryState.recoverable, "verified", True, HardwareHealthStatus.healthy, False, False),
-        (DeviceLifecyclePolicySummaryState.idle, "verified", True, HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.suppressed, "verified", "ok", HardwareHealthStatus.healthy, False, True),
+        (DeviceLifecyclePolicySummaryState.backoff, "verified", "ok", HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.deferred_stop, "verified", "ok", HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.excluded, "verified", "ok", HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.recoverable, "verified", "ok", HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "ok", HardwareHealthStatus.healthy, False, False),
         # Readiness alone
-        (DeviceLifecyclePolicySummaryState.idle, "setup_required", True, HardwareHealthStatus.healthy, False, True),
+        (DeviceLifecyclePolicySummaryState.idle, "setup_required", "ok", HardwareHealthStatus.healthy, False, True),
         (
             DeviceLifecyclePolicySummaryState.idle,
             "verification_required",
-            True,
+            "ok",
             HardwareHealthStatus.healthy,
             False,
             True,
         ),
-        # Liveness false fires
-        (DeviceLifecyclePolicySummaryState.idle, "verified", False, HardwareHealthStatus.healthy, False, True),
+        # Overall failed fires
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "failed", HardwareHealthStatus.healthy, False, True),
         # Hardware critical fires; warning does not
-        (DeviceLifecyclePolicySummaryState.idle, "verified", True, HardwareHealthStatus.critical, False, True),
-        (DeviceLifecyclePolicySummaryState.idle, "verified", True, HardwareHealthStatus.warning, False, False),
-        # Liveness None (unknown) does not fire on its own
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "ok", HardwareHealthStatus.critical, False, True),
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "ok", HardwareHealthStatus.warning, False, False),
+        # Overall warn/unknown/None do not fire on their own
+        # (stopped node → overall unknown → no attention: deliberate change)
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "warn", HardwareHealthStatus.healthy, False, False),
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "unknown", HardwareHealthStatus.healthy, False, False),
         (DeviceLifecyclePolicySummaryState.idle, "verified", None, HardwareHealthStatus.healthy, False, False),
         # Compound: any single trigger is enough
-        (DeviceLifecyclePolicySummaryState.idle, "verified", False, HardwareHealthStatus.critical, False, True),
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "failed", HardwareHealthStatus.critical, False, True),
         # review_required alone fires (S10 finding: review-shelved devices need attention)
-        (DeviceLifecyclePolicySummaryState.idle, "verified", True, HardwareHealthStatus.healthy, True, True),
+        (DeviceLifecyclePolicySummaryState.idle, "verified", "ok", HardwareHealthStatus.healthy, True, True),
     ],
 )
 def test_compute_needs_attention(
     lifecycle_state: DeviceLifecyclePolicySummaryState,
     readiness_state: str,
-    healthy: bool | None,
+    health_overall: str | None,
     hardware: HardwareHealthStatus,
     review_required: bool,
     expected: bool,
@@ -50,7 +53,7 @@ def test_compute_needs_attention(
         compute_needs_attention(
             lifecycle_state=lifecycle_state,
             readiness_state=readiness_state,
-            health_healthy=healthy,
+            health_overall=health_overall,
             hardware_health_status=hardware,
             review_required=review_required,
         )

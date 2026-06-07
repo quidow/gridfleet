@@ -1,104 +1,81 @@
 import { memo } from 'react';
-import type { DeviceRead } from '../../types';
+import type { DeviceRead, HealthVerdictRead } from '../../types';
 import { Popover } from '../../components/ui/Popover';
-import { deriveUnifiedHealth, type UnifiedHealthTone } from '../../lib/deviceUnifiedHealth';
+import { VERDICT_DOT_CLASSES, VERDICT_STATUS_LABELS, VERDICT_TEXT_CLASSES } from '../../lib/healthVerdicts';
 import { formatBatteryLevel, formatChargingState } from '../../lib/hardwareTelemetry';
+import { formatDateTime } from '../../utils/dateFormatting';
 
-type Props = {
-  device: DeviceRead;
-};
+type Props = { device: DeviceRead };
 
-const DOT_CLASSES: Record<UnifiedHealthTone, string> = {
-  ok: 'bg-success-strong',
-  warn: 'bg-warning-strong',
-  error: 'bg-danger-strong',
-  unknown: 'bg-neutral-strong',
-};
+const SIGNALS = [
+  { key: 'device', short: 'dev', label: 'Device' },
+  { key: 'node', short: 'node', label: 'Node' },
+  { key: 'viability', short: 'via', label: 'Viability' },
+] as const;
 
-const LABEL_CLASSES: Record<UnifiedHealthTone, string> = {
-  ok: 'text-success-foreground',
-  warn: 'text-warning-foreground',
-  error: 'text-danger-foreground',
-  unknown: 'text-text-2',
-};
-
-const REASON_CLASSES: Record<UnifiedHealthTone, string> = {
-  ok: 'text-success-foreground',
-  warn: 'text-warning-foreground',
-  error: 'text-danger-foreground',
-  unknown: 'text-text-2',
-};
-
-function displayReason(value: string): string {
-  const parts = value.split('|').map((part) => part.trim()).filter(Boolean);
-  if (parts[0]?.toLowerCase() === 'healthy' && parts.length > 1) {
-    return parts.slice(1).join(' · ');
-  }
-  return parts[0] || value;
+function Dot({ short, label, verdict }: { short: string; label: string; verdict: HealthVerdictRead }) {
+  const title = verdict.detail
+    ? `${label}: ${VERDICT_STATUS_LABELS[verdict.status]} — ${verdict.detail}`
+    : `${label}: ${VERDICT_STATUS_LABELS[verdict.status]}`;
+  return (
+    <span className="inline-flex items-center gap-1" aria-label={`${label} ${verdict.status}`} title={title}>
+      <span
+        aria-hidden="true"
+        className={`inline-block h-2 w-2 shrink-0 rounded-full ${VERDICT_DOT_CLASSES[verdict.status]}`}
+      />
+      <span className="text-[10px] font-medium uppercase tracking-wide text-text-3">{short}</span>
+    </span>
+  );
 }
 
 function DeviceHealthCellInner({ device }: Props) {
-  const health = deriveUnifiedHealth(device);
-  const ariaLabel = health.summary ? `${health.label} — ${health.summary}` : health.label;
-  const telemetry = device.hardware_telemetry_state;
+  const hs = device.health_summary;
 
   const hasTelemetryData =
     device.battery_level_percent !== null && device.battery_level_percent !== undefined
     || (device.charging_state !== null && device.charging_state !== undefined && device.charging_state !== 'unknown');
-  const showTelemetry =
-    health.tone !== 'error' && telemetry !== 'unsupported' && hasTelemetryData;
+  const showTelemetry = device.hardware_telemetry_state !== 'unsupported' && hasTelemetryData;
   const telemetryLine = `${formatBatteryLevel(device.battery_level_percent)} · ${formatChargingState(device.charging_state)}`;
 
-  const showReasons = health.tone !== 'ok' && health.tone !== 'unknown' && health.reasons.length > 0;
-
-  const hasDetail = showTelemetry || showReasons;
-
   const trigger = (
-    <span className="inline-flex items-center gap-1.5">
-      <span
-        aria-hidden="true"
-        className={`inline-block h-2 w-2 shrink-0 rounded-full ${DOT_CLASSES[health.tone]}`}
-      />
-      <span className={`text-xs font-medium ${LABEL_CLASSES[health.tone]}`}>{health.label}</span>
+    <span className="inline-flex items-center gap-2">
+      {SIGNALS.map(({ key, short, label }) => (
+        <Dot key={key} short={short} label={label} verdict={hs[key]} />
+      ))}
     </span>
-  );
-
-  if (!hasDetail) {
-    return (
-      <span className="inline-flex items-center gap-1.5" aria-label={ariaLabel}>
-        {trigger}
-      </span>
-    );
-  }
-
-  const content = (
-    <div className="space-y-2 text-xs leading-snug">
-      {showReasons ? (
-        <div>
-          <p className="heading-label mb-0.5">{health.label}</p>
-          <ul className={`space-y-0.5 ${REASON_CLASSES[health.tone]}`}>
-            {health.reasons.map((reason) => (
-              <li key={reason}>{displayReason(reason)}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {showTelemetry ? (
-        <div>
-          <p className="heading-label mb-0.5">Battery</p>
-          <p className="text-text-2">{telemetryLine}</p>
-        </div>
-      ) : null}
-    </div>
   );
 
   return (
     <Popover
       ariaLabel={`Health details for ${device.name}`}
       trigger={trigger}
-      triggerClassName="inline-flex items-center gap-1.5 rounded px-0.5 hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-ring"
+      triggerClassName="inline-flex items-center gap-2 rounded px-0.5 hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-ring"
     >
-      {content}
+      <div className="space-y-2 text-xs leading-snug">
+        <div className="space-y-1">
+          {SIGNALS.map(({ key, label }) => {
+            const verdict = hs[key];
+            return (
+              <div key={key} className="flex items-baseline justify-between gap-3">
+                <span className="heading-label">{label}</span>
+                <span className={`text-right ${VERDICT_TEXT_CLASSES[verdict.status]}`}>
+                  {VERDICT_STATUS_LABELS[verdict.status]}
+                  {verdict.detail ? ` — ${verdict.detail}` : ''}
+                  {verdict.checked_at ? (
+                    <span className="block text-[10px] text-text-3">checked {formatDateTime(verdict.checked_at)}</span>
+                  ) : null}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {showTelemetry ? (
+          <div>
+            <p className="heading-label mb-0.5">Battery</p>
+            <p className="text-text-2">{telemetryLine}</p>
+          </div>
+        ) : null}
+      </div>
     </Popover>
   );
 }

@@ -68,7 +68,7 @@ async def test_omitted_health_kwargs_do_not_clear_error(db_session: AsyncSession
     assert device.appium_node is not None
     assert device.appium_node.health_state == "error"
     assert device.appium_node.health_running is False
-    assert build_public_summary(device)["healthy"] is False
+    assert build_public_summary(device)["node"]["status"] == "failed"
 
 
 async def test_explicit_none_still_clears(db_session: AsyncSession, db_host: Host) -> None:

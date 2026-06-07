@@ -836,8 +836,8 @@ async def test_report_preparation_failure_excludes_device_and_marks_unhealthy(
     # enter_maintenance which sets maintenance_reason — hold derivation is deferred
     assert device_data["reservation"]["excluded"] is True
     assert device_data["reservation"]["exclusion_reason"] == "ADB authorization failed on device during CI setup"
-    assert device_data["health_summary"]["healthy"] is False
-    assert device_data["health_summary"]["summary"] == "ADB authorization failed on device during CI setup"
+    assert device_data["health_summary"]["overall"] == "failed"
+    assert device_data["health_summary"]["device"]["detail"] == "ADB authorization failed on device during CI setup"
 
 
 async def test_report_preparation_failure_rejects_device_not_reserved_by_run(

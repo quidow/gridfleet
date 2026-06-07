@@ -65,9 +65,10 @@ function makeDevice(): DeviceDetail {
       backoff_until: null,
     },
     health_summary: {
-      healthy: true,
-      summary: 'Healthy',
-      last_checked_at: null,
+      device: { status: 'ok', detail: null, checked_at: null },
+      node: { status: 'ok', detail: 'running', checked_at: null },
+      viability: { status: 'ok', detail: 'passed', checked_at: null },
+      overall: 'ok',
     },
     emulator_state: null,
     created_at: '2026-04-28T12:00:00Z',

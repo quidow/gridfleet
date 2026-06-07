@@ -13,6 +13,7 @@ import type {
   DeviceFilterStatus,
   DeviceType,
   HardwareHealthStatus,
+  HealthVerdictStatus,
   HardwareTelemetryState,
   DeviceVerificationUpdate,
   PlatformDescriptor,
@@ -24,6 +25,7 @@ export const DEVICE_TYPES: DeviceType[] = DEVICE_TYPE_OPTIONS;
 export const CONNECTION_TYPES: ConnectionType[] = CONNECTION_TYPE_OPTIONS;
 export const HARDWARE_HEALTH_STATUSES: HardwareHealthStatus[] = ['unknown', 'healthy', 'warning', 'critical'];
 export const HARDWARE_TELEMETRY_STATES: HardwareTelemetryState[] = ['unknown', 'fresh', 'stale'];
+export const HEALTH_VERDICT_STATUSES: HealthVerdictStatus[] = ['ok', 'warn', 'failed', 'unknown'];
 
 export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
   ...SHARED_DEVICE_TYPE_LABELS,
@@ -33,6 +35,13 @@ export const DEVICE_TYPE_COLORS: Record<DeviceType, string> = {
   real_device: 'bg-device-type-real-bg text-device-type-real-fg',
   emulator: 'bg-device-type-emulator-bg text-device-type-emulator-fg',
   simulator: 'bg-device-type-simulator-bg text-device-type-simulator-fg',
+};
+
+export const HEALTH_VERDICT_FILTER_LABELS: Record<HealthVerdictStatus, string> = {
+  ok: 'OK',
+  warn: 'Warning',
+  failed: 'Failed',
+  unknown: 'Unknown',
 };
 
 export const HARDWARE_HEALTH_STATUS_LABELS: Record<HardwareHealthStatus, string> = {

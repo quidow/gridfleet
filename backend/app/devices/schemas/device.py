@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, computed_field, field_validator, model_validator
 
+from app.appium_nodes.services.effective_state import compute_effective_state
 from app.devices.models import (
     ConnectionType,
     DeviceOperationalState,
@@ -132,41 +133,16 @@ class AppiumNodeRead(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def effective_state(self) -> EffectiveNodeState:
-        now = datetime.now(UTC)
-
-        if (
-            self.transition_token is not None
-            and self.transition_deadline is not None
-            and self.transition_deadline > now
-        ):
-            return "restarting"
-
-        lifecycle_state = self.lifecycle_policy_state or {}
-        suppression_reason = lifecycle_state.get("recovery_suppressed_reason")
-        if isinstance(suppression_reason, str) and suppression_reason:
-            backoff_raw = lifecycle_state.get("backoff_until")
-            backoff_active = False
-            if isinstance(backoff_raw, str):
-                try:
-                    backoff_until = datetime.fromisoformat(backoff_raw)
-                    if backoff_until.tzinfo is None:
-                        backoff_until = backoff_until.replace(tzinfo=UTC)
-                    backoff_active = backoff_until > now
-                except ValueError:
-                    backoff_active = False
-            if backoff_raw is None or backoff_active:
-                return "blocked"
-
-        if self.health_state == "error" or self.health_running is False:
-            return "error"
-
-        if self.desired_state == DesiredNodeState.running and self.pid is None:
-            return "starting"
-        if self.desired_state == DesiredNodeState.stopped and self.pid is not None:
-            return "stopping"
-        if self.desired_state == DesiredNodeState.running and self.pid is not None:
-            return "running"
-        return "stopped"
+        return compute_effective_state(
+            pid=self.pid,
+            desired_state=self.desired_state.value,
+            health_running=self.health_running,
+            health_state=self.health_state,
+            transition_token=self.transition_token,
+            transition_deadline=self.transition_deadline,
+            lifecycle_policy_state=self.lifecycle_policy_state,
+            now=datetime.now(UTC),
+        )
 
 
 class SessionRead(BaseModel):
@@ -228,13 +204,20 @@ class DeviceLifecyclePolicySummaryRead(BaseModel):
     maintenance_reason: str | None = None
 
 
+HealthVerdictStatus = Literal["ok", "warn", "failed", "unknown"]
+
+
+class HealthVerdictRead(BaseModel):
+    status: HealthVerdictStatus
+    detail: str | None = None
+    checked_at: str | None = None
+
+
 class DeviceHealthSummaryRead(BaseModel):
-    healthy: bool | None
-    summary: str
-    connectivity_status: Literal["ok", "failed"] | None = None
-    node_status: str | None = None
-    session_status: Literal["passed", "failed"] | None = None
-    last_checked_at: str | None = None
+    device: HealthVerdictRead
+    node: HealthVerdictRead
+    viability: HealthVerdictRead
+    overall: HealthVerdictStatus
 
 
 class DeviceConfigRead(RootModel[dict[str, Any]]):

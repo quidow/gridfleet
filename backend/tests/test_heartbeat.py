@@ -493,7 +493,7 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     device_reloaded = (
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()
-    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
+    assert device_health.build_public_summary(device_reloaded)["node"]["status"] == "ok"
 
 
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
@@ -732,7 +732,7 @@ async def test_grid_relay_restart_events_degrade_and_restore_health_summary(
     device_reloaded = (
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()
-    assert device_health.build_public_summary(device_reloaded)["healthy"] is True
+    assert device_health.build_public_summary(device_reloaded)["node"]["status"] == "ok"
 
 
 async def test_grid_relay_restart_exhausted_sets_relay_specific_degraded_state(

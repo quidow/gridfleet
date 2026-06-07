@@ -420,6 +420,9 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         hardware_health_status=None,
         hardware_telemetry_state=None,
         needs_attention=None,
+        device_health=None,
+        node_health=None,
+        viability=None,
         sort_by="created_at",
         sort_dir="desc",
     )

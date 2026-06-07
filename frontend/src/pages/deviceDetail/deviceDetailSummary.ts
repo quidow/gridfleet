@@ -1,13 +1,21 @@
-import type { DeviceDetail, DeviceRead } from '../../types';
+import type { DeviceDetail, DeviceRead, HealthVerdictRead, HealthVerdictStatus } from '../../types';
 import type { SummaryPillTone } from '../../components/ui';
 import {
   HARDWARE_HEALTH_STATUS_LABELS,
   HARDWARE_TELEMETRY_STATE_LABELS,
 } from '../../lib/hardwareTelemetry';
+import { VERDICT_STATUS_LABELS } from '../../lib/healthVerdicts';
 import { formatDateTime } from '../../utils/dateFormatting';
 
+const VERDICT_PILL_TONES: Record<HealthVerdictStatus, SummaryPillTone> = {
+  ok: 'ok',
+  warn: 'warn',
+  failed: 'error',
+  unknown: 'neutral',
+};
+
 export type DeviceDetailStatusPill = {
-  key: 'hardware' | 'connectivity';
+  key: 'hardware' | 'device' | 'node' | 'viability';
   label: string;
   value: string;
   tone: SummaryPillTone;
@@ -29,14 +37,6 @@ function hardwareDetail(
     default:
       return 'No hardware telemetry reported yet.';
   }
-}
-
-function connectivityTone(
-  summary: DeviceRead['health_summary'],
-): SummaryPillTone {
-  if (summary.healthy === true) return 'ok';
-  if (summary.healthy === false) return 'error';
-  return 'neutral';
 }
 
 export function hardwareSummary(
@@ -106,15 +106,20 @@ export function hardwareSummary(
   };
 }
 
-function connectivityPillValue(
-  hs: DeviceRead['health_summary'],
-): string {
-  if (hs.connectivity_status) {
-    return hs.connectivity_status === 'ok' ? 'OK' : 'Failed';
-  }
-  if (hs.healthy === true) return 'OK';
-  if (hs.healthy === false) return 'Failed';
-  return 'Unknown';
+function verdictPill(
+  key: 'device' | 'node' | 'viability',
+  label: string,
+  verdict: HealthVerdictRead,
+  to: string,
+): DeviceDetailStatusPill {
+  return {
+    key,
+    label,
+    tone: VERDICT_PILL_TONES[verdict.status],
+    value: verdict.detail || VERDICT_STATUS_LABELS[verdict.status],
+    title: verdict.checked_at ? `Last checked ${formatDateTime(verdict.checked_at)}` : undefined,
+    to,
+  };
 }
 
 export function getDeviceDetailStatusPills(
@@ -128,6 +133,8 @@ export function getDeviceDetailStatusPills(
   >,
 ): DeviceDetailStatusPill[] {
   const hardware = hardwareSummary(device);
+  const hs = device.health_summary;
+  const triageTo = `/devices/${device.id}?tab=triage#device-health`;
 
   return [
     {
@@ -138,15 +145,8 @@ export function getDeviceDetailStatusPills(
       title: hardware.detail,
       to: hardware.to,
     },
-    {
-      key: 'connectivity',
-      label: 'Connectivity',
-      tone: connectivityTone(device.health_summary),
-      value: connectivityPillValue(device.health_summary),
-      title: device.health_summary.last_checked_at
-        ? `Last checked ${formatDateTime(device.health_summary.last_checked_at)}`
-        : undefined,
-      to: `/devices/${device.id}?tab=triage#device-health`,
-    },
+    verdictPill('device', 'Device', hs.device, triageTo),
+    verdictPill('node', 'Node', hs.node, triageTo),
+    verdictPill('viability', 'Viability', hs.viability, triageTo),
   ];
 }

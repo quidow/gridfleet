@@ -32,7 +32,7 @@ const DEVICE = {
   verified_at: '2026-03-30T10:00:03Z',
   reservation: null,
   lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
-  health_summary: { healthy: true, summary: 'Healthy', last_checked_at: '2026-03-30T10:00:03Z' },
+  health_summary: { device: { status: 'ok', detail: null, checked_at: null }, node: { status: 'ok', detail: 'running', checked_at: null }, viability: { status: 'ok', detail: 'passed', checked_at: null }, overall: 'ok' },
   emulator_state: null,
   created_at: '2026-03-30T10:00:03Z',
   updated_at: '2026-03-30T10:00:03Z',

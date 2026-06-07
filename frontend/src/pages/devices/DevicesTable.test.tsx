@@ -43,9 +43,10 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
       backoff_until: null,
     },
     health_summary: {
-      healthy: null,
-      summary: 'No data',
-      last_checked_at: null,
+      device: { status: 'unknown', detail: 'not checked', checked_at: null },
+      node: { status: 'unknown', detail: 'no node', checked_at: null },
+      viability: { status: 'unknown', detail: 'not run', checked_at: null },
+      overall: 'unknown',
     },
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',

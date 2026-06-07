@@ -6,6 +6,7 @@ import type {
   DeviceDetail,
   DeviceHealth,
   HardwareHealthStatus,
+  HealthVerdictStatus,
   HardwareTelemetryState,
   DevicePatch,
   DeviceRead,
@@ -30,6 +31,9 @@ export async function fetchDevices(params?: {
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
+  device_health?: HealthVerdictStatus;
+  node_health?: HealthVerdictStatus;
+  viability?: HealthVerdictStatus;
 }): Promise<DeviceRead[]> {
   const { data } = await api.get('/devices', { params });
   return data;
@@ -60,6 +64,9 @@ export async function fetchDevicesPaginated(params: {
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
+  device_health?: HealthVerdictStatus;
+  node_health?: HealthVerdictStatus;
+  viability?: HealthVerdictStatus;
   limit: number;
   offset: number;
   sort_by?: DeviceSortBy;

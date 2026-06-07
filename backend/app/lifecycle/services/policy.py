@@ -696,7 +696,7 @@ class LifecyclePolicyService:
         # does not set ``stop_pending``, so nothing else clears the reason once the
         # session ends — the device renders as ``Unhealthy: A client session is still
         # running`` indefinitely (lifecycle_policy_summary maps the suppression to
-        # ``state=suppressed`` → frontend ``deriveUnifiedHealth`` tone=error).
+        # ``state=suppressed`` → rendered as an error-tone state in the frontend).
         if current_state.get("recovery_suppressed_reason") == CLIENT_SESSION_RUNNING_SUPPRESSION_REASON:
             current_state["recovery_suppressed_reason"] = None
             set_action(current_state, "recovery_unsuppressed_after_session_end")
@@ -713,11 +713,10 @@ class LifecyclePolicyService:
         if await self._actions.has_running_client_session(db, device.id):
             return DeferredStopOutcome.RUNNING_SESSION_EXISTS
 
-        summary = device_health.build_public_summary(device)
         node = loaded_node(device)
         node_running = node is not None and node.observed_running
 
-        if summary.get("healthy") is True and node_running:
+        if device_health.merged_liveness(device) is True and node_running:
             # Defense in depth: ``clear_pending_auto_stop_on_recovery`` should
             # already have cleared the intent when health recovered. If anything
             # slipped the device into a healthy state without going through that

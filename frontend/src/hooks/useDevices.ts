@@ -31,6 +31,7 @@ import type {
   ConnectionType,
   DevicePatch,
   HardwareHealthStatus,
+  HealthVerdictStatus,
   HardwareTelemetryState,
   DeviceFilterStatus,
   DeviceType,
@@ -62,6 +63,9 @@ export function useDevices(params?: {
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
+  device_health?: HealthVerdictStatus;
+  node_health?: HealthVerdictStatus;
+  viability?: HealthVerdictStatus;
 }) {
   const { connected } = useEventStreamStatus();
   return useQuery({
@@ -83,6 +87,9 @@ export function useDevicesPaginated(params: {
   hardware_health_status?: HardwareHealthStatus;
   hardware_telemetry_state?: HardwareTelemetryState;
   needs_attention?: boolean;
+  device_health?: HealthVerdictStatus;
+  node_health?: HealthVerdictStatus;
+  viability?: HealthVerdictStatus;
   limit: number;
   offset: number;
   sort_by?: DeviceSortBy;

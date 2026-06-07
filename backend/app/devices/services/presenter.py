@@ -69,7 +69,7 @@ class DevicePresenterService:
         needs_attention = device_attention.compute_needs_attention(
             lifecycle_summary["state"],
             readiness.readiness_state,
-            health_healthy=health_summary.get("healthy") if health_summary else None,
+            health_overall=health_summary.get("overall") if health_summary else None,
             hardware_health_status=hardware_status,
             review_required=bool(device.review_required),
         )

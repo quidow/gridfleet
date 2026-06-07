@@ -208,6 +208,12 @@ export function Devices() {
           onHardwareHealthStatusFilterChange={controller.setHardwareHealthStatusFilter}
           hardwareTelemetryStateFilter={controller.hardwareTelemetryStateFilter}
           onHardwareTelemetryStateFilterChange={controller.setHardwareTelemetryStateFilter}
+          deviceHealthFilter={controller.deviceHealthFilter}
+          onDeviceHealthFilterChange={controller.setDeviceHealthFilter}
+          nodeHealthFilter={controller.nodeHealthFilter}
+          onNodeHealthFilterChange={controller.setNodeHealthFilter}
+          viabilityFilter={controller.viabilityFilter}
+          onViabilityFilterChange={controller.setViabilityFilter}
           osVersionFilter={controller.osVersionFilter}
           onOsVersionFilterChange={controller.setOsVersionFilter}
           osVersions={controller.osDisplayVersions}
