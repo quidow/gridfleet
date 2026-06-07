@@ -154,7 +154,7 @@ class DeviceCrudService:
                     device_attention.compute_needs_attention(
                         summary["state"],
                         readiness.readiness_state,
-                        health_healthy=(health_summary or {}).get("healthy"),
+                        health_overall=(health_summary or {}).get("overall"),
                         hardware_health_status=hardware_telemetry.current_hardware_health_status(device),
                         review_required=bool(device.review_required),
                     )

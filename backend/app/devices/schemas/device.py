@@ -203,13 +203,20 @@ class DeviceLifecyclePolicySummaryRead(BaseModel):
     maintenance_reason: str | None = None
 
 
+HealthVerdictStatus = Literal["ok", "warn", "failed", "unknown"]
+
+
+class HealthVerdictRead(BaseModel):
+    status: HealthVerdictStatus
+    detail: str | None = None
+    checked_at: str | None = None
+
+
 class DeviceHealthSummaryRead(BaseModel):
-    healthy: bool | None
-    summary: str
-    connectivity_status: Literal["ok", "failed"] | None = None
-    node_status: str | None = None
-    session_status: Literal["passed", "failed"] | None = None
-    last_checked_at: str | None = None
+    device: HealthVerdictRead
+    node: HealthVerdictRead
+    viability: HealthVerdictRead
+    overall: HealthVerdictStatus
 
 
 class DeviceConfigRead(RootModel[dict[str, Any]]):

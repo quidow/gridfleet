@@ -13,7 +13,7 @@ def compute_needs_attention(
     lifecycle_state: DeviceLifecyclePolicySummaryState,
     readiness_state: str,
     *,
-    health_healthy: bool | None = None,
+    health_overall: str | None = None,
     hardware_health_status: HardwareHealthStatus | None = None,
     review_required: bool = False,
 ) -> bool:
@@ -23,7 +23,7 @@ def compute_needs_attention(
         return True
     if readiness_state in _READINESS_NEEDS_ATTENTION:
         return True
-    if health_healthy is False:
+    if health_overall == "failed":
         return True
     if hardware_health_status is HardwareHealthStatus.critical:  # noqa: SIM103 - short-circuit for clarity
         return True
