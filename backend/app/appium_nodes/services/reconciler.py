@@ -469,6 +469,14 @@ async def _touch_last_observed(
 ) -> None:
     if not rows:
         return
+    # WI-4 ruling: this observation touch is intentionally LOCKLESS (no
+    # lock_appium_node), unlike every other observation-column writer. It is a
+    # monotonic timestamp written by the single leader-serialized reconciler and
+    # read by no decision logic (display/export only), so a lost update is
+    # harmless and self-heals next tick; locking N rows per tick would add
+    # contention for nothing. TRIPWIRE: if any loop/allocator/reaper ever starts
+    # reading last_observed_at to make a decision, revisit this ruling and WI-2
+    # (the guard cannot see this Core write either).
     async with session_factory() as db:
         await assert_current_leader(db, settings=settings)
         node_ids = [row.node_id for row in rows]

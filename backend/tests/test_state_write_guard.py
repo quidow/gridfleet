@@ -13,9 +13,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.appium_nodes.models import AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from tests.helpers import test_event_bus as event_bus
+
+# Columns the attribute-event guard structurally CANNOT enforce: they are
+# written only by SQLAlchemy Core bulk UPDATEs, which fire no ORM ``set`` event.
+# Documented carve-out (WI-2, option B). See the test below + the module
+# docstring in state_write_guard.py.
+_CORE_WRITE_ONLY: frozenset[tuple[str, str]] = frozenset({("appium_nodes", "last_observed_at")})
 
 
 def _device() -> Device:
@@ -111,6 +118,42 @@ def test_allowlist_pins_every_protected_column(table: str, column: str) -> None:
         ("appium_nodes", "last_observed_at"),
     }
     assert (table, column) in expected_columns
+
+
+def _node() -> AppiumNode:
+    with state_write_guard.bypass():
+        return AppiumNode(id=uuid.uuid4())
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    sorted(set(state_write_guard.ALLOWLIST) - _CORE_WRITE_ONLY),
+)
+def test_unsanctioned_write_actually_raises_for_every_orm_enforceable_column(table: str, column: str) -> None:
+    """Enforcement (not just key-presence): a write from an unsanctioned module
+    (this test) must actually raise for every ORM-enforceable protected column.
+
+    The guard fires on the SQLAlchemy ``set`` event before any type coercion, so
+    a type-agnostic sentinel value is sufficient to trip it. ``last_observed_at``
+    is excluded as the documented Core-update carve-out (see the dedicated test).
+    """
+    target: Device | AppiumNode = _device() if table == "devices" else _node()
+    with pytest.raises(state_write_guard.StateWriteOutsideSanctionedWriterError) as exc:
+        setattr(target, column, "guard-enforcement-probe")
+    assert f"{table}.{column}" in str(exc.value)
+
+
+def test_last_observed_at_is_a_documented_core_write_carve_out() -> None:
+    """``last_observed_at`` is written only via a Core bulk UPDATE
+    (``reconciler._touch_last_observed``), which the attribute-event guard cannot
+    intercept. Its ALLOWLIST entry must name the real writer (``reconciler``,
+    documentary only) rather than the stale ``heartbeat`` — and it is excluded
+    from the enforcement parametrization above so the gap is explicit, not silent.
+    """
+    assert ("appium_nodes", "last_observed_at") in _CORE_WRITE_ONLY
+    assert state_write_guard.ALLOWLIST[("appium_nodes", "last_observed_at")] == frozenset(
+        {"app.appium_nodes.services.reconciler"}
+    )
 
 
 def test_register_is_called_during_app_lifespan() -> None:
