@@ -93,8 +93,6 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
             _dead_result(),
             guard_active=True,
             settings=FakeSettingsReader({}),
-            circuit_breaker=Mock(),
-            session_factory=MagicMock(),
             publisher=event_bus,
         )
 

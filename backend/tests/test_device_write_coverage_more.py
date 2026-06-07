@@ -177,7 +177,6 @@ def test_device_config_identity_and_create_payload_branches() -> None:
         identity_value=None,
         connection_target=None,
         ip_address=None,
-        device_type=DeviceType.real_device,
         normalized=normalized,
     ) == ("serial", "stable", "", None)
 
@@ -187,7 +186,6 @@ def test_device_config_identity_and_create_payload_branches() -> None:
         identity_value=None,
         connection_target=None,
         ip_address=None,
-        device_type=DeviceType.real_device,
     )
     assert generated[0] == "manager_generated"
     assert generated[1].startswith("android:")

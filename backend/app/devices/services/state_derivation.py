@@ -121,7 +121,6 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
 def _reason_for(
     prev_op: DeviceOperationalState,
     facts: DeviceStateFacts,
-    derived_op: DeviceOperationalState,
 ) -> ObservationReason:
     """Map gathered facts to the closest ObservationReason for the derived transition.
 
@@ -184,7 +183,7 @@ async def apply_derived_state(
         return False
 
     prev_op = device.operational_state
-    reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts, derived_op)
+    reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts)
     event_type, severity = map_transition_event(derived_op, reason)
     # Persist the typed audit row when the cause was
     # explicitly carried in by the observation site — never from the fact-based heuristic, which

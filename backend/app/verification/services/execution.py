@@ -334,7 +334,6 @@ class VerificationExecutionService:
                 publisher=self._publisher,
                 crud=self._crud,
                 viability=self._viability,
-                node_manager=self._node_manager,
             )
         except Exception:
             await _finalize_failure(
@@ -521,7 +520,6 @@ async def _finalize_success(
     publisher: EventPublisher,
     crud: DeviceCrudProtocol,
     viability: SessionViabilityProbe,
-    node_manager: RemoteNodeManager,
 ) -> VerificationExecutionOutcome:
     assert context.save_device_id is not None
     await set_stage(job, "save_device", "running")

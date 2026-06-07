@@ -62,11 +62,6 @@ class PackDiscoveredCandidate:
     missing_requirements: list[str] = field(default_factory=list)
 
 
-@dataclass
-class PackDiscoveryResult:
-    candidates: list[PackDiscoveredCandidate]
-
-
 IdentityKey = tuple[str, str, str]
 
 

@@ -280,7 +280,6 @@ async def test_finalize_success_is_reconciler_authoritative_after_verified_at(
         publisher=event_bus,
         crud=AsyncMock(),
         viability=_mock_viability,
-        node_manager=AsyncMock(),
     )
 
     assert outcome.status == "completed"

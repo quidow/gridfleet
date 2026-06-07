@@ -38,16 +38,6 @@ class HostRegister(BaseModel):
     host_info: HostHardwareInfo | None = None
 
 
-class HostUpdate(BaseModel):
-    hostname: str | None = None
-    ip: str | None = None
-    os_type: OSType | None = None
-    agent_port: int | None = None
-    status: HostStatus | None = None
-    agent_version: str | None = None
-    capabilities: dict[str, Any] | None = None
-
-
 class HostRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

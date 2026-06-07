@@ -235,10 +235,8 @@ def _resolve_identity(
     identity_value: str | None,
     connection_target: str | None,
     ip_address: str | None,
-    device_type: DeviceType,
     existing_identity_value: str | None = None,
     resolved_identity_scheme: str | None = None,
-    connection_behavior: dict[str, Any] | None = None,
     normalized: dict[str, Any] | None = None,
 ) -> tuple[str, str, str | None, str | None]:
     """Resolve identity_scheme, identity_value, connection_target, ip_address from pack-shaped inputs.
@@ -314,9 +312,7 @@ def _resolve_create_payload_fields(
         identity_value=payload.get("identity_value"),
         connection_target=payload.get("connection_target"),
         ip_address=payload.get("ip_address"),
-        device_type=resolved_device_type,
         resolved_identity_scheme=resolved_identity_scheme,
-        connection_behavior=connection_behavior,
         normalized=normalized,
     )
 
@@ -447,10 +443,8 @@ def _resolve_update_payload_fields(
         identity_value=payload.get("identity_value", device.identity_value),
         connection_target=payload.get("connection_target", device.connection_target),
         ip_address=next_ip_address,
-        device_type=next_device_type,
         existing_identity_value=device.identity_value,
         resolved_identity_scheme=resolved_identity_scheme,
-        connection_behavior=connection_behavior,
     )
 
     _validate_device_shape(
