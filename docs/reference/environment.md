@@ -37,7 +37,7 @@ These configure the standalone Rust WebDriver router (`router/`). Each has an eq
 | --- | --- | --- | --- |
 | `GRIDFLEET_ROUTER_LISTEN` | required (`0.0.0.0:4444` in compose) | router process | `host:port` the router binds for inbound WebDriver traffic. |
 | `GRIDFLEET_ROUTER_BACKEND` | required (`http://backend:8000` in compose) | router process | Backend base URL the router calls for device allocation (`/internal/grid/*`). |
-| `GRIDFLEET_ROUTER_BACKEND_AUTH` | empty (absent) | router process | HTTP Basic credentials `user:pass` for backend calls. Empty means no auth header is sent. |
+| `GRIDFLEET_ROUTER_BACKEND_AUTH` | empty (absent) | router process | HTTP Basic credentials `user:pass` for backend calls. Empty means no auth header is sent. The prod compose requires it to be explicitly set (set it empty only with `GRIDFLEET_AUTH_ENABLED=false`); leaving it unset with auth on would 401 every allocation. |
 | `GRIDFLEET_ROUTER_PROXY_TIMEOUT` | `300` | router process | Per-command upstream Appium timeout, in seconds. |
 | `GRIDFLEET_ROUTER_NEW_SESSION_TIMEOUT` | `330` | router process | Overall cap on a new-session request including queueing, in seconds. |
 

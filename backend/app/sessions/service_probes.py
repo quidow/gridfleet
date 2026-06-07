@@ -12,17 +12,19 @@ This module never emits session events: probes are diagnostic, not workload.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.observability import get_logger
+from app.core.timeutil import now_utc
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.probe_result import ProbeResult
@@ -70,7 +72,7 @@ async def record_probe_session(
         device_id=device.id,
         test_name=PROBE_TEST_NAME,
         started_at=attempted_at,
-        ended_at=datetime.now(UTC),
+        ended_at=now_utc(),
         status=status,
         requested_capabilities=enriched_caps,
         error_type=error_type,

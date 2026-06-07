@@ -212,9 +212,13 @@ async def test_register_and_finish_session_guard_paths(
 
 
 async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = SimpleNamespace(session_id="vanished-device", device_id=__import__("uuid").uuid4(), ended_at=None)
+    _uuid = __import__("uuid")
+    session = SimpleNamespace(session_id="vanished-device", id=_uuid.uuid4(), device_id=_uuid.uuid4(), ended_at=None)
     db = AsyncMock()
     db.get = AsyncMock(return_value=None)
+    # The conditional close-claim UPDATE (re-review B3) must report a win.
+    db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+    db.refresh = AsyncMock()
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     monkeypatch.setattr(IntentService, "revoke_intents_and_reconcile", AsyncMock())

@@ -230,33 +230,6 @@ async def get_background_loop_snapshots(db: AsyncSession) -> dict[str, dict[str,
     return {name: value for name, value in values.items() if isinstance(value, dict)}
 
 
-async def set_background_loop_snapshot(db: AsyncSession, loop_name: str, snapshot: dict[str, Any]) -> None:
-    control_plane_state_store = _control_plane_state_store()
-    await control_plane_state_store.set_value(db, LOOP_HEARTBEAT_NAMESPACE, loop_name, snapshot)
-
-
-def build_background_loop_snapshot(
-    loop_name: str,
-    *,
-    interval_seconds: float,
-    owner: str | None = None,
-    now: datetime | None = None,
-    last_error: str | None = None,
-) -> dict[str, Any]:
-    reference_time = now or _now()
-    return {
-        "loop_name": loop_name,
-        "owner": owner or _PROCESS_OWNER,
-        "interval_seconds": interval_seconds,
-        "last_started_at": reference_time.isoformat(),
-        "last_succeeded_at": reference_time.isoformat(),
-        "last_error_at": None,
-        "last_error": last_error,
-        "last_duration_seconds": 0.01,
-        "next_expected_at": (reference_time + timedelta(seconds=interval_seconds)).isoformat(),
-    }
-
-
 @dataclass
 class _HeartbeatBuffer:
     """Per-process in-memory cache of the latest background-loop heartbeats.

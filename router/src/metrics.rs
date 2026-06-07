@@ -7,6 +7,13 @@ use prometheus::{Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, 
 pub struct Metrics {
     /// Commands seen, by class (new_session|command|delete|local).
     pub commands_total: IntCounterVec,
+    /// Pre-resolved children of `commands_total` — the label set is the fixed
+    /// route-class enum, so the hot path skips the per-request label-hash
+    /// lookup of `with_label_values` (wave-5 #23).
+    pub commands_new_session: IntCounter,
+    pub commands_command: IntCounter,
+    pub commands_delete: IntCounter,
+    pub commands_local: IntCounter,
     /// Allocate-loop outcomes (allocated|queued|invalid|timeout|error).
     pub allocate_outcomes: IntCounterVec,
     /// Current number of live session routes.
@@ -76,8 +83,17 @@ pub fn metrics() -> &'static Metrics {
         prometheus::register(Box::new(create_missing_session_id_total.clone())).expect("register");
         prometheus::register(Box::new(request_duration.clone())).expect("register");
 
+        let commands_new_session = commands_total.with_label_values(&["new_session"]);
+        let commands_command = commands_total.with_label_values(&["command"]);
+        let commands_delete = commands_total.with_label_values(&["delete"]);
+        let commands_local = commands_total.with_label_values(&["local"]);
+
         Metrics {
             commands_total,
+            commands_new_session,
+            commands_command,
+            commands_delete,
+            commands_local,
             allocate_outcomes,
             active_routes,
             delete_orphaned_total,

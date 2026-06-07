@@ -227,6 +227,54 @@ async def test_upload_warns_when_session_discovery_missing(
 
 
 @pytest.mark.asyncio
+async def test_upload_canonicalizes_session_discovery_into_stored_manifest(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """Wave-5 #29: the invariant "every grid pack supports session enumeration" was
+    split across a soft warn at ingest and a hard fix-up at dispatch (start_shim),
+    so the stored manifest could permanently disagree with what runs. Ingest now
+    canonicalizes the wildcard feature into the stored manifest_json; the dispatch
+    injection stays as the compat layer for packs ingested before this."""
+    from sqlalchemy import select
+
+    from app.packs.models import DriverPackRelease
+
+    storage = PackStorageService(root=tmp_path)
+    await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball())
+    release = (
+        (await db_session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == "vendor-foo")))
+        .scalars()
+        .one()
+    )
+    assert "*:session_discovery" in (release.manifest_json.get("insecure_features") or [])
+
+
+@pytest.mark.asyncio
+async def test_upload_preserves_existing_session_discovery_scope(db_session: AsyncSession, tmp_path: Path) -> None:
+    """A pack already requesting the feature (any scope) is stored verbatim — no
+    duplicate wildcard appended."""
+    from sqlalchemy import select
+
+    from app.packs.models import DriverPackRelease
+
+    storage = PackStorageService(root=tmp_path)
+    manifest = _MANIFEST + 'insecure_features:\n  - "uiautomator2:session_discovery"\n'
+    await upload_pack(
+        db_session,
+        storage=storage,
+        username="alice",
+        origin_filename="x.tar.gz",
+        data=_build_tarball(manifest=manifest),
+    )
+    release = (
+        (await db_session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == "vendor-foo")))
+        .scalars()
+        .one()
+    )
+    assert release.manifest_json.get("insecure_features") == ["uiautomator2:session_discovery"]
+
+
+@pytest.mark.asyncio
 async def test_upload_no_warning_when_session_discovery_present(
     db_session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

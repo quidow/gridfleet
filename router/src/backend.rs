@@ -1,7 +1,6 @@
 //! HTTP client for the backend's internal grid API (contract: Plan A / spec §3-5).
 
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub enum AllocateOutcome {
@@ -100,6 +99,18 @@ impl BackendClient {
                 };
                 Ok(AllocateOutcome::Fatal { status, message })
             }
+            status @ 400..=499 => {
+                // Any other 4xx is a request-level rejection retrying cannot fix
+                // (e.g. FastAPI 422 on a malformed allocate envelope). Surface the
+                // body's detail to the client immediately instead of spinning the
+                // 2s retry loop to the new-session deadline (wave-5 #5). Only 5xx
+                // and transport errors stay transient.
+                let raw = resp.text().await.unwrap_or_default();
+                let detail = reject_detail(&raw);
+                Ok(AllocateOutcome::Invalid {
+                    message: format!("backend rejected allocate ({status}): {detail}"),
+                })
+            }
             _ => {
                 let v: serde_json::Value = resp.error_for_status()?.json().await?;
                 if v["status"] == "allocated" {
@@ -192,19 +203,16 @@ impl BackendClient {
         Ok(routes)
     }
 
-    pub async fn flush_activity(
-        &self,
-        sessions: HashMap<String, SystemTime>,
-    ) -> reqwest::Result<()> {
+    /// Report which sessions saw traffic since the last flush. The backend
+    /// stamps a server-side now() per id (it always ignored caller timestamps
+    /// — clock skew here must not extend idle reaping), so the payload is just
+    /// the id set (wave-5 #12).
+    pub async fn flush_activity(&self, sessions: HashSet<String>) -> reqwest::Result<()> {
         if sessions.is_empty() {
             return Ok(());
         }
-        let map: serde_json::Map<String, serde_json::Value> = sessions
-            .into_iter()
-            .map(|(id, ts)| (id, serde_json::Value::String(rfc3339_utc(ts))))
-            .collect();
         self.req(reqwest::Method::POST, "/internal/grid/activity")
-            .json(&serde_json::json!({"sessions": map}))
+            .json(&serde_json::json!({"sessions": sessions}))
             .send()
             .await?
             .error_for_status()?;
@@ -212,70 +220,61 @@ impl BackendClient {
     }
 }
 
-/// Format a `SystemTime` as a UTC RFC3339 timestamp `YYYY-MM-DDTHH:MM:SSZ`.
-/// Times before the UNIX epoch clamp to the epoch. Civil-date math uses
-/// Howard Hinnant's `days_from_civil` inverse (`civil_from_days`).
-fn rfc3339_utc(t: SystemTime) -> String {
-    let secs = t
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// Inverse of `days_from_civil`: convert days since 1970-01-01 to (year, month, day).
-/// From Howard Hinnant's "chrono-compatible Low-Level Date Algorithms".
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
+/// Best-effort human-readable detail from a backend rejection body: a
+/// top-level `message`, then FastAPI-style `detail` (a string, or an array of
+/// validation objects whose `msg` fields are joined — re-review B1: never dump
+/// serialized JSON into the client-facing message), else the raw body text.
+fn reject_detail(raw: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return raw.to_string();
+    };
+    if let Some(message) = v["message"].as_str() {
+        return message.to_string();
+    }
+    match &v["detail"] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(items) => {
+            let msgs: Vec<&str> = items.iter().filter_map(|i| i["msg"].as_str()).collect();
+            if msgs.is_empty() {
+                v["detail"].to_string()
+            } else {
+                msgs.join("; ")
+            }
+        }
+        serde_json::Value::Null => raw.to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::time::Duration;
+    use super::reject_detail;
 
     #[test]
-    fn rfc3339_epoch() {
-        assert_eq!(rfc3339_utc(UNIX_EPOCH), "1970-01-01T00:00:00Z");
+    fn reject_detail_prefers_message() {
+        assert_eq!(reject_detail(r#"{"message":"no match"}"#), "no match");
     }
 
     #[test]
-    fn rfc3339_known_modern() {
-        // date -u -r 1717538096 +%Y-%m-%dT%H:%M:%SZ => 2024-06-04T21:54:56Z
-        let t = UNIX_EPOCH + Duration::from_secs(1_717_538_096);
-        assert_eq!(rfc3339_utc(t), "2024-06-04T21:54:56Z");
+    fn reject_detail_joins_fastapi_msgs() {
+        let raw = r#"{"detail":[{"type":"t","msg":"Input should be a valid dictionary"},{"msg":"second"}]}"#;
+        assert_eq!(
+            reject_detail(raw),
+            "Input should be a valid dictionary; second"
+        );
     }
 
     #[test]
-    fn rfc3339_leap_day() {
-        // date -u -r 1709207696 +%Y-%m-%dT%H:%M:%SZ => 2024-02-29T11:54:56Z
-        let t = UNIX_EPOCH + Duration::from_secs(1_709_207_696);
-        assert_eq!(rfc3339_utc(t), "2024-02-29T11:54:56Z");
+    fn reject_detail_string_detail() {
+        assert_eq!(
+            reject_detail(r#"{"detail":"plain reason"}"#),
+            "plain reason"
+        );
     }
 
     #[test]
-    fn rfc3339_day_after_leap_day() {
-        // date -u -r 1709251200 +%Y-%m-%dT%H:%M:%SZ => 2024-03-01T00:00:00Z
-        let t = UNIX_EPOCH + Duration::from_secs(1_709_251_200);
-        assert_eq!(rfc3339_utc(t), "2024-03-01T00:00:00Z");
-    }
-
-    #[test]
-    fn rfc3339_before_epoch_clamps() {
-        let t = UNIX_EPOCH - Duration::from_secs(10);
-        assert_eq!(rfc3339_utc(t), "1970-01-01T00:00:00Z");
+    fn reject_detail_falls_back_to_raw() {
+        assert_eq!(reject_detail("plain crash dump"), "plain crash dump");
+        assert_eq!(reject_detail(r#"{"other":1}"#), r#"{"other":1}"#);
     }
 }

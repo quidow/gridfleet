@@ -8,6 +8,7 @@ database while xdist workers are busy.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -55,6 +56,11 @@ def _test_database_url(base_database_url: str) -> str:
 @pytest.mark.asyncio
 async def test_driver_pack_tables_exist(ensure_test_database: None) -> None:
     _ = ensure_test_database
+    # Logging sentinel: env.py's fileConfig must not disable pre-existing loggers
+    # when alembic runs in-process — with the stdlib default
+    # (disable_existing_loggers=True) every already-imported app logger went
+    # silent, poisoning caplog assertions in any test that ran after this one.
+    logging_sentinel = logging.getLogger("app.tests.migration_logging_sentinel")
     schema_name = f"migration_{uuid.uuid4().hex}"
     database_url = _test_database_url(settings.database_url)
     engine = create_async_engine(database_url, poolclass=NullPool)
@@ -88,3 +94,4 @@ async def test_driver_pack_tables_exist(ensure_test_database: None) -> None:
 
     missing = EXPECTED_TABLES - tables
     assert not missing, f"missing driver-pack tables after upgrade: {sorted(missing)}"
+    assert not logging_sentinel.disabled, "in-process alembic upgrade disabled pre-existing loggers (caplog poison)"

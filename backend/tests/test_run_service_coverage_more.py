@@ -584,6 +584,78 @@ async def test_mark_running_sessions_released_success_path(
 
 
 @pytest.mark.db
+async def test_mark_running_sessions_released_terminates_concurrently_across_hosts(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wave-5 #8: run release awaited each Appium DELETE serially (10s timeout each)
+    while the callers hold the run FOR UPDATE — worst case Nx10s of wall time under
+    lock. The DELETEs must overlap across hosts (bounded per host); the DB writes
+    stay serial afterwards."""
+    import asyncio
+
+    other_host = Host(
+        hostname=f"db-host-{uuid.uuid4().hex[:8]}",
+        ip="10.0.0.251",
+        os_type=db_host.os_type,
+        agent_port=5100,
+        status=db_host.status,
+    )
+    db_session.add(other_host)
+    await db_session.flush()
+
+    devices = []
+    for i, host in enumerate([db_host, db_host, other_host, other_host]):
+        device = await create_device(
+            db_session,
+            host_id=host.id,
+            name=f"Concurrent Release Device {i}",
+            identity_value=f"run-release-conc-{i:03d}",
+            operational_state=DeviceOperationalState.busy,
+        )
+        with state_write_guard.bypass():
+            db_session.add(
+                AppiumNode(
+                    device_id=device.id,
+                    port=4723 + i,
+                    desired_state=AppiumDesiredState.running,
+                    desired_port=4723 + i,
+                    pid=1,
+                    active_connection_target="",
+                )
+            )
+        devices.append(device)
+    run = await create_reserved_run(db_session, name="release-conc-run", devices=devices, state=RunState.cancelled)
+    sessions = [
+        Session(session_id=f"release-conc-{i}", device_id=device.id, run_id=run.id, status=SessionStatus.running)
+        for i, device in enumerate(devices)
+    ]
+    db_session.add_all(sessions)
+    await db_session.commit()
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def fake_terminate(target: str, session_id: str, **_: object) -> bool:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return True
+
+    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    await svc._mark_running_sessions_released(db_session, run, datetime.now(UTC), terminate_grid_sessions=True)
+
+    assert max_in_flight >= 2, f"terminates did not overlap (max in flight: {max_in_flight})"
+    for session in sessions:
+        assert session.status == SessionStatus.error
+        assert session.ended_at is not None
+
+
+@pytest.mark.db
 async def test_mark_running_sessions_released_expires_claimed_ticket(
     db_session: AsyncSession,
     db_host: Host,

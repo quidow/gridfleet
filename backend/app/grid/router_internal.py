@@ -13,7 +13,6 @@ behavior within 1 s, no cross-worker wake needed.
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import APIRouter
@@ -23,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import DbDep
+from app.core.timeutil import now_utc
 from app.devices.models import Device
 from app.grid.allocation import (
     GRID_ALLOCATION_OUTCOME_TOTAL,
@@ -31,7 +31,9 @@ from app.grid.allocation import (
     resolve_router_target,
     transition_ticket,
 )
+from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.dependencies import GridServicesDep
+from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import (
     ActivityRequest,
@@ -48,7 +50,6 @@ from app.sessions.models import Session, SessionStatus
 router = APIRouter(prefix="/internal/grid", include_in_schema=False, tags=["grid-internal"])
 
 LONG_POLL_SEC = 25.0
-RETRY_INTERVAL_SEC = 1.0
 
 
 async def _get_or_create_ticket(
@@ -97,13 +98,15 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 if resumed is not None:
                     await db.commit()
                     return _allocated(resumed)
-            result = await allocation.try_allocate(db, ticket=ticket)
-            # try_allocate cancels the ticket on an invalid body; re-read past
-            # mypy's narrowing from the early returns above.
-            cancelled = cast("GridQueueStatus", ticket.status) == GridQueueStatus.cancelled
+            try:
+                result = await allocation.try_allocate(db, ticket=ticket)
+            except CapabilityMergeError as e:
+                # try_allocate already cancelled the ticket; persist that and put
+                # the descriptive merge message in the 400 body (wave-5 #26). A
+                # re-poll of the cancelled ticket gets the generic text above.
+                await db.commit()
+                return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
             await db.commit()
-        if cancelled:
-            return JSONResponse(status_code=400, content={"status": "invalid", "message": "invalid capabilities"})
         if result is not None:
             return _allocated(result)
         if time.monotonic() >= deadline:
@@ -126,6 +129,14 @@ async def confirm(allocation_id: uuid.UUID, payload: ConfirmRequest, db: DbDep, 
     try:
         await services.allocation.confirm(db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id)
     except AllocationNotPendingError:
+        # The router rolls the just-created Appium session back best-effort on 409.
+        # Record the reported id on the terminal row first (wave-5 #7) so the orphan
+        # sweep can kill exactly this session if that rollback DELETE fails — even
+        # while the device already holds a new pending allocation.
+        await services.allocation.record_doomed_appium_session(
+            db, allocation_id=allocation_id, appium_session_id=payload.appium_session_id
+        )
+        await db.commit()
         return Response(status_code=409)
     await db.commit()
     return Response(status_code=204)
@@ -173,14 +184,14 @@ async def routes(db: DbDep) -> RoutesResponse:
 async def activity(payload: ActivityRequest, db: DbDep) -> Response:
     if not payload.sessions:
         return Response(status_code=204)
-    # The payload means "these sessions were active"; we ignore the caller-supplied
-    # datetimes (the router host's wall clock — clock skew there would otherwise extend
-    # or defeat idle reaping, which is judged against this host's clock) and stamp a
-    # single server-side now() for every reported session. One UPDATE over an IN-set.
-    now = datetime.now(UTC)
+    # The payload means "these sessions were active"; stamp a single server-side
+    # now() for every reported session (the legacy map form's caller datetimes were
+    # always ignored — router clock skew would otherwise extend or defeat idle
+    # reaping, which is judged against this host's clock). One UPDATE over an IN-set.
+    now = now_utc()
     await db.execute(
         update(Session)
-        .where(Session.session_id.in_(list(payload.sessions.keys())), Session.status == SessionStatus.running)
+        .where(Session.session_id.in_(payload.session_ids), Session.status == SessionStatus.running)
         .values(last_activity_at=now)
     )
     await db.commit()

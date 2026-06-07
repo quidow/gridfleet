@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -10,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.probe_result import ProbeResult
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger, observe_background_loop
+from app.core.timeutil import now_utc
 from app.core.timeutil import parse_iso as _parse_timestamp
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
@@ -25,6 +25,8 @@ from app.sessions.service_probes import ProbeSource, record_probe_session
 from app.sessions.viability_types import SessionViabilityCheckedBy
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
@@ -208,7 +210,7 @@ class SessionViabilityService:
             # it; otherwise a probe really is in flight.
             existing = await control_plane_state_store.get_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
             timeout_sec = int(self._settings.get("general.session_viability_timeout_sec"))
-            if _viability_lock_is_stale(existing, now=datetime.now(UTC), timeout_sec=timeout_sec):
+            if _viability_lock_is_stale(existing, now=now_utc(), timeout_sec=timeout_sec):
                 logger.warning("session_viability_reclaiming_stale_lock", device_id=device_key, existing_lock=existing)
                 await control_plane_state_store.delete_value(db, SESSION_VIABILITY_RUNNING_NAMESPACE, device_key)
                 acquired = await control_plane_state_store.try_claim_value(
@@ -298,7 +300,7 @@ class SessionViabilityService:
             await record_probe_session(
                 db,
                 device=device,
-                attempted_at=_parse_timestamp(attempted_at) or datetime.now(UTC),
+                attempted_at=_parse_timestamp(attempted_at) or now_utc(),
                 result=grid_probe_response_to_result((ok, error)),
                 source=_VIABILITY_PROBE_SOURCE_MAP[checked_by],
                 capabilities=capabilities,
@@ -384,7 +386,7 @@ class SessionViabilityService:
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return now_utc().isoformat()
 
 
 # A viability probe holds its lock for at most one ``session_viability_timeout_sec``
@@ -506,7 +508,7 @@ async def _should_run_scheduled_probe(db: AsyncSession, device: Device, interval
     if last_attempted_at is None:
         return True
 
-    elapsed = (datetime.now(UTC) - last_attempted_at).total_seconds()
+    elapsed = (now_utc() - last_attempted_at).total_seconds()
     return elapsed >= interval_sec
 
 

@@ -15,23 +15,12 @@ from app.core.observability import (
     BACKGROUND_LOOP_NAMES,
     REQUEST_ID_HEADER,
     bind_request_context,
-    build_background_loop_snapshot,
     clear_request_context,
     configure_logging,
     get_logger,
-    set_background_loop_snapshot,
 )
 from tests.fakes import FakeSettingsReader
-
-
-async def _seed_ready_loops(db_session: AsyncSession) -> None:
-    for loop_name in BACKGROUND_LOOP_NAMES:
-        await set_background_loop_snapshot(
-            db_session,
-            loop_name,
-            build_background_loop_snapshot(loop_name, interval_seconds=60.0),
-        )
-    await db_session.commit()
+from tests.helpers import seed_ready_loop_snapshots
 
 
 async def test_health_live_returns_ok_and_request_id(client: AsyncClient) -> None:
@@ -52,7 +41,7 @@ async def test_request_middleware_echoes_request_id(client: AsyncClient) -> None
 async def test_ready_health_endpoints_report_ready_when_loops_are_fresh(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _seed_ready_loops(db_session)
+    await seed_ready_loop_snapshots(db_session)
 
     ready_resp = await client.get("/health/ready")
     alias_resp = await client.get("/api/health")
@@ -85,7 +74,7 @@ async def test_check_readiness_reports_db_failure() -> None:
 
 
 async def test_metrics_endpoint_returns_prometheus_payload(client: AsyncClient, db_session: AsyncSession) -> None:
-    await _seed_ready_loops(db_session)
+    await seed_ready_loop_snapshots(db_session)
     record_background_loop_run("heartbeat", 0.05)
 
     await client.get("/health/live")

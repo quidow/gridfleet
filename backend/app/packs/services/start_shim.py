@@ -12,6 +12,8 @@ from app.packs.services.platform_resolver import resolve_pack_platform
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
@@ -28,20 +30,30 @@ _SESSION_DISCOVERY_FEATURE = "session_discovery"
 _SESSION_DISCOVERY_WILDCARD = "*:session_discovery"
 
 
-def _ensure_session_discovery(insecure_features: list[str], *, pack_id: str) -> list[str]:
-    """Force ``session_discovery`` into the agent's --allow-insecure set.
+def has_session_discovery(insecure_features: Iterable[str]) -> bool:
+    """Whether any entry requests session_discovery (bare, ``*:``-scoped, or
+    driver-scoped ``foo:session_discovery``).
 
-    The flag is otherwise purely manifest-driven and ingest only *warns* when a
-    pack omits it, so a third-party grid pack could ship without it and silently
-    lose orphan reaping (harness C10). Injecting it here guarantees every started
-    node can be enumerated. Already-present (bare, ``*:``-scoped, or driver-scoped
-    ``foo:session_discovery``) entries are left untouched.
+    The single predicate shared by ingest canonicalization and the dispatch
+    injection below — if a new scope format ever appears, both layers must
+    recognize it identically or the stored manifest diverges from what runs.
     """
-    has_feature = any(
+    return any(
         feat == _SESSION_DISCOVERY_FEATURE or feat.endswith(f":{_SESSION_DISCOVERY_FEATURE}")
         for feat in insecure_features
     )
-    if has_feature:
+
+
+def _ensure_session_discovery(insecure_features: list[str], *, pack_id: str) -> list[str]:
+    """Force ``session_discovery`` into the agent's --allow-insecure set.
+
+    Ingest canonicalizes the feature into newly stored manifests; this injection
+    is the compat layer for packs ingested before that, so a third-party grid
+    pack cannot silently lose orphan reaping (harness C10). Injecting it here
+    guarantees every started node can be enumerated. Already-present entries
+    are left untouched.
+    """
+    if has_session_discovery(insecure_features):
         return insecure_features
     logger.info(
         "start_shim_injecting_session_discovery pack=%s (manifest omitted it; required for grid orphan reaping)",

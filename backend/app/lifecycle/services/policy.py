@@ -828,7 +828,11 @@ class LifecyclePolicyService:
             detail="Device self-healed; cleared stale recovery suppression",
             source="device_checks",
         )
-        await db.commit()
+        # No commit here: the connectivity loop is single-batch-commit and owns the
+        # transaction boundary (wave-5 #6) — a mid-cycle commit would make partial
+        # cycle state durable past a later rollback. Flush so the incident row is
+        # visible to same-transaction reads.
+        await db.flush()
         return True
 
     async def clear_pending_auto_stop_on_recovery(

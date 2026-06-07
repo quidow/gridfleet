@@ -105,6 +105,42 @@ async def test_grid_status_with_running_node_and_session(
     assert data["active_sessions"] == 1
 
 
+async def test_grid_status_counts_pending_allocation(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """Wave-5 re-review B2: a pending grid allocation (allocate->confirm window)
+    already claims its device — the public status must count it, not report the
+    device as free."""
+    device = await _seed_device(db_session, default_host_id, operational_state="busy")
+
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                pid=9999,
+                active_connection_target="emulator-5554",
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+            )
+        )
+    db_session.add(
+        Session(
+            session_id="alloc-pending-placeholder",
+            status=SessionStatus.pending,
+            device_id=device.id,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/grid/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active_sessions"] == 1
+    assert data["grid"]["value"]["nodes"][0]["slots"] == [{"session": "alloc-pending-placeholder"}]
+
+
 async def test_grid_status_queue_size(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     await _seed_device(db_session, default_host_id)
     db_session.add(

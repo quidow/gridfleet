@@ -21,7 +21,9 @@ import { dateOnlyToEndOfDayIso, dateOnlyToStartOfDayIso } from '../utils/dateFor
 import { useDriverPackCatalog } from '../hooks/useDriverPacks';
 import { useGridQueue } from '../hooks/useGridQueue';
 
-const SESSION_STATUSES: SessionStatus[] = ['running', 'passed', 'failed', 'error'];
+// 'pending' is the grid allocate->confirm window; those rows render in the list
+// with a "Pending" badge, so the filter must be able to select them (wave-5 #27).
+const SESSION_STATUSES: SessionStatus[] = ['running', 'pending', 'passed', 'failed', 'error'];
 
 function readEnumSearchParam<T extends string>(searchParams: URLSearchParams, key: string, values: readonly T[]): T | '' {
   const value = searchParams.get(key);

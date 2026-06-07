@@ -46,4 +46,18 @@ class RoutesResponse(BaseModel):
 
 
 class ActivityRequest(BaseModel):
-    sessions: dict[str, datetime]
+    """``sessions``: which session ids saw traffic since the last router flush.
+
+    The backend stamps a server-side ``now()`` for every reported id, so the
+    values of the legacy id->timestamp map form were always ignored (router
+    clock skew must not extend or defeat idle reaping). Routers send a bare id
+    list (wave-5 #12); the map form stays accepted for deploy-order
+    compatibility with older routers — drop it once every deployed router is
+    past the list-form release.
+    """
+
+    sessions: list[str] | dict[str, datetime]
+
+    @property
+    def session_ids(self) -> list[str]:
+        return self.sessions if isinstance(self.sessions, list) else list(self.sessions.keys())

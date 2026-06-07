@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn stub_backend() -> (tiny_http::Server, String) {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
@@ -162,17 +161,18 @@ async fn confirm_ended_fail_activity_roundtrip() {
         let mut body = String::new();
         req.as_reader().read_to_string(&mut body).unwrap();
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["sessions"]["sess-a"], "1970-01-01T00:00:00Z");
+        // Bare id list (wave-5 #12): the backend stamps server-side now() per id.
+        assert_eq!(v["sessions"], serde_json::json!(["sess-a"]));
         req.respond(tiny_http::Response::empty(204)).unwrap();
     });
     let client = gridfleet_router::backend::BackendClient::new(&addr, None);
-    let mut sessions: HashMap<String, SystemTime> = HashMap::new();
-    sessions.insert("sess-a".to_string(), UNIX_EPOCH);
+    let mut sessions: HashSet<String> = HashSet::new();
+    sessions.insert("sess-a".to_string());
     client.flush_activity(sessions).await.unwrap();
 
     // flush_activity empty -> no request
     let client = gridfleet_router::backend::BackendClient::new("http://127.0.0.1:1", None);
-    client.flush_activity(HashMap::new()).await.unwrap();
+    client.flush_activity(HashSet::new()).await.unwrap();
 }
 
 #[tokio::test]
@@ -242,6 +242,47 @@ async fn allocate_410_returns_queue_timeout() {
     match client.allocate(raw, None).await.unwrap() {
         gridfleet_router::backend::AllocateOutcome::QueueTimeout => {}
         other => panic!("expected QueueTimeout, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn allocate_unexpected_4xx_is_invalid_fail_fast() {
+    // Wave-5 #5: an unexpected 4xx (e.g. FastAPI 422 on a malformed allocate
+    // envelope) is a request-level rejection retrying cannot fix. It must map to
+    // Invalid (immediate 400 to the client with the body's detail), not an Err the
+    // new-session loop retries for the full 330s deadline masking the real error.
+    let (server, addr) = stub_backend();
+    thread::spawn(move || {
+        let req = server.recv().unwrap();
+        assert_eq!(req.url(), "/internal/grid/allocate");
+        let resp = json_response(
+            r#"{"detail":[{"type":"model_attributes_type","msg":"Input should be a valid dictionary"}]}"#,
+        )
+        .with_status_code(422);
+        req.respond(resp).unwrap();
+    });
+    let client = gridfleet_router::backend::BackendClient::new(&addr, None);
+    // Valid JSON but not an object — passes the router's parse check, 422s on the
+    // backend's AllocateRequest model.
+    let raw = br#"[]"#;
+    match client.allocate(raw, None).await.unwrap() {
+        gridfleet_router::backend::AllocateOutcome::Invalid { message } => {
+            assert!(
+                message.contains("422"),
+                "message should carry the status: {message}"
+            );
+            assert!(
+                message.contains("valid dictionary"),
+                "message should carry the backend detail: {message}"
+            );
+            // Re-review B1: the FastAPI detail array must be rendered as its
+            // msg text, not serialized JSON dumped into the message.
+            assert!(
+                !message.contains('{'),
+                "message should be human-readable, not raw JSON: {message}"
+            );
+        }
+        other => panic!("expected Invalid, got {other:?}"),
     }
 }
 

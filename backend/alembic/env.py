@@ -53,7 +53,11 @@ elif _externally_supplied_url is not None:
     config.set_main_option("sqlalchemy.url", _externally_supplied_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: alembic also runs IN-PROCESS (the migration
+    # test, programmatic upgrades); the stdlib default (True) silently disables
+    # every already-imported app logger, which poisons caplog assertions in any
+    # test running after an in-process upgrade.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

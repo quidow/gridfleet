@@ -403,6 +403,86 @@ async def test_idle_session_over_threshold_reaped(
     assert after == before + 1
 
 
+async def test_idle_session_terminate_failure_defers_close(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wave-5 #3: a reap whose Appium DELETE fails (transient 5xx/timeout) must NOT
+    close the DB row — the session may still be alive on the node, and closing would
+    free the device for re-allocation under the live foreign session. The row stays
+    running and the reap retries next tick (terminate_session returns True on 404,
+    so an already-gone session still converges to close)."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="idle-termfail", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id="sess-idle-termfail",
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    async def fake_terminate_fail(target: str, session_id: str, **_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate_fail)
+
+    before = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.busy
+    assert service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get() == before
+
+
+async def test_recently_active_session_skips_liveness_probe(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wave-5 #19: the router flushes last_activity_at every ~10s while traffic
+    flows, so a session active within the freshness window is provably alive —
+    the sweep must not spend one GET per running session per tick re-verifying
+    it. Sessions with stale or NULL activity are still probed."""
+    fresh_device = await _seed_device_with_node(
+        db_session, db_host, identity_value="probe-fresh", operational_state=DeviceOperationalState.busy
+    )
+    stale_device = await _seed_device_with_node(
+        db_session, db_host, identity_value="probe-stale", operational_state=DeviceOperationalState.busy
+    )
+    fresh = Session(
+        session_id="sess-fresh",
+        device_id=fresh_device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC),
+    )
+    stale = Session(
+        session_id="sess-stale",
+        device_id=stale_device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
+    db_session.add_all([fresh, stale])
+    await db_session.commit()
+
+    probed: list[str] = []
+
+    async def recording_session_alive(target: str, session_id: str, **_: object) -> bool | None:
+        probed.append(session_id)
+        return True
+
+    monkeypatch.setattr(service_sync.appium_direct, "session_alive", recording_session_alive)
+    # idle_timeout large so the stale session is probed, not reaped.
+    await _idle_sync_service(idle_timeout_sec=86400).sync(db_session)
+
+    assert "sess-fresh" not in probed
+    assert "sess-stale" in probed
+    await db_session.refresh(fresh)
+    assert fresh.status == SessionStatus.running
+
+
 async def test_idle_session_under_threshold_untouched(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
@@ -691,8 +771,8 @@ async def test_orphan_spared_during_alloc_confirm_window(
 ) -> None:
     """The allocate→confirm window: the pending row holds an ``alloc-`` placeholder
     while the real Appium id is live. The live id is absent from known_ids, so the
-    sweep would kill the in-creation session. An in-window pending row spares the
-    whole device."""
+    sweep would kill the in-creation session. On a pending device every id not
+    proven doomed (no terminal row) is spared."""
     device = await _seed_device_with_node(
         db_session, db_host, identity_value="orph-window", operational_state=DeviceOperationalState.busy
     )
@@ -711,7 +791,7 @@ async def test_orphan_spared_during_alloc_confirm_window(
 async def test_orphan_sweep_skips_device_with_over_age_pending_row(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
-    """F7: a device with ANY pending row is skipped by the orphan sweep regardless of
+    """F7: unknown live ids on a device with ANY pending row are spared regardless of
     the row's age. Expiring stale pending rows is the allocation reaper's job (claim
     window + confirm grace); the sweep must not race it by killing a session whose
     confirm is still in flight on an over-age row."""
@@ -732,6 +812,34 @@ async def test_orphan_sweep_skips_device_with_over_age_pending_row(
     await _make_sync_service().sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []
+
+
+async def test_orphan_sweep_kills_doomed_id_on_pending_device(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
+) -> None:
+    """Wave-5 #7: a device holding a pending row is no longer spared wholesale. A live
+    id matching a TERMINAL row is provably not the in-creation session (which has no
+    row until confirm) — e.g. the id stamped by the 409-confirm path after a failed
+    router rollback — and is killed even while a new allocation is in flight. Unknown
+    ids are still spared (they may be the pending allocation's own session)."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-doomed", operational_state=DeviceOperationalState.busy
+    )
+    pending = Session(session_id="alloc-new-placeholder", device_id=device.id, status=SessionStatus.pending)
+    doomed = Session(
+        session_id="sess-doomed",
+        device_id=device.id,
+        status=SessionStatus.error,
+        ended_at=datetime.now(UTC),
+    )
+    db_session.add_all([pending, doomed])
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    _stub_appium_direct["list"][target] = ["sess-doomed", "real-in-creation-id"]
+    await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == [(target, "sess-doomed")]
 
 
 async def test_orphan_kill_metric_not_incremented_when_terminate_fails(

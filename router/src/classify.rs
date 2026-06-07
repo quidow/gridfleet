@@ -1,4 +1,5 @@
-//! Pure path routing — no GridFleet semantics (mirrors relay-proxy's classify.rs).
+//! Pure path routing — no GridFleet semantics (classifier shape inherited from
+//! the retired relay proxy).
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteClass {

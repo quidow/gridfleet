@@ -1860,7 +1860,7 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     fake_device_services = SimpleNamespace(crud=SimpleNamespace(list_devices=AsyncMock(return_value=devices)))
     db = object()
     with (
-        patch.object(grid, "_running_sessions_by_device", AsyncMock(return_value={device_one_id: ["s1"]})),
+        patch.object(grid, "_live_sessions_by_device", AsyncMock(return_value={device_one_id: ["s1"]})),
         patch.object(grid, "_waiting_tickets", AsyncMock(return_value=[ticket])),
     ):
         status = await grid.grid_status(db=db, device_services=fake_device_services)

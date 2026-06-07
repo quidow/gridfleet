@@ -22,6 +22,7 @@ from app.packs.models import (
     DriverPackRelease,
     PackState,
 )
+from app.packs.services.start_shim import has_session_discovery
 from app.packs.services.storage import PackStorageError
 
 logger = logging.getLogger(__name__)
@@ -154,14 +155,16 @@ async def ingest_pack_tarball(
     pack_id = manifest.id
     release_id = manifest.release
 
-    # Non-fatal validation note: orphan-session reaping (session_sync's _kill_orphans)
-    # depends on Appium's session_discovery insecure feature to enumerate live sessions.
-    # A pack that does not request it silently disables that reaping path — a leaked
-    # session can pin a device busy until the idle timeout. Warn but do not reject.
-    if not any(feature.endswith(":session_discovery") for feature in manifest.insecure_features):
+    # Orphan-session reaping (session_sync's _kill_orphans) depends on Appium's
+    # session_discovery insecure feature to enumerate live sessions; a pack that
+    # does not request it would silently disable that reaping path. Shared
+    # predicate with the start_shim dispatch injection so the two layers cannot
+    # diverge (wave-5 re-review B7).
+    discovery_present = has_session_discovery(manifest.insecure_features)
+    if not discovery_present:
         logger.warning(
             "pack_ingest_missing_session_discovery pack=%s release=%s: insecure_features lacks a "
-            "':session_discovery' entry; orphan-session reaping is disabled for this pack",
+            "':session_discovery' entry; injecting '*:session_discovery' into the stored manifest",
             pack_id,
             release_id,
         )
@@ -225,6 +228,12 @@ async def ingest_pack_tarball(
     manifest_dict = yaml.safe_load(manifest_text)
     if not isinstance(manifest_dict, dict):
         raise PackIngestValidationError("manifest.yaml must parse to a dictionary")
+
+    # Canonicalize session_discovery into the STORED manifest (wave-5 #29) so it
+    # cannot disagree with what dispatch actually runs. start_shim keeps its own
+    # injection as the compat layer for packs ingested before this canonicalization.
+    if not discovery_present:
+        manifest_dict["insecure_features"] = [*(manifest_dict.get("insecure_features") or []), "*:session_discovery"]
 
     release_row = DriverPackRelease(
         pack_id=pack_id,

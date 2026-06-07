@@ -8,7 +8,8 @@ from app.devices.dependencies import DeviceServicesDep
 from app.grid.matching import CapabilityMergeError, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas import GridQueueRead, GridStatusRead
-from app.sessions.models import Session, SessionStatus
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
 
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 
@@ -25,10 +26,11 @@ def _ticket_capabilities(ticket: GridSessionQueueTicket) -> dict[str, Any]:
     return candidates[0] if candidates else {}
 
 
-async def _running_sessions_by_device(db: DbDep) -> dict[Any, list[str]]:
-    stmt = select(Session.device_id, Session.session_id).where(
-        Session.status == SessionStatus.running, Session.ended_at.is_(None)
-    )
+async def _live_sessions_by_device(db: DbDep) -> dict[Any, list[str]]:
+    # running|pending via the shared chokepoint: a pending allocation
+    # (allocate->confirm window) already claims its device, so the public status
+    # must count it rather than report the device free (wave-5 re-review B2).
+    stmt = select(Session.device_id, Session.session_id).where(live_session_predicate())
     rows = (await db.execute(stmt)).all()
     by_device: dict[Any, list[str]] = {}
     for device_id, session_id in rows:
@@ -50,7 +52,7 @@ async def _waiting_tickets(db: DbDep) -> list[GridSessionQueueTicket]:
 @router.get("/status", response_model=GridStatusRead)
 async def grid_status(db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
     devices = await device_services.crud.list_devices(db)
-    sessions_by_device = await _running_sessions_by_device(db)
+    sessions_by_device = await _live_sessions_by_device(db)
     waiting = await _waiting_tickets(db)
 
     registry_devices = []

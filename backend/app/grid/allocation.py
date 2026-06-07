@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol, cast
 
 from prometheus_client import Counter, Gauge
@@ -22,10 +22,12 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.common import build_grid_stereotype_caps
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.core.protocols import SettingsReader
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.events.protocols import EventPublisher
+from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import RUN_ID_CAP, CapabilityMergeError, candidate_matches_stereotype, merge_candidates
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
@@ -76,11 +78,6 @@ class AllocationNotPendingError(Exception):
 # expired by the reaper. 10 intervals (~10s at the 1s router poll) is comfortably
 # longer than a single slow poll but far shorter than the 300s queue timeout.
 TICKET_STALE_POLL_INTERVALS = 10
-# Local copy of the router long-poll re-attempt cadence. router_internal owns the
-# authoritative LONG_POLL/RETRY constants, but importing them here would create an
-# allocation<-router_internal cycle (router_internal already imports allocation);
-# the staleness window only needs the poll cadence, so it is duplicated with a note.
-RETRY_INTERVAL_SEC = 1.0
 
 
 def _ticket_liveness_cutoff(now: datetime) -> datetime:
@@ -304,7 +301,7 @@ class AllocationService:
                 status=SessionStatus.error,
                 error_type="allocation_failed",
                 error_message=message,
-                ended_at=datetime.now(UTC),
+                ended_at=now_utc(),
             )
         )
         if int(getattr(result, "rowcount", 0) or 0) == 0:
@@ -315,6 +312,40 @@ class AllocationService:
         if device_id is not None:
             intent = self._intent_factory(db)
             await intent.mark_dirty_and_reconcile(device_id, reason="grid_allocation_failed", publisher=self._publisher)
+
+    async def record_doomed_appium_session(
+        self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str
+    ) -> bool:
+        """Stamp the Appium id reported by a 409-rejected confirm onto the terminal row.
+
+        When a confirm loses to the reaper/run-cancel, the router rolls the
+        freshly-created Appium session back with a best-effort DELETE. If that DELETE
+        fails, nothing tracks the orphan — and the orphan sweep spares unknown ids on
+        a device holding a new pending row (it cannot tell an in-creation session
+        from an orphan by id). Swapping the terminal row's ``alloc-`` placeholder for
+        the real id makes the orphan a *known doomed id* the sweep can kill precisely.
+
+        Guards: only a terminal row still carrying its placeholder is stamped, and
+        never while any live row owns the id (the legacy-register conflict case —
+        that session is alive and tracked, not an orphan). Returns True iff stamped.
+        """
+        row = await db.get(Session, allocation_id)
+        if row is None or row.ended_at is None or not row.session_id.startswith("alloc-"):
+            return False
+        live_owner = await db.scalar(
+            select(Session.id).where(Session.session_id == appium_session_id, live_session_predicate()).limit(1)
+        )
+        if live_owner is not None:
+            return False
+        row.session_id = appium_session_id
+        await db.flush()
+        logger.info(
+            "grid_doomed_appium_session_recorded allocation=%s appium_session=%s device=%s",
+            allocation_id,
+            appium_session_id,
+            row.device_id,
+        )
+        return True
 
     async def mark_ended(self, db: DbSession, *, appium_session_id: str) -> None:
         """Close a running session the same way session_sync closes vanished sessions.
@@ -346,7 +377,7 @@ class AllocationService:
             raise RuntimeError("AllocationService.reap_expired requires a settings reader")
         claim_window = int(cast("int", self._settings.get("grid.claim_window_sec")))
         queue_timeout = int(cast("int", self._settings.get("grid.queue_timeout_sec")))
-        now = datetime.now(UTC)
+        now = now_utc()
 
         pending_stmt = select(Session.id).where(
             Session.status == SessionStatus.pending,
@@ -387,14 +418,18 @@ class AllocationService:
         # The FIFO veto and the reaper read last_polled_at to expire abandoned tickets
         # long before queue_timeout (harness C8). Stamp before any early return so even
         # an invalid-body ticket records that its client was present this tick.
-        ticket.last_polled_at = datetime.now(UTC)
+        ticket.last_polled_at = now_utc()
         try:
             candidates = merge_candidates(ticket.requested_body)
-        except CapabilityMergeError:
-            logger.warning("grid_allocation_invalid_body ticket=%s", ticket.id)
+        except CapabilityMergeError as e:
+            logger.warning("grid_allocation_invalid_body ticket=%s detail=%s", ticket.id, e)
             transition_ticket(ticket, GridQueueStatus.cancelled, reason="invalid_capabilities")
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
-            return None
+            # Re-raise so the API layer can put the descriptive merge message
+            # (e.g. "'firstMatch' must be a list of objects") in the 400 body
+            # instead of a generic text (wave-5 #26). The ticket is already
+            # cancelled; the caller commits before responding.
+            raise
         # Hoist the older-waiter load + per-ticket candidate merge out of the
         # per-device x per-candidate loops: load once, pre-merge once, reuse.
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
@@ -562,7 +597,7 @@ class AllocationService:
         not-yet-polled ticket (last_polled_at IS NULL) only blocks while its
         created_at is itself within the window — i.e. it really is a fresh waiter.
         """
-        cutoff = _ticket_liveness_cutoff(datetime.now(UTC))
+        cutoff = _ticket_liveness_cutoff(now_utc())
         stmt = (
             select(GridSessionQueueTicket)
             .where(

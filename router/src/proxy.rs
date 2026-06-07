@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use pingora::http::ResponseHeader;
 use pingora::prelude::*;
+use pingora::protocols::http::v1::common::is_upgrade_req;
 use pingora::proxy::{ProxyHttp, Session};
 
 use crate::activity::ActivityTracker;
@@ -79,24 +80,24 @@ impl ProxyHttp for GridRouter {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut RouterCtx) -> Result<bool> {
-        let method = session.req_header().method.as_str().to_string();
-        let path = session.req_header().uri.path().to_string();
-        let class = classify(&method, &path);
-        let label = match &class {
-            RouteClass::NewSession => "new_session",
-            RouteClass::SessionCommand { .. } => "command",
-            RouteClass::DeleteSession { .. } => "delete",
+        // Borrow method/path for classification; owned copies are only needed in
+        // the Unknown arm's error body (wave-5 #22).
+        let class = {
+            let req = session.req_header();
+            classify(req.method.as_str(), req.uri.path())
+        };
+        let m = crate::metrics::metrics();
+        match &class {
+            RouteClass::NewSession => m.commands_new_session.inc(),
+            RouteClass::SessionCommand { .. } => m.commands_command.inc(),
+            RouteClass::DeleteSession { .. } => m.commands_delete.inc(),
             // Plan classes are (new_session|command|delete|local); healthz/status/
             // metrics/unknown are all local-terminated, so map them to "local".
             RouteClass::Healthz
             | RouteClass::Status
             | RouteClass::Metrics
-            | RouteClass::Unknown => "local",
-        };
-        crate::metrics::metrics()
-            .commands_total
-            .with_label_values(&[label])
-            .inc();
+            | RouteClass::Unknown => m.commands_local.inc(),
+        }
         match class {
             RouteClass::Healthz => respond(session, 200, b"ok".to_vec(), "text/plain").await,
             RouteClass::Status => {
@@ -113,10 +114,14 @@ impl ProxyHttp for GridRouter {
                 self.route_session(session, ctx, session_id, true).await
             }
             RouteClass::Unknown => {
+                let detail = {
+                    let req = session.req_header();
+                    format!("{} {}", req.method.as_str(), req.uri.path())
+                };
                 respond(
                     session,
                     404,
-                    w3c::error_body("unknown command", &format!("{method} {path}")),
+                    w3c::error_body("unknown command", &detail),
                     "application/json",
                 )
                 .await
@@ -126,34 +131,43 @@ impl ProxyHttp for GridRouter {
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         ctx: &mut RouterCtx,
     ) -> Result<Box<HttpPeer>> {
         let upstream = ctx.upstream.clone().expect("set by request_filter");
         let mut peer = Box::new(HttpPeer::new(upstream.authority(), false, String::new()));
         peer.options.connection_timeout = Some(Duration::from_secs(5));
-        peer.options.read_timeout = Some(self.proxy_timeout);
-        peer.options.write_timeout = Some(self.proxy_timeout);
+        // An Upgrade request (WebSocket — W3C BiDi / CDP on the session path)
+        // becomes a long-lived duplex tunnel after the 101: frames can
+        // legitimately be minutes apart (paused debugger, slow test), so the
+        // per-command read/write timeouts must not tear it down (wave-5 #2).
+        // pingora tunnels the upgrade itself; same predicate proxy_h1 uses.
+        // Accepted risk: a client sending a bogus Upgrade header opts its own
+        // request out of the read timeout. :4444 sits inside the lab network
+        // boundary (docs/guides/security.md), so the only victim is itself.
+        if !is_upgrade_req(session.req_header()) {
+            peer.options.read_timeout = Some(self.proxy_timeout);
+            peer.options.write_timeout = Some(self.proxy_timeout);
+        }
         Ok(peer)
     }
 
     async fn response_filter(
         &self,
         _session: &mut Session,
-        upstream_response: &mut ResponseHeader,
+        _upstream_response: &mut ResponseHeader,
         ctx: &mut RouterCtx,
     ) -> Result<()> {
         if ctx.is_delete {
-            let status = upstream_response.status.as_u16();
-            // Prune on 2xx or 404 (session already gone upstream). Lossiness
-            // accepted: response_filter does not fire on upstream connect/transport
-            // failures, so a failed DELETE leaves the route entry and skips
-            // session_ended. The periodic route rebuild (Task 7) and the backend's
-            // session sweep reconcile any leaked entries.
-            if (200..300).contains(&status) || status == 404 {
-                if let Some(session_id) = ctx.session_id.clone() {
-                    self.prune_and_notify_ended(session_id);
-                }
+            // A client DELETE is unambiguous intent: prune and notify session_ended
+            // on ANY upstream response — including a 5xx from a driver hiccup
+            // mid-teardown, which previously left the route entry and the backend
+            // `running` row pinning the device until the idle timeout (wave-5 #4).
+            // If the Appium session actually survived the hiccup, the orphan sweep
+            // kills it next tick (the closed row's id is a doomed id). Transport
+            // failures never reach this filter; the logging() hook covers those.
+            if let Some(session_id) = ctx.session_id.clone() {
+                self.prune_and_notify_ended(session_id);
             }
         }
         Ok(())
@@ -525,7 +539,7 @@ impl GridRouter {
         let resp = appium_client()
             .post(format!("{target}/session"))
             .header("Content-Type", "application/json")
-            .body(raw.clone())
+            .body(raw)
             .timeout(create_timeout(self.proxy_timeout, claim_window_sec))
             .send()
             .await;

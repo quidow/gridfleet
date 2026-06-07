@@ -151,3 +151,40 @@ async def test_draining_stays_draining_with_live_session(db_session: AsyncSessio
 
     pack = await transition_pack_state(db_session, "test-pack", PackState.disabled)
     assert pack.state == PackState.draining
+
+
+@pytest.mark.asyncio
+async def test_draining_stays_draining_with_pending_grid_allocation(
+    db_session: AsyncSession, default_host_id: str
+) -> None:
+    """Wave-5 #9: a grid allocation in the allocate->confirm window mints a pending
+    Session with run_id=None and NO reservation, so neither drain gate saw it. The
+    drain count must go through live_session_predicate (running|pending) — completing
+    the drain would tear down the pack runtime mid-create."""
+    await _seed_pack(db_session, state=PackState.enabled)
+    host_id = uuid.UUID(default_host_id)
+    device = Device(
+        name="test-dev-pending",
+        pack_id="test-pack",
+        platform_id="test-plat",
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        host_id=host_id,
+        os_version="14",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="SERIAL002",
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    pending = Session(
+        session_id="alloc-pending-placeholder",
+        device_id=device.id,
+        status=SessionStatus.pending,
+    )
+    db_session.add(pending)
+    await db_session.flush()
+
+    pack = await transition_pack_state(db_session, "test-pack", PackState.disabled)
+    assert pack.state == PackState.draining

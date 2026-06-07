@@ -635,6 +635,215 @@ fn delete_against_dead_upstream_still_notifies_ended() {
     }
 }
 
+/// Raw-TCP upstream stub speaking the HTTP/1.1 upgrade handshake: replies 101
+/// Switching Protocols to an Upgrade request, then echoes every byte it reads.
+/// Echoed bytes prove the router established a duplex tunnel, not a plain
+/// request/response exchange.
+fn spawn_ws_echo_upstream() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let stream = match stream {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                if !head.to_ascii_lowercase().contains("upgrade: websocket") {
+                    let mut s = stream;
+                    let _ = s.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
+                    return;
+                }
+                let mut stream = stream;
+                stream
+                    .write_all(
+                        b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+                    )
+                    .unwrap();
+                // Duplex echo until either side closes.
+                let mut buf = [0u8; 1024];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => {
+                            if stream.write_all(&buf[..n]).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    addr
+}
+
+#[test]
+fn websocket_upgrade_tunnels_through_router() {
+    // Wave-5 #2: BiDi/CDP clients pointed at :4444 open a WebSocket on the
+    // session path. The router must tunnel the HTTP/1.1 upgrade — 101 relayed
+    // downstream, then raw duplex bytes both ways — like the relay's bridge did.
+    let ws_upstream = spawn_ws_echo_upstream();
+    let (backend_addr, _hits) = spawn_backend(ws_upstream);
+    let router = spawn_router(&backend_addr);
+
+    let mut conn = TcpStream::connect(("127.0.0.1", router.port)).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    conn.write_all(
+        b"GET /session/known-session/se/bidi HTTP/1.1\r\n\
+          Host: 127.0.0.1\r\n\
+          Connection: Upgrade\r\n\
+          Upgrade: websocket\r\n\
+          Sec-WebSocket-Version: 13\r\n\
+          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    .unwrap();
+
+    let mut reader = BufReader::new(conn.try_clone().unwrap());
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).unwrap();
+    assert!(
+        status_line.starts_with("HTTP/1.1 101"),
+        "expected 101 Switching Protocols, got: {status_line:?}"
+    );
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        if line == "\r\n" {
+            break;
+        }
+    }
+
+    // Duplex proof: bytes sent after the upgrade come back echoed.
+    conn.write_all(b"bidi-frame-payload").unwrap();
+    let mut echoed = [0u8; 18];
+    reader.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"bidi-frame-payload");
+
+    // And a second round-trip on the same tunnel (not a one-shot body relay).
+    conn.write_all(b"second-frame").unwrap();
+    let mut echoed2 = [0u8; 12];
+    reader.read_exact(&mut echoed2).unwrap();
+    assert_eq!(&echoed2, b"second-frame");
+}
+
+#[test]
+fn websocket_tunnel_survives_idle_beyond_proxy_timeout() {
+    // The harness starts the router with --proxy-timeout 5: a BiDi/CDP socket
+    // sitting idle between frames (a debugger paused, a slow test) must not be
+    // torn down by the per-command upstream read timeout.
+    let ws_upstream = spawn_ws_echo_upstream();
+    let (backend_addr, _hits) = spawn_backend(ws_upstream);
+    let router = spawn_router(&backend_addr);
+
+    let mut conn = TcpStream::connect(("127.0.0.1", router.port)).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    conn.write_all(
+        b"GET /session/known-session/se/bidi HTTP/1.1\r\n\
+          Host: 127.0.0.1\r\n\
+          Connection: Upgrade\r\n\
+          Upgrade: websocket\r\n\
+          Sec-WebSocket-Version: 13\r\n\
+          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    )
+    .unwrap();
+
+    let mut reader = BufReader::new(conn.try_clone().unwrap());
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).unwrap();
+    assert!(
+        status_line.starts_with("HTTP/1.1 101"),
+        "expected 101 Switching Protocols, got: {status_line:?}"
+    );
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        if line == "\r\n" {
+            break;
+        }
+    }
+
+    // Idle past the router's 5s proxy timeout, then exchange a frame.
+    thread::sleep(Duration::from_secs(7));
+    conn.write_all(b"late-frame").unwrap();
+    let mut echoed = [0u8; 10];
+    reader.read_exact(&mut echoed).unwrap();
+    assert_eq!(&echoed, b"late-frame");
+}
+
+/// Upstream Appium stub that answers 500 to every request (driver hiccup
+/// mid-teardown): the DELETE gets a response, but not a 2xx/404.
+fn spawn_appium_delete_500() -> String {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let resp = tiny_http::Response::from_string(
+                r#"{"value":{"error":"unknown error","message":"teardown hiccup"}}"#,
+            )
+            .with_status_code(500)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .unwrap(),
+            );
+            req.respond(resp).unwrap();
+        }
+    });
+    addr
+}
+
+#[test]
+fn delete_answered_5xx_still_notifies_ended_and_prunes() {
+    // Wave-5 #4: a client DELETE is unambiguous intent. If Appium answers 5xx
+    // mid-teardown, the router must still prune the route and notify
+    // session_ended — otherwise the backend `running` row pins the device until
+    // the idle timeout (~30 min). A session that actually survived the hiccup is
+    // the orphan sweep's job (the closed row's id is a doomed id).
+    let appium = spawn_appium_delete_500();
+    let (backend_addr, ended) = spawn_backend_dead_route(appium);
+    let router = spawn_router(&backend_addr);
+    let base = format!("http://127.0.0.1:{}", router.port);
+
+    // The 500 is relayed to the client unchanged.
+    match ureq::delete(&format!("{base}/session/dead-session")).call() {
+        Err(ureq::Error::Status(500, _)) => {}
+        other => panic!("expected relayed 500, got {other:?}"),
+    }
+
+    // session_ended must still fire.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while ended.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended after a 5xx-answered DELETE"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    // The route was pruned: a follow-up command 404s locally.
+    let err = ureq::get(&format!("{base}/session/dead-session/url")).call();
+    match err {
+        Err(ureq::Error::Status(404, resp)) => {
+            let body = resp.into_string().unwrap();
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(v["value"]["error"], "invalid session id", "got: {body}");
+        }
+        other => panic!("expected 404 after prune, got {other:?}"),
+    }
+}
+
 /// Backend stub for the unparseable-target-after-confirm flow (F8). Allocate
 /// answers allocated(A1) with an UPPERCASE-scheme target (reqwest reaches it
 /// for create + rollback DELETE, but `Upstream::parse` rejects the `HTTP://`

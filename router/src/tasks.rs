@@ -44,6 +44,9 @@ pub fn spawn_route_reconcile(routes: Arc<RouteMap>, backend: Arc<BackendClient>)
 
 /// Every 10s: drain the activity tracker and flush to the backend (batched,
 /// never per-command). Skips the call entirely when nothing has been touched.
+/// The backend liveness sweep sizes its activity-freshness window as a
+/// multiple of this cadence (service_sync.py, ACTIVITY_FRESH_WINDOW_SEC) —
+/// retune both together.
 pub fn spawn_activity_flush(activity: Arc<ActivityTracker>, backend: Arc<BackendClient>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10));

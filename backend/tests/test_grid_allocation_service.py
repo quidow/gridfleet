@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationNotPendingError, AllocationService
-from app.grid.matching import RUN_ID_CAP
+from app.grid.matching import RUN_ID_CAP, CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
@@ -133,7 +133,10 @@ async def test_invalid_body_cancels_ticket(
     ticket = GridSessionQueueTicket(requested_body={"desiredCapabilities": {"platformName": "Android"}})
     db_session.add(ticket)
     await db_session.flush()
-    assert await allocation_service.try_allocate(db_session, ticket=ticket) is None
+    # The merge error re-raises after cancelling so the API layer can surface the
+    # descriptive message in the 400 body (wave-5 #26).
+    with pytest.raises(CapabilityMergeError, match="capabilities"):
+        await allocation_service.try_allocate(db_session, ticket=ticket)
     assert ticket.status == GridQueueStatus.cancelled
 
 

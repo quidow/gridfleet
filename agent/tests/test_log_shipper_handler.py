@@ -69,7 +69,6 @@ async def test_emits_monotonic_sequence() -> None:
 async def test_drops_on_full_queue_and_counts() -> None:
     queue: asyncio.Queue[ShippedLogLine] = asyncio.Queue(maxsize=1)
     handler = ShipperHandler(queue=queue, min_level=logging.INFO)
-    handler.set_min_level("INFO")
     for i in range(3):
         record = logging.LogRecord(
             name="agent.foo",
