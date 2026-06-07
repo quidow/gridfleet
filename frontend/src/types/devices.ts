@@ -8,6 +8,8 @@ export type DeviceRead = Omit<Schemas['DeviceRead'], 'platform_label' | 'readine
   readiness_state: DeviceReadinessState;
 };
 export type AppiumNodeRead = Schemas['AppiumNodeRead'];
+export type HealthVerdictRead = Schemas['HealthVerdictRead'];
+export type HealthVerdictStatus = HealthVerdictRead['status'];
 export type DeviceDetail = Omit<Schemas['DeviceDetail'], 'platform_label' | 'readiness_state'> & {
   platform_label: string | null;
   readiness_state: DeviceReadinessState;

@@ -2725,18 +2725,14 @@ export interface components {
         };
         /** DeviceHealthSummaryRead */
         DeviceHealthSummaryRead: {
-            /** Connectivity Status */
-            connectivity_status?: ("ok" | "failed") | null;
-            /** Healthy */
-            healthy: boolean | null;
-            /** Last Checked At */
-            last_checked_at?: string | null;
-            /** Node Status */
-            node_status?: string | null;
-            /** Session Status */
-            session_status?: ("passed" | "failed") | null;
-            /** Summary */
-            summary: string;
+            device: components["schemas"]["HealthVerdictRead"];
+            node: components["schemas"]["HealthVerdictRead"];
+            /**
+             * Overall
+             * @enum {string}
+             */
+            overall: "ok" | "warn" | "failed" | "unknown";
+            viability: components["schemas"]["HealthVerdictRead"];
         };
         /** DeviceIntentSummaryRead */
         DeviceIntentSummaryRead: {
@@ -3775,6 +3771,18 @@ export interface components {
             };
             /** Status */
             status: string;
+        };
+        /** HealthVerdictRead */
+        HealthVerdictRead: {
+            /** Checked At */
+            checked_at?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "warn" | "failed" | "unknown";
         };
         /** HeartbeatResponse */
         HeartbeatResponse: {
@@ -7034,6 +7042,9 @@ export interface operations {
                 hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
                 hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
+                device_health?: ("ok" | "warn" | "failed" | "unknown") | null;
+                node_health?: ("ok" | "warn" | "failed" | "unknown") | null;
+                viability?: ("ok" | "warn" | "failed" | "unknown") | null;
                 sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
             };
@@ -11516,6 +11527,9 @@ export interface operations {
                 hardware_health_status?: components["schemas"]["HardwareHealthStatus"] | null;
                 hardware_telemetry_state?: components["schemas"]["HardwareTelemetryState"] | null;
                 needs_attention?: boolean | null;
+                device_health?: ("ok" | "warn" | "failed" | "unknown") | null;
+                node_health?: ("ok" | "warn" | "failed" | "unknown") | null;
+                viability?: ("ok" | "warn" | "failed" | "unknown") | null;
                 sort_by?: "name" | "platform" | "device_type" | "connection_type" | "os_version" | "os_version_display" | "host" | "status" | "operational_state" | "created_at";
                 sort_dir?: "asc" | "desc";
             };
