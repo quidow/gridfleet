@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -35,12 +36,19 @@ async def aclose() -> None:
 
 
 async def terminate_session(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
-    """DELETE a session on the Appium node. 404 means already gone (success)."""
+    """DELETE a session on the Appium node. 404 means already gone (success).
+
+    ``session_id`` can originate from an operator request path (the kill
+    endpoint) and session rows can be registered with arbitrary ids, so it is
+    percent-encoded into both the URL and the log line — a crafted id must not
+    alter the request path or forge log entries.
+    """
+    sid = quote(session_id, safe="")
     try:
-        resp = await _get_client().delete(f"{target}/session/{session_id}", timeout=timeout)
+        resp = await _get_client().delete(f"{target}/session/{sid}", timeout=timeout)
         return resp.status_code == 404 or resp.is_success
     except httpx.HTTPError as exc:
-        logger.warning("appium_terminate_failed target=%s session=%s err=%s", target, session_id, exc)
+        logger.warning("appium_terminate_failed target=%s session=%s err=%s", target, sid, exc)
         return False
 
 

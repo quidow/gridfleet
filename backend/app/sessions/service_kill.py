@@ -65,7 +65,9 @@ async def kill_session(db: AsyncSession, *, crud: SessionCrudProtocol, session_i
     target = resolve_router_target(session)
     terminated = False
     if target is not None:
-        terminated = await appium_direct.terminate_session(target, session_id)
+        # Pass the DB-loaded id (equal to the request param by the WHERE above):
+        # the Appium URL is built from a stored value, never raw request input.
+        terminated = await appium_direct.terminate_session(target, session.session_id)
 
     # Stamp the kill provenance on the identity-map instance, then let the
     # existing terminal-status path do ALL bookkeeping (ended_at, intent revoke,
