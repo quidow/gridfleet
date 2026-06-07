@@ -20,6 +20,7 @@ DeviceSortBy = Literal[
     "created_at",
 ]
 DeviceSortDir = Literal["asc", "desc"]
+HealthVerdictFilter = Literal["ok", "warn", "failed", "unknown"]
 
 
 class DeviceGroupFilters(BaseModel):
@@ -43,5 +44,8 @@ class DeviceGroupFilters(BaseModel):
 
 class DeviceQueryFilters(DeviceGroupFilters):
     search: str | None = None
+    device_health: HealthVerdictFilter | None = None
+    node_health: HealthVerdictFilter | None = None
+    viability: HealthVerdictFilter | None = None
     sort_by: DeviceSortBy = "created_at"
     sort_dir: DeviceSortDir = "desc"

@@ -774,6 +774,118 @@ async def test_list_devices_filter_needs_attention(
 
 
 @pytest.mark.asyncio
+async def test_list_devices_filter_by_node_health(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    error_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="node-health-error",
+        connection_target="node-health-error",
+        name="Node Error Device",
+    )
+    running_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="node-health-ok",
+        connection_target="node-health-ok",
+        name="Node OK Device",
+    )
+    with state_write_guard.bypass():
+        error_node = AppiumNode(
+            device_id=error_device.id,
+            port=4723,
+            pid=1,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            active_connection_target="t",
+            health_state="error",
+        )
+        ok_node = AppiumNode(
+            device_id=running_device.id,
+            port=4724,
+            pid=2,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            active_connection_target="t",
+        )
+    db_session.add_all([error_node, ok_node])
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"node_health": "failed"})
+    assert resp.status_code == 200
+    assert [d["name"] for d in resp.json()] == ["Node Error Device"]
+
+    resp_ok = await client.get("/api/devices", params={"node_health": "ok"})
+    assert resp_ok.status_code == 200
+    assert [d["name"] for d in resp_ok.json()] == ["Node OK Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_viability(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    failed_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="viability-failed",
+        connection_target="viability-failed",
+        name="Viability Failed Device",
+    )
+    passed_device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="viability-passed",
+        connection_target="viability-passed",
+        name="Viability Passed Device",
+    )
+    failed_device.session_viability_status = "failed"
+    failed_device.session_viability_error = "boom"
+    passed_device.session_viability_status = "passed"
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"viability": "failed"})
+    assert resp.status_code == 200
+    assert [d["name"] for d in resp.json()] == ["Viability Failed Device"]
+
+
+@pytest.mark.asyncio
+async def test_list_devices_filter_by_device_health_paginated_total(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    for index in range(2):
+        device = await _create_device(
+            db_session,
+            default_host_id,
+            identity_value=f"device-health-ok-{index}",
+            connection_target=f"device-health-ok-{index}",
+            name=f"Device Health OK {index}",
+        )
+        device.device_checks_healthy = True
+    unhealthy = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="device-health-bad",
+        connection_target="device-health-bad",
+        name="Device Health Bad",
+    )
+    unhealthy.device_checks_healthy = False
+    await db_session.commit()
+
+    resp = await client.get("/api/devices", params={"device_health": "ok", "limit": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 2
+    assert len(data["items"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_device_detail_surfaces_emulator_state(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:

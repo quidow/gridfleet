@@ -17,7 +17,13 @@ from app.devices.schemas.device import (
     HardwareTelemetryState,
     SessionOutcomeHeatmapRow,
 )
-from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters, DeviceSortBy, DeviceSortDir
+from app.devices.schemas.filters import (
+    ChipStatus,
+    DeviceQueryFilters,
+    DeviceSortBy,
+    DeviceSortDir,
+    HealthVerdictFilter,
+)
 from app.devices.services import (
     health as device_health,
 )
@@ -62,6 +68,9 @@ def build_device_query_filters(
     hardware_health_status: HardwareHealthStatus | None = Query(None),
     hardware_telemetry_state: HardwareTelemetryState | None = Query(None),
     needs_attention: bool | None = Query(None),
+    device_health: HealthVerdictFilter | None = Query(None),
+    node_health: HealthVerdictFilter | None = Query(None),
+    viability: HealthVerdictFilter | None = Query(None),
     sort_by: DeviceSortBy = Query("created_at"),
     sort_dir: DeviceSortDir = Query("desc"),
 ) -> DeviceQueryFilters:
@@ -80,6 +89,9 @@ def build_device_query_filters(
         hardware_health_status=hardware_health_status,
         hardware_telemetry_state=hardware_telemetry_state,
         needs_attention=needs_attention,
+        device_health=device_health,
+        node_health=node_health,
+        viability=viability,
         sort_by=sort_by,
         sort_dir=sort_dir,
         tags=_extract_tag_filters(request),
