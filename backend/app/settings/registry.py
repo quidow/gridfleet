@@ -474,19 +474,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
-        key="appium_reconciler.transition_default_window_sec",
-        category="grid",
-        setting_type="int",
-        default=120,
-        description=(
-            "Default wall-clock window (seconds) Phase 3 writers use to populate "
-            "appium_nodes.transition_deadline when starting a desired-state lease. "
-            "The reconciler reclaims leases past this deadline."
-        ),
-        min_value=30,
-        max_value=600,
-    ),
-    SettingDefinition(
         key="appium_reconciler.restart_window_sec",
         category="grid",
         setting_type="int",
@@ -628,15 +615,6 @@ _DEFINITIONS: list[SettingDefinition] = [
         description="Seconds the circuit stays open before a probe is allowed",
         min_value=5,
         max_value=600,
-    ),
-    SettingDefinition(
-        key="agent.log_ship_min_level",
-        category="agent",
-        setting_type="string",
-        default="INFO",
-        description="Minimum log level the agent ships to backend storage",
-        env_var="GRIDFLEET_AGENT_LOG_SHIP_MIN_LEVEL",
-        allowed_values=["DEBUG", "INFO", "WARNING", "ERROR"],
     ),
     # ── Reservations ──
     SettingDefinition(

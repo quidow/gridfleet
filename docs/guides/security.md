@@ -72,7 +72,6 @@ Treat shipped log lines as sensitive operational data:
 
 - Keep backend auth enabled before exposing the operator UI outside a trusted lab network.
 - Do not log credentials, tokens, customer identifiers, or private device data from agent code or driver-pack adapters.
-- Use `agent.log_ship_min_level` to reduce verbosity in shared environments. The default is `INFO`; `DEBUG` should be temporary and restricted.
 
 ### Backend → agent authentication (optional)
 

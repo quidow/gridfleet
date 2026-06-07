@@ -658,7 +658,6 @@ async def test_finalize_and_execute_success_guard_branches(monkeypatch: pytest.M
         publisher=event_bus,
         crud=mock_crud_none,
         viability=AsyncMock(),
-        node_manager=AsyncMock(),
     )
     assert failed.status == "failed"
     assert failed.error == "Device was not found"
@@ -720,7 +719,6 @@ async def test_finalize_success_and_execute_update_branches(monkeypatch: pytest.
         publisher=event_bus,
         crud=mock_crud_upd,
         viability=viability_mock,
-        node_manager=AsyncMock(),
     )
     assert outcome.status == "completed"
     # PASS is reconciler-authoritative: the revoke (carrying the publisher) is the writer,

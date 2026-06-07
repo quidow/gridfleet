@@ -60,7 +60,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `appium.default_plugins` | `grid` | `string` | empty string | none | none | Comma-separated Appium plugins added to every managed node |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | none | `5..120` | Node startup readiness timeout |
 | `appium_reconciler.interval_sec` | `grid` | `int` | `30` | none | `5..600` | How often the Appium reconciler reaps orphan agent Appium processes |
-| `appium_reconciler.transition_default_window_sec` | `grid` | `int` | `120` | none | `30..600` | Default lease window for desired-state Appium node transitions; Phase 3 writers use it when populating `transition_deadline` |
 | `appium_reconciler.restart_window_sec` | `grid` | `int` | `120` | none | `30..600` | Wall-clock window the Phase 3 restart-node writer uses to populate `transition_deadline`; the reconciler clears the lease past this deadline |
 | `appium_reconciler.start_failure_threshold` | `grid` | `int` | `5` | none | `1..100` | Consecutive desired-state convergence failures before lifecycle policy treats the device as backoff-suppressed; suppression lasts `appium.startup_timeout_sec * 4` seconds |
 | `appium_reconciler.host_parallelism` | `grid` | `int` | `8` | none | `1..32` | Max number of hosts the Appium reconciler converges in parallel per cycle |
@@ -77,7 +76,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `agent.http_pool_idle_seconds` | `agent` | `int` | `60` | none | `5..600` | Idle time (seconds) after which a pooled keepalive connection is closed |
 | `agent.circuit_breaker_failure_threshold` | `agent` | `int` | `5` | none | `1..50` | Consecutive backend-to-agent failures before the circuit opens |
 | `agent.circuit_breaker_cooldown_seconds` | `agent` | `int` | `30` | none | `5..600` | Seconds the circuit stays open before a probe is allowed |
-| `agent.log_ship_min_level` | `agent` | `string` | `INFO` | `GRIDFLEET_AGENT_LOG_SHIP_MIN_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Minimum agent-process log level shipped to backend storage |
 | `reservations.default_ttl_minutes` | `reservations` | `int` | `60` | none | `1..1440` | Default reservation TTL when callers omit it |
 | `reservations.max_ttl_minutes` | `reservations` | `int` | `180` | none | `1..1440` | Hard cap for reservation TTL |
 | `reservations.default_heartbeat_timeout_sec` | `reservations` | `int` | `120` | none | `30..600` | Default heartbeat timeout for runs |

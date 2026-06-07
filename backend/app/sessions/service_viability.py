@@ -146,7 +146,6 @@ class SessionViabilityService:
             attempted_at=_now_iso(),
             error=error,
             checked_by=checked_by,
-            publisher=self._publisher,
             health=self._health,
         )
         if config_changed:
@@ -254,7 +253,6 @@ class SessionViabilityService:
                     attempted_at=attempted_at,
                     error="Appium node is not running",
                     checked_by=checked_by,
-                    publisher=self._publisher,
                     health=self._health,
                 )
                 if config_changed:
@@ -313,7 +311,6 @@ class SessionViabilityService:
                 attempted_at=attempted_at,
                 error=error,
                 checked_by=checked_by,
-                publisher=self._publisher,
                 health=self._health,
             )
 
@@ -456,7 +453,6 @@ async def _write_session_viability(
     attempted_at: str,
     error: str | None,
     checked_by: SessionViabilityCheckedBy,
-    publisher: EventPublisher,
     health: DeviceSessionViabilityWriter,
 ) -> dict[str, Any]:
     previous = await get_session_viability(db, device) or {}

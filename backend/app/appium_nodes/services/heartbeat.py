@@ -510,8 +510,6 @@ async def _apply_host_ping_result(
     guard_threshold_sec: float | None = None,
     publisher: EventPublisher,
     settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol | None,
-    session_factory: async_sessionmaker[AsyncSession],
     on_host_recovered: AsyncTaskFactory | None = None,
 ) -> None:
     """Apply the result of a single heartbeat ping to a host row using the supplied session.
@@ -727,8 +725,6 @@ class HeartbeatService:
                             guard_threshold_sec=guard_threshold_sec,
                             publisher=self._publisher,
                             settings=self._settings,
-                            circuit_breaker=self._circuit_breaker,
-                            session_factory=self._session_factory,
                             on_host_recovered=self._auto_sync_plugins_on_recovery,
                         )
                         await host_db.commit()

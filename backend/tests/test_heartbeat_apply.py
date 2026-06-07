@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -45,8 +45,6 @@ async def test_apply_host_ping_result_alive_persists_health_data(db_session: Asy
         success,
         guard_active=False,
         settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        session_factory=lambda: db_session,
         publisher=event_bus,
     )
     await db_session.commit()
@@ -77,8 +75,6 @@ async def test_apply_host_ping_result_offline_with_guard_does_not_increment_coun
         guard_gap_sec=150.0,
         guard_threshold_sec=45.0,
         settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        session_factory=lambda: db_session,
         publisher=event_bus,
     )
     await db_session.commit()
