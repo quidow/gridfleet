@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -9,8 +8,9 @@ import httpx
 from sqlalchemy import func, select, text
 
 from app.agent_comm import operations as agent_operations
+from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
-from app.core.observability import get_logger, observe_background_loop, parse_timestamp
+from app.core.observability import get_logger, parse_timestamp
 from app.hosts.models import Host, HostResourceSample, HostStatus
 from app.hosts.schemas import HostResourceSampleRead, HostResourceTelemetryResponse
 
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.hosts.services_container import HostServices
 
 logger = get_logger(__name__)
@@ -193,16 +194,20 @@ class HostResourceTelemetryService:
         )
 
 
-class HostResourceTelemetryLoop:
+class HostResourceTelemetryLoop(BackgroundLoop):
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
+    cycle_failed_message = "Host resource telemetry loop failed"
+
     def __init__(self, *, services: HostServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        while True:
-            interval = float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.resource_telemetry.poll_once(db)
-            except Exception:
-                logger.exception("Host resource telemetry loop failed")
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.resource_telemetry.poll_once(db)

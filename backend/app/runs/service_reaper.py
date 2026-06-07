@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import asyncio
-import os
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, or_, select
 
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
-from app.core.observability import get_logger, observe_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.leader.advisory import assert_current_leader
+from app.core.observability import get_logger
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run_for_update
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.runs.services_container import RunServices
 
 logger = get_logger(__name__)
@@ -23,41 +23,30 @@ LOOP_NAME = "run_reaper"
 NON_TERMINAL_STATES = [s for s in RunState if s not in TERMINAL_STATES]
 
 
-class RunReaperLoop:
+class RunReaperLoop(BackgroundLoop):
+    """Background loop that expires stale test runs."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Run reaper check failed"
+
     def __init__(self, *, services: RunServices) -> None:
         self._services = services
+        self._interval_sec = 0.0
 
-    async def run(self) -> None:
-        """Background loop that expires stale test runs."""
-        interval = float(self._services.settings.get("reservations.reaper_interval_sec"))
-        # On startup, immediately check for stale runs (e.g. manager was restarted)
-        try:
-            async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                await self._reap_stale_runs(db)
-        except LeadershipLost as exc:
-            logger.error(
-                "run_reaper_loop_leadership_lost",
-                reason=str(exc),
-                action="exiting_process_to_prevent_split_brain",
-            )
-            os._exit(70)
-        except Exception:
-            logger.exception("Initial stale run check failed")
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
 
-        while True:
-            await asyncio.sleep(interval)
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._reap_stale_runs(db)
-            except LeadershipLost as exc:
-                logger.error(
-                    "run_reaper_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Run reaper check failed")
+    async def _on_start(self) -> None:
+        # Interval is frozen at startup (pre-scaffold behavior preserved).
+        self._interval_sec = float(self._services.settings.get("reservations.reaper_interval_sec"))
+
+    def _interval(self) -> float:
+        return self._interval_sec
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._reap_stale_runs(db)
 
     async def _reap_stale_runs(self, db: AsyncSession) -> None:
         now = datetime.now(UTC)

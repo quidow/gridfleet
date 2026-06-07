@@ -24,7 +24,6 @@ from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
-from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.hosts.service import HostCrudService
 from app.hosts.service_agent_logs import AgentLogsService
 from app.hosts.service_diagnostics import HostDiagnosticsService
@@ -166,13 +165,15 @@ async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.Mon
 
 
 async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fleet_capacity, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     monkeypatch.setattr(
         fleet_capacity.FleetCapacityService,
         "collect_capacity_snapshot_once",
         AsyncMock(side_effect=[RuntimeError("boom"), None]),
     )
-    monkeypatch.setattr(fleet_capacity.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     _fc_settings = FakeSettingsReader({})
     _fc_publisher = AsyncMock()
@@ -221,10 +222,10 @@ async def test_capacity_and_hardware_telemetry_loops_cover_retry_paths(monkeypat
 
     assert fleet_capacity.FleetCapacityService.collect_capacity_snapshot_once.await_count == 2
 
-    monkeypatch.setattr(hardware_telemetry, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     poll_once_mock = AsyncMock(side_effect=[RuntimeError("boom"), None])
     monkeypatch.setattr(HardwareTelemetryService, "poll_once", poll_once_mock)
-    monkeypatch.setattr(hardware_telemetry.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(side_effect=[None, asyncio.CancelledError]))
 
     _cb = Mock()
     loop = HardwareTelemetryLoop(

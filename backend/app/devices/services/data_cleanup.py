@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -10,7 +9,8 @@ from sqlalchemy import and_, delete, or_, select
 
 from app.agent_comm.models import AgentReconfigureOutbox
 from app.analytics.models import AnalyticsCapacitySnapshot
-from app.core.observability import get_logger, observe_background_loop, schedule_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.observability import get_logger, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.diagnostics.models import DeviceDiagnosticSnapshot
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
 
@@ -270,22 +271,30 @@ class DataCleanupService:
         )
 
 
-class DataCleanupLoop:
+class DataCleanupLoop(BackgroundLoop):
+    """Background loop that periodically cleans up old data."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
+    cycle_failed_message = "Data cleanup failed"
+    sleep_before_first_cycle = True  # never run cleanup immediately at boot
+
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
+        self._interval_sec = 0.0
 
-    async def run(self) -> None:
-        """Background loop that periodically cleans up old data."""
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    async def _on_start(self) -> None:
         interval_hours: int = self._services.settings.get("retention.cleanup_interval_hours")
-        interval_seconds = float(interval_hours * 3600)
-        await schedule_background_loop(LOOP_NAME, interval_seconds)
-        while True:
-            await asyncio.sleep(interval_seconds)
-            try:
-                async with (
-                    observe_background_loop(LOOP_NAME, interval_seconds).cycle(),
-                    self._services.session_factory() as db,
-                ):
-                    await self._services.data_cleanup.cleanup_old_data(db)
-            except Exception:
-                logger.exception("Data cleanup failed")
+        self._interval_sec = float(interval_hours * 3600)
+        # Pre-register the snapshot so readiness probes see the loop before its first (long) sleep.
+        await schedule_background_loop(LOOP_NAME, self._interval_sec)
+
+    def _interval(self) -> float:
+        return self._interval_sec
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.data_cleanup.cleanup_old_data(db)

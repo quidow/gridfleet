@@ -301,11 +301,13 @@ async def test_device_connectivity_loop_exits_on_leadership_loss(monkeypatch: py
 async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         run_reaper.RunReaperLoop, "_reap_stale_runs", AsyncMock(side_effect=LeadershipLost("stale leader"))
     )
-    monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
+    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     mock_services = SimpleNamespace(
         lifecycle=AsyncMock(),
@@ -317,20 +319,22 @@ async def test_run_reaper_loop_exits_on_initial_leadership_loss(monkeypatch: pyt
     with pytest.raises(SystemExit):
         await loop.run()
 
-    run_reaper.os._exit.assert_called_once_with(70)
+    background_loop.os._exit.assert_called_once_with(70)
 
 
 async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
 
-    monkeypatch.setattr(run_reaper, "observe_background_loop", Mock(return_value=_Observation()))
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         run_reaper.RunReaperLoop,
         "_reap_stale_runs",
         AsyncMock(side_effect=[None, LeadershipLost("stale leader")]),
     )
-    monkeypatch.setattr(run_reaper.asyncio, "sleep", AsyncMock(return_value=None))
-    monkeypatch.setattr(run_reaper.os, "_exit", Mock(side_effect=SystemExit(70)))
+    monkeypatch.setattr(background_loop.asyncio, "sleep", AsyncMock(return_value=None))
+    monkeypatch.setattr(background_loop.os, "_exit", Mock(side_effect=SystemExit(70)))
 
     mock_services = SimpleNamespace(
         lifecycle=AsyncMock(),
@@ -342,17 +346,19 @@ async def test_run_reaper_loop_exits_on_repeated_leadership_loss(monkeypatch: py
     with pytest.raises(SystemExit):
         await loop.run()
 
-    run_reaper.os._exit.assert_called_once_with(70)
+    background_loop.os._exit.assert_called_once_with(70)
 
 
 async def test_data_cleanup_loop_logs_failure_and_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.background_loop as background_loop
+
     monkeypatch.setattr(data_cleanup, "schedule_background_loop", AsyncMock())
-    monkeypatch.setattr(data_cleanup, "observe_background_loop", Mock(return_value=_Observation()))
+    monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
     monkeypatch.setattr(
         data_cleanup.DataCleanupService, "cleanup_old_data", AsyncMock(side_effect=RuntimeError("boom"))
     )
     sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
-    monkeypatch.setattr(data_cleanup.asyncio, "sleep", sleep)
+    monkeypatch.setattr(background_loop.asyncio, "sleep", sleep)
 
     _svc_settings_4 = FakeSettingsReader({})
     _svc_pub_4 = AsyncMock()

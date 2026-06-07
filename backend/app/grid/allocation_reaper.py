@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
-from app.core.leader.advisory import LeadershipLost
-from app.core.observability import get_logger, observe_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.observability import get_logger
 from app.grid.allocation import GRID_QUEUE_DEPTH
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.service_sync import request_session_sync_wake
@@ -17,6 +15,7 @@ from app.sessions.service_sync import request_session_sync_wake
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.grid.services_container import GridServices
 
 logger = get_logger(__name__)
@@ -24,29 +23,23 @@ LOOP_NAME = "grid_allocation_reaper"
 INTERVAL_SEC = 5.0
 
 
-class GridAllocationReaperLoop:
+class GridAllocationReaperLoop(BackgroundLoop):
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Grid allocation reaper cycle failed"
+
     def __init__(self, *, services: GridServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that fails expired pending sessions and expires stale tickets."""
-        while True:
-            try:
-                async with (
-                    observe_background_loop(LOOP_NAME, INTERVAL_SEC).cycle(),
-                    self._services.session_factory() as db,
-                ):
-                    await self.run_cycle(db)
-            except LeadershipLost as exc:
-                logger.error(
-                    "grid_allocation_reaper_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Grid allocation reaper cycle failed")
-            await asyncio.sleep(INTERVAL_SEC)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(INTERVAL_SEC)
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self.run_cycle(db)
 
     async def run_cycle(self, db: AsyncSession) -> None:
         reaped = await self._services.allocation.reap_expired(db)
