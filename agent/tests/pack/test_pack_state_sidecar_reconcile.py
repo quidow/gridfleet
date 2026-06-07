@@ -154,7 +154,9 @@ async def test_pack_state_loop_drops_stale_sidecar_when_adapter_missing() -> Non
     try:
         await loop.run_once()
         assert supervisor.tracked_keys() == {("uploaded-sidecar-pack", "1.0.0", "tunnel")}
-        registry.clear()
+        # Simulate the adapter being evicted between reconcile passes by swapping in
+        # a fresh, empty registry for the second pass.
+        loop.adapter_registry = AdapterRegistry()
         client._packs = []
 
         await loop.run_once()

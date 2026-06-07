@@ -37,7 +37,6 @@ def _run_command(command: list[str], *, check: bool = True) -> None:
 
 def _stop_service(
     os_name: str,
-    service_file: Path,
     *,
     run_command: Callable[..., None],
     operator: OperatorIdentity,
@@ -68,7 +67,7 @@ def uninstall(
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
 
-    _stop_service(resolved_os, service_file, run_command=run_command, operator=operator)
+    _stop_service(resolved_os, run_command=run_command, operator=operator)
 
     removed_service_file = False
     if service_file.exists():

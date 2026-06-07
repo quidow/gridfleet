@@ -176,7 +176,7 @@ def test_discover_tools_ignores_sudo_user_home(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr("agent_app.installer.plan.Path.home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
     monkeypatch.setattr("agent_app.installer.plan.shutil.which", lambda _name: None)
 
-    discovery = discover_tools(env={"SUDO_USER": "operator"}, os_name="Linux")
+    discovery = discover_tools(env={"SUDO_USER": "operator"})
 
     # SUDO_USER is ignored; with no node in the real home and shutil.which returning None,
     # node_bin_dir should be None.

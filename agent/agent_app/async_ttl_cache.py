@@ -41,10 +41,6 @@ class AsyncTTLCache[K: Hashable, V]:
             self._entries[key] = (self._now() + self._ttl_seconds, value)
             return value
 
-    def put(self, key: K, value: V) -> None:
-        """Store ``value`` for ``key`` directly, starting a fresh TTL window."""
-        self._entries[key] = (self._now() + self._ttl_seconds, value)
-
     def clear(self) -> None:
         """Drop all entries (test hook / explicit invalidation)."""
         self._entries.clear()
