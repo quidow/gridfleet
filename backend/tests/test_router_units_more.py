@@ -1851,10 +1851,12 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
             appium_node=stopped_node,
         ),
     ]
+    run_id = uuid.uuid4()
     ticket = SimpleNamespace(
         id="queued",
         requested_body={"capabilities": {"alwaysMatch": {"platformName": "android"}}},
         created_at=datetime(2026, 6, 5, tzinfo=UTC),
+        run_id=run_id,
     )
 
     fake_device_services = SimpleNamespace(crud=SimpleNamespace(list_devices=AsyncMock(return_value=devices)))
@@ -1876,6 +1878,7 @@ async def test_grid_router_summarizes_registry_and_queue() -> None:
     assert queue["queue_size"] == 1
     assert queue["requests"][0]["requestId"] == "queued"
     assert queue["requests"][0]["capabilities"] == {"platformName": "android"}
+    assert queue["requests"][0]["runId"] == str(run_id)
 
 
 async def test_nodes_router_validation_branches() -> None:
