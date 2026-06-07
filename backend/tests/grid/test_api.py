@@ -1,3 +1,5 @@
+import uuid
+
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -160,6 +162,7 @@ async def test_grid_status_queue_size(client: AsyncClient, db_session: AsyncSess
 
 
 async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
+    run_id = uuid.uuid4()
     ticket = GridSessionQueueTicket(
         requested_body={
             "capabilities": {
@@ -168,6 +171,7 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default
             }
         },
         status=GridQueueStatus.waiting,
+        run_id=run_id,
     )
     db_session.add(ticket)
     # A non-waiting ticket must be excluded.
@@ -192,3 +196,21 @@ async def test_grid_queue(client: AsyncClient, db_session: AsyncSession, default
     assert req["capabilities"]["appium:platformVersion"] == "14"
     assert req["capabilities"]["appium:automationName"] == "UiAutomator2"
     assert req["requestTimestamp"] == ticket.created_at.isoformat()
+    # Run attribution comes from the ticket row (run-scoped endpoint), not from
+    # capabilities — the gridfleet:run_id cap is retired (review F1).
+    assert req["runId"] == str(run_id)
+
+
+async def test_grid_queue_free_ticket_has_null_run(client: AsyncClient, db_session: AsyncSession) -> None:
+    db_session.add(
+        GridSessionQueueTicket(
+            requested_body={"capabilities": {"alwaysMatch": {"platformName": "android"}}},
+            status=GridQueueStatus.waiting,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/grid/queue")
+
+    assert resp.status_code == 200
+    assert resp.json()["requests"][0]["runId"] is None
