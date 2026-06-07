@@ -39,6 +39,27 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
     ping_result = await _network_ping(serial)
     if ping_result is not None:
         results.append(ping_result)
+    is_network = getattr(ctx, "connection_type", None) == "network" or _IP_PORT_RE.match(serial) is not None
+    link_dead = not connected or not responsive
+    tcp_ok = ping_result is not None and ping_result.ok
+    if is_network and link_dead:
+        if await _adb_unauthorized(adb, serial):
+            results.append(
+                HealthCheckResult(
+                    check_id="adb_unauthorized",
+                    ok=False,
+                    detail="Device authorization revoked; re-authorize on the device",
+                )
+            )
+        elif tcp_ok:
+            results.append(
+                HealthCheckResult(
+                    check_id="link_repairable",
+                    ok=False,
+                    detail="adb transport down but device TCP-reachable; reconnect recommended",
+                    recommended_action="reconnect",
+                )
+            )
     expected = getattr(ctx, "expected_identity_value", None)
     if connected and expected and getattr(ctx, "connection_type", None) == "network":
         identity_result = await _verify_identity(adb, serial, str(expected))
@@ -81,6 +102,20 @@ async def _verify_identity(adb: str, serial: str, expected: str) -> HealthCheckR
 
 async def _adb_connected(adb: str, serial: str) -> bool:
     return await run_cmd([adb, "-s", serial, "get-state"], timeout=5) == "device"
+
+
+async def _adb_unauthorized(adb: str, serial: str) -> bool:
+    """True if ``serial`` is present in ``adb devices`` marked ``unauthorized``.
+
+    Distinguishes a revoked-authorization device (TCP-reachable, but no retry of
+    ``adb connect`` can repair it — needs device-side approval) from a dead link.
+    """
+    raw = await run_cmd([adb, "devices"], timeout=5)
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == serial and parts[1] == "unauthorized":
+            return True
+    return False
 
 
 async def _adb_shell_echo(adb: str, serial: str) -> bool:

@@ -42,6 +42,9 @@ class HealthCheckResult:
     check_id: str
     ok: bool
     detail: str = ""
+    # Optional name of a manifest-declared lifecycle action the adapter
+    # recommends as remediation (generic; core dispatches without interpreting).
+    recommended_action: str | None = None
 
 
 @dataclass

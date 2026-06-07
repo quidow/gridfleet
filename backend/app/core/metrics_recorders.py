@@ -157,6 +157,10 @@ AGENT_RECONFIGURE_OUTBOX_ABANDONED = Counter(
     "agent_reconfigure_outbox_abandoned_total",
     "Agent reconfigure outbox rows abandoned after exhausting delivery attempts.",
 )
+AGENT_RECONFIGURE_OUTBOX_NO_PROCESS = Counter(
+    "agent_reconfigure_outbox_no_process_total",
+    "Agent reconfigure outbox rows consumed because the agent reports no managed process on the port.",
+)
 
 
 def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:
@@ -259,3 +263,24 @@ def record_ip_ping_failure(*, device_identity: str, host: str) -> None:
 
 def set_ip_ping_consecutive_failures(*, device_identity: str, host: str, value: int) -> None:
     ip_ping_consecutive_failures.labels(device_identity=device_identity, host=host).set(value)
+
+
+device_repair_attempts_total = Counter(
+    "gridfleet_device_repair_attempts_total",
+    "Total adapter-recommended repair dispatches by the connectivity loop.",
+    ["action", "outcome"],
+)
+
+probe_unanswered_consecutive = Gauge(
+    "gridfleet_probe_unanswered_consecutive",
+    "Current consecutive unanswered health-probe counter, per device.",
+    ["device_identity", "host"],
+)
+
+
+def record_device_repair_attempt(*, action: str, outcome: str) -> None:
+    device_repair_attempts_total.labels(action=action, outcome=outcome).inc()
+
+
+def set_probe_unanswered_consecutive(*, device_identity: str, host: str, value: int) -> None:
+    probe_unanswered_consecutive.labels(device_identity=device_identity, host=host).set(value)

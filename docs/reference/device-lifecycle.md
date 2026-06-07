@@ -89,8 +89,8 @@ the observed-state writers (the `app.appium_nodes.services.reconciler*` modules;
 hand-copying it here.  Caveat: `last_observed_at` is written only by a SQLAlchemy
 Core bulk update in `app.appium_nodes.services.reconciler` (`_touch_last_observed`),
 which the attribute-event guard cannot intercept — Core updates never fire ORM
-`set` events — so the `ALLOWLIST` entry naming `heartbeat` for that column is stale
-and unenforced.
+`set` events — so its `ALLOWLIST` entry (which names `reconciler`) is documentary
+only, not enforced.
 
 Any new sanctioned writer must be added to `ALLOWLIST`; unlisted callers get
 `StateWriteOutsideSanctionedWriterError`.  Test fixtures seed state using
@@ -104,6 +104,15 @@ MUST acquire the row lock first via `app.devices.locking.lock_device` (or
 endpoints.  Background loops commit per device after the locked write window.  The
 leader advisory lock alone is NOT sufficient — API mutators run on every worker and
 bypass it.
+
+Exemption: `_touch_last_observed` (`app.appium_nodes.services.reconciler`) writes
+`appium_nodes.last_observed_at` **lockless** by design — a monotonic observability
+timestamp written by the single leader-serialized reconciler and read by no decision
+logic, so a lost update is harmless and self-heals next tick; revisit if any decision
+path ever reads it.
+
+Alembic schema/data migrations are an accepted out-of-band writer for protected
+columns; the runtime guard and row-lock contract apply to application code only.
 
 ### Lifecycle JSON axis
 

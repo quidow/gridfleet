@@ -99,7 +99,9 @@ async def run_device_intent_reconciler_once(
 ) -> None:
     await assert_current_leader(db, settings=settings)
     full_scan_every = int(settings.get("general.intent_reconcile_full_scan_every_cycles"))
-    await deliver_pending_agent_reconfigures(db, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+    await deliver_pending_agent_reconfigures(
+        db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+    )
     await _reconcile_expired_intents(
         db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
     )
@@ -119,7 +121,9 @@ async def run_device_intent_reconciler_once(
     for affected_id in sorted(precondition_affected):
         await reconcile_device(db, affected_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, affected_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, affected_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
     if cycle % full_scan_every == 0:
         await _reconcile_all_devices_once(
             db, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
@@ -154,7 +158,9 @@ async def _reconcile_all_devices_once(
     for device_id in dict.fromkeys([*intent_device_ids, *orphan_device_ids]):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def _reconcile_dirty_devices(
@@ -179,7 +185,9 @@ async def _reconcile_dirty_devices(
         if current is not None and current.generation == generation:
             await db.delete(current)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def _reconcile_expired_intents(
@@ -208,7 +216,9 @@ async def _reconcile_expired_intents(
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def _sweep_orphaned_intents(db: AsyncSession) -> None:
@@ -319,7 +329,9 @@ async def _reconcile_terminal_run_intents(
     for device_id in sorted(set(device_ids)):
         await reconcile_device(db, device_id, publisher=publisher)
         await db.commit()
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def reconcile_device(
@@ -402,9 +414,13 @@ async def reconcile_device(
         "recovery_blocked_reason": device.recovery_blocked_reason,
     }
 
-    desired_port = node_decision.desired_port if target_state == AppiumDesiredState.running else None
-    if target_state == AppiumDesiredState.running and desired_port is None:
-        desired_port = node.port
+    # The node row is the single source of port truth: payload `desired_port` values are
+    # registration-time snapshots of node.port and go stale when a fallback start moves the
+    # node (observation updates node.port and clears AppiumNode.desired_port). Re-applying
+    # a stale snapshot flips desired_port against the live port on every reconcile, and the
+    # appium reconciler then force-restarts the node onto the stale port — the 4724<->4725
+    # churn storm behind the N11 S13/S14 failures (2026-06-07). Pin the live port instead.
+    desired_port = node.port if target_state == AppiumDesiredState.running else None
     await write_desired_state(
         db,
         node=node,

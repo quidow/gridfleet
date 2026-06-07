@@ -124,7 +124,10 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     mock_ra = AsyncMock()
     mock_ra.restart_node = AsyncMock(return_value=node)
     with (
-        patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
+        ),
     ):
         result = await devices_control.reconnect_device(
             device.id,
@@ -166,9 +169,8 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
         patch.object(devices_control, "resolve_pack_platform", new=AsyncMock(return_value=_RESOLVED)),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch.object(
-            devices_control,
-            "pack_device_lifecycle_action",
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
@@ -200,9 +202,8 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
         patch.object(devices_control, "resolve_pack_platform", new=AsyncMock(return_value=_RESOLVED)),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch.object(
-            devices_control,
-            "pack_device_lifecycle_action",
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
@@ -242,9 +243,8 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
         patch.object(devices_control, "resolve_pack_platform", new=AsyncMock(return_value=_RESOLVED)),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch.object(
-            devices_control,
-            "pack_device_lifecycle_action",
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
@@ -274,9 +274,8 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
         patch.object(devices_control, "get_device_or_404", new=AsyncMock(return_value=device)),
         patch.object(devices_control, "resolve_pack_platform", new=AsyncMock(return_value=_RESOLVED)),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch.object(
-            devices_control,
-            "pack_device_lifecycle_action",
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),

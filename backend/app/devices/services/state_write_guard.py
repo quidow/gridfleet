@@ -8,6 +8,17 @@ originates outside the allowlist.
 
 Tests that seed state via fixtures use the ``bypass()`` context manager. Production
 code never calls ``bypass``.
+
+LIMITATION (known carve-out): this guard hooks the ORM attribute ``set`` event, so
+it only sees writes that go through an instrumented attribute (``obj.col = ...`` or
+a constructor kwarg). SQLAlchemy **Core** bulk updates (``update(Model).values(...)``)
+fire no ``set`` event and are therefore invisible to the guard. Today exactly one
+protected column is written this way — ``appium_nodes.last_observed_at`` via
+``reconciler._touch_last_observed`` — and nothing reads it for decisions, so the
+carve-out is accepted (its ALLOWLIST entry is documentary, not enforced). If a
+second Core write to a protected column ever appears, the upgrade path is a
+``before_execute``/``do_orm_execute`` hook that scans UPDATE statements against the
+protected set — do not assume the ALLOWLIST protects a Core write.
 """
 
 from __future__ import annotations
@@ -66,7 +77,6 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("appium_nodes", "pid"): frozenset(
         {
             "app.appium_nodes.services.reconciler_agent",
-            "app.appium_nodes.services.reconciler",
             "app.appium_nodes.services.heartbeat",
             # Verification teardown clears pid to signal the node has stopped.
             "app.verification.services.execution",
@@ -75,11 +85,9 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
     ("appium_nodes", "port"): frozenset(
         {
             "app.appium_nodes.services.reconciler_agent",
-            "app.appium_nodes.services.reconciler",
             # Node creation paths: port is set at construction time when the AppiumNode row
             # does not yet exist.  These modules create the row; subsequent port changes go
             # through the reconciler.
-            "app.devices.services.bulk",
             "app.lifecycle.services.policy",
             "app.lifecycle.services.operator_node",
         }
@@ -91,24 +99,13 @@ ALLOWLIST: dict[tuple[str, str], frozenset[str]] = {
             "app.verification.services.execution",
         }
     ),
-    ("appium_nodes", "health_running"): frozenset(
-        {
-            "app.devices.services.health",
-            "app.appium_nodes.services.heartbeat",
-            # Reconciler agent clears health_running when stale health state is detected.
-            "app.appium_nodes.services.reconciler_agent",
-        }
-    ),
-    ("appium_nodes", "health_state"): frozenset(
-        {
-            "app.devices.services.health",
-            "app.appium_nodes.services.heartbeat",
-            # Reconciler agent clears health_state when stale health state is detected.
-            "app.appium_nodes.services.reconciler_agent",
-        }
-    ),
+    ("appium_nodes", "health_running"): frozenset({"app.devices.services.health"}),
+    ("appium_nodes", "health_state"): frozenset({"app.devices.services.health"}),
     ("appium_nodes", "last_health_checked_at"): frozenset({"app.devices.services.health"}),
-    ("appium_nodes", "last_observed_at"): frozenset({"app.appium_nodes.services.heartbeat"}),
+    # Documentary only — NOT enforced. ``last_observed_at`` is written via a Core
+    # bulk update in ``reconciler._touch_last_observed``, which fires no ORM ``set``
+    # event, so the listener below never sees it (see module docstring + WI-2).
+    ("appium_nodes", "last_observed_at"): frozenset({"app.appium_nodes.services.reconciler"}),
 }
 
 

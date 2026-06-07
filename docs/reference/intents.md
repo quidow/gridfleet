@@ -133,17 +133,20 @@ below.
 | `health_failure:node:{device_id}` | `stop_mode` | Intentional snapshot | "graceful" stop policy fixed at health-failure detection time. |
 | `maintenance:node:{device_id}` | `stop_mode` | Intentional snapshot | "graceful" stop policy; fixed at maintenance-entry time. |
 | `maintenance:recovery:{device_id}` | `reason` | Intentional snapshot | Must equal `MAINTENANCE_HOLD_SUPPRESSION_REASON` exactly — `clear_maintenance_recovery_suppression` compares by value. |
-| `operator:start:{device_id}` (start variant) | `desired_port` | Intentional snapshot | Operator-chosen port selected at start time; not read from a live node row field. |
-| `operator:start:{device_id}` (restart variant) | `desired_port` | Intentional snapshot | Same — operator-chosen (current node port at restart time). |
+| `operator:start:{device_id}` (start variant) | `desired_port` | Audit-only snapshot | Port at registration time, for the audit trail. NOT applied: the intent reconciler pins the live `node.port` (a payload port goes stale when a fallback start moves the node — the 2026-06-07 FireTV 4724↔4725 churn). |
+| `operator:start:{device_id}` (restart variant) | `desired_port` | Audit-only snapshot | Same — recorded at restart time, never applied. |
 | `operator:start:{device_id}` (restart variant) | `transition_token` | Intentional snapshot | Fresh UUID minted at registration for restart coordination. |
 | `operator:start:{device_id}` (restart variant) | `transition_deadline` | Intentional snapshot | Window computed fresh from `appium_reconciler.restart_window_sec` at restart time. |
 | `operator:stop:node:{device_id}` | `stop_mode` | Intentional snapshot | "hard" stop policy fixed at operator-stop time. |
 | `operator:stop:grid:{device_id}` | _(no extra fields)_ | — | Structural only. |
 
-**Audit note — no Drop violations found.** The `desired_port` field on
-`auto_recovery:node:*` was a Drop violation (it captured `node.port`, a moving
-row field); it was removed in commit `864e6feb`. No other Drop-class violations
-were identified in the current 31 call sites.
+**Audit note.** The `desired_port` field on `auto_recovery:node:*` was a Drop
+violation (it captured `node.port`, a moving row field); it was removed in
+commit `864e6feb`. The remaining `desired_port` payloads (`operator:start:*`,
+`baseline:idle`) are the same moving-row-field class; rather than removing them,
+the intent reconciler now ignores payload ports entirely and pins the live
+`node.port` when applying a start decision — the payload copies are retained as
+registration-time audit records only.
 
 ## Lifecycle Ownership
 

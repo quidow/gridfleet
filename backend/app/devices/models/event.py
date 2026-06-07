@@ -29,6 +29,8 @@ class DeviceEventType(enum.StrEnum):
     lifecycle_run_restored = "lifecycle_run_restored"
     lifecycle_run_cooldown_set = "lifecycle_run_cooldown_set"
     lifecycle_run_cooldown_escalated = "lifecycle_run_cooldown_escalated"
+    repair_attempted = "repair_attempted"
+    repair_failed = "repair_failed"
     # Derived-state transitions that produce DeviceEvent audit rows:
     maintenance_entered = "maintenance_entered"
     maintenance_exited = "maintenance_exited"

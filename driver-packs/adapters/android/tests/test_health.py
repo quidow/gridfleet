@@ -19,6 +19,32 @@ class _Ctx:
 
 
 @pytest.mark.asyncio
+async def test_adb_unauthorized_true_when_device_listed_unauthorized(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\tunauthorized\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    from adapter.health import _adb_unauthorized
+
+    assert await _adb_unauthorized("adb", "192.168.1.254:5555") is True
+
+
+@pytest.mark.asyncio
+async def test_adb_unauthorized_false_when_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\tdevice\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    from adapter.health import _adb_unauthorized
+
+    assert await _adb_unauthorized("adb", "192.168.1.254:5555") is False
+
+
+@pytest.mark.asyncio
 async def test_health_check_uses_manifest_check_ids(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
         if cmd[-1] == "get-state":
@@ -112,6 +138,75 @@ async def test_health_check_resolves_avd_name_without_adb_devices_listing(monkey
 async def test_unhealthy(_mock_echo: AsyncMock) -> None:
     results = await health_check(_Ctx())
     assert results[0].ok is False
+
+
+def _recommendation(results: list) -> str | None:
+    for r in results:
+        action = getattr(r, "recommended_action", None)
+        if action:
+            return action
+    return None
+
+
+@pytest.mark.asyncio
+async def test_recommends_reconnect_when_link_dead_but_tcp_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\toffline\n"
+        return ""  # get-state, echo, boot_completed all fail (link dead)
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    results = await health_check(_network_ctx(expected=None))
+
+    assert _recommendation(results) == "reconnect"
+
+
+@pytest.mark.asyncio
+async def test_no_recommendation_when_tcp_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\toffline\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=False))
+
+    results = await health_check(_network_ctx(expected=None))
+
+    assert _recommendation(results) is None
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_no_recommendation_and_emits_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd == ["adb", "devices"]:
+            return "List of devices attached\n192.168.1.254:5555\tunauthorized\n"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))
+
+    results = await health_check(_network_ctx(expected=None))
+
+    assert _recommendation(results) is None
+    assert any(r.check_id == "adb_unauthorized" and not r.ok for r in results)
+
+
+@pytest.mark.asyncio
+async def test_usb_never_recommends(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        return ""  # link dead
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    results = await health_check(_Ctx("ABC123"))  # usb-style serial, connection_type None
+
+    assert _recommendation(results) is None
 
 
 # ---------------------------------------------------------------------------

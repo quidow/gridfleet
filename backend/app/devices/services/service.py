@@ -31,10 +31,14 @@ from app.devices.schemas.device import (
 from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy_summary
+from app.devices.services import lifecycle_policy_summary, link_repair
 from app.devices.services import readiness as device_readiness
 from app.devices.services import write as device_write
-from app.devices.services.connectivity import CONNECTIVITY_NAMESPACE, IP_PING_NAMESPACE
+from app.devices.services.connectivity import (
+    CONNECTIVITY_NAMESPACE,
+    IP_PING_NAMESPACE,
+    PROBE_UNANSWERED_NAMESPACE,
+)
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -253,6 +257,8 @@ class DeviceCrudService:
         # the device row, so the cleanup stays in the same transaction.
         await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
         await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
+        await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+        await link_repair.reset_repair_attempts(db, device.identity_value)
 
         await db.delete(device)
         await db.commit()

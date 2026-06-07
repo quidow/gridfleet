@@ -71,7 +71,7 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
         await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
         return device.appium_node
 
-    monkeypatch.setattr(devices_control, "pack_device_lifecycle_action", fake_lifecycle_action)
+    monkeypatch.setattr("app.devices.services.link_repair.pack_device_lifecycle_action", fake_lifecycle_action)
 
     async def reconnect() -> None:
         async with db_session_maker() as session:

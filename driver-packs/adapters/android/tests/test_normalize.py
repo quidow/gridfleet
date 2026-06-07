@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from adapter.normalize import normalize_device
+from agent_app.pack.adapter_dispatch import ADAPTER_HOOK_TIMEOUT_SECONDS
 
 
 class _Ctx:
@@ -18,7 +19,7 @@ class _Ctx:
 async def test_normalize_network_ip_connects_adb_and_uses_stable_serial(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 
-    async def fake_run_cmd(cmd: list[str]) -> str:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float | None = None) -> str:
         calls.append(cmd)
         return "connected to 192.168.1.99:5555"
 
@@ -73,7 +74,7 @@ async def test_normalize_network_ip_connects_adb_and_uses_stable_serial(monkeypa
 
 @pytest.mark.asyncio
 async def test_normalize_firetv_keeps_model_code_as_model_number(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_cmd(cmd: list[str]) -> str:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float | None = None) -> str:
         return "already connected to 192.168.1.254:5555"
 
     async def fake_get_android_properties(adb: str, target: str) -> dict[str, str]:
@@ -125,7 +126,7 @@ async def test_normalize_firetv_keeps_model_code_as_model_number(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_normalize_plain_android_leaves_os_version_display_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_cmd(cmd: list[str]) -> str:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float | None = None) -> str:
         return "connected to 192.168.1.50:5555"
 
     async def fake_get_android_properties(adb: str, target: str) -> dict[str, str]:
@@ -160,7 +161,7 @@ async def test_normalize_plain_android_leaves_os_version_display_none(monkeypatc
 
 @pytest.mark.asyncio
 async def test_normalize_emulator_uses_host_scope(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_cmd(cmd: list[str]) -> str:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float | None = None) -> str:
         if cmd[:3] == ["adb", "-s", "emulator-5554"] and cmd[-3:] == ["emu", "avd", "name"]:
             return "Pixel_6\nOK"
         return ""
@@ -197,6 +198,43 @@ async def test_normalize_emulator_uses_host_scope(monkeypatch: pytest.MonkeyPatc
     assert result.identity_scope == "host"
     assert result.identity_value == "avd:Pixel_6"
     assert result.device_type == "emulator"
+
+
+@pytest.mark.asyncio
+async def test_normalize_bounds_adb_connect_below_hook_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A flaky Fire TV (wifi power-save / half-open TCP) makes `adb connect` block.
+    # The connect must be bounded well under the adapter-hook deadline so a hung
+    # connect returns a field error instead of tripping AdapterHookTimeoutError.
+    connect_timeout: float | None = None
+
+    async def fake_run_cmd(cmd: list[str], *, timeout: float | None = None) -> str:
+        nonlocal connect_timeout
+        if cmd[:2] == ["adb", "connect"]:
+            connect_timeout = timeout
+        return "connected to 192.168.1.77:5555"
+
+    async def fake_get_android_properties(adb: str, target: str) -> dict[str, str]:
+        return {"serial_number": "DEAD1234", "android_version": "11"}
+
+    monkeypatch.setattr("adapter.normalize.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.normalize.run_cmd", fake_run_cmd, raising=False)
+    monkeypatch.setattr("adapter.normalize.get_android_properties", fake_get_android_properties)
+
+    await normalize_device(
+        _Ctx(
+            {
+                "connection_target": "192.168.1.77",
+                "ip_address": "192.168.1.77",
+                "connection_type": "network",
+            }
+        )
+    )
+
+    assert connect_timeout is not None, "adb connect must pass an explicit timeout"
+    assert connect_timeout < ADAPTER_HOOK_TIMEOUT_SECONDS, (
+        f"adb connect timeout {connect_timeout}s must stay under the "
+        f"{ADAPTER_HOOK_TIMEOUT_SECONDS}s hook budget"
+    )
 
 
 async def _coro(value: str) -> str:

@@ -375,8 +375,16 @@ def _device_health_timeout(device: Device, *, settings: SettingsReader) -> float
 
 
 async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) -> AppiumNode:
-    """Write stopped desired state for verification update path."""
-    node: AppiumNode | None = device.appium_node
+    """Write stopped desired state for verification update path.
+
+    Re-loads the device under the row lock so the desired-state write and the
+    observation-column clears land inside the locked write window, per the
+    device-row-locking contract. The lock must be taken here (not hoisted by the
+    caller) because this helper commits internally, which would release any
+    outer lock mid-flow.
+    """
+    locked_device = await device_locking.lock_device(db, device.id)
+    node: AppiumNode | None = locked_device.appium_node
     if node is None or not node.observed_running:
         raise NodeManagerError(f"No running node for device {device.id}")
     await write_desired_state(
@@ -461,6 +469,17 @@ async def _stop_verification_node_if_running(
     node: AppiumNode | None,
     node_manager: RemoteNodeManager,
 ) -> str | None:
+    """Stop the verification node and clear its observation columns.
+
+    PRECONDITION: the caller MUST already hold the device row lock (the cleanup
+    clears ``pid``/``active_connection_target``, which are protected observation
+    columns — see the device-row-locking contract and the sibling
+    ``_stop_managed_node_for_verification``, which re-locks for the same reason).
+    Today's callers satisfy this: ``_finalize_failure`` (update mode) locks before
+    calling, and create mode operates on a throwaway device that is rolled back.
+    A new caller that does not hold the lock must add one — do not write these
+    columns unlocked.
+    """
     if node is None:
         return None
     try:

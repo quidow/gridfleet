@@ -37,8 +37,14 @@ from app.runs.models import RunState, TestRun
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_inflight import viability_probe_lock_active
 
 logger = logging.getLogger(__name__)
+
+# Registry default for ``general.session_viability_timeout_sec``, used only when the
+# service is constructed without a settings reader (unit tests); production wiring
+# always passes one (``composition.py``).
+_SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC = 120
 
 GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
     "gridfleet_grid_allocation_outcome",
@@ -48,6 +54,10 @@ GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
 GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
     "Waiting tickets in grid_session_queue.",
+)
+GRID_ALLOCATION_PROBE_DEFERRED_TOTAL = Counter(
+    "gridfleet_grid_allocation_probe_deferred",
+    "Device claims skipped because a session-viability probe held the device's probe lock.",
 )
 GRID_STEREOTYPE_LOOKUP_ERROR_TOTAL = Counter(
     "gridfleet_grid_stereotype_lookup_error",
@@ -635,6 +645,28 @@ class AllocationService:
             return None
         recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:
+            return None
+        # A session-viability probe is a REAL Appium session on an ``available``
+        # device, posted directly to the node — no Session row exists until the
+        # probe completes, so the live-session recheck above cannot see it. Its
+        # only allocation-visible footprint is the control-plane probe lock.
+        # Claiming mid-probe races the probe's uia2 startup for the device's
+        # static systemPort and fails the client create ("local port #8200 is
+        # busy", proven live 2026-06-07). Skip the device for this tick — the
+        # ticket stays waiting and retries on its next poll. Staleness uses the
+        # probe's own reclaim rule so a leaked lock cannot park the device.
+        viability_timeout_sec = (
+            int(cast("int", self._settings.get("general.session_viability_timeout_sec")))
+            if self._settings is not None
+            else _SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC
+        )
+        if await viability_probe_lock_active(db, locked.id, timeout_sec=viability_timeout_sec):
+            GRID_ALLOCATION_PROBE_DEFERRED_TOTAL.inc()
+            logger.info(
+                "grid_allocation_deferred_probe_inflight device=%s ticket=%s",
+                locked.id,
+                ticket.id,
+            )
             return None
         target = node_target(locked)
         if target is None:

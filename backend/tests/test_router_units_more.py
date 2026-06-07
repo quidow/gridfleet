@@ -1541,7 +1541,8 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
         patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
@@ -1560,7 +1561,8 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
         patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.devices.routers.control.pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
         ),
     ):
         reconnect = await devices_control.reconnect_device(
@@ -1742,7 +1744,7 @@ async def test_devices_control_reconnect_revokes_stale_recovery_intents() -> Non
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
         patch("app.devices.routers.control.platform_has_lifecycle_action", new=Mock(return_value=True)),
         patch(
-            "app.devices.routers.control.pack_device_lifecycle_action",
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=revoke),
@@ -2924,7 +2926,10 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             devices_control, "resolve_pack_platform", new=AsyncMock(return_value=SimpleNamespace(lifecycle_actions=[]))
         ),
         patch.object(devices_control, "platform_has_lifecycle_action", new=Mock(return_value=True)),
-        patch.object(devices_control, "pack_device_lifecycle_action", new=AsyncMock(return_value={"success": True})),
+        patch(
+            "app.devices.services.link_repair.pack_device_lifecycle_action",
+            new=AsyncMock(return_value={"success": True}),
+        ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
     ):
         with pytest.raises(HTTPException) as exc:

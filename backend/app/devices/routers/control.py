@@ -27,7 +27,7 @@ from app.devices.schemas.device import (
     SessionViabilityRead,
 )
 from app.devices.schemas.maintenance import DeviceMaintenanceUpdate
-from app.devices.services import identity, lifecycle_policy_summary
+from app.devices.services import identity, lifecycle_policy_summary, link_repair
 from app.devices.services import intent as intent_service
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
@@ -248,16 +248,9 @@ async def reconnect_device(
     if not device.connection_target:
         raise HTTPException(status_code=400, detail="Device has no connection target")
 
-    host = device.host
-    data = await pack_device_lifecycle_action(
-        host.ip,
-        host.agent_port,
-        device.connection_target,
-        pack_id=device.pack_id,
-        platform_id=device.platform_id,
-        action="reconnect",
-        args={"ip_address": device.ip_address, "port": 5555},
-        http_client_factory=httpx.AsyncClient,
+    data = await link_repair.dispatch_recommended_action(
+        device,
+        "reconnect",
         settings=settings_services.service,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,

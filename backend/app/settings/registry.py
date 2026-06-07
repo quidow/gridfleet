@@ -361,6 +361,18 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=1,
         max_value=10,
     ),
+    SettingDefinition(
+        key="device_checks.probe_unanswered.consecutive_fail_threshold",
+        category="device_checks",
+        setting_type="int",
+        default=3,
+        description=(
+            "Consecutive unanswered health probes (agent/adapter error) before a device "
+            "is marked unhealthy instead of being silently skipped."
+        ),
+        min_value=1,
+        max_value=100,
+    ),
     # ── Appium & Grid ──
     SettingDefinition(
         key="grid.session_poll_interval_sec",
