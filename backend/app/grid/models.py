@@ -45,3 +45,8 @@ class GridSessionQueueTicket(Base):
     # as a dead (half-closed) client. NULL until the first poll. ``updated_at`` cannot
     # serve this — its ``onupdate`` also fires on status transitions.
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Run binding from the router's /run/{run_id} endpoint (NULL = free session).
+    # Validated against an active run on every try_allocate tick; deliberately no
+    # FK — tickets are short-lived and a run's disappearance must cancel them,
+    # not block its deletion.
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

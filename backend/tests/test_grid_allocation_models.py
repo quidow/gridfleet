@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
 from alembic import command
+from app.grid.models import GridSessionQueueTicket
 from app.sessions.models import SessionStatus
 from tests.conftest import TEST_DATABASE_URL
 
@@ -106,6 +107,20 @@ async def test_grid_session_queue_table_exists(alembic_session: AsyncSession) ->
     )
     cols = {row[0] for row in res.fetchall()}
     assert {"id", "requested_body", "status", "session_row_id", "created_at", "updated_at"} <= cols
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ticket_stores_run_binding(db_session: AsyncSession) -> None:
+    """The /run/{id} endpoint's binding is a first-class ticket column (NULL = free)."""
+    bound = GridSessionQueueTicket(requested_body={"capabilities": {"alwaysMatch": {}}}, run_id=uuid.uuid4())
+    free = GridSessionQueueTicket(requested_body={"capabilities": {"alwaysMatch": {}}})
+    db_session.add_all([bound, free])
+    await db_session.commit()
+    await db_session.refresh(bound)
+    await db_session.refresh(free)
+    assert bound.run_id is not None
+    assert free.run_id is None
 
 
 def test_grid_allocation_settings_registered() -> None:
