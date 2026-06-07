@@ -208,7 +208,14 @@ class AllocationService:
         self._stereotype_provider = stereotype_provider
         self._settings = settings
 
-    async def confirm(self, db: DbSession, *, allocation_id: uuid.UUID, appium_session_id: str) -> None:
+    async def confirm(
+        self,
+        db: DbSession,
+        *,
+        allocation_id: uuid.UUID,
+        appium_session_id: str,
+        appium_capabilities: dict[str, Any] | None = None,
+    ) -> None:
         """Swap the placeholder session id for the Appium id and promote to ``running``.
 
         The status transition is a conditional UPDATE guarded on ``status='pending'``
@@ -234,6 +241,7 @@ class AllocationService:
                 .values(
                     session_id=appium_session_id,
                     status=SessionStatus.running,
+                    actual_capabilities=appium_capabilities,
                 )
             )
             await db.flush()

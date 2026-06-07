@@ -458,3 +458,43 @@ async def test_allocate_persists_run_binding_on_queued_ticket(client: AsyncClien
     assert data["status"] == "queued"
     ticket = await db_session.get(GridSessionQueueTicket, uuid.UUID(data["ticket"]))
     assert ticket is not None and ticket.run_id == run.id
+
+
+@pytest.mark.db
+async def test_confirm_stores_actual_capabilities(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    resp = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm",
+        json={
+            "appium_session_id": "appium-caps-1",
+            "appium_capabilities": {"platformName": "Android", "appium:systemPort": 8200},
+        },
+    )
+    assert resp.status_code == 204
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.actual_capabilities == {"platformName": "Android", "appium:systemPort": 8200}
+
+
+@pytest.mark.db
+async def test_confirm_without_capabilities_leaves_null(
+    client: AsyncClient, db_session: AsyncSession, seeded_available_device: Device
+) -> None:
+    resp = await client.post("/internal/grid/allocate", json={"body": _body(platformName="Android")})
+    allocation_id = resp.json()["allocation_id"]
+
+    resp = await client.post(
+        f"/internal/grid/sessions/{allocation_id}/confirm", json={"appium_session_id": "appium-nocaps-1"}
+    )
+    assert resp.status_code == 204
+
+    row = await db_session.get(Session, uuid.UUID(allocation_id))
+    assert row is not None
+    await db_session.refresh(row)
+    assert row.actual_capabilities is None
