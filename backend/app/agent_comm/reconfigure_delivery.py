@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.events.protocols import EventPublisher
 
 DELIVERY_BATCH_SIZE = 5
 MAX_DELIVERY_ATTEMPTS = 10
@@ -78,6 +79,7 @@ async def deliver_agent_reconfigures(
     raise_on_failure: bool = False,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
     await _mark_duplicate_generation_rows_delivered(db, device_id)
@@ -155,6 +157,29 @@ async def deliver_agent_reconfigures(
                     circuit_breaker=circuit_breaker,
                 )
         except (AgentUnreachableError, AgentResponseError) as exc:
+            if isinstance(exc, AgentResponseError) and exc.http_status == 404:
+                # The reconfigure route's only 404 is DEVICE_NOT_FOUND: the agent
+                # authoritatively reports no managed Appium process on this port, so
+                # the row can never be delivered — consume it (a future start carries
+                # the node's current flags in its payload). And if the node row still
+                # claims a process there, that observation is stale: the process died
+                # outside a reconciler-issued stop (e.g. a maintenance graceful drain)
+                # and only the appium_reconciler sweep — up to interval_sec (30s)
+                # later — would clear it. The stale window retires start intents via
+                # their node_running precondition and points probes at a dead port
+                # (N11, 2026-06-07), so clear it now instead of waiting.
+                metrics_recorders.AGENT_RECONFIGURE_OUTBOX_NO_PROCESS.inc()
+                row.delivered_at = datetime.now(UTC)
+                if node.pid is not None and node.port == row.port:
+                    from app.appium_nodes.services.reconciler_agent import (  # noqa: PLC0415 — import cycle
+                        mark_node_stopped,
+                    )
+
+                    # mark_node_stopped commits (including the row consumption above).
+                    await mark_node_stopped(db, device, publisher=publisher)
+                else:
+                    await db.commit()
+                continue
             _record_delivery_failure(row)
             await db.commit()
             if raise_on_failure:
@@ -172,6 +197,7 @@ async def deliver_pending_agent_reconfigures(
     limit: int = 100,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
+    publisher: EventPublisher,
     pool: AgentHttpPool | None = None,
 ) -> None:
     device_ids = (
@@ -192,7 +218,9 @@ async def deliver_pending_agent_reconfigures(
         .all()
     )
     for device_id in device_ids:
-        await deliver_agent_reconfigures(db, device_id, settings=settings, circuit_breaker=circuit_breaker, pool=pool)
+        await deliver_agent_reconfigures(
+            db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
+        )
 
 
 async def _mark_duplicate_generation_rows_delivered(db: AsyncSession, device_id: object) -> None:

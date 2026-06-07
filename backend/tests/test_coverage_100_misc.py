@@ -505,7 +505,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         ]
     )
     await agent_reconfigure_delivery.deliver_agent_reconfigures(
-        reconfigure_db, row.device_id, settings=FakeSettingsReader(), circuit_breaker=Mock()
+        reconfigure_db, row.device_id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=Mock()
     )
     assert row.abandoned_reason == agent_reconfigure_delivery.ABANDONED_REASON_HOST_MISSING
 

@@ -157,6 +157,10 @@ AGENT_RECONFIGURE_OUTBOX_ABANDONED = Counter(
     "agent_reconfigure_outbox_abandoned_total",
     "Agent reconfigure outbox rows abandoned after exhausting delivery attempts.",
 )
+AGENT_RECONFIGURE_OUTBOX_NO_PROCESS = Counter(
+    "agent_reconfigure_outbox_no_process_total",
+    "Agent reconfigure outbox rows consumed because the agent reports no managed process on the port.",
+)
 
 
 def record_http_request(method: str, path: str, status_code: int, duration_seconds: float) -> None:

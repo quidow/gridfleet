@@ -281,6 +281,7 @@ class RunFailureService:
                 settings=self._settings,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
+                publisher=self._publisher,
             )
             return excluded_until, cooldown_count_after, False, threshold
 
@@ -319,6 +320,7 @@ class RunFailureService:
             raise_on_failure=True,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
+            publisher=self._publisher,
         )
         return None, cooldown_count_after, True, threshold
 

@@ -15,9 +15,11 @@ from app.agent_comm.reconfigure_delivery import (
     deliver_agent_reconfigures,
 )
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.errors import AgentResponseError
 from app.devices.services import state_write_guard
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     import pytest
@@ -60,7 +62,7 @@ async def test_delivery_forwards_agent_auth_pool(
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
     await deliver_agent_reconfigures(
-        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, pool=POOL
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus, pool=POOL
     )
 
     assert reconfigure.await_args.kwargs["pool"] is POOL
@@ -92,7 +94,9 @@ async def test_stale_outbox_row_is_marked_delivered_without_agent_call(
     reconfigure = AsyncMock()
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is not None
@@ -125,7 +129,9 @@ async def test_outbox_row_sends_when_generation_matches(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is not None
@@ -179,7 +185,9 @@ async def test_outbox_row_sends_when_generation_behind_but_config_still_current(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is not None
@@ -227,7 +235,9 @@ async def test_outbox_delivery_failure_increments_attempts(
         AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline")),
     )
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
     assert stored.delivered_at is None
@@ -274,7 +284,12 @@ async def test_outbox_delivery_failure_raises_when_raise_on_failure_true(
 
     with _pytest.raises(InlineReconfigureDeliveryFailedError):
         await deliver_agent_reconfigures(
-            db_session, device.id, raise_on_failure=True, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER
+            db_session,
+            device.id,
+            raise_on_failure=True,
+            settings=SETTINGS,
+            circuit_breaker=CIRCUIT_BREAKER,
+            publisher=event_bus,
         )
 
     stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
@@ -321,7 +336,9 @@ async def test_outbox_delivery_failure_swallowed_by_default(
     )
 
     # Must not raise — default behavior swallows for the loop callers.
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
 
 async def test_delivery_marks_older_duplicate_generation_rows_delivered(
@@ -359,7 +376,9 @@ async def test_delivery_marks_older_duplicate_generation_rows_delivered(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     await db_session.refresh(older)
     await db_session.refresh(newest)
@@ -409,7 +428,9 @@ async def test_delivery_processes_at_most_one_batch_per_device(
     reconfigure = AsyncMock(return_value={"port": 4723})
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     delivered = (
         (
@@ -459,8 +480,12 @@ async def test_delivery_abandons_row_after_max_attempts(
     reconfigure = AsyncMock(side_effect=AgentUnreachableError(db_host.ip, "offline"))
     monkeypatch.setattr("app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure", reconfigure)
 
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
-    await deliver_agent_reconfigures(db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER)
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
 
     await db_session.refresh(row)
     assert row.delivered_at is None
@@ -483,3 +508,151 @@ def test_delivery_failure_uses_specific_abandonment_reason() -> None:
     assert row.abandoned_at is not None
     assert row.abandoned_reason == "host missing"
     assert row.delivery_attempts == MAX_DELIVERY_ATTEMPTS
+
+
+async def test_404_no_process_clears_stale_observed_state_and_consumes_row(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N11 (2026-06-07): the reconfigure route's only 404 is DEVICE_NOT_FOUND — the
+    agent authoritatively reports no managed process on the port. A node row still
+    claiming a pid there is stale (the process died outside a reconciler-issued stop,
+    e.g. a maintenance graceful drain) and would otherwise persist for up to one
+    appium_reconciler interval (30s), retiring start intents via their node_running
+    precondition and pointing probes at a dead port. Delivery must clear the stale
+    observation immediately and consume the undeliverable row."""
+    device = await create_device(db_session, host_id=db_host.id, name="stale-404")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=4242,
+            active_connection_target=device.connection_target,
+            generation=4,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4725,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=None,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(
+            side_effect=AgentResponseError(
+                db_host.ip, "Agent reconfigure Appium node failed (HTTP 404)", http_status=404
+            )
+        ),
+    )
+
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    await db_session.refresh(node)
+    assert node.pid is None, "stale pid must be cleared on agent-reported absence"
+    assert node.active_connection_target is None
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivered_at is not None, "undeliverable row must be consumed, not retried"
+    assert stored.delivery_attempts == 0, "absence is not a delivery failure"
+
+
+async def test_404_no_process_on_moved_port_consumes_row_without_clearing(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 404 for an outbox row whose port the node has since left says nothing about
+    the node's current process — consume the row but leave the observation alone."""
+    device = await create_device(db_session, host_id=db_host.id, name="moved-404")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4726,  # node moved; the outbox row below still targets 4725
+            desired_state=AppiumDesiredState.running,
+            desired_port=4726,
+            pid=4242,
+            active_connection_target=device.connection_target,
+            generation=4,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4725,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=None,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(
+            side_effect=AgentResponseError(
+                db_host.ip, "Agent reconfigure Appium node failed (HTTP 404)", http_status=404
+            )
+        ),
+    )
+
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    await db_session.refresh(node)
+    assert node.pid == 4242, "a 404 for a stale port must not clear the live observation"
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivered_at is not None
+
+
+async def test_non_404_response_error_keeps_failure_path(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the 404 absence signal is consumed; other agent errors stay retryable."""
+    device = await create_device(db_session, host_id=db_host.id, name="err-500")
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4725,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4725,
+            pid=4242,
+            active_connection_target=device.connection_target,
+            generation=4,
+        )
+    row = AgentReconfigureOutbox(
+        device_id=device.id,
+        port=4725,
+        accepting_new_sessions=True,
+        stop_pending=False,
+        grid_run_id=None,
+        reconciled_generation=4,
+    )
+    db_session.add_all([node, row])
+    await db_session.commit()
+    monkeypatch.setattr(
+        "app.agent_comm.reconfigure_delivery.agent_operations.agent_appium_reconfigure",
+        AsyncMock(
+            side_effect=AgentResponseError(
+                db_host.ip, "Agent reconfigure Appium node failed (HTTP 500)", http_status=500
+            )
+        ),
+    )
+
+    await deliver_agent_reconfigures(
+        db_session, device.id, settings=SETTINGS, circuit_breaker=CIRCUIT_BREAKER, publisher=event_bus
+    )
+
+    await db_session.refresh(node)
+    assert node.pid == 4242
+    stored = (await db_session.execute(select(AgentReconfigureOutbox))).scalar_one()
+    assert stored.delivered_at is None
+    assert stored.delivery_attempts == 1

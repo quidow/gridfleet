@@ -63,7 +63,6 @@ def test_idle_start_returns_running() -> None:
     )
 
     assert decision.desired_state == "running"
-    assert decision.desired_port == 4723
     assert map_node_process_decision(decision) == (AppiumDesiredState.running, True, False)
 
 
@@ -76,7 +75,6 @@ def test_node_process_start_drops_transition_token_without_deadline() -> None:
                 payload={
                     "action": "start",
                     "priority": 10,
-                    "desired_port": True,
                     "transition_token": str(uuid.uuid4()),
                 },
             )
@@ -85,7 +83,6 @@ def test_node_process_start_drops_transition_token_without_deadline() -> None:
     )
 
     assert decision.desired_state == "running"
-    assert decision.desired_port is None
     assert decision.transition_token is None
 
 
