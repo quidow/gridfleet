@@ -117,6 +117,7 @@ async def test_leadership_lost_continues_when_not_flagged() -> None:
     loop = _TolerantLoop(fail_with=LeadershipLost("stolen"))
     await _run_cycles(loop, until=lambda: loop.cycles >= 2)
     assert loop.cycles >= 2  # treated as a generic cycle failure
+    assert len(loop.ends) >= 2  # _on_cycle_end fires on the leadership-loss path too
 
 
 async def test_sleep_before_first_cycle() -> None:
@@ -141,3 +142,46 @@ async def test_on_start_runs_once_before_everything() -> None:
 
 def test_default_leadership_event_name() -> None:
     assert _RecordingLoop()._leadership_lost_event() == "scaffold_test_loop_leadership_lost"
+
+
+async def test_base_default_hooks_are_safe_noops() -> None:
+    class _BareLoop(BackgroundLoop):
+        loop_name = "scaffold_bare"
+        exit_on_leadership_lost = False
+        cycle_failed_message = "scaffold bare cycle failed"
+
+        def __init__(self) -> None:
+            self.cycles = 0
+
+        @property
+        def _session_factory(self) -> object:  # type: ignore[override]
+            return _fake_session_factory
+
+        def _interval(self) -> float:
+            return 0.0
+
+        async def _run_cycle(self, db) -> None:  # noqa: ANN001 - stub session
+            self.cycles += 1
+            if self.cycles == 1:
+                raise ValueError("first cycle fails")
+
+    loop = _BareLoop()
+    task = asyncio.create_task(loop.run())
+    try:
+        for _ in range(200):
+            if loop.cycles >= 3:
+                break
+            await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert loop.cycles >= 3
+
+
+def test_leadership_event_name_override() -> None:
+    class _LegacyNameLoop(_RecordingLoop):
+        def _leadership_lost_event(self) -> str:
+            return "legacy_leadership_lost"
+
+    assert _LegacyNameLoop()._leadership_lost_event() == "legacy_leadership_lost"

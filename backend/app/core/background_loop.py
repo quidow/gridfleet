@@ -80,6 +80,7 @@ class BackgroundLoop(ABC):
                 async with observe_background_loop(self.loop_name, interval).cycle(), self._session_factory() as db:
                     await self._run_cycle(db)
             except LeadershipLost as exc:
+                # Leadership loss intentionally skips _on_cycle_error: that hook is for generic cycle failures only.
                 self._on_cycle_end(time.monotonic() - cycle_start, interval)
                 if self.exit_on_leadership_lost:
                     logger.error(
