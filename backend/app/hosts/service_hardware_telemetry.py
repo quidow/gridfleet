@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -9,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm import operations as agent_operations
+from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
-from app.core.observability import get_logger, observe_background_loop, parse_timestamp
+from app.core.observability import get_logger, parse_timestamp
 from app.devices.models import (
     Device,
     DeviceEventType,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
     from app.hosts.services_container import HostServices
@@ -337,16 +338,20 @@ class HardwareTelemetryService:
                 logger.exception("Failed to poll hardware telemetry for device %s", device.identity_value)
 
 
-class HardwareTelemetryLoop:
+class HardwareTelemetryLoop(BackgroundLoop):
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = False  # pre-scaffold: no LeadershipLost handler
+    cycle_failed_message = "Hardware telemetry loop failed"
+
     def __init__(self, *, services: HostServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        while True:
-            interval = float(self._services.settings.get("general.hardware_telemetry_interval_sec"))
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.hardware_telemetry.poll_once(db)
-            except Exception:
-                logger.exception("Hardware telemetry loop failed")
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.hardware_telemetry_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.hardware_telemetry.poll_once(db)
