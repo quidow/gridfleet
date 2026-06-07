@@ -32,7 +32,6 @@ from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.services_container import HostServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from app.sessions import service_sync as session_sync
 from app.sessions.service_sync import SessionSyncLoop
 from app.sessions.service_viability import SessionViabilityLoop
 from app.sessions.services_container import SessionServices
@@ -128,7 +127,9 @@ async def test_session_viability_loop_one_successful_iteration(monkeypatch: pyte
 
 
 async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
     mock_sync.sync = AsyncMock()
     mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits the loop
@@ -148,7 +149,9 @@ async def test_session_sync_loop_one_successful_iteration(monkeypatch: pytest.Mo
 
 
 async def test_session_sync_loop_logs_unexpected_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
     mock_sync = Mock()
     mock_sync.sync = AsyncMock(side_effect=RuntimeError("boom"))
     mock_sync.wait_for_wake = AsyncMock(side_effect=asyncio.CancelledError)  # exits after error
@@ -309,8 +312,10 @@ async def test_leadership_lost_loop_exit_paths(monkeypatch: pytest.MonkeyPatch) 
             )
         ).run()
 
-    monkeypatch.setattr(session_sync, "observe_background_loop", lambda *args, **kwargs: _Cycle())
-    monkeypatch.setattr(session_sync.os, "_exit", fake_exit)
+    import app.core.background_loop as background_loop
+
+    monkeypatch.setattr(background_loop, "observe_background_loop", lambda *args, **kwargs: _Cycle())
+    monkeypatch.setattr(background_loop.os, "_exit", fake_exit)
     mock_sync = Mock()
     mock_sync.sync = AsyncMock(side_effect=LeadershipLost("lost"))
     mock_sync.wait_for_wake = AsyncMock()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
@@ -12,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
-from app.core.observability import get_logger, observe_background_loop
+from app.core.background_loop import BackgroundLoop
+from app.core.leader.advisory import assert_current_leader
+from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceSessionLifecycle
     from app.sessions.services_container import SessionServices
@@ -560,36 +561,38 @@ class SessionSyncService:
             await self._lifecycle.complete_deferred_stop_if_session_ended(db, device)
 
 
-class SessionSyncLoop:
+class SessionSyncLoop(BackgroundLoop):
+    """Background loop that runs the session observation sweep.
+
+    Wakes on either the doorbell (rung via ``request_session_sync_wake`` —
+    e.g. the allocation reaper after it frees a reaped pending device, P2)
+    or the registry-configured timeout, whichever comes first. The poll runs
+    as a drift reconciler.
+    """
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Session sync failed"
+
     def __init__(self, *, services: SessionServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that runs the session observation sweep.
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
 
-        Wakes on either the doorbell (rung via ``request_session_sync_wake`` —
-        e.g. the allocation reaper after it frees a reaped pending device, P2)
-        or the registry-configured timeout, whichever comes first. The poll runs
-        as a drift reconciler.
-        """
-        sync = self._services.sync
+    async def _on_start(self) -> None:
         # Register this running service's doorbell so co-located leader loops can ring it
         # (P2). Registered on the leader process; non-leader loops exit before reaching
         # work, so the last registration wins and points at the active loop.
-        register_session_sync_wake_hook(sync.wake)
-        while True:
-            interval = float(self._services.settings.get("grid.session_poll_interval_sec"))
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await sync.sync(db)
-            except LeadershipLost as exc:
-                logger.error(
-                    "session_sync_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Session sync failed")
-            woke = await sync.wait_for_wake(interval)
-            SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
+        register_session_sync_wake_hook(self._services.sync.wake)
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("grid.session_poll_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.sync.sync(db)
+
+    async def _wait(self, interval: float) -> None:
+        woke = await self._services.sync.wait_for_wake(interval)
+        SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source="doorbell" if woke else "tick").inc()
