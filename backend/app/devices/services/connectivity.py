@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -12,10 +10,11 @@ from sqlalchemy.orm import selectinload
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
 from app.core import metrics_recorders as metrics
+from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
 from app.core.leader import state_store as control_plane_state_store
-from app.core.leader.advisory import LeadershipLost, assert_current_leader
-from app.core.observability import get_logger, observe_background_loop
+from app.core.leader.advisory import assert_current_leader
+from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services.intent import IntentService
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
@@ -631,25 +631,23 @@ class ConnectivityService:
         await db.commit()
 
 
-class DeviceConnectivityLoop:
+class DeviceConnectivityLoop(BackgroundLoop):
+    """Background loop that checks device connectivity via host agents."""
+
+    loop_name = LOOP_NAME
+    exit_on_leadership_lost = True
+    cycle_failed_message = "Device connectivity check failed"
+
     def __init__(self, *, services: DeviceServices) -> None:
         self._services = services
 
-    async def run(self) -> None:
-        """Background loop that checks device connectivity via host agents."""
-        while True:
-            interval = float(self._services.settings.get("general.device_check_interval_sec"))
-            try:
-                async with observe_background_loop(LOOP_NAME, interval).cycle(), self._services.session_factory() as db:
-                    await self._services.connectivity.check_expired_cooldowns(db)
-                    await self._services.connectivity.check_connectivity(db)
-            except LeadershipLost as exc:
-                logger.error(
-                    "device_connectivity_loop_leadership_lost",
-                    reason=str(exc),
-                    action="exiting_process_to_prevent_split_brain",
-                )
-                os._exit(70)
-            except Exception:
-                logger.exception("Device connectivity check failed")
-            await asyncio.sleep(interval)
+    @property
+    def _session_factory(self) -> SessionFactory:
+        return self._services.session_factory
+
+    def _interval(self) -> float:
+        return float(self._services.settings.get("general.device_check_interval_sec"))
+
+    async def _run_cycle(self, db: AsyncSession) -> None:
+        await self._services.connectivity.check_expired_cooldowns(db)
+        await self._services.connectivity.check_connectivity(db)

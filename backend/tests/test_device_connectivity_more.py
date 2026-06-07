@@ -331,14 +331,14 @@ async def test_device_connectivity_loop_logs_and_retries() -> None:
     )
 
     with (
-        patch("app.devices.services.connectivity.observe_background_loop", return_value=_Observation()),
+        patch("app.core.background_loop.observe_background_loop", return_value=_Observation()),
         patch.object(
             ConnectivityService,
             "check_connectivity",
             new=AsyncMock(side_effect=[RuntimeError("boom"), asyncio.CancelledError()]),
         ),
         patch.object(ConnectivityService, "check_expired_cooldowns", new=AsyncMock(return_value=None)),
-        patch("app.devices.services.connectivity.asyncio.sleep", new=AsyncMock()) as sleep,
+        patch("app.core.background_loop.asyncio.sleep", new=AsyncMock()) as sleep,
         pytest.raises(asyncio.CancelledError),
     ):
         await loop.run()
