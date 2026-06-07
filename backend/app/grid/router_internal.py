@@ -28,6 +28,7 @@ from app.grid.allocation import (
     GRID_ALLOCATION_OUTCOME_TOTAL,
     AllocationNotPendingError,
     AllocationResult,
+    RunNotActiveError,
     resolve_router_target,
     transition_ticket,
 )
@@ -59,7 +60,7 @@ async def _get_or_create_ticket(
         existing = await db.get(GridSessionQueueTicket, ticket_id)
         if existing is not None:
             return existing
-    ticket = GridSessionQueueTicket(requested_body=payload.body)
+    ticket = GridSessionQueueTicket(requested_body=payload.body, run_id=payload.run_id)
     db.add(ticket)
     await db.flush()
     return ticket
@@ -104,6 +105,11 @@ async def allocate(payload: AllocateRequest, services: GridServicesDep) -> Alloc
                 # try_allocate already cancelled the ticket; persist that and put
                 # the descriptive merge message in the 400 body (wave-5 #26). A
                 # re-poll of the cancelled ticket gets the generic text above.
+                await db.commit()
+                return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
+            except RunNotActiveError as e:
+                # try_allocate already cancelled the ticket; persist and reject
+                # immediately — the router maps this to a W3C session-not-created.
                 await db.commit()
                 return JSONResponse(status_code=400, content={"status": "invalid", "message": str(e)})
             await db.commit()
