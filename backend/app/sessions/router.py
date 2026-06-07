@@ -11,6 +11,7 @@ from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409
 from app.core.pagination import CursorPaginationError
 from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
+from app.sessions import service_kill
 from app.sessions.dependencies import SessionServicesDep
 from app.sessions.models import Session, SessionStatus
 
@@ -19,6 +20,7 @@ SessionDetail = device_schemas.SessionDetail
 SessionListRead = device_schemas.SessionListRead
 SessionRead = device_schemas.SessionRead
 SessionStatusUpdate = device_schemas.SessionStatusUpdate
+SessionKillResult = device_schemas.SessionKillResult
 
 SESSION_ERROR_RESPONSES = {**RESPONSES_401, **RESPONSES_404, **RESPONSES_409, **RESPONSES_422}
 
@@ -123,6 +125,24 @@ async def get_session(session_id: str, db: DbDep, session_services: SessionServi
         raise HTTPException(status_code=404, detail="Session not found")
     details = await _session_details_with_labels(db, [session])
     return details[0]
+
+
+@router.post("/{session_id}/kill", response_model=SessionKillResult)
+async def kill_session(
+    session_id: str,
+    db: DbDep,
+    session_services: SessionServicesDep,
+) -> SessionKillResult:
+    try:
+        outcome = await service_kill.kill_session(db, crud=session_services.crud, session_id=session_id)
+    except service_kill.SessionNotKillableError:
+        raise HTTPException(status_code=409, detail="Session is not running") from None
+    if outcome is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionKillResult(
+        terminated=outcome.terminated,
+        session=SessionRead.model_validate(outcome.session),
+    )
 
 
 @router.post("", response_model=SessionRead)
