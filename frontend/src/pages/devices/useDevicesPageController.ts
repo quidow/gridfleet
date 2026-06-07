@@ -10,6 +10,7 @@ import type {
   DeviceType,
   HardwareHealthStatus,
   HardwareTelemetryState,
+  HealthVerdictStatus,
   DeviceVerificationUpdate,
 } from '../../types';
 import {
@@ -18,6 +19,7 @@ import {
   DEVICE_TYPES,
   HARDWARE_HEALTH_STATUSES,
   HARDWARE_TELEMETRY_STATES,
+  HEALTH_VERDICT_STATUSES,
 } from './devicePageHelpers';
 import type { DeviceSortKey } from './devicePageHelpers';
 import { deriveDevicesSummaryStats } from './devicesSummary';
@@ -61,6 +63,9 @@ export function useDevicesPageController() {
     'hardware_telemetry_state',
     HARDWARE_TELEMETRY_STATES,
   );
+  const deviceHealthFilter = readEnumSearchParam(searchParams, 'device_health', HEALTH_VERDICT_STATUSES);
+  const nodeHealthFilter = readEnumSearchParam(searchParams, 'node_health', HEALTH_VERDICT_STATUSES);
+  const viabilityFilter = readEnumSearchParam(searchParams, 'viability', HEALTH_VERDICT_STATUSES);
   const osVersionFilter = searchParams.get('os_version_display') ?? '';
   const search = searchParams.get('search') ?? '';
 
@@ -73,6 +78,9 @@ export function useDevicesPageController() {
     search: search || undefined,
     hardware_health_status: hardwareHealthStatusFilter || undefined,
     hardware_telemetry_state: hardwareTelemetryStateFilter || undefined,
+    device_health: deviceHealthFilter || undefined,
+    node_health: nodeHealthFilter || undefined,
+    viability: viabilityFilter || undefined,
   };
   const { data: triageBase = [] } = useDevices(sharedFilters);
   const offset = (page - 1) * pageSize;
@@ -201,6 +209,18 @@ export function useDevicesPageController() {
     updateSearchParam('hardware_telemetry_state', next);
   }
 
+  function updateDeviceHealthFilter(next: HealthVerdictStatus | '') {
+    updateSearchParam('device_health', next);
+  }
+
+  function updateNodeHealthFilter(next: HealthVerdictStatus | '') {
+    updateSearchParam('node_health', next);
+  }
+
+  function updateViabilityFilter(next: HealthVerdictStatus | '') {
+    updateSearchParam('viability', next);
+  }
+
   function updateSearch(next: string) {
     updateSearchParam('search', next);
   }
@@ -227,7 +247,8 @@ export function useDevicesPageController() {
 
   const hasFilters = Boolean(
     packIdFilter || platformFilter || statusFilter || needsAttentionFilter || deviceTypeFilter || connectionTypeFilter ||
-    hardwareHealthStatusFilter || hardwareTelemetryStateFilter || osVersionFilter || search,
+    hardwareHealthStatusFilter || hardwareTelemetryStateFilter || deviceHealthFilter || nodeHealthFilter ||
+    viabilityFilter || osVersionFilter || search,
   );
 
   return {
@@ -256,6 +277,12 @@ export function useDevicesPageController() {
     setHardwareHealthStatusFilter: updateHardwareHealthStatusFilter,
     hardwareTelemetryStateFilter,
     setHardwareTelemetryStateFilter: updateHardwareTelemetryStateFilter,
+    deviceHealthFilter,
+    setDeviceHealthFilter: updateDeviceHealthFilter,
+    nodeHealthFilter,
+    setNodeHealthFilter: updateNodeHealthFilter,
+    viabilityFilter,
+    setViabilityFilter: updateViabilityFilter,
     osVersionFilter,
     setOsVersionFilter: updateOsVersionFilter,
     search,

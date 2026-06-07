@@ -5,6 +5,7 @@ import type {
   DeviceType,
   HardwareHealthStatus,
   HardwareTelemetryState,
+  HealthVerdictStatus,
 } from '../../types';
 import {
   CONNECTION_TYPES,
@@ -15,6 +16,8 @@ import {
   HARDWARE_HEALTH_STATUS_LABELS,
   HARDWARE_TELEMETRY_STATES,
   HARDWARE_TELEMETRY_STATE_LABELS,
+  HEALTH_VERDICT_FILTER_LABELS,
+  HEALTH_VERDICT_STATUSES,
 } from './devicePageHelpers';
 import { resolvePlatformLabel } from '../../lib/labels';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
@@ -34,6 +37,12 @@ type Props = {
   onHardwareHealthStatusFilterChange: (value: HardwareHealthStatus | '') => void;
   hardwareTelemetryStateFilter: HardwareTelemetryState | '';
   onHardwareTelemetryStateFilterChange: (value: HardwareTelemetryState | '') => void;
+  deviceHealthFilter: HealthVerdictStatus | '';
+  onDeviceHealthFilterChange: (value: HealthVerdictStatus | '') => void;
+  nodeHealthFilter: HealthVerdictStatus | '';
+  onNodeHealthFilterChange: (value: HealthVerdictStatus | '') => void;
+  viabilityFilter: HealthVerdictStatus | '';
+  onViabilityFilterChange: (value: HealthVerdictStatus | '') => void;
   osVersionFilter: string;
   onOsVersionFilterChange: (value: string) => void;
   osVersions: string[];
@@ -60,6 +69,12 @@ export function DevicesFiltersBar({
   onHardwareHealthStatusFilterChange,
   hardwareTelemetryStateFilter,
   onHardwareTelemetryStateFilterChange,
+  deviceHealthFilter,
+  onDeviceHealthFilterChange,
+  nodeHealthFilter,
+  onNodeHealthFilterChange,
+  viabilityFilter,
+  onViabilityFilterChange,
   osVersionFilter,
   onOsVersionFilterChange,
   osVersions,
@@ -75,7 +90,8 @@ export function DevicesFiltersBar({
   ).filter((p, idx, arr) => arr.findIndex((q) => q.id === p.id) === idx);
 
   const hasAdvancedFilters = Boolean(
-    connectionTypeFilter || hardwareHealthStatusFilter || hardwareTelemetryStateFilter || osVersionFilter,
+    connectionTypeFilter || hardwareHealthStatusFilter || hardwareTelemetryStateFilter || deviceHealthFilter ||
+    nodeHealthFilter || viabilityFilter || osVersionFilter,
   );
 
   const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedFilters);
@@ -94,6 +110,24 @@ export function DevicesFiltersBar({
       ? {
           label: `Telemetry: ${HARDWARE_TELEMETRY_STATE_LABELS[hardwareTelemetryStateFilter]}`,
           onRemove: () => onHardwareTelemetryStateFilterChange(''),
+        }
+      : null,
+    deviceHealthFilter
+      ? {
+          label: `Device: ${HEALTH_VERDICT_FILTER_LABELS[deviceHealthFilter]}`,
+          onRemove: () => onDeviceHealthFilterChange(''),
+        }
+      : null,
+    nodeHealthFilter
+      ? {
+          label: `Node: ${HEALTH_VERDICT_FILTER_LABELS[nodeHealthFilter]}`,
+          onRemove: () => onNodeHealthFilterChange(''),
+        }
+      : null,
+    viabilityFilter
+      ? {
+          label: `Viability: ${HEALTH_VERDICT_FILTER_LABELS[viabilityFilter]}`,
+          onRemove: () => onViabilityFilterChange(''),
         }
       : null,
   ].filter((chip): chip is { label: string; onRemove: () => void } => chip !== null);
@@ -222,6 +256,36 @@ export function DevicesFiltersBar({
                   value: state,
                   label: HARDWARE_TELEMETRY_STATE_LABELS[state],
                 })),
+              ]}
+            />
+            <Select
+              ariaLabel="Filter by device health"
+              value={deviceHealthFilter}
+              onChange={(next) => onDeviceHealthFilterChange(next as HealthVerdictStatus | '')}
+              className={SELECT_CLASS}
+              options={[
+                { value: '', label: 'Any device health' },
+                ...HEALTH_VERDICT_STATUSES.map((s) => ({ value: s, label: HEALTH_VERDICT_FILTER_LABELS[s] })),
+              ]}
+            />
+            <Select
+              ariaLabel="Filter by node health"
+              value={nodeHealthFilter}
+              onChange={(next) => onNodeHealthFilterChange(next as HealthVerdictStatus | '')}
+              className={SELECT_CLASS}
+              options={[
+                { value: '', label: 'Any node state' },
+                ...HEALTH_VERDICT_STATUSES.map((s) => ({ value: s, label: HEALTH_VERDICT_FILTER_LABELS[s] })),
+              ]}
+            />
+            <Select
+              ariaLabel="Filter by viability"
+              value={viabilityFilter}
+              onChange={(next) => onViabilityFilterChange(next as HealthVerdictStatus | '')}
+              className={SELECT_CLASS}
+              options={[
+                { value: '', label: 'Any viability' },
+                ...HEALTH_VERDICT_STATUSES.map((s) => ({ value: s, label: HEALTH_VERDICT_FILTER_LABELS[s] })),
               ]}
             />
           </div>
