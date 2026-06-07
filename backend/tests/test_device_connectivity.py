@@ -1,5 +1,7 @@
+import uuid
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -1671,3 +1673,177 @@ async def test_connectivity_probe_sends_expected_identity(db_session: AsyncSessi
     probe.assert_awaited_once()
     assert probe.await_args is not None
     assert probe.await_args.kwargs["identity_value"] == "dc-001"
+
+
+# ---------------------------------------------------------------------------
+# Adapter-recommended link repair (Task 7)
+# ---------------------------------------------------------------------------
+
+_RESOLVED_WITH_RECONNECT = SimpleNamespace(lifecycle_actions=[SimpleNamespace(id="reconnect")])
+
+
+async def _device_event_types(db_session: AsyncSession, device_id: uuid.UUID) -> list[str]:
+    from sqlalchemy import select as _select
+
+    from app.devices.models.event import DeviceEvent
+
+    rows = (await db_session.execute(_select(DeviceEvent).where(DeviceEvent.device_id == device_id))).scalars().all()
+    return [r.event_type.value for r in rows]
+
+
+def _recommend_repair_patches() -> tuple[object, object]:
+    return (
+        patch(
+            "app.devices.services.connectivity.resolve_pack_platform",
+            new=AsyncMock(return_value=_RESOLVED_WITH_RECONNECT),
+        ),
+        patch("app.devices.services.connectivity.platform_has_lifecycle_action", new=Mock(return_value=True)),
+    )
+
+
+async def test_recommended_action_dispatches_repair_for_available_device(db_session: AsyncSession) -> None:
+    """Probe returns unhealthy + recommended_action=reconnect; loop dispatches the
+    action and, when the re-probe is healthy, the device stays available."""
+    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "adb_connected", "ok": False}],
+        "recommended_action": "reconnect",
+    }
+    dispatch = AsyncMock(return_value={"success": True})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy, {"healthy": True}],
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_awaited_once()
+    await db_session.refresh(device)
+    assert device.operational_state == DeviceOperationalState.available
+    assert "repair_attempted" in await _device_event_types(db_session, device.id)
+
+
+async def test_recommended_action_dispatches_for_offline_wedged_device(db_session: AsyncSession) -> None:
+    """The wedge case: device already offline, probe still recommends reconnect →
+    dispatch still happens (this is what un-wedges it)."""
+    _host, device, _ = await _setup_host_and_device(
+        db_session, device_operational_state=DeviceOperationalState.offline, with_node=True
+    )
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "adb_connected", "ok": False}],
+        "recommended_action": "reconnect",
+    }
+    dispatch = AsyncMock(return_value={"success": True})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy, None],
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_awaited_once()
+    assert "repair_attempted" in await _device_event_types(db_session, device.id)
+
+
+async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession) -> None:
+    from sqlalchemy import update as _update
+
+    from app.packs.models.pack import DriverPack, PackState
+
+    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
+    await db_session.execute(
+        _update(DriverPack).where(DriverPack.id == device.pack_id).values(state=PackState.draining)
+    )
+    await db_session.commit()
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "adb_connected", "ok": False}],
+        "recommended_action": "reconnect",
+    }
+    dispatch = AsyncMock(return_value={"success": True})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy],
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_not_awaited()
+
+
+async def test_repair_budget_exhausts_then_records_failed(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store
+    from app.devices.services.link_repair import REPAIR_ATTEMPTS_NAMESPACE, REPAIR_MAX_ATTEMPTS
+
+    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
+    await state_store.set_value(db_session, REPAIR_ATTEMPTS_NAMESPACE, device.identity_value, REPAIR_MAX_ATTEMPTS)
+    await db_session.commit()
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "adb_connected", "ok": False}],
+        "recommended_action": "reconnect",
+    }
+    dispatch = AsyncMock(return_value={"success": True})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy],
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_not_awaited()
+    assert "repair_failed" in await _device_event_types(db_session, device.id)
