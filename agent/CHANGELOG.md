@@ -2,6 +2,18 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.25.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.24.0...gridfleet-agent-v0.25.0) (2026-06-07)
+
+
+### Features
+
+* **agent:** carry generic recommended_action through pack health contract ([70291b5](https://github.com/quidow/gridfleet/commit/70291b5102a2d607040018b53282a72f113c93d6))
+
+
+### Bug Fixes
+
+* wave-5 review hardening for the grid router migration ([e56ff27](https://github.com/quidow/gridfleet/commit/e56ff2705aa6099beaf070391c519092de82304b))
+
 ## [0.24.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.23.1...gridfleet-agent-v0.24.0) (2026-06-06)
 
 
