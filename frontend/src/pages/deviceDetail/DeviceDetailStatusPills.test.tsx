@@ -42,9 +42,10 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       backoff_until: null,
     },
     health_summary: {
-      healthy: true,
-      summary: 'Healthy',
-      last_checked_at: '2026-03-30T10:00:03Z',
+      device: { status: 'ok', detail: null, checked_at: '2026-03-30T10:00:03Z' },
+      node: { status: 'ok', detail: 'running', checked_at: null },
+      viability: { status: 'unknown', detail: 'not run', checked_at: null },
+      overall: 'ok',
     },
     emulator_state: null,
     created_at: '2026-03-30T10:00:03Z',
@@ -56,47 +57,48 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
 }
 
 describe('DeviceDetailStatusPills', () => {
-  it('renders two status pills', () => {
+  it('renders four status pills', () => {
     render(
       <MemoryRouter>
         <DeviceDetailStatusPills device={makeDevice()} />
       </MemoryRouter>,
     );
-    expect(screen.getAllByLabelText(/^(Hardware|Connectivity) /)).toHaveLength(2);
+    expect(screen.getAllByLabelText(/^(Hardware|Device|Node|Viability) /)).toHaveLength(4);
   });
 
-  it('connectivity pill links to triage tab with device-health anchor', () => {
+  it('verdict pills link to triage tab with device-health anchor', () => {
     render(
       <MemoryRouter>
         <DeviceDetailStatusPills device={makeDevice()} />
       </MemoryRouter>,
     );
     const links = screen.getAllByRole('link');
-    const connectivityLink = links.find((el) =>
-      el.getAttribute('aria-label')?.toLowerCase().includes('connectivity'),
+    const deviceLink = links.find((el) =>
+      el.getAttribute('aria-label')?.toLowerCase().startsWith('device'),
     );
-    expect(connectivityLink).toBeDefined();
-    expect(connectivityLink).toHaveAttribute('href', '/devices/device-1?tab=triage#device-health');
+    expect(deviceLink).toBeDefined();
+    expect(deviceLink).toHaveAttribute('href', '/devices/device-1?tab=triage#device-health');
   });
 
-  it('connectivity pill reflects unhealthy tone when health_summary.healthy is false', () => {
+  it('device pill surfaces the failed detail when the device verdict fails', () => {
     render(
       <MemoryRouter>
         <DeviceDetailStatusPills
           device={makeDevice({
             health_summary: {
-              healthy: false,
-              summary: 'ADB not responsive',
-              last_checked_at: null,
+              device: { status: 'failed', detail: 'ADB not responsive', checked_at: null },
+              node: { status: 'ok', detail: 'running', checked_at: null },
+              viability: { status: 'unknown', detail: 'not run', checked_at: null },
+              overall: 'failed',
             },
           })}
         />
       </MemoryRouter>,
     );
-    const connectivityLink = screen.getAllByRole('link').find((el) =>
-      el.getAttribute('aria-label')?.toLowerCase().includes('connectivity'),
+    const deviceLink = screen.getAllByRole('link').find((el) =>
+      el.getAttribute('aria-label')?.toLowerCase().startsWith('device'),
     );
-    expect(connectivityLink).toBeDefined();
-    expect(connectivityLink).toHaveAttribute('href', '/devices/device-1?tab=triage#device-health');
+    expect(deviceLink).toBeDefined();
+    expect(deviceLink).toHaveAttribute('aria-label', 'Device ADB not responsive');
   });
 });

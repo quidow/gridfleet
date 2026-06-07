@@ -5,6 +5,14 @@ import {
   hardwareSummary,
 } from './deviceDetailSummary';
 
+const healthSummary = (over: Partial<DeviceDetail['health_summary']> = {}): DeviceDetail['health_summary'] => ({
+  device: { status: 'ok', detail: null, checked_at: '2026-03-30T10:00:03Z' },
+  node: { status: 'ok', detail: 'running', checked_at: null },
+  viability: { status: 'unknown', detail: 'not run', checked_at: null },
+  overall: 'ok',
+  ...over,
+});
+
 function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
   return {
     id: 'device-1',
@@ -42,11 +50,7 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       detail: null,
       backoff_until: null,
     },
-    health_summary: {
-      healthy: true,
-      summary: 'Healthy',
-      last_checked_at: '2026-03-30T10:00:03Z',
-    },
+    health_summary: healthSummary(),
     emulator_state: null,
     created_at: '2026-03-30T10:00:03Z',
     updated_at: '2026-03-30T10:00:03Z',
@@ -71,20 +75,21 @@ describe('deviceDetailSummary', () => {
     expect(hardwareSummary(device).to).toBeUndefined();
   });
 
-  it('builds hardware and connectivity pills (no lifecycle/readiness)', () => {
+  it('builds hardware plus the three verdict pills', () => {
     const device = makeDevice({
       operational_state: 'busy',
       hardware_health_status: 'warning',
-      health_summary: {
-        healthy: false,
-        summary: 'ADB not responsive',
-        last_checked_at: '2026-03-30T10:00:03Z',
-      },
+      health_summary: healthSummary({
+        device: { status: 'failed', detail: 'ADB not responsive', checked_at: '2026-03-30T10:00:03Z' },
+        node: { status: 'warn', detail: 'starting', checked_at: null },
+        viability: { status: 'unknown', detail: 'not run', checked_at: null },
+        overall: 'failed',
+      }),
     });
 
     const pills = getDeviceDetailStatusPills(device);
 
-    expect(pills).toHaveLength(2);
+    expect(pills).toHaveLength(4);
     expect(pills[0]).toMatchObject({
       key: 'hardware',
       label: 'Hardware',
@@ -92,11 +97,40 @@ describe('deviceDetailSummary', () => {
       to: '/devices?hardware_health_status=warning',
     });
     expect(pills[1]).toMatchObject({
-      key: 'connectivity',
-      label: 'Connectivity',
-      value: 'Failed',
+      key: 'device',
+      label: 'Device',
+      value: 'ADB not responsive',
       tone: 'error',
       to: `/devices/${device.id}?tab=triage#device-health`,
     });
+    expect(pills[2]).toMatchObject({
+      key: 'node',
+      label: 'Node',
+      value: 'starting',
+      tone: 'warn',
+    });
+    expect(pills[3]).toMatchObject({
+      key: 'viability',
+      label: 'Viability',
+      value: 'not run',
+      tone: 'neutral',
+    });
+  });
+
+  it('maps verdict statuses to tones and falls back to status labels without detail', () => {
+    const pills = getDeviceDetailStatusPills(
+      makeDevice({
+        health_summary: healthSummary({
+          device: { status: 'ok', detail: null, checked_at: null },
+          node: { status: 'unknown', detail: null, checked_at: null },
+          viability: { status: 'failed', detail: null, checked_at: null },
+          overall: 'failed',
+        }),
+      }),
+    );
+
+    expect(pills[1]).toMatchObject({ key: 'device', value: 'OK', tone: 'ok' });
+    expect(pills[2]).toMatchObject({ key: 'node', value: 'Unknown', tone: 'neutral' });
+    expect(pills[3]).toMatchObject({ key: 'viability', value: 'Failed', tone: 'error' });
   });
 });

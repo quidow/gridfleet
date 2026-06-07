@@ -40,9 +40,10 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       backoff_until: null,
     },
     health_summary: {
-      healthy: true,
-      summary: 'Healthy',
-      last_checked_at: '2026-03-30T10:00:03Z',
+      device: { status: 'ok', detail: null, checked_at: '2026-03-30T10:00:03Z' },
+      node: { status: 'ok', detail: 'running', checked_at: null },
+      viability: { status: 'unknown', detail: 'not run', checked_at: null },
+      overall: 'ok',
     },
     emulator_state: null,
     created_at: '2026-03-30T10:00:03Z',
@@ -209,7 +210,12 @@ describe('deriveDeviceDetailTriage', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
         operational_state: 'offline',
-        health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
+        health_summary: {
+          device: { status: 'failed', detail: 'Disconnected', checked_at: null },
+          node: { status: 'failed', detail: 'error', checked_at: null },
+          viability: { status: 'unknown', detail: 'not run', checked_at: null },
+          overall: 'failed',
+        },
         appium_node: {
           ...makeDevice().appium_node!,
           effective_state: 'error',
@@ -364,7 +370,12 @@ describe('deriveDeviceDetailTriage', () => {
   it('shows health check failed when node is running but health is unhealthy', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({
-        health_summary: { healthy: false, summary: 'ADB not responsive', last_checked_at: null },
+        health_summary: {
+          device: { status: 'failed', detail: 'ADB not responsive', checked_at: null },
+          node: { status: 'ok', detail: 'running', checked_at: null },
+          viability: { status: 'unknown', detail: 'not run', checked_at: null },
+          overall: 'failed',
+        },
       }),
       {
         health: makeHealth({
@@ -412,7 +423,12 @@ describe('deriveDeviceDetailTriage', () => {
       makeDevice({
         operational_state: 'offline',
         is_reserved: true,
-        health_summary: { healthy: false, summary: 'Disconnected', last_checked_at: null, connectivity_status: 'failed' },
+        health_summary: {
+          device: { status: 'failed', detail: 'Disconnected', checked_at: null },
+          node: { status: 'failed', detail: 'error', checked_at: null },
+          viability: { status: 'unknown', detail: 'not run', checked_at: null },
+          overall: 'failed',
+        },
         appium_node: { ...makeDevice().appium_node!, effective_state: 'error' },
         reservation: {
           run_id: 'run-1',

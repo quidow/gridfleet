@@ -72,9 +72,9 @@ function failedHealthDetail(device: DeviceDetail, health?: DeviceHealth): string
   }
   const parts: string[] = [];
   const hs = device.health_summary;
-  if (hs.connectivity_status === 'failed') parts.push('Connectivity failed');
-  if (hs.node_status && hs.node_status !== 'running') parts.push(`Node ${hs.node_status}`);
-  if (hs.session_status === 'failed') parts.push('Session probe failed');
+  if (hs.device.status === 'failed') parts.push(hs.device.detail || 'Device checks failed');
+  if (hs.node.status === 'failed') parts.push(`Node ${hs.node.detail || 'failed'}`);
+  if (hs.viability.status === 'failed') parts.push(hs.viability.detail || 'Session probe failed');
   if (parts.length > 0) return parts.join('. ') + '.';
   return 'Device health checks are failing.';
 }
@@ -125,7 +125,7 @@ export function deriveDeviceDetailTriage(
 
   if (!node || node.effective_state !== 'running') {
     const inMaintenance = device.operational_state === 'maintenance';
-    const connectivityFailed = device.health_summary.connectivity_status === 'failed';
+    const connectivityFailed = device.health_summary.device.status === 'failed';
 
     let nodeAction: DeviceDetailTriageAction;
     if (inMaintenance) {
@@ -171,7 +171,7 @@ export function deriveDeviceDetailTriage(
     return { tone, eyebrow, title, titleLink, detail, action: nodeAction };
   }
 
-  if (health?.healthy === false || device.health_summary.healthy === false) {
+  if (health?.healthy === false || device.health_summary.overall === 'failed') {
     return {
       tone: 'error',
       eyebrow: 'Health check',
