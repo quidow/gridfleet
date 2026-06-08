@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
+    from app.packs.models import DriverPack
 
 logger = get_logger(__name__)
 
@@ -178,7 +179,9 @@ def device_in_service(device: Device) -> bool:
     )
 
 
-async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: datetime) -> DeviceStateFacts:
+async def gather_device_state_facts(
+    db: AsyncSession, device: Device, *, now: datetime, packs: dict[str, DriverPack] | None = None
+) -> DeviceStateFacts:
     """Gather all inputs needed for state derivation via async DB queries.
 
     ``device`` must be persistent (committed or flushed) in *db*.  The
@@ -187,10 +190,14 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
     inspect the node without triggering synchronous lazy loading.
     """
     # Reload the device with appium_node eager-loaded so health-view helpers
-    # can access it synchronously without triggering MissingGreenlet.
-    device = (
-        await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
-    ).scalar_one()
+    # can access it synchronously without triggering MissingGreenlet. Skip the
+    # reload when appium_node is already loaded (the reconciler path always
+    # passes a lock_device-loaded, row-locked device) — re-selecting it would
+    # just re-run two queries and return the same in-session object.
+    if "appium_node" in sa_inspect(device).unloaded:
+        device = (
+            await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+        ).scalar_one()
 
     has_running_session = (
         await db.execute(select(Session.id).where(live_session_predicate(device.id)).limit(1))
@@ -210,7 +217,11 @@ async def gather_device_state_facts(db: AsyncSession, device: Device, *, now: da
     ).first() is not None
 
     in_maintenance = policy_state(device).get("maintenance_reason") is not None
-    ready = await is_ready_for_use_async(db, device) and device_allows_allocation(device) and not device.review_required
+    ready = (
+        await is_ready_for_use_async(db, device, packs=packs)
+        and device_allows_allocation(device)
+        and not device.review_required
+    )
 
     return DeviceStateFacts(
         has_running_session=has_running_session,
@@ -260,6 +271,7 @@ async def apply_derived_state(
     now: datetime,
     publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
+    packs: dict[str, DriverPack] | None = None,
 ) -> bool:
     """Derive ``operational_state`` and write it when it differs from the persisted column.
 
@@ -279,7 +291,7 @@ async def apply_derived_state(
 
     Returns True if the operational axis was written.
     """
-    facts = await gather_device_state_facts(db, device, now=now)
+    facts = await gather_device_state_facts(db, device, now=now, packs=packs)
     derived_op = evaluate_operational_state(facts)
 
     if derived_op is device.operational_state:

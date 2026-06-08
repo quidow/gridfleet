@@ -152,13 +152,29 @@ def _assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceR
     raise ValueError(f"Unknown readiness state {assessment.readiness_state!r}")
 
 
-async def assess_device_async(session: AsyncSession, device: Device) -> DeviceReadiness:
-    """Assess device readiness by querying the driver-pack catalog in the DB."""
+async def assess_device_async(
+    session: AsyncSession, device: Device, *, packs: dict[str, DriverPack] | None = None
+) -> DeviceReadiness:
+    """Assess device readiness by querying the driver-pack catalog in the DB.
+
+    *packs* may be supplied by a caller that has already loaded the catalog (e.g. the
+    reconciler loop reconciling a batch of devices) to avoid one pack load per device.
+    """
     pack_id: str | None = getattr(device, "pack_id", None)
     if not pack_id or not getattr(device, "platform_id", None):
         return _assess_device_with_pack(device, None)
-    packs = await load_packs_by_ids(session, [pack_id])
-    return _assess_device_with_pack(device, packs.get(pack_id))
+    caller_supplied = packs is not None
+    if packs is None:
+        packs = await load_packs_by_ids(session, [pack_id])
+    pack = packs.get(pack_id)
+    if pack is None and caller_supplied:
+        # The caller's prefetched catalog lacked this pack_id — e.g. the device's
+        # pack_id changed (operator PATCH) after the batch prefetch but before the
+        # per-device row lock refreshed the row. Fall back to a single-pack load so
+        # the verdict matches the per-device path and self-heals, instead of wrongly
+        # deriving setup_required (-> offline) from a stale prefetched snapshot.
+        pack = (await load_packs_by_ids(session, [pack_id])).get(pack_id)
+    return _assess_device_with_pack(device, pack)
 
 
 async def assess_devices_async(
@@ -185,8 +201,10 @@ async def assess_devices_async(
     return result
 
 
-async def is_ready_for_use_async(session: AsyncSession, device: Device) -> bool:
-    return (await assess_device_async(session, device)).readiness_state == "verified"
+async def is_ready_for_use_async(
+    session: AsyncSession, device: Device, *, packs: dict[str, DriverPack] | None = None
+) -> bool:
+    return (await assess_device_async(session, device, packs=packs)).readiness_state == "verified"
 
 
 async def readiness_error_detail_async(session: AsyncSession, device: Device, *, action: str) -> str:

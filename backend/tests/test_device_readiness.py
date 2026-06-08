@@ -218,6 +218,48 @@ async def test_assess_devices_async_empty_input_skips_query(monkeypatch: pytest.
     scalars_mock.assert_not_awaited()
 
 
+async def test_assess_device_async_uses_provided_packs_without_querying(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the caller supplies the pack catalog, no per-device pack load is issued."""
+    platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
+    release = SimpleNamespace(platforms=[platform])
+    pack = SimpleNamespace(id="alpha", releases=[release], current_release=None)
+    scalars_mock = AsyncMock()
+    session = SimpleNamespace(scalars=scalars_mock)
+    monkeypatch.setattr(
+        device_readiness, "selected_release", lambda releases, _current: releases[0] if releases else None
+    )
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_from_required_fields",
+        lambda _device, _fields: device_readiness.DeviceAssessment(readiness_state="verified", missing_setup_fields=[]),
+    )
+    device = SimpleNamespace(id="d", pack_id="alpha", platform_id="android_mobile", device_type=None)
+
+    result = await device_readiness.assess_device_async(session, device, packs={"alpha": pack})  # type: ignore[arg-type]
+
+    assert result.readiness_state == "verified"
+    scalars_mock.assert_not_awaited()
+
+
+@pytest.mark.db
+async def test_assess_device_async_falls_back_when_supplied_catalog_missing_pack(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A caller-supplied catalog that lacks the device's pack_id (e.g. pack_id changed after
+    a batch prefetch) must fall back to a DB load, not wrongly return setup_required."""
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    device = await create_device_record(
+        db_session, host_id=host["id"], identity_value="catalog-fallback", name="catalog-fallback", verified=True
+    )
+
+    via_missing = await device_readiness.assess_device_async(db_session, device, packs={})
+    baseline = await device_readiness.assess_device_async(db_session, device)
+
+    assert via_missing == baseline
+    assert via_missing.readiness_state == "verified"  # not setup_required despite the empty catalog
+
+
 async def test_readiness_error_detail_setup_and_verification_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     session = object()
     device = object()
