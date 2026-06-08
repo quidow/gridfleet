@@ -241,6 +241,25 @@ async def test_assess_device_async_uses_provided_packs_without_querying(monkeypa
     scalars_mock.assert_not_awaited()
 
 
+@pytest.mark.db
+async def test_assess_device_async_falls_back_when_supplied_catalog_missing_pack(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A caller-supplied catalog that lacks the device's pack_id (e.g. pack_id changed after
+    a batch prefetch) must fall back to a DB load, not wrongly return setup_required."""
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    device = await create_device_record(
+        db_session, host_id=host["id"], identity_value="catalog-fallback", name="catalog-fallback", verified=True
+    )
+
+    via_missing = await device_readiness.assess_device_async(db_session, device, packs={})
+    baseline = await device_readiness.assess_device_async(db_session, device)
+
+    assert via_missing == baseline
+    assert via_missing.readiness_state == "verified"  # not setup_required despite the empty catalog
+
+
 async def test_readiness_error_detail_setup_and_verification_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     session = object()
     device = object()

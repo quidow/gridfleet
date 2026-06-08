@@ -163,9 +163,18 @@ async def assess_device_async(
     pack_id: str | None = getattr(device, "pack_id", None)
     if not pack_id or not getattr(device, "platform_id", None):
         return _assess_device_with_pack(device, None)
+    caller_supplied = packs is not None
     if packs is None:
         packs = await load_packs_by_ids(session, [pack_id])
-    return _assess_device_with_pack(device, packs.get(pack_id))
+    pack = packs.get(pack_id)
+    if pack is None and caller_supplied:
+        # The caller's prefetched catalog lacked this pack_id — e.g. the device's
+        # pack_id changed (operator PATCH) after the batch prefetch but before the
+        # per-device row lock refreshed the row. Fall back to a single-pack load so
+        # the verdict matches the per-device path and self-heals, instead of wrongly
+        # deriving setup_required (-> offline) from a stale prefetched snapshot.
+        pack = (await load_packs_by_ids(session, [pack_id])).get(pack_id)
+    return _assess_device_with_pack(device, pack)
 
 
 async def assess_devices_async(
