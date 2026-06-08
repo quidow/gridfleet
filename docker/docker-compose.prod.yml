@@ -75,6 +75,11 @@ services:
       GRIDFLEET_DATABASE_URL: ${GRIDFLEET_DATABASE_URL:?set GRIDFLEET_DATABASE_URL in docker/.env}
       GRIDFLEET_DB_POOL_SIZE: ${GRIDFLEET_DB_POOL_SIZE:-10}
       GRIDFLEET_DB_MAX_OVERFLOW: ${GRIDFLEET_DB_MAX_OVERFLOW:-20}
+      # Uvicorn worker processes. Background loops stay singleton (leader advisory
+      # lock); extra workers only add API-serving capacity. Each worker opens its
+      # own DB pool, so keep WORKERS x (DB_POOL_SIZE + DB_MAX_OVERFLOW) under
+      # Postgres max_connections (default 100). e.g. 3 workers x (10+20) = 90.
+      GRIDFLEET_UVICORN_WORKERS: ${GRIDFLEET_UVICORN_WORKERS:-1}
       GRIDFLEET_REQUEST_TIMEOUT_SEC: ${GRIDFLEET_REQUEST_TIMEOUT_SEC:-30}
       GRIDFLEET_ENVIRONMENT: ${GRIDFLEET_ENVIRONMENT:-prod}
       GRIDFLEET_ENV: ${GRIDFLEET_ENV:-production}
