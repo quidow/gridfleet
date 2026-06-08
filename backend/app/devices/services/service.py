@@ -37,6 +37,7 @@ from app.devices.services import write as device_write
 from app.devices.services.connectivity import (
     CONNECTIVITY_NAMESPACE,
     IP_PING_NAMESPACE,
+    PROBE_FAILED_NAMESPACE,
     PROBE_UNANSWERED_NAMESPACE,
 )
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -282,6 +283,7 @@ class DeviceCrudService:
         await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
         await control_plane_state_store.delete_value(db, CONNECTIVITY_NAMESPACE, device.identity_value)
         await control_plane_state_store.delete_value(db, PROBE_UNANSWERED_NAMESPACE, device.identity_value)
+        await control_plane_state_store.delete_value(db, PROBE_FAILED_NAMESPACE, device.identity_value)
         await link_repair.reset_repair_attempts(db, device.identity_value)
 
         await db.delete(device)

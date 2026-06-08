@@ -157,6 +157,12 @@ class HealthCheckLabel(BaseModel):
     id: str
     label: str
     applies_when: HealthCheckAppliesWhen | None = None
+    # When true, the backend debounces transient failures of this check with a
+    # consecutive-failure counter before marking the device unhealthy (mirrors the
+    # ip_ping hysteresis). Use for flaky reachability probes — e.g. Roku ECP on port
+    # 8060 — that blip while the device is asleep but recover on their own. Hard
+    # control-channel checks (adb) should leave this false so failures act immediately.
+    debounce: bool = False
 
     @model_validator(mode="after")
     def _non_empty(self) -> "HealthCheckLabel":

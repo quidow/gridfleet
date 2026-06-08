@@ -1126,6 +1126,46 @@ async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSessi
     assert counter is None
 
 
+@pytest.mark.asyncio
+async def test_apply_probe_failure_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+
+    fake = _FakeDevice(identity_value="dev-1")
+    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    assert gated is True
+    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
+    assert counter == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_probe_failure_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+
+    fake = _FakeDevice(identity_value="dev-1")
+    for _ in range(2):
+        await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    assert gated is False
+    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
+    assert counter == 3
+
+
+@pytest.mark.asyncio
+async def test_apply_probe_failure_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+
+    fake = _FakeDevice(identity_value="dev-1")
+    await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=True, threshold=3)  # type: ignore[arg-type]
+    assert gated is True
+    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
+    assert counter is None
+
+
 # ---------------------------------------------------------------------------
 # Task 12: _check_connectivity ip_ping hysteresis integration tests
 # ---------------------------------------------------------------------------
@@ -1253,6 +1293,189 @@ async def test_ip_ping_other_check_failure_no_hysteresis(
     assert refreshed.device_checks_healthy is False
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, device.identity_value)
     assert counter is None
+
+
+# ---------------------------------------------------------------------------
+# Debounceable (manifest-declared) health-check hysteresis — e.g. Roku ECP.
+# A transient blip on a debounceable check must not flip the device unhealthy
+# (and so must not auto-stop / exclude it from a run) on the first cycle.
+# ---------------------------------------------------------------------------
+
+
+def _roku_payload(*, reachable: bool) -> dict[str, object]:
+    """A Roku-shaped health result: ping+ecp both reflect TCP reachability to ECP 8060."""
+    detail = "" if reachable else "Roku ECP port 8060 unreachable"
+    return {
+        "healthy": reachable,
+        "checks": [
+            {"check_id": "ping", "ok": reachable, "message": detail},
+            {"check_id": "ecp", "ok": reachable, "message": detail},
+        ],
+    }
+
+
+class _ResolvedPlatformStub:
+    def __init__(self, health_checks: list[dict[str, object]]) -> None:
+        self.health_checks = health_checks
+
+
+def _patch_debounceable(monkeypatch: pytest.MonkeyPatch, ids: set[str]) -> None:
+    """Make resolve_pack_platform report ``ids`` as debounce=true health checks."""
+
+    async def _f(_db: object, *, pack_id: str, platform_id: str, device_type: object = None) -> _ResolvedPlatformStub:
+        del pack_id, platform_id, device_type
+        return _ResolvedPlatformStub([{"id": i, "label": i, "debounce": True} for i in ids])
+
+    monkeypatch.setattr("app.devices.services.connectivity.resolve_pack_platform", _f)
+
+
+def _debounce_settings(threshold: int = 3) -> FakeSettingsReader:
+    return FakeSettingsReader(
+        {
+            "general.device_check_interval_sec": 60,
+            "device_checks.ip_ping.consecutive_fail_threshold": 3,
+            "device_checks.ip_ping.timeout_sec": 2.0,
+            "device_checks.ip_ping.count_per_cycle": 1,
+            "device_checks.probe_unanswered.consecutive_fail_threshold": 3,
+            "device_checks.probe_failed.consecutive_fail_threshold": threshold,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_debounceable_check_blip_first_miss_keeps_healthy(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    """A single transient ECP blip (debounceable) must NOT flip unhealthy nor auto-stop."""
+    device = await make_device(connection_type="network", ip_address="10.0.0.50")
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    _stub_get_health(monkeypatch, _roku_payload(reachable=False))
+    _patch_debounceable(monkeypatch, {"ping", "ecp"})
+    handler_calls: list[str] = []
+    mock_lifecycle_policy = MagicMock()
+    mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=_debounce_settings(threshold=3),
+        circuit_breaker=Mock(),
+        lifecycle_policy=mock_lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    ).check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is True
+    assert handler_calls == []
+
+
+@pytest.mark.asyncio
+async def test_debounceable_check_flips_unhealthy_at_threshold(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    """Sustained ECP failure (>= threshold cycles) does flip unhealthy and auto-stops once."""
+    device = await make_device(connection_type="network", ip_address="10.0.0.50")
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    _stub_get_health(monkeypatch, _roku_payload(reachable=False))
+    _patch_debounceable(monkeypatch, {"ping", "ecp"})
+    handler_calls: list[str] = []
+    mock_lifecycle_policy = MagicMock()
+    mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+
+    for _ in range(3):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=_debounce_settings(threshold=3),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is False
+    assert len(handler_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_debounceable_check_recovery_clears_counter(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    """A passing cycle between blips resets the counter so the device never flips."""
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE
+
+    device = await make_device(connection_type="network", ip_address="10.0.0.50")
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    _patch_debounceable(monkeypatch, {"ping", "ecp"})
+    _stub_get_health_sequence(
+        monkeypatch,
+        [_roku_payload(reachable=False), _roku_payload(reachable=False), _roku_payload(reachable=True)],
+    )
+    mock_lifecycle_policy = MagicMock()
+    mock_lifecycle_policy.handle_health_failure = AsyncMock()
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
+
+    for _ in range(3):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=_debounce_settings(threshold=3),
+            circuit_breaker=Mock(),
+            lifecycle_policy=mock_lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is True
+    mock_lifecycle_policy.handle_health_failure.assert_not_awaited()
+    counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, device.identity_value)
+    assert counter is None
+
+
+@pytest.mark.asyncio
+async def test_hard_check_failure_flips_immediately_despite_debounceable_sibling(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    make_device: Callable[..., Coroutine[Any, Any, Device]],
+) -> None:
+    """A non-debounceable (hard) check failing in the same cycle must flip on cycle 1."""
+    device = await make_device(connection_type="network", ip_address="10.0.0.50")
+    _stub_agent_devices(monkeypatch, {device.identity_value})
+    # ecp is debounceable; adb is not — a hard failure must not be suppressed.
+    _stub_get_health(
+        monkeypatch,
+        {
+            "healthy": False,
+            "checks": [
+                {"check_id": "ecp", "ok": False, "message": "Roku ECP port 8060 unreachable"},
+                {"check_id": "adb", "ok": False, "message": "adb dead"},
+            ],
+        },
+    )
+    _patch_debounceable(monkeypatch, {"ping", "ecp"})
+    handler_calls: list[str] = []
+    mock_lifecycle_policy = MagicMock()
+    mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
+    mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+
+    await ConnectivityService(
+        publisher=Mock(),
+        settings=_debounce_settings(threshold=3),
+        circuit_breaker=Mock(),
+        lifecycle_policy=mock_lifecycle_policy,
+        health=DeviceHealthService(publisher=Mock()),
+    ).check_connectivity(db_session)
+
+    refreshed = await _reload(db_session, device.id)
+    assert refreshed.device_checks_healthy is False
+    assert len(handler_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -1679,7 +1902,7 @@ async def test_connectivity_probe_sends_expected_identity(db_session: AsyncSessi
 # Adapter-recommended link repair (Task 7)
 # ---------------------------------------------------------------------------
 
-_RESOLVED_WITH_RECONNECT = SimpleNamespace(lifecycle_actions=[SimpleNamespace(id="reconnect")])
+_RESOLVED_WITH_RECONNECT = SimpleNamespace(lifecycle_actions=[SimpleNamespace(id="reconnect")], health_checks=[])
 
 
 async def _device_event_types(db_session: AsyncSession, device_id: uuid.UUID) -> list[str]:

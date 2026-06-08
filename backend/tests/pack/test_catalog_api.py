@@ -126,10 +126,10 @@ async def test_catalog_exposes_identity_and_lifecycle_actions(client: AsyncClien
         {"id": "shutdown"},
     ]
     assert platform["health_checks"] == [
-        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None},
-        {"id": "adb_responsive", "label": "ADB Responsive", "applies_when": None},
-        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None},
-        {"id": "ping", "label": "IP Reachable", "applies_when": None},
+        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None, "debounce": False},
+        {"id": "adb_responsive", "label": "ADB Responsive", "applies_when": None, "debounce": False},
+        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None, "debounce": False},
+        {"id": "ping", "label": "IP Reachable", "applies_when": None, "debounce": False},
     ]
 
 

@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-roku-dlenroc
-release: 2026.06.3
+release: 2026.06.4
 display_name: "Roku (dlenroc)"
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -30,10 +30,15 @@ platforms:
     display:
       icon_kind: set_top
     health_checks:
+      # ping/ecp both probe TCP reachability to the Roku ECP port (8060), which blips
+      # transiently while the device sleeps/screensaves. Debounce so a single missed
+      # cycle does not auto-stop the device or exclude it from a run (backend hysteresis).
       - id: ping
         label: IP Reachable
+        debounce: true
       - id: ecp
         label: ECP Reachable
+        debounce: true
       - id: developer_mode
         label: Developer Mode
     capabilities:
