@@ -712,9 +712,13 @@ async def test_node_health_dispatches_checks_concurrently(db_session: AsyncSessi
                 incidents=AsyncMock(),
             ).check_nodes(db_session)
         )
-        await asyncio.wait_for(both_started.wait(), timeout=1)
+        # Generous budgets: serial dispatch would block both waits forever (the second
+        # check never starts, so both_started never sets), so a real regression still
+        # trips these. 1s was too tight for a loaded CI runner doing real DB I/O — the
+        # task loads nodes/devices and commits health state — and flaked intermittently.
+        await asyncio.wait_for(both_started.wait(), timeout=5.0)
         release_checks.set()
-        await asyncio.wait_for(task, timeout=1)
+        await asyncio.wait_for(task, timeout=5.0)
 
     assert started_ports == {4731, 4732}
 
