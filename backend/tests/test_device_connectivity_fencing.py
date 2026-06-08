@@ -63,6 +63,10 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             new=AsyncMock(return_value=None),
         ),
         patch(
+            "app.devices.services.connectivity._get_lifecycle_state",
+            new_callable=AsyncMock,
+        ) as mock_lifecycle,
+        patch(
             "app.devices.services.connectivity.assert_current_leader",
             side_effect=LeadershipLost("test"),
         ),
@@ -75,6 +79,11 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             lifecycle_policy=AsyncMock(),
             health=AsyncMock(),
         ).check_connectivity(db_session)
+
+    # The first fence is the post-probe fence (before the device loop): aborting
+    # there means the per-device lifecycle probe is never reached. Pins that fence
+    # so its removal would surface here instead of silently passing.
+    mock_lifecycle.assert_not_called()
 
 
 @pytest.mark.db
@@ -125,7 +134,7 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
         patch(
             "app.devices.services.connectivity.assert_current_leader",
             side_effect=[None, LeadershipLost("site b")],
-        ),
+        ) as mock_leader,
         pytest.raises(LeadershipLost),
     ):
         await ConnectivityService(
@@ -138,6 +147,9 @@ async def test_check_connectivity_aborts_in_connected_branch_when_leadership_los
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
+    # Post-probe fence passed (call 1), after-lifecycle fence raised (call 2),
+    # before the connected-device write path. Pins the abort to that fence.
+    assert mock_leader.await_count == 2
 
 
 @pytest.mark.db
@@ -193,8 +205,8 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
         ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, None, LeadershipLost("site stop")],
-        ),
+            side_effect=[None, None, None, LeadershipLost("site stop")],
+        ) as mock_leader,
         pytest.raises(LeadershipLost),
     ):
         await ConnectivityService(
@@ -208,13 +220,22 @@ async def test_check_connectivity_aborts_before_stop_disconnected_node_when_lead
     stop_called.assert_not_called()
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
+    # Fence sequence to this branch: post-probe (1), after-lifecycle (2),
+    # after-enumeration (3), then the disconnected-branch fence (4) raises before
+    # _stop_disconnected_node. Pins the abort to that fence.
+    assert mock_leader.await_count == 4
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_check_connectivity_aborts_after_direct_probe_when_leadership_lost(
+async def test_check_connectivity_post_probe_fence_aborts_before_connected_write(
     db_session: AsyncSession,
 ) -> None:
+    """The health probe now runs in the concurrent phase, re-fenced once afterward.
+
+    A device that would otherwise be written (healthy) must not be touched when
+    leadership is lost across that probe phase.
+    """
     host = Host(
         id=uuid.uuid4(),
         hostname="conn-c-h",
@@ -256,8 +277,12 @@ async def test_check_connectivity_aborts_after_direct_probe_when_leadership_lost
             return_value={"healthy": True},
         ),
         patch(
+            "app.devices.services.connectivity._get_lifecycle_state",
+            new_callable=AsyncMock,
+        ) as mock_lifecycle,
+        patch(
             "app.devices.services.connectivity.assert_current_leader",
-            side_effect=[None, LeadershipLost("site c")],
+            side_effect=LeadershipLost("site c"),
         ),
         pytest.raises(LeadershipLost),
     ):
@@ -271,3 +296,5 @@ async def test_check_connectivity_aborts_after_direct_probe_when_leadership_lost
 
     await db_session.refresh(device, attribute_names=["operational_state"])
     assert device.operational_state == initial_state
+    # Aborted at the post-probe fence, before the device loop: lifecycle never ran.
+    mock_lifecycle.assert_not_called()

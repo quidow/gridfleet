@@ -1,0 +1,95 @@
+"""Connectivity health probes for devices on the same host must run concurrently.
+
+A serial probe loop makes each cycle O(devices) in agent round-trip latency, which
+degrades reconciliation timeliness as a host's device count grows. The probe phase
+is expected to overlap probes (bounded per host), mirroring the session_sync sweep.
+"""
+
+import asyncio
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services import state_write_guard
+from app.devices.services.connectivity import ConnectivityService
+from app.devices.services.health import DeviceHealthService
+from app.hosts.models import Host, HostStatus
+from tests.fakes import FakeSettingsReader
+
+pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+
+@pytest.fixture(autouse=True)
+def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", AsyncMock(return_value=None))
+
+
+@pytest.fixture(autouse=True)
+def _noop_assert_current_leader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.devices.services.connectivity.assert_current_leader", AsyncMock(return_value=None))
+
+
+async def _seed_host_with_devices(db_session: AsyncSession, count: int) -> tuple[Host, list[str]]:
+    host = Host(hostname="probe-host", ip="10.0.0.20", os_type="linux", agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.flush()
+
+    targets: list[str] = []
+    for i in range(count):
+        target = f"pc-{i:03d}"
+        with state_write_guard.bypass():
+            device = Device(
+                pack_id="appium-uiautomator2",
+                platform_id="android_mobile",
+                identity_scheme="android_serial",
+                identity_scope="host",
+                identity_value=target,
+                connection_target=target,
+                name=f"Phone {i}",
+                os_version="14",
+                host_id=host.id,
+                operational_state=DeviceOperationalState.available,
+                verified_at=datetime.now(UTC),
+                device_type=DeviceType.real_device,
+                connection_type=ConnectionType.usb,
+            )
+        db_session.add(device)
+        targets.append(target)
+    await db_session.commit()
+    return host, targets
+
+
+async def test_health_probes_run_concurrently_within_host(db_session: AsyncSession) -> None:
+    _host, targets = await _seed_host_with_devices(db_session, count=2)
+
+    active = 0
+    peak = 0
+
+    async def probing_health(device: Device, **kwargs: object) -> dict[str, object]:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.05)  # hold the probe open so a concurrent peer can enter
+        active -= 1
+        return {"healthy": True}
+
+    with (
+        patch(
+            "app.devices.services.connectivity._get_agent_devices",
+            new_callable=AsyncMock,
+            return_value=set(targets),
+        ),
+        patch("app.devices.services.connectivity._get_device_health", probing_health),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    assert peak >= 2, f"health probes serialized (peak concurrency={peak}); expected overlap >= 2"
