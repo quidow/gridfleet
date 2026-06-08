@@ -438,6 +438,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         presenter=SimpleNamespace(
             serialize_device=AsyncMock(return_value={"id": str(device_id)}),
             serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
+            build_serialization_contexts=AsyncMock(return_value={device_id: None}),
         ),
     )
     monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))

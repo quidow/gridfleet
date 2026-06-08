@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     )
     from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
-    from app.devices.services.presenter import DeviceSerializationContext
+    from app.devices.services.serialization_types import DeviceSerializationContext
     from app.events.protocols import EventPublisher
     from app.hosts.models import Host
     from app.runs.models import TestRun

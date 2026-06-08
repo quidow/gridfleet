@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +20,7 @@ from app.devices.services.intent_evaluator import (
     evaluate_reservation,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.serialization_types import DeviceSerializationContext
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
@@ -34,17 +34,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.models import Device, DeviceReservation
-    from app.devices.services.readiness import DeviceReadiness
     from app.runs.models import TestRun
-
-
-@dataclass(frozen=True)
-class DeviceSerializationContext:
-    """Per-device values precomputed in batch by :meth:`build_serialization_contexts`
-    so :meth:`serialize_device` can skip its per-device pack-catalog queries."""
-
-    readiness: DeviceReadiness
-    blocked_reason: str | None
 
 
 def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:

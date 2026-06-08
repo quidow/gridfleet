@@ -2716,7 +2716,10 @@ async def test_devices_core_router_branches() -> None:
     ):
         mock_ds_list = SimpleNamespace(
             crud=SimpleNamespace(list_devices_paginated=AsyncMock(return_value=([device], 1))),
-            presenter=SimpleNamespace(serialize_device=AsyncMock(return_value=serialized)),
+            presenter=SimpleNamespace(
+                serialize_device=AsyncMock(return_value=serialized),
+                build_serialization_contexts=AsyncMock(return_value={device_id: None}),
+            ),
         )
         listed = await devices_core.list_devices(
             filters=filters,
