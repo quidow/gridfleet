@@ -155,6 +155,57 @@ async def test_healthy_signal_does_not_change_busy_device(
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_update_device_checks_healthy_steady_state_skips_mark_dirty(
+    db_with_device: tuple[AsyncSession, Device],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Healthy → healthy with no verdict change must NOT re-enqueue the device."""
+    db, device = db_with_device
+    device.device_checks_healthy = True
+    device.device_checks_summary = "Healthy"
+    await db.commit()
+
+    calls: list[str] = []
+    original = svc.IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
+    await db.commit()
+    assert calls == []  # steady-state healthy did not mark dirty
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_device_checks_healthy_transition_marks_dirty_once(
+    db_with_device: tuple[AsyncSession, Device],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unknown → healthy is a verdict change and must mark dirty exactly once."""
+    db, device = db_with_device
+    # device_checks_healthy starts as None (verdict "unknown")
+    await db.commit()
+
+    calls: list[str] = []
+    original = svc.IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+
+    await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
+    await db.commit()
+    assert calls == ["device checks healthy"]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_device_allows_allocation_false_when_checks_failed(db_with_device: tuple[AsyncSession, Device]) -> None:
     _, device = db_with_device
     device.device_checks_healthy = False
