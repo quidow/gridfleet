@@ -684,8 +684,10 @@ class ConnectivityService:
                 if lifecycle_state is not None:
                     await self._health.update_emulator_state(db, device, lifecycle_state)
 
+                # Health was probed in the concurrent phase above and re-fenced once
+                # afterward; this is a plain dict lookup, so no per-device re-fence is
+                # needed here (the after-lifecycle fence above already re-checked).
                 health_result = health_by_device_id[device.id]
-                await assert_current_leader(db, settings=self._settings)
                 if health_result is None:
                     flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
                     if flipped:
