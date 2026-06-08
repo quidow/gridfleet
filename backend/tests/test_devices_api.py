@@ -1,4 +1,6 @@
+import contextlib
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -6,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -14,6 +17,7 @@ from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate
 from app.devices.services import service as device_service
 from app.devices.services import state_write_guard
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
@@ -202,6 +206,97 @@ async def test_list_devices(client: AsyncClient, db_session: AsyncSession, defau
     assert all("lifecycle_policy_summary" in item for item in data)
     assert all("hardware_health_status" in item for item in data)
     assert all("hardware_telemetry_state" in item for item in data)
+
+
+@contextlib.contextmanager
+def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_list_devices_pack_lookups_do_not_scale_with_device_count(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """The driver-pack catalog must be loaded a constant number of times regardless
+    of how many devices the list returns (guards against the per-device N+1)."""
+
+    async def pack_query_count() -> int:
+        with _capture_statements(db_session) as statements:
+            resp = await client.get("/api/devices")
+            assert resp.status_code == 200
+        return sum(1 for stmt in statements if "driver_packs" in stmt.lower())
+
+    await _create_device(db_session, default_host_id, identity_value="dev-1", connection_target="dev-1", name="dev-1")
+    baseline = await pack_query_count()
+
+    for i in range(2, 8):
+        await _create_device(
+            db_session, default_host_id, identity_value=f"dev-{i}", connection_target=f"dev-{i}", name=f"dev-{i}"
+        )
+    scaled = await pack_query_count()
+
+    assert scaled == baseline, f"pack-catalog queries scaled with device count: {baseline} -> {scaled}"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_batch_serialization_matches_per_device(db_session: AsyncSession, default_host_id: str) -> None:
+    """The batched precompute path must produce byte-identical payloads to the
+    per-device path across runnable / platform-removed / pack-unavailable cases."""
+    presenter = DevicePresenterService(settings=FakeSettingsReader({}))
+
+    d_ok = await _create_device(db_session, default_host_id, identity_value="ok", connection_target="ok", name="ok")
+    d_bad_platform = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="bad-platform",
+        name="bad-platform",
+        pack_id="appium-uiautomator2",
+        platform_id="no_such_platform",
+    )
+    d_no_pack = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="no-pack",
+        name="no-pack",
+        pack_id="ghost-pack",
+        platform_id="android_mobile",
+    )
+    devices = [d_ok, d_bad_platform, d_no_pack]
+
+    contexts = await presenter.build_serialization_contexts(db_session, devices)
+    payloads: dict[uuid.UUID, dict[str, object]] = {}
+    for device in devices:
+        batched = await presenter.serialize_device(db_session, device, precomputed=contexts[device.id])
+        per_device = await presenter.serialize_device(db_session, device)
+        assert batched == per_device
+        payloads[device.id] = batched
+
+    assert payloads[d_ok.id]["blocked_reason"] is None
+    assert payloads[d_bad_platform.id]["blocked_reason"] == "platform_removed"
+    assert payloads[d_no_pack.id]["blocked_reason"] == "pack_unavailable"
 
 
 @pytest.mark.db

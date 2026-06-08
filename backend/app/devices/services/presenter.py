@@ -20,6 +20,7 @@ from app.devices.services.intent_evaluator import (
     evaluate_reservation,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, RECOVERY, RESERVATION
+from app.devices.services.serialization_types import DeviceSerializationContext
 from app.hosts import service_hardware_telemetry as hardware_telemetry
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
@@ -27,6 +28,8 @@ from app.runs import service as run_service
 assert_runnable = pack_platform_resolver.assert_runnable
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
@@ -45,6 +48,23 @@ class DevicePresenterService:
     def __init__(self, *, settings: SettingsReader) -> None:
         self._settings = settings
 
+    async def build_serialization_contexts(
+        self, db: AsyncSession, devices: list[Device]
+    ) -> dict[uuid.UUID, DeviceSerializationContext]:
+        """Batch-load everything :meth:`serialize_device` would otherwise query
+        per device: readiness and blocked-reason both derive from a single load of
+        the driver-pack catalog, collapsing the previous ~3-queries-per-device into one."""
+        packs = await device_readiness.load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
+        readiness_map = await device_readiness.assess_devices_async(db, devices, packs=packs)
+        contexts: dict[uuid.UUID, DeviceSerializationContext] = {}
+        for device in devices:
+            pack = packs.get(device.pack_id) if device.pack_id else None
+            contexts[device.id] = DeviceSerializationContext(
+                readiness=readiness_map[device.id],
+                blocked_reason=pack_platform_resolver.evaluate_runnable(pack, platform_id=device.platform_id),
+            )
+        return contexts
+
     async def serialize_device(
         self,
         db: AsyncSession,
@@ -53,11 +73,14 @@ class DevicePresenterService:
         reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
         health_summary: dict[str, Any] | None = None,
         platform_label: str | None = None,
+        precomputed: DeviceSerializationContext | None = None,
     ) -> dict[str, Any]:
         if reservation_context is None:
             reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
         reservation, reservation_entry = reservation_context
-        readiness = await device_readiness.assess_device_async(db, device)
+        readiness = (
+            precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
+        )
         policy = await lifecycle_policy_summary.build_lifecycle_policy(
             db, device, reservation_context=reservation_context
         )
@@ -79,11 +102,15 @@ class DevicePresenterService:
         if isinstance(raw, str) and raw:
             emulator_state_value = raw
 
-        blocked_reason: str | None = None
-        try:
-            await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
-        except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
-            blocked_reason = exc.code
+        blocked_reason: str | None
+        if precomputed is not None:
+            blocked_reason = precomputed.blocked_reason
+        else:
+            blocked_reason = None
+            try:
+                await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
+            except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
+                blocked_reason = exc.code
 
         return {
             "id": device.id,
