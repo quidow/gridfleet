@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,9 @@ from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.http_pool import AgentHttpPool
@@ -58,6 +62,9 @@ IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
+# Concurrent agent health probes per host during the probe phase. Matches the
+# ceiling node_health / session_sync use so a single host agent is not overwhelmed.
+PROBE_CONCURRENCY_PER_HOST = 2
 LOOP_NAME = "device_connectivity"
 
 
@@ -597,6 +604,34 @@ class ConnectivityService:
         else:
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
 
+    async def _probe_host_health(
+        self,
+        devices: Sequence[Device],
+        *,
+        ip_ping_timeout: float | None,
+        ip_ping_count: int | None,
+    ) -> dict[uuid.UUID, dict[str, Any] | None]:
+        """Concurrently probe device health for one host, bounded by a semaphore.
+
+        Pure agent I/O — no DB access — so the shared session is untouched here and
+        the caller's apply loop owns every write. ``Device.host`` must be eager-loaded
+        by the caller (read inside ``_get_device_health``).
+        """
+        semaphore = asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+
+        async def _probe(device: Device) -> tuple[uuid.UUID, dict[str, Any] | None]:
+            async with semaphore:
+                return device.id, await _get_device_health(
+                    device,
+                    ip_ping_timeout_sec=ip_ping_timeout,
+                    ip_ping_count=ip_ping_count,
+                    settings=self._settings,
+                    circuit_breaker=self._circuit_breaker,
+                    pool=self._pool,
+                )
+
+        return dict(await asyncio.gather(*[_probe(device) for device in devices]))
+
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
         ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
@@ -611,10 +646,28 @@ class ConnectivityService:
         hosts = result.scalars().all()
 
         for host in hosts:
-            # Get registered devices for this host
-            device_stmt = select(Device).where(Device.host_id == host.id).options(selectinload(Device.appium_node))
+            # Get registered devices for this host. Device.host is eager-loaded so the
+            # concurrent probe phase below reads it without a lazy load on the shared
+            # session (an AsyncSession is not safe for concurrent use).
+            device_stmt = (
+                select(Device)
+                .where(Device.host_id == host.id)
+                .options(selectinload(Device.appium_node), selectinload(Device.host))
+            )
             device_result = await db.execute(device_stmt)
             devices = device_result.scalars().all()
+
+            # Probe phase: fetch each device's health concurrently, bounded per host so
+            # one slow/hung device cannot serialize the whole host (the cycle was O(devices)
+            # in agent round-trip latency). No DB access happens inside the gather — the
+            # apply loop below performs all writes sequentially. Mirrors session_sync.
+            health_by_device_id = await self._probe_host_health(
+                devices, ip_ping_timeout=ip_ping_timeout, ip_ping_count=ip_ping_count
+            )
+            # Re-fence after the slow probe phase: leadership may have changed while we
+            # awaited the agents (session_sync pattern). The per-device asserts below
+            # remain as the in-loop guard for the sequential write window.
+            await assert_current_leader(db, settings=self._settings)
 
             # WI-6 lazy presence: the agent enumeration (a discovery sweep —
             # SSDP for network packs) runs only when a device's direct health
@@ -631,14 +684,7 @@ class ConnectivityService:
                 if lifecycle_state is not None:
                     await self._health.update_emulator_state(db, device, lifecycle_state)
 
-                health_result = await _get_device_health(
-                    device,
-                    ip_ping_timeout_sec=ip_ping_timeout,
-                    ip_ping_count=ip_ping_count,
-                    settings=self._settings,
-                    circuit_breaker=self._circuit_breaker,
-                    pool=self._pool,
-                )
+                health_result = health_by_device_id[device.id]
                 await assert_current_leader(db, settings=self._settings)
                 if health_result is None:
                     flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
