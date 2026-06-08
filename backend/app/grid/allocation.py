@@ -731,12 +731,17 @@ class AllocationService:
                 locked.host is not None,
             )
             return None
+        # Surface the client's test label in the Session.test_name column (the Sessions UI
+        # reads it). The legacy register_session API took it as an explicit field; the
+        # router/grid flow that replaced it must lift it from the requested caps here.
+        requested_test_name = candidate.get("gridfleet:testName")
         row = Session(
             id=uuid.uuid4(),
             session_id=f"alloc-{uuid.uuid4()}",  # placeholder until confirm; unique, never 'running'
             device_id=locked.id,
             status=SessionStatus.pending,
             requested_capabilities=candidate,
+            test_name=requested_test_name if isinstance(requested_test_name, str) else None,
             run_id=run_id,
             # Persist the allocation target so /routes can fall back to it if the
             # device's node port is transiently stale-cleared later (#6).

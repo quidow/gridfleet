@@ -116,6 +116,44 @@ async def test_allocate_creates_pending_and_busy(
 
 
 @pytest.mark.db
+async def test_allocate_extracts_test_name_from_capabilities(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """The client's ``gridfleet:testName`` cap must land in the Session.test_name column so the
+    Sessions UI shows it. The router/grid flow that replaced the legacy register_session API
+    dropped this extraction, leaving every grid session's TEST NAME blank."""
+    body = {
+        "capabilities": {
+            "alwaysMatch": {"platformName": "Android", "gridfleet:testName": "state-test"},
+            "firstMatch": [{}],
+        }
+    }
+    ticket = GridSessionQueueTicket(requested_body=body)
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.test_name == "state-test"
+
+
+@pytest.mark.db
+async def test_allocate_without_test_name_leaves_it_null(
+    db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
+) -> None:
+    """No ``gridfleet:testName`` cap → test_name stays NULL (the UI shows ``-``)."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.test_name is None
+
+
+@pytest.mark.db
 async def test_no_match_leaves_ticket_waiting(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:
