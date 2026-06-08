@@ -227,7 +227,7 @@ The agent exposes a local `/agent/health` endpoint. The response includes a `ver
 | `GET` | `/api/runs` | List runs | filters: `state`, `created_from`, `created_to`, `limit`, `offset`, `sort_by`, `sort_dir` | `{ items: RunRead[], total, limit, offset }` |
 | `GET` | `/api/runs/{run_id}` | Read full run detail | path `run_id` | `RunDetail` |
 | `POST` | `/api/runs/{run_id}/ready` | Compatibility alias that transitions a preparing run to `active` | path `run_id` | `RunRead` |
-| `POST` | `/api/runs/{run_id}/active` | Transition run from `preparing` to `active`. Required to begin associating Appium sessions with the run — sessions started while the run is `preparing` have `run_id = NULL` and never show up in Run Detail. | path `run_id` | `RunRead` |
+| `POST` | `/api/runs/{run_id}/active` | Transition run from `preparing` to `active`, marking that real testing has begun. Not a gate on device access: run-scoped sessions (`/run/{run_id}/session`) can run on the run's reserved devices — and are linked to the run — from `preparing` onward. | path `run_id` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/preparation-failed` | Exclude one reserved device after CI preparation failure, persist the exact failure message, and mark the device unhealthy/offline | `RunPreparationFailureReport` | `RunRead` |
 | `POST` | `/api/runs/{run_id}/devices/{device_id}/cooldown` | Put one reserved device into cooldown for the run | `RunCooldownRequest` | cooldown result (`200`) |
 | `POST` | `/api/runs/{run_id}/heartbeat` | Refresh heartbeat and read current state | path `run_id` | `HeartbeatResponse` |

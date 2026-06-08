@@ -259,6 +259,70 @@ async def test_run_not_active_cancels_ticket(
     assert ticket.status == GridQueueStatus.cancelled
 
 
+async def _seed_reserved_device_for_run(db_session: AsyncSession, *, state: RunState) -> ReservedDevice:
+    """Like the seeded_reserved_device fixture but with a caller-chosen run state."""
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"grid-alloc-prep-{uuid.uuid4().hex[:8]}")
+    run = TestRun(
+        id=uuid.uuid4(),
+        name="grid-alloc-preparing-run",
+        state=state,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run_id=run.id,
+            device_id=device.id,
+            identity_value=device.identity_value,
+            connection_target=device.connection_target,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            os_version=device.os_version,
+        )
+    )
+    await db_session.commit()
+    return ReservedDevice(device=device, reservation_run_id=run.id)
+
+
+@pytest.mark.db
+async def test_preparing_run_ticket_allocates_its_reserved_device(
+    db_session: AsyncSession, allocation_service: AllocationService
+) -> None:
+    """Preparation sessions are legit (docs: runs-and-reservations.md §preparing): a run-bound
+    ticket whose run is still `preparing` allocates ITS reserved device and links the session."""
+    reserved = await _seed_reserved_device_for_run(db_session, state=RunState.preparing)
+    ticket = GridSessionQueueTicket(
+        requested_body=_body(platformName="Android"),
+        run_id=reserved.reservation_run_id,
+    )
+    db_session.add(ticket)
+    await db_session.flush()
+
+    result = await allocation_service.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    row = await db_session.get(Session, result.allocation_id)
+    assert row is not None
+    assert row.run_id == reserved.reservation_run_id
+
+
+@pytest.mark.db
+async def test_preparing_run_reservation_blocks_free_ticket(
+    db_session: AsyncSession, allocation_service: AllocationService
+) -> None:
+    """A device reserved for a `preparing` run is protected: a free ticket cannot steal it
+    during the preparation window (Option A — reservations gate from creation, not just active)."""
+    await _seed_reserved_device_for_run(db_session, state=RunState.preparing)
+    free_ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(free_ticket)
+    await db_session.flush()
+
+    assert await allocation_service.try_allocate(db_session, ticket=free_ticket) is None
+
+
 @pytest.mark.db
 async def test_legacy_run_id_cap_rejected(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService

@@ -145,7 +145,7 @@ Those helpers reuse the same driver-pack catalog resolver as the pytest fixture.
 | `GridFleetClient.reserve_devices(...)` | Create a run/reservation and return the manager response |
 | `GridFleetClient.get_run(run_id)` | Fetch one run detail row by backend run id |
 | `GridFleetClient.signal_ready(run_id)` | Compatibility alias that moves a preparing run to `active` |
-| `GridFleetClient.signal_active(run_id)` | Move a run from `preparing` to `active`. **Required** between preparation and real tests — Appium sessions registered before this call are not linked to the run (`run_id = NULL`) and do not appear in Run Detail. |
+| `GridFleetClient.signal_active(run_id)` | Move a run from `preparing` to `active`, marking that real testing has begun. **Required** between preparation and real tests (a run left in `preparing` is eventually reaped as `never_activated`), but it is not a gate on device access — run-scoped sessions run on the run's reserved devices, and are linked to it, from `preparing` onward. |
 | `GridFleetClient.heartbeat(run_id)` | Send a run heartbeat and read current state |
 | `GridFleetClient.report_preparation_failure(run_id, device_id, message, source="ci_preparation")` | Exclude one reserved device after setup fails |
 | `GridFleetClient.register_session(fields)` | Register a Grid/Appium session with optional requested capability metadata |
@@ -246,7 +246,7 @@ client.report_preparation_failure(
 client.signal_active(run_id)
 ```
 
-`signal_active` is the prep/test boundary. Anything before it (build installs, smoke checks, warm-up Appium sessions on reserved devices) is considered preparation: those sessions land in the Session table with `run_id = NULL` and are visible only on **Sessions (advanced)**. After `signal_active`, new sessions on reserved devices are linked to the run. If the client never calls `signal_active` and the run hits its TTL, the manager emits a `run.never_activated` event and the run expires with a clear error reason.
+`signal_active` is the prep/test boundary as a lifecycle marker, not a device-access gate. Run-scoped sessions on reserved devices work from `preparing` onward — preparation work (build installs, smoke checks, warm-up Appium sessions) runs against the run's reserved devices and is linked to the run (it shows up in Run Detail). `signal_active` records that real testing has begun. If the client never calls `signal_active` and the run hits its TTL, the manager emits a `run.never_activated` event and the run expires with a clear error reason.
 
 Use `count` for exact reservations. Use `allocation: "all_available"` when CI should reserve every currently eligible matching device and size its worker pool from `len(run["devices"])`.
 
