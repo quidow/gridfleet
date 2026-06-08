@@ -99,7 +99,7 @@ class DeviceReadiness:
     can_verify_now: bool
 
 
-async def _load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, DriverPack]:
+async def load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, DriverPack]:
     ids = {pid for pid in pack_ids if pid}
     if not ids:
         return {}
@@ -157,15 +157,26 @@ async def assess_device_async(session: AsyncSession, device: Device) -> DeviceRe
     pack_id: str | None = getattr(device, "pack_id", None)
     if not pack_id or not getattr(device, "platform_id", None):
         return _assess_device_with_pack(device, None)
-    packs = await _load_packs_by_ids(session, [pack_id])
+    packs = await load_packs_by_ids(session, [pack_id])
     return _assess_device_with_pack(device, packs.get(pack_id))
 
 
-async def assess_devices_async(session: AsyncSession, devices: Iterable[Device]) -> dict[uuid.UUID, DeviceReadiness]:
-    """Batch-assess readiness for many devices with a single pack catalog query."""
+async def assess_devices_async(
+    session: AsyncSession,
+    devices: Iterable[Device],
+    *,
+    packs: dict[str, DriverPack] | None = None,
+) -> dict[uuid.UUID, DeviceReadiness]:
+    """Batch-assess readiness for many devices with a single pack catalog query.
+
+    *packs* may be supplied by a caller that has already loaded the catalog (e.g. the
+    device-list serializer, which also needs it for blocked-reason evaluation) to
+    avoid loading it twice.
+    """
     device_list = list(devices)
-    pack_ids = {pid for pid in (getattr(d, "pack_id", None) for d in device_list) if pid}
-    packs = await _load_packs_by_ids(session, pack_ids)
+    if packs is None:
+        pack_ids = {pid for pid in (getattr(d, "pack_id", None) for d in device_list) if pid}
+        packs = await load_packs_by_ids(session, pack_ids)
     result: dict[uuid.UUID, DeviceReadiness] = {}
     for device in device_list:
         pack_id: str | None = getattr(device, "pack_id", None)

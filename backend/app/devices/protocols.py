@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     )
     from app.devices.schemas.filters import ChipStatus, DeviceQueryFilters
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+    from app.devices.services.presenter import DeviceSerializationContext
     from app.events.protocols import EventPublisher
     from app.hosts.models import Host
     from app.runs.models import TestRun
@@ -144,6 +145,9 @@ class BulkOperationsProtocol(Protocol):
 
 @runtime_checkable
 class DevicePresenterProtocol(Protocol):
+    async def build_serialization_contexts(
+        self, db: AsyncSession, devices: list[Device]
+    ) -> dict[uuid.UUID, DeviceSerializationContext]: ...
     async def serialize_device(
         self,
         db: AsyncSession,
@@ -152,6 +156,7 @@ class DevicePresenterProtocol(Protocol):
         reservation_context: tuple[Any | None, DeviceReservation | None] | None = ...,
         health_summary: dict[str, Any] | None = ...,
         platform_label: str | None = ...,
+        precomputed: DeviceSerializationContext | None = ...,
     ) -> dict[str, Any]: ...
     async def serialize_device_detail(
         self,

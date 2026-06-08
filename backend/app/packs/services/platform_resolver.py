@@ -146,6 +146,33 @@ async def assert_runnable(
         raise PlatformRemovedError(pack_id, platform_id) from exc
 
 
+def evaluate_runnable(pack: DriverPack | None, *, platform_id: str | None) -> str | None:
+    """Pure, no-DB equivalent of :func:`assert_runnable`'s reachability checks.
+
+    Given an already-loaded *pack* (with ``releases`` and their ``platforms`` eager
+    loaded), return the blocking error ``code`` that :func:`assert_runnable` would
+    raise — or ``None`` when the pack/platform is runnable. Used by the batched
+    device-list serialization path to avoid one ``assert_runnable`` query per device.
+    """
+    if pack is None:
+        return PackUnavailableError.code
+    if pack.state == PackState.disabled:
+        return PackDisabledError.code
+    if pack.state == PackState.draining:
+        return PackDrainingError.code
+    if pack.state != PackState.enabled:
+        return PackDisabledError.code
+    release = selected_release(pack.releases, pack.current_release)
+    platform = (
+        next((row for row in release.platforms if row.manifest_platform_id == platform_id), None)
+        if release is not None
+        else None
+    )
+    if release is None or platform is None:
+        return PlatformRemovedError.code
+    return None
+
+
 def _device_type_override(platform_data: dict[str, Any], device_type: str | None) -> dict[str, Any]:
     if not device_type:
         return {}

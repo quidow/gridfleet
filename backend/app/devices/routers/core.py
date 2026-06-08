@@ -122,6 +122,7 @@ async def list_devices(
         db,
         ((device.pack_id, device.platform_id) for device in devices),
     )
+    serialization_contexts = await device_services.presenter.build_serialization_contexts(db, devices)
     serialized: list[dict[str, Any]] = []
     for device in devices:
         reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
@@ -131,6 +132,7 @@ async def list_devices(
             reservation_context=reservation_context,
             health_summary=health_summary_map.get(str(device.id)),
             platform_label=label_map.get((device.pack_id, device.platform_id)),
+            precomputed=serialization_contexts[device.id],
         )
         serialized.append(payload)
 
