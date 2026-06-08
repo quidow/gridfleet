@@ -496,6 +496,84 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     assert device_health.build_public_summary(device_reloaded)["node"]["status"] == "ok"
 
 
+async def test_restart_succeeded_eager_fills_active_connection_target(db_session: AsyncSession) -> None:
+    """I11/N15: after a crash auto-restart, a reconciler poll that observed the down window may
+    have nulled ``active_connection_target``. The agent confirms the node is back via
+    ``restart_succeeded``, so the handler must restore the node-viability marker immediately —
+    otherwise the device reads ``available`` but fails the allocator's ``node_viable_predicate``
+    until the next reconciler poll refills it (lost allocatability for ~one interval)."""
+    host = Host(
+        hostname="agent-host-act", ip="10.0.0.9", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
+    )
+    db_session.add(host)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="dev-act-1",
+            connection_target="dev-act-1",
+            name="Eager Fill Phone",
+            os_version="14",
+            host_id=host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            pid=None,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            # Nulled by a reconciler poll that observed the crash window.
+            active_connection_target=None,
+        )
+    db_session.add(node)
+    await db_session.commit()
+
+    payload = {
+        "status": "ok",
+        "hostname": "agent-host-act",
+        "os_type": "linux",
+        "version": "0.1.0",
+        "appium_processes": {
+            "running_nodes": [],
+            "recent_restart_events": [
+                {
+                    "sequence": 1,
+                    "kind": "restart_succeeded",
+                    "port": 4723,
+                    "pid": 2222,
+                    "attempt": 1,
+                    "occurred_at": "2026-04-04T10:00:01+00:00",
+                    "will_retry": False,
+                }
+            ],
+        },
+    }
+
+    with (
+        patch("app.appium_nodes.services.heartbeat._ping_agent", return_value=_ok_result(payload)),
+        patch("app.appium_nodes.services.heartbeat._schedule_background_task"),
+    ):
+        await _hb_svc(db_session, settings=FakeSettingsReader({}), circuit_breaker=Mock())._check_hosts(db_session)
+
+    await db_session.refresh(node)
+    assert node.pid == 2222
+    # The viability marker is restored, so the allocator's node_viable_predicate passes now.
+    assert node.active_connection_target is not None
+    assert node.observed_running
+
+
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
     host = Host(hostname="agent-host", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)

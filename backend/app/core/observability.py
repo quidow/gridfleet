@@ -55,6 +55,7 @@ BACKGROUND_LOOP_NAMES = (
     "durable_job_worker",
     "webhook_delivery",
     "run_reaper",
+    "grid_allocation_reaper",
     "data_cleanup",
     "session_viability",
     "fleet_capacity_collector",

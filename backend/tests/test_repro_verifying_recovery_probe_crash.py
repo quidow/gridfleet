@@ -223,13 +223,14 @@ async def test_run_recovery_probe_skips_on_in_progress_collision(
     assert probe.await_count == 1, "a probe-in-flight collision must not be retried as a failure"
 
 
-async def test_attempt_auto_recovery_suppresses_on_probe_collision(
+async def test_attempt_auto_recovery_records_skip_on_probe_collision(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
     """F6: a recovery whose probe was *skipped* (another probe in flight) is recorded as a
-    suppression — no auto-stop, no backoff, no ``review_required``. The lifecycle loop retries
-    on its next cycle once the lock frees."""
+    benign *skip* — not a suppression, not a failure: no auto-stop, no backoff, no
+    ``review_required``, and no ``suppressed``/``needs_attention`` badge. The flow that won the
+    lock does the real recovery; the lifecycle loop also retries on its next cycle."""
     from app.lifecycle.services.policy import LifecyclePolicyService
 
     device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-suppress")
@@ -256,6 +257,60 @@ async def test_attempt_auto_recovery_suppresses_on_probe_collision(
         )
 
     probe_mock.assert_awaited_once()  # gates passed; we actually reached the probe + skip branch
-    actions.record_recovery_suppressed.assert_awaited_once()
+    actions.record_recovery_skipped.assert_awaited_once()
+    actions.record_recovery_suppressed.assert_not_awaited()
     actions.complete_auto_stop.assert_not_awaited()
     review.mark_review_required.assert_not_awaited()
+
+
+async def test_probe_collision_skip_does_not_flag_needs_attention(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """ex-N11 'Fix B': a recovery whose probe was *skipped* because another viability probe
+    held the device's lock is a benign, self-resolving collision — NOT an operator-actionable
+    condition. The winning flow (exit-maintenance verification / the next connectivity tick)
+    does the real recovery, so the skip must NOT leave the device deriving
+    ``recovery_state="suppressed"`` (→ a false ``needs_attention`` / "Recovery Paused" badge).
+
+    Uses the real ``LifecyclePolicyActionsService`` so the derived lifecycle policy is asserted,
+    not the call shape."""
+    from app.devices.services.lifecycle_policy_state import state as policy_state
+    from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
+    from app.lifecycle.services.actions import LifecyclePolicyActionsService
+    from app.lifecycle.services.policy import LifecyclePolicyService
+    from app.runs.service_reservation import RunReservationService
+
+    device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-no-attention")
+
+    svc = LifecyclePolicyService(
+        review=build_review_service(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=event_bus,
+            reservation=RunReservationService(review=build_review_service()),
+            incidents=LifecycleIncidentService(),
+        ),
+        incidents=LifecycleIncidentService(),
+        viability=Mock(),
+        node_manager=AsyncMock(),
+    )
+
+    probe_mock = AsyncMock(return_value={"status": "skipped"})
+    with patch.object(LifecyclePolicyService, "_run_recovery_probe", new=probe_mock):
+        restored = await svc.attempt_auto_recovery(
+            db_session, device, source="exit_maintenance", reason="Operator exited maintenance"
+        )
+
+    assert restored is False  # a skip is not a successful recovery
+    probe_mock.assert_awaited_once()  # gates passed; we reached the probe + skip branch
+
+    await db_session.refresh(device)
+    assert policy_state(device).get("recovery_suppressed_reason") is None, (
+        "a benign probe-lock collision must not record a suppression reason"
+    )
+    policy = await build_lifecycle_policy(db_session, device)
+    assert policy["recovery_state"] != "suppressed", (
+        "a probe-collision skip must not derive recovery_state=suppressed → needs_attention"
+    )

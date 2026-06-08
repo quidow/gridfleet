@@ -136,3 +136,12 @@ def test_structured_logs_include_request_and_loop_context(capsys: pytest.Capture
 
 def test_leader_keepalive_is_required_for_readiness() -> None:
     assert "control_plane_leader_keepalive" in BACKGROUND_LOOP_NAMES
+
+
+def test_grid_allocation_reaper_is_required_for_readiness() -> None:
+    """BL#1: the grid_allocation_reaper loop writes a heartbeat under this name, but it was
+    missing from BACKGROUND_LOOP_NAMES, so /health/ready never checked it — a stalled reaper
+    (leaking queue tickets, skipping the orphaned-claim sweep) left readiness green."""
+    from app.grid.allocation_reaper import LOOP_NAME
+
+    assert LOOP_NAME in BACKGROUND_LOOP_NAMES

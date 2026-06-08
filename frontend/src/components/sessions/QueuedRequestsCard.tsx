@@ -18,7 +18,7 @@ function extractPlatformLabel(caps: Record<string, unknown> | undefined): string
 
 function extractDeviceId(caps: Record<string, unknown> | undefined): string | null {
   if (!caps) return null;
-  const deviceId = caps['gridfleet:deviceId'] as string | undefined;
+  const deviceId = caps['appium:gridfleet:deviceId'] as string | undefined;
   return deviceId || null;
 }
 

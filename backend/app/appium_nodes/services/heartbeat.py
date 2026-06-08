@@ -29,6 +29,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.identity import appium_connection_target
 from app.devices.services.state import set_operational_state
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus
@@ -417,6 +418,18 @@ async def _ingest_appium_restart_events(
         if kind == "restart_succeeded":
             if process == "appium" and pid is not None:
                 locked_node.pid = pid
+                # Eager-fill the node-viability marker (I11/N15). A reconciler poll that
+                # observed the crash window may have nulled active_connection_target; the
+                # agent has now confirmed the node is back, so restore it immediately rather
+                # than waiting for the next reconciler poll to refill it — otherwise the
+                # device reads ``available`` but fails the allocator's node_viable_predicate
+                # (pid + active_connection_target set, no transition_token) for up to one
+                # reconciler interval. The value is a liveness marker only (routing uses
+                # host.ip + node.port via node_target); the reconciler reconciles it to the
+                # agent-reported connection_target on its next poll. Only fill when null so a
+                # live value the reconciler already wrote is never churned.
+                if locked_node.active_connection_target is None:
+                    locked_node.active_connection_target = appium_connection_target(device)
             locked_node.consecutive_health_failures = 0
             if process == "appium":
                 publisher.queue_for_session(

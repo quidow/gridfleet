@@ -404,18 +404,14 @@ class LifecyclePolicyService:
 
         if result.get("status") == "skipped":
             # The probe could not run because another viability probe holds the device's
-            # lock (see _run_recovery_probe). Record a suppression — not a failure — so no
-            # auto-stop, backoff, or review_required fires on a healthy device. The lifecycle
-            # loop retries on its next cycle once the lock frees.
-            return await self._actions.record_recovery_suppressed(
-                db,
-                device,
-                current_state,
-                source="session_viability",
-                reason=result.get("error") or reason,
-                suppression_reason="Another viability probe is in progress",
-                run=run,
-            )
+            # lock, or the device left a probeable state mid-attempt (see _run_recovery_probe).
+            # Record a *skip* — not a suppression, not a failure: no auto-stop, no backoff, no
+            # review_required, and crucially no ``suppressed``/``needs_attention`` badge. A
+            # lock collision is benign and self-resolving — the flow that won the lock (the
+            # exit-maintenance verification lease, or the next device_connectivity tick) does
+            # the real recovery. (ex-N11 "Fix B": suppressing here raised a false "Recovery
+            # Paused" alarm and tripped the harness's forbidden-event check in the S14 window.)
+            return await self._actions.record_recovery_skipped(db, device)
 
         if result.get("status") != "passed":
             failure_reason = result.get("error") or "Recovery viability probe failed"

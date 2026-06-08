@@ -332,6 +332,36 @@ class LifecyclePolicyActionsService:
         await db.commit()
         return False
 
+    async def record_recovery_skipped(
+        self,
+        db: AsyncSession,
+        device: Device,
+    ) -> bool:
+        """Record that an auto-recovery attempt was *skipped* for a transient,
+        self-resolving reason — a concurrent viability probe held the device's
+        probe lock, or the device left a probeable state mid-attempt.
+
+        Unlike ``record_recovery_suppressed`` this records NO operator-actionable
+        state: a probe-lock collision is not a health signal, and the device is
+        already being recovered by the flow that won the lock (the exit-maintenance
+        verification lease, or the next ``device_connectivity`` tick). Clearing
+        ``recovery_suppressed_reason`` keeps the device out of the
+        ``suppressed`` / ``needs_attention`` derivation (the ex-N11 "Fix B" false
+        "Recovery Paused" badge). No ``lifecycle_recovery_suppressed`` incident is
+        emitted — the skip is logged by the caller and self-resolves.
+
+        Caller holds the device row lock through to here (like
+        ``record_recovery_suppressed``); we re-lock + re-derive so a concurrent
+        committer's fields are not clobbered.
+        """
+        device = await _lock_for_state_write(db, device)
+        fresh = policy_state(device)
+        fresh["recovery_suppressed_reason"] = None
+        set_action(fresh, "recovery_skipped")
+        write_state(device, fresh)
+        await db.commit()
+        return False
+
     async def record_auto_stopped_incident(
         self,
         db: AsyncSession,
