@@ -16,7 +16,7 @@ dependencies = [
     "httpx==0.28.1",
     "sse-starlette==3.4.4",
     "prometheus-client==0.25.0",
-    "structlog==25.5.0",
+    "structlog==26.1.0",
     "pyyaml==6.0.3",
     "packaging>=26.2",
     "python-multipart>=0.0.32",
@@ -39,7 +39,7 @@ dev = [
     "pytest-xdist>=3.6.0",
     "mypy>=2.1.0",
     "ruff>=0.15.16",
-    "datamodel-code-generator==0.60.0",
+    "datamodel-code-generator==0.60.1",
 ]
 
 [tool.pytest.ini_options]
