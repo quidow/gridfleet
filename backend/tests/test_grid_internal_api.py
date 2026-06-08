@@ -422,7 +422,8 @@ async def test_allocate_rejects_unknown_run(client: AsyncClient, seeded_availabl
     assert resp.status_code == 400
     body = resp.json()
     assert body["status"] == "invalid"
-    assert "only active runs" in body["message"]
+    assert "is missing" in body["message"]
+    assert "non-terminal" in body["message"]
 
 
 @pytest.mark.db

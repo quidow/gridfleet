@@ -33,7 +33,7 @@ from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import StereotypeTemplate, load_stereotype_template
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs import service as run_service
-from app.runs.models import RunState, TestRun
+from app.runs.models import TERMINAL_STATES, TestRun
 from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
@@ -151,10 +151,10 @@ class AllocationResult:
 
 
 class RunNotActiveError(Exception):
-    """A run-bound allocate names a run that is missing or no longer active."""
+    """A run-bound allocate names a run that is missing or already terminal."""
 
     def __init__(self, run_id: uuid.UUID, state: str) -> None:
-        super().__init__(f"run {run_id} is {state}; only active runs can create sessions")
+        super().__init__(f"run {run_id} is {state}; sessions can only be created for a live (non-terminal) run")
 
 
 async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -> int:
@@ -486,11 +486,15 @@ class AllocationService:
         # A run-bound ticket is only as alive as its run: re-check every tick so a
         # run cancelled/completed mid-queue fails its waiters NOW with a clear
         # message instead of stranding them until the queue timeout (spec §4).
-        # This same check is the creation-time validation — the allocate endpoint
-        # calls try_allocate in the request that creates the ticket.
+        # A still-`preparing` run is a legitimate session source — clients open
+        # Appium sessions on their reserved devices during preparation (install
+        # builds, sign in, smoke checks; docs: runs-and-reservations.md §preparing).
+        # Only a missing or already-terminal run is a hard reject. This same check
+        # is the creation-time validation — the allocate endpoint calls try_allocate
+        # in the request that creates the ticket.
         if ticket.run_id is not None:
             run = await run_service.get_run(db, ticket.run_id)
-            if run is None or run.state != RunState.active:
+            if run is None or run.state in TERMINAL_STATES:
                 state = run.state.value if run is not None else "missing"
                 transition_ticket(ticket, GridQueueStatus.cancelled, reason="run_not_active")
                 GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="invalid").inc()
@@ -604,15 +608,18 @@ class AllocationService:
 
     @staticmethod
     def _reservation_run_id(reservation_run: TestRun | None, device_id: uuid.UUID) -> uuid.UUID | None:
-        """Return the active reservation's run id for *device_id*, or ``None`` if the
+        """Return the reservation's run id for *device_id*, or ``None`` if the
         device carries no admitting reservation (open to any ticket).
 
-        Pure projection over the run loaded once by ``get_device_reservation_map``: an
-        active, non-excluded reservation gates the device to its owning run (spec §3);
-        anything else (no reservation, non-active run, excluded entry) leaves it
+        Pure projection over the run loaded once by ``get_device_reservation_map``: a
+        live (non-terminal), non-excluded reservation gates the device to its owning
+        run (spec §3). The reservation is honoured from run creation (`preparing`)
+        onward — not only once `active` — so the run can take ITS reserved devices
+        during preparation and free tickets cannot steal them in that window.
+        Anything else (no reservation, terminal run, excluded entry) leaves it
         unreserved.
         """
-        if reservation_run is None or reservation_run.state != RunState.active:
+        if reservation_run is None or reservation_run.state in TERMINAL_STATES:
             return None
         entry = run_service.get_reservation_entry_for_device(reservation_run, device_id)
         if run_service.reservation_entry_is_excluded(entry):

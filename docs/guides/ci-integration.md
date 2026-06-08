@@ -103,7 +103,7 @@ Practical notes:
 
 - size the worker pool from the `devices` array returned by `POST /api/runs`
 - keep the run heartbeat active while workers are running
-- call `/api/runs/{id}/ready` or `/api/runs/{id}/active` after preparation — this is required; session sync never auto-activates a run. Appium sessions registered while the run is still `preparing` are not linked to it (run_id stays NULL), and a run left in `preparing` is eventually expired with the message that `/api/runs/{id}/active` was never signaled.
+- call `/api/runs/{id}/ready` or `/api/runs/{id}/active` after preparation — this is required; session sync never auto-activates a run, and a run left in `preparing` is eventually expired with the message that `/api/runs/{id}/active` was never signaled. The transition is a lifecycle marker only: run-scoped sessions can run on the run's reserved devices, and are linked to it, from `preparing` onward (preparation sessions show up in Run Detail).
 - resolve the assigned manager device row from the session connection target with `/api/devices/by-connection-target/{target}` when a test needs device config or metadata
 - finish with the normal `complete` or `cancel` call; there is no per-worker release call
 

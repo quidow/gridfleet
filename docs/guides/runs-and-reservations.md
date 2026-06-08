@@ -20,7 +20,7 @@ The manager does not run your test suite itself. It protects and tracks the rese
 
 Large CI jobs often create one run and then fan out to multiple pytest-xdist workers. Workers no longer claim devices through the manager. Instead, the testkit creates each Appium session through the run-scoped router endpoint (`GRID_URL/run/{run_id}`), which the router uses to admit the session only to devices reserved for that run. The endpoint URL is composed automatically from the `GRIDFLEET_RUN_ID` env var (set externally by the run launcher/CI).
 
-Admission is strictly symmetric: a run-bound session is admitted only to devices reserved for that run, and a reserved device admits only sessions from its run (no spillover in either direction). Two additional failure modes apply: a session request naming a missing or inactive run is rejected immediately (HTTP 400, "only active runs can create sessions"); any queued allocation tickets are cancelled when their run ends mid-queue.
+Admission is strictly symmetric: a run-bound session is admitted only to devices reserved for that run, and a reserved device admits only sessions from its run (no spillover in either direction). The reservation is honoured from run creation (`preparing`) onward, so this gate also protects reserved devices during preparation. Two additional failure modes apply: a session request naming a missing or already-terminal run is rejected immediately (HTTP 400, "sessions can only be created for a live (non-terminal) run"); any queued allocation tickets are cancelled when their run ends mid-queue.
 
 The reserved device list from `POST /api/runs` remains the run's fleet slice and should be used to size the worker pool. Once a WebDriver session starts, clients can resolve the assigned manager device row from the runtime connection target:
 
@@ -57,7 +57,7 @@ The normal reservation path today is:
 3. the run starts in `preparing`
 4. CI prepares the reserved devices
 5. if one reserved device fails preparation, CI can call `/api/runs/{id}/devices/{device_id}/preparation-failed` to exclude only that device and preserve the exact failure reason
-6. CI must explicitly call `POST /api/runs/{id}/active` after preparation finishes to leave `preparing`. There is no implicit transition based on observed session activity. Sessions started before `/active` are preparation sessions and are not linked to the run.
+6. CI must explicitly call `POST /api/runs/{id}/active` after preparation finishes to leave `preparing`. There is no implicit transition based on observed session activity — `/active` is a lifecycle marker, not a gate on device access. Sessions can be opened on the run's reserved devices from `preparing` onward (see [Preparation Sessions](#preparation-sessions)).
 7. the run ends as `completed`, `cancelled`, or `expired`
 
 Run creation supports two allocation modes per requirement:
@@ -69,8 +69,8 @@ Run creation supports two allocation modes per requirement:
 
 | State | What It Means Today | Typical Cause |
 | --- | --- | --- |
-| `preparing` | devices are reserved and preparation can happen | run was just created |
-| `active` | reserved devices are in use, real test sessions are now linked to the run | explicit `POST /api/runs/{id}/active` call |
+| `preparing` | devices are reserved; run-scoped sessions can already run on them (preparation, and linked to the run) | run was just created |
+| `active` | the run has signalled that real testing has begun | explicit `POST /api/runs/{id}/active` call |
 | `completed` | normal finish and release | CI called `complete` |
 | `cancelled` | operator-initiated stop and release | `cancel` or `force-release` |
 | `expired` | safety timeout released the fleet | missed heartbeat or TTL exceeded |
@@ -79,11 +79,11 @@ The UI contract also recognizes `pending` and `failed`, but the current run serv
 
 ## Preparation Sessions
 
-CI often opens one or more Appium sessions on reserved devices while the run is still `preparing` — installing builds, warming caches, signing in, or running smoke checks. GridFleet does not link those sessions to the run:
+CI often opens one or more Appium sessions on reserved devices while the run is still `preparing` — installing builds, warming caches, signing in, or running smoke checks. This is a fully supported scenario: a run's reservation is honoured from creation (`preparing`) onward, not only once it is `active`.
 
-- `Session.run_id` is `NULL` for any session that starts while the owning reservation's run is in `preparing`.
-- These sessions are visible under **Sessions** only. They never appear in Run Detail.
-- The run state does not auto-flip on observed session activity. CI must call `POST /api/runs/{id}/active` between the preparation stage and the real test stage. The testkit exposes this as `GridFleetClient.signal_active(run_id)`.
+- A run-scoped session — opened against the router's `/run/{run_id}/session` endpoint (the testkit's default whenever a run id is set) — allocates one of the run's **own reserved devices** during `preparing`. The resulting `Session.run_id` is set, so the session is linked to the run and appears in Run Detail.
+- Those reserved devices are protected throughout `preparing`: a free (non-run-scoped) session cannot claim a device reserved for another run, so preparation can never lose a reserved device to an unrelated client. A free session opened without any run binding stays unlinked (`Session.run_id` is `NULL`) and draws only from unreserved devices.
+- The run state does not auto-flip on observed session activity. CI must still call `POST /api/runs/{id}/active` between the preparation stage and the real test stage to mark that real testing has begun. The testkit exposes this as `GridFleetClient.signal_active(run_id)`.
 
 If a run reaches its TTL or heartbeat budget still in `preparing` (the client never called `/active`), the reaper emits a `run.never_activated` event (severity `warning`) before the usual `run.expired` event, and sets the run's `error` to a message stating the run was never activated. This surfaces misconfigured CI in Run Detail's error banner.
 
