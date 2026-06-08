@@ -127,8 +127,8 @@ services:
       timeout: 10s
       retries: 6
       start_period: 45s
-    mem_limit: 1g
-    cpus: 1.0
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpus: ${BACKEND_CPUS:-1.0}
     logging:
       driver: json-file
       options:
