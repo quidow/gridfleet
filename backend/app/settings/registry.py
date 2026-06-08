@@ -373,6 +373,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         min_value=1,
         max_value=100,
     ),
+    SettingDefinition(
+        key="device_checks.probe_failed.consecutive_fail_threshold",
+        category="device_checks",
+        setting_type="int",
+        default=3,
+        description=(
+            "Consecutive failing cycles of a manifest-declared debounceable health check "
+            "(e.g. Roku ECP reachability on port 8060) before the device is marked unhealthy. "
+            "Set to 1 for strict, no-hysteresis behaviour."
+        ),
+        min_value=1,
+        max_value=50,
+    ),
     # ── Appium & Grid ──
     SettingDefinition(
         key="grid.session_poll_interval_sec",

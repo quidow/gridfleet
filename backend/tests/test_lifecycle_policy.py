@@ -16,12 +16,19 @@ from app.devices.models import (
     DeviceEventType,
     DeviceIntent,
     DeviceOperationalState,
+    DeviceReservation,
     DeviceType,
 )
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
-from app.devices.services.intent_types import NODE_PROCESS, PRIORITY_HEALTH_FAILURE, RECOVERY, IntentRegistration
+from app.devices.services.intent_types import (
+    NODE_PROCESS,
+    PRIORITY_HEALTH_FAILURE,
+    RECOVERY,
+    RESERVATION,
+    IntentRegistration,
+)
 from app.devices.services.lifecycle_policy_summary import (
     build_lifecycle_policy,
     build_lifecycle_policy_summary,
@@ -36,6 +43,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
+from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -2224,3 +2232,115 @@ async def test_clear_self_heal_clears_aged_residue_without_reassertion(
     assert clear_self_heal_suppression(locked, min_age_seconds=120.0) is True
     assert locked.lifecycle_policy_state["recovery_suppressed_reason"] is None
     assert locked.lifecycle_policy_state["last_action"] == "self_healed"
+
+
+# ---------------------------------------------------------------------------
+# restore_run_after_self_heal — close the restore-gap where a recovered device
+# returns to ``available`` without auto-recovery firing, leaving the no-TTL
+# health_failure:reservation intent (and thus the run exclusion) stuck.
+# ---------------------------------------------------------------------------
+
+
+async def _reservation_row(db_session: AsyncSession, device_id: object) -> DeviceReservation:
+    return (
+        await db_session.execute(
+            select(DeviceReservation).where(
+                DeviceReservation.device_id == device_id,
+                DeviceReservation.released_at.is_(None),
+            )
+        )
+    ).scalar_one()
+
+
+async def _exclude_reservation(
+    db_session: AsyncSession,
+    *,
+    device_id: object,
+    run_id: object,
+    reason: str = "Failed checks: ping, ecp",
+    excluded_until: object = None,
+) -> None:
+    """Mark the reservation excluded and seed the permanent health-failure intent."""
+    res = await _reservation_row(db_session, device_id)
+    res.excluded = True
+    res.exclusion_reason = reason
+    res.excluded_at = datetime.now(UTC)
+    res.excluded_until = excluded_until
+    await IntentService(db_session).register_intents(
+        device_id=device_id,
+        reason="seed health failure exclusion",
+        intents=[
+            IntentRegistration(
+                source=f"health_failure:reservation:{device_id}",
+                axis=RESERVATION,
+                run_id=run_id,
+                payload={"excluded": True, "priority": PRIORITY_HEALTH_FAILURE, "exclusion_reason": reason},
+            )
+        ],
+    )
+    await db_session.commit()
+
+
+async def test_restore_run_after_self_heal_clears_health_failure_exclusion(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    device = await create_device(
+        db_session, host_id=db_host.id, name="self-heal-restore", operational_state=DeviceOperationalState.available
+    )
+    run = await create_reserved_run(db_session, name="self-heal-restore-run", devices=[device])
+    await _exclude_reservation(db_session, device_id=device.id, run_id=run.id)
+
+    restored = await _make_svc(publisher=event_bus).restore_run_after_self_heal(
+        db_session, device, reason="Device healthy after self-heal"
+    )
+
+    assert restored is True
+    res = await _reservation_row(db_session, device.id)
+    assert res.excluded is False
+    assert res.exclusion_reason is None
+    leftover = (
+        await db_session.execute(
+            select(DeviceIntent.id).where(
+                DeviceIntent.device_id == device.id,
+                DeviceIntent.source == f"health_failure:reservation:{device.id}",
+            )
+        )
+    ).scalar_one_or_none()
+    assert leftover is None
+
+
+async def test_restore_run_after_self_heal_leaves_cooldown_exclusion(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(
+        db_session, host_id=db_host.id, name="self-heal-cooldown", operational_state=DeviceOperationalState.available
+    )
+    run = await create_reserved_run(db_session, name="self-heal-cooldown-run", devices=[device])
+    await _exclude_reservation(
+        db_session,
+        device_id=device.id,
+        run_id=run.id,
+        excluded_until=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    restored = await _make_svc(publisher=event_bus).restore_run_after_self_heal(
+        db_session, device, reason="Device healthy after self-heal"
+    )
+
+    assert restored is False
+    res = await _reservation_row(db_session, device.id)
+    assert res.excluded is True
+
+
+async def test_restore_run_after_self_heal_skips_non_available_device(db_session: AsyncSession, db_host: Host) -> None:
+    device = await create_device(
+        db_session, host_id=db_host.id, name="self-heal-offline", operational_state=DeviceOperationalState.offline
+    )
+    run = await create_reserved_run(db_session, name="self-heal-offline-run", devices=[device])
+    await _exclude_reservation(db_session, device_id=device.id, run_id=run.id)
+
+    restored = await _make_svc(publisher=event_bus).restore_run_after_self_heal(
+        db_session, device, reason="Device healthy after self-heal"
+    )
+
+    assert restored is False
+    res = await _reservation_row(db_session, device.id)
+    assert res.excluded is True

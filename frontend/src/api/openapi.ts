@@ -3775,6 +3775,11 @@ export interface components {
         /** HealthCheckLabelOut */
         HealthCheckLabelOut: {
             applies_when?: components["schemas"]["HealthCheckAppliesWhenOut"] | null;
+            /**
+             * Debounce
+             * @default false
+             */
+            debounce: boolean;
             /** Id */
             id: string;
             /** Label */

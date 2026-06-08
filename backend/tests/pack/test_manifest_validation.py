@@ -85,8 +85,8 @@ def test_platform_accepts_health_check_labels() -> None:
     manifest = load_manifest_yaml(yaml_text)
 
     assert [check.model_dump() for check in manifest.platforms[0].health_checks] == [
-        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None},
-        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None},
+        {"id": "adb_connected", "label": "ADB Connected", "applies_when": None, "debounce": False},
+        {"id": "boot_completed", "label": "Boot Completed", "applies_when": None, "debounce": False},
     ]
 
 

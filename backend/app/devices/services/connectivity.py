@@ -56,6 +56,7 @@ logger = get_logger(__name__)
 CONNECTIVITY_NAMESPACE = "connectivity.previously_offline"
 IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
+PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
 LOOP_NAME = "device_connectivity"
 
@@ -271,6 +272,29 @@ async def _apply_ip_ping_hysteresis(
     return counter < threshold
 
 
+async def _apply_probe_failure_hysteresis(
+    db: AsyncSession,
+    device: Device,
+    *,
+    ok: bool,
+    threshold: int,
+) -> bool:
+    """Consecutive-failure debounce for manifest-declared debounceable checks.
+
+    Same shape as ``_apply_ip_ping_hysteresis`` but keyed on its own namespace:
+    returns True (suppressing the failure) while the count is below threshold,
+    False once it reaches threshold, and always True + counter reset on success.
+    """
+    if ok:
+        await control_plane_state_store.delete_value(db, PROBE_FAILED_NAMESPACE, device.identity_value)
+        return True
+
+    current = await control_plane_state_store.get_value(db, PROBE_FAILED_NAMESPACE, device.identity_value)
+    counter = int(current) + 1 if isinstance(current, int) else 1
+    await control_plane_state_store.set_value(db, PROBE_FAILED_NAMESPACE, device.identity_value, counter)
+    return counter < threshold
+
+
 async def _stop_disconnected_node(
     db: AsyncSession, device: Device, *, health: DeviceHealthProtocol, publisher: EventPublisher
 ) -> None:
@@ -320,6 +344,7 @@ class ConnectivityService:
         health_result: dict[str, Any],
         *,
         ip_ping_threshold: int,
+        probe_failed_threshold: int,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Derive the health verdict from a probe result, applying ip-ping hysteresis.
 
@@ -357,7 +382,46 @@ class ConnectivityService:
                 host=host.hostname,
                 value=int(counter_value or 0),
             )
-        return others_ok and gated_ip_ping_ok, ip_ping_entry
+
+        # Debounce transient failures of manifest-declared debounceable checks (e.g. Roku
+        # ECP on port 8060). Only suppress when EVERY failing non-ip_ping check is
+        # debounceable — a hard check (adb) failing in the same cycle must act immediately.
+        # The manifest owns which checks are debounceable; core never names specific ids.
+        # Platform resolution runs only on the cold path (a probe actually failed), so the
+        # healthy path stays a single counter reset.
+        gated_others_ok = others_ok
+        if raw_checks_list and device.operational_state != DeviceOperationalState.maintenance:
+            if others_ok:
+                await _apply_probe_failure_hysteresis(db, device, ok=True, threshold=probe_failed_threshold)
+            else:
+                failing = [c for c in other_checks if isinstance(c, dict) and not c.get("ok")]
+                debounceable = await self._debounceable_check_ids(db, device)
+                if failing and all(c.get("check_id") in debounceable for c in failing):
+                    gated_others_ok = await _apply_probe_failure_hysteresis(
+                        db, device, ok=False, threshold=probe_failed_threshold
+                    )
+        return gated_others_ok and gated_ip_ping_ok, ip_ping_entry
+
+    async def _debounceable_check_ids(self, db: AsyncSession, device: Device) -> set[str]:
+        """Manifest-declared health-check ids whose transient failures should be debounced.
+
+        Resolved from the device's pack/platform manifest so core stays driver-agnostic.
+        Empty when the platform cannot be resolved.
+        """
+        try:
+            resolved = await resolve_pack_platform(
+                db,
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=device.device_type.value if device.device_type else None,
+            )
+        except LookupError:
+            return set()
+        return {
+            str(check["id"])
+            for check in resolved.health_checks
+            if isinstance(check, dict) and check.get("debounce") and check.get("id")
+        }
 
     async def _handle_healthy_device(
         self,
@@ -501,6 +565,13 @@ class ConnectivityService:
             await self._lifecycle_policy.clear_suppression_on_self_heal(
                 db, device, reason="Device self-healed after healthy reconnect"
             )
+            # Clear a stale health-failure run exclusion left by a recovery route that
+            # never ran restore (e.g. operator node restart): the device is provably
+            # available but still excluded because the no-TTL health_failure:reservation
+            # intent was never revoked. Cooldown exclusions are left intact.
+            await self._lifecycle_policy.restore_run_after_self_heal(
+                db, device, reason="Device healthy after self-heal"
+            )
             return
         if not await is_ready_for_use_async(db, device):
             logger.debug("Device %s is connected but still awaiting setup/verification", device.name)
@@ -533,6 +604,7 @@ class ConnectivityService:
         probe_unanswered_threshold = int(
             self._settings.get("device_checks.probe_unanswered.consecutive_fail_threshold")
         )
+        probe_failed_threshold = int(self._settings.get("device_checks.probe_failed.consecutive_fail_threshold"))
 
         stmt = select(Host).where(Host.status == HostStatus.online)
         result = await db.execute(stmt)
@@ -578,7 +650,12 @@ class ConnectivityService:
                 ip_ping_entry: dict[str, Any] | None = None
                 if health_result is not None:
                     healthy, ip_ping_entry = await self._evaluate_health_result(
-                        db, device, host, health_result, ip_ping_threshold=ip_ping_threshold
+                        db,
+                        device,
+                        host,
+                        health_result,
+                        ip_ping_threshold=ip_ping_threshold,
+                        probe_failed_threshold=probe_failed_threshold,
                     )
 
                 if not healthy and health_result is not None:
