@@ -190,10 +190,14 @@ async def gather_device_state_facts(
     inspect the node without triggering synchronous lazy loading.
     """
     # Reload the device with appium_node eager-loaded so health-view helpers
-    # can access it synchronously without triggering MissingGreenlet.
-    device = (
-        await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
-    ).scalar_one()
+    # can access it synchronously without triggering MissingGreenlet. Skip the
+    # reload when appium_node is already loaded (the reconciler path always
+    # passes a lock_device-loaded, row-locked device) — re-selecting it would
+    # just re-run two queries and return the same in-session object.
+    if "appium_node" in sa_inspect(device).unloaded:
+        device = (
+            await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+        ).scalar_one()
 
     has_running_session = (
         await db.execute(select(Session.id).where(live_session_predicate(device.id)).limit(1))
