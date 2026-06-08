@@ -13,7 +13,10 @@ workers="${GRIDFLEET_UVICORN_WORKERS:-1}"
 case "$workers" in
     ''|*[!0-9]*) workers=1 ;;
 esac
-if [ "$workers" -gt 1 ]; then
+# Only the default uvicorn command takes --workers. Guard so an overridden CMD
+# (e.g. `docker run <image> alembic ...` or `docker compose run backend <cmd>`)
+# is not handed an unrecognized flag.
+if [ "$workers" -gt 1 ] && [ "$1" = "uvicorn" ]; then
     set -- "$@" --workers "$workers"
 fi
 
