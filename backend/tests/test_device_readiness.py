@@ -218,6 +218,29 @@ async def test_assess_devices_async_empty_input_skips_query(monkeypatch: pytest.
     scalars_mock.assert_not_awaited()
 
 
+async def test_assess_device_async_uses_provided_packs_without_querying(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the caller supplies the pack catalog, no per-device pack load is issued."""
+    platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
+    release = SimpleNamespace(platforms=[platform])
+    pack = SimpleNamespace(id="alpha", releases=[release], current_release=None)
+    scalars_mock = AsyncMock()
+    session = SimpleNamespace(scalars=scalars_mock)
+    monkeypatch.setattr(
+        device_readiness, "selected_release", lambda releases, _current: releases[0] if releases else None
+    )
+    monkeypatch.setattr(
+        device_readiness,
+        "assess_device_from_required_fields",
+        lambda _device, _fields: device_readiness.DeviceAssessment(readiness_state="verified", missing_setup_fields=[]),
+    )
+    device = SimpleNamespace(id="d", pack_id="alpha", platform_id="android_mobile", device_type=None)
+
+    result = await device_readiness.assess_device_async(session, device, packs={"alpha": pack})  # type: ignore[arg-type]
+
+    assert result.readiness_state == "verified"
+    scalars_mock.assert_not_awaited()
+
+
 async def test_readiness_error_detail_setup_and_verification_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     session = object()
     device = object()

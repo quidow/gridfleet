@@ -33,6 +33,7 @@ from app.devices.services.intent_evaluator import (
     map_node_process_decision,
 )
 from app.devices.services.intent_types import GRID_ROUTING, NODE_PROCESS, PRIORITY_IDLE, RECOVERY, RESERVATION
+from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import apply_derived_state, device_in_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from app.devices.services.observation_reason import ObservationReason
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
+    from app.packs.models import DriverPack
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
@@ -155,8 +157,15 @@ async def _reconcile_all_devices_once(
         .scalars()
         .all()
     )
-    for device_id in dict.fromkeys([*intent_device_ids, *orphan_device_ids]):
-        await reconcile_device(db, device_id, publisher=publisher)
+    scan_ids = list(dict.fromkeys([*intent_device_ids, *orphan_device_ids]))
+    # Prefetch the pack catalog once for the whole scan so each reconcile_device skips
+    # its per-device pack load (see _reconcile_dirty_devices for the same pattern).
+    packs: dict[str, DriverPack] = {}
+    if scan_ids:
+        pack_ids = (await db.execute(select(Device.pack_id).where(Device.id.in_(scan_ids)))).scalars().all()
+        packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
+    for device_id in scan_ids:
+        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
         await db.commit()
         await deliver_agent_reconfigures(
             db, device_id, settings=settings, circuit_breaker=circuit_breaker, publisher=publisher, pool=pool
@@ -177,10 +186,18 @@ async def _reconcile_dirty_devices(
     rows = (
         (await db.execute(select(DeviceIntentDirty).order_by(DeviceIntentDirty.dirty_at).limit(limit))).scalars().all()
     )
+    # Prefetch the driver-pack catalog once for the whole dirty batch so each
+    # reconcile_device skips its own per-device pack load (readiness check).
+    # expire_on_commit=False keeps these objects usable across the per-device commits below.
+    device_ids = [row.device_id for row in rows]
+    packs: dict[str, DriverPack] = {}
+    if device_ids:
+        pack_ids = (await db.execute(select(Device.pack_id).where(Device.id.in_(device_ids)))).scalars().all()
+        packs = await load_packs_by_ids(db, {pid for pid in pack_ids if pid})
     for row in rows:
         device_id = row.device_id
         generation = row.generation
-        await reconcile_device(db, device_id, publisher=publisher)
+        await reconcile_device(db, device_id, publisher=publisher, packs=packs)
         current = await db.get(DeviceIntentDirty, device_id, populate_existing=True)
         if current is not None and current.generation == generation:
             await db.delete(current)
@@ -340,6 +357,7 @@ async def reconcile_device(
     *,
     publisher: EventPublisher,
     observed_reason: ObservationReason | None = None,
+    packs: dict[str, DriverPack] | None = None,
 ) -> None:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
     device = await device_locking.lock_device(db, device_id)
@@ -349,7 +367,9 @@ async def reconcile_device(
         # so operational_state / hold stay consistent with durable facts.
         try:
             now = datetime.now(UTC)
-            await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
+            await apply_derived_state(
+                db, device, now=now, publisher=publisher, observed_reason=observed_reason, packs=packs
+            )
         except Exception:  # noqa: BLE001 - state derivation must never break reconcile
             logger.warning("device-state derivation failed for %s (no node)", device_id, exc_info=True)
         return
@@ -506,7 +526,9 @@ async def reconcile_device(
     await db.flush()
 
     try:
-        await apply_derived_state(db, device, now=now, publisher=publisher, observed_reason=observed_reason)
+        await apply_derived_state(
+            db, device, now=now, publisher=publisher, observed_reason=observed_reason, packs=packs
+        )
     except Exception:  # noqa: BLE001 - state derivation must never break reconcile
         logger.warning("device-state derivation failed for %s", device_id, exc_info=True)
 

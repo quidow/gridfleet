@@ -76,3 +76,38 @@ async def test_gather_facts_available_device(
     assert facts.stop_in_flight is False
     assert facts.ready is True
     assert evaluate_operational_state(facts) is DeviceOperationalState.available
+
+
+@pytest.mark.db
+async def test_gather_facts_prefetched_packs_match_per_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A prefetched pack catalog (reconciler-loop batch path) must yield byte-identical
+    facts to the per-device pack load, across ready and not-ready devices."""
+    from app.devices.services.readiness import load_packs_by_ids
+
+    await seed_test_packs(db_session)
+    host = await create_host(client)
+    ready = await create_device_record(
+        db_session, host_id=host["id"], identity_value="eq-ready", name="ready", verified=True
+    )
+    unready = await create_device_record(
+        db_session,
+        host_id=host["id"],
+        identity_value="eq-unready",
+        name="unready",
+        platform_id="no_such_platform",
+        verified=True,
+    )
+    now = datetime.now(UTC)
+    catalog = await load_packs_by_ids(db_session, {ready.pack_id, unready.pack_id})
+
+    for device in (ready, unready):
+        baseline = await gather_device_state_facts(db_session, device, now=now)
+        hinted = await gather_device_state_facts(db_session, device, now=now, packs=catalog)
+        assert hinted == baseline
+
+    # sanity: the two devices genuinely differ on readiness (otherwise the test is vacuous)
+    assert (await gather_device_state_facts(db_session, ready, now=now)).ready is True
+    assert (await gather_device_state_facts(db_session, unready, now=now)).ready is False
