@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -40,6 +41,15 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
+
+
+# A run-create match can come up short purely because Stage-3's
+# ``SELECT ... FOR UPDATE SKIP LOCKED`` skipped a candidate whose row was
+# momentarily locked by a background reconcile loop (the device is fully
+# allocatable). Re-match a bounded number of times before surfacing the
+# shortfall; those lock windows are sub-second.
+_MATCH_RETRY_ATTEMPTS = 3
+_MATCH_RETRY_BACKOFF_SEC = 0.05
 
 
 class _UnmetRequirementError(Exception):
@@ -207,38 +217,48 @@ class RunAllocatorService:
 
         ttl_minutes, heartbeat_timeout_sec = self._resolve_run_options(data)
 
-        try:
-            run, device_infos = await self._attempt_create_run(
-                db,
-                data,
-                ttl_minutes=ttl_minutes,
-                heartbeat_timeout_sec=heartbeat_timeout_sec,
-            )
-            self._publisher.queue_for_session(
-                db,
-                "run.created",
-                {
-                    "run_id": str(run.id),
-                    "name": run.name,
-                    "device_count": len(device_infos),
-                    "created_by": run.created_by,
-                },
-            )
-            await db.commit()
-        except _UnmetRequirementError as exc:
-            await db.rollback()
-            raise ValueError(
-                "Not enough devices for requirement: "
-                f"pack_id={exc.requirement.pack_id}, "
-                f"platform_id={exc.requirement.platform_id}, "
-                f"os_version={exc.requirement.os_version}, "
-                f"{_format_requirement_count(exc.requirement)} "
-                f"(matched {exc.matched_count} eligible devices right now). "
-                "Check /api/availability for current platform capacity or retry later."
-            ) from exc
-        except Exception:
-            await db.rollback()
-            raise
+        attempt = 0
+        while True:
+            try:
+                run, device_infos = await self._attempt_create_run(
+                    db,
+                    data,
+                    ttl_minutes=ttl_minutes,
+                    heartbeat_timeout_sec=heartbeat_timeout_sec,
+                )
+                self._publisher.queue_for_session(
+                    db,
+                    "run.created",
+                    {
+                        "run_id": str(run.id),
+                        "name": run.name,
+                        "device_count": len(device_infos),
+                        "created_by": run.created_by,
+                    },
+                )
+                await db.commit()
+                break
+            except _UnmetRequirementError as exc:
+                # The shortfall may be a transient false negative: Stage-3's
+                # ``SELECT ... FOR UPDATE SKIP LOCKED`` drops a candidate whose
+                # row a background reconcile loop holds for its (sub-second)
+                # commit window. Roll back and re-match before surfacing.
+                await db.rollback()
+                attempt += 1
+                if attempt >= _MATCH_RETRY_ATTEMPTS:
+                    raise ValueError(
+                        "Not enough devices for requirement: "
+                        f"pack_id={exc.requirement.pack_id}, "
+                        f"platform_id={exc.requirement.platform_id}, "
+                        f"os_version={exc.requirement.os_version}, "
+                        f"{_format_requirement_count(exc.requirement)} "
+                        f"(matched {exc.matched_count} eligible devices right now). "
+                        "Check /api/availability for current platform capacity or retry later."
+                    ) from exc
+                await asyncio.sleep(_MATCH_RETRY_BACKOFF_SEC)
+            except Exception:
+                await db.rollback()
+                raise
 
         deferred = await self._deliver_routing_reconfigures(db, device_infos)
 
