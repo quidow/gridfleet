@@ -168,6 +168,31 @@ async def test_healthy_available_device_triggers_self_heal_clear(db_session: Asy
     lifecycle_policy.clear_suppression_on_self_heal.assert_awaited_once()
 
 
+async def test_healthy_available_device_attempts_run_restore(db_session: AsyncSession) -> None:
+    """A healthy, non-offline device also routes through the run-restore path so a stale
+    health-failure run exclusion (left by a recovery route that skipped restore) clears."""
+    _host, _device, _ = await _setup_host_and_device(db_session)
+    lifecycle_policy = AsyncMock()
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            return_value={"healthy": True},
+        ),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=lifecycle_policy,
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    lifecycle_policy.restore_run_after_self_heal.assert_awaited_once()
+
+
 async def test_disconnected_device_skips_self_heal_clear(db_session: AsyncSession) -> None:
     """An unhealthy/disconnected device never reaches the healthy self-heal path,
     so its suppression residue is left untouched."""
@@ -1216,6 +1241,7 @@ async def test_ip_ping_threshold_flips_unhealthy(
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     for _ in range(3):
         await ConnectivityService(
@@ -1357,6 +1383,7 @@ async def test_debounceable_check_blip_first_miss_keeps_healthy(
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     await ConnectivityService(
         publisher=Mock(),
@@ -1386,6 +1413,7 @@ async def test_debounceable_check_flips_unhealthy_at_threshold(
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     for _ in range(3):
         await ConnectivityService(
@@ -1421,6 +1449,7 @@ async def test_debounceable_check_recovery_clears_counter(
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = AsyncMock()
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
 
     for _ in range(3):
@@ -1464,6 +1493,7 @@ async def test_hard_check_failure_flips_immediately_despite_debounceable_sibling
     mock_lifecycle_policy = MagicMock()
     mock_lifecycle_policy.handle_health_failure = _async_recorder(handler_calls)
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     await ConnectivityService(
         publisher=Mock(),
@@ -1659,6 +1689,7 @@ async def test_healthy_probe_trumps_enumeration_absence(db_session: AsyncSession
     mock_lifecycle_policy.handle_health_failure = AsyncMock()
     mock_lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
     mock_lifecycle_policy.clear_suppression_on_self_heal = AsyncMock(return_value=False)
+    mock_lifecycle_policy.restore_run_after_self_heal = AsyncMock(return_value=False)
 
     with (
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),

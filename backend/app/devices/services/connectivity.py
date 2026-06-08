@@ -565,6 +565,13 @@ class ConnectivityService:
             await self._lifecycle_policy.clear_suppression_on_self_heal(
                 db, device, reason="Device self-healed after healthy reconnect"
             )
+            # Clear a stale health-failure run exclusion left by a recovery route that
+            # never ran restore (e.g. operator node restart): the device is provably
+            # available but still excluded because the no-TTL health_failure:reservation
+            # intent was never revoked. Cooldown exclusions are left intact.
+            await self._lifecycle_policy.restore_run_after_self_heal(
+                db, device, reason="Device healthy after self-heal"
+            )
             return
         if not await is_ready_for_use_async(db, device):
             logger.debug("Device %s is connected but still awaiting setup/verification", device.name)

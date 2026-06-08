@@ -830,6 +830,39 @@ class LifecyclePolicyService:
         await db.flush()
         return True
 
+    async def restore_run_after_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
+        """Clear a stale permanent (health-failure) run exclusion once the device is
+        provably available again.
+
+        Counterpart to ``restore_run_if_needed``'s viability-pass path. A device can
+        return to ``available`` via a route that never runs auto-recovery — operator
+        node restart (``operator_node`` revokes the node-stop intent but not the
+        reservation one), exit-maintenance, or an independent reconverge. That leaves
+        the no-TTL ``health_failure:reservation`` intent active, so the reconciler keeps
+        the run exclusion forever and the device sits ``available``/green yet excluded.
+
+        An ``available`` device is already deemed allocatable (``merged_liveness`` is
+        not False), so rejoining its run is safe and consistent with the existing
+        recovery-restore. Gated on ``recovery_allowed`` so an operator-stop hold stays
+        sticky (mirrors ``clear_suppression_on_self_heal``). Cooldown exclusions
+        (``excluded_until`` in the future) are intentional backoff and are left
+        untouched. Returns True only when an exclusion was actually cleared.
+        """
+        device = await _reload_device(db, device)
+        if not device.recovery_allowed:
+            return False
+        if device.operational_state != DeviceOperationalState.available:
+            return False
+        run, entry = await run_reservation_service.get_device_reservation_with_entry(db, device.id)
+        if run is None or run.state in TERMINAL_STATES:
+            return False
+        if not run_reservation_service.reservation_entry_is_excluded(entry):
+            return False
+        if entry is not None and entry.excluded_until is not None and entry.excluded_until > now():
+            return False  # active cooldown — intentional backoff, leave it
+        await self._actions.restore_run_if_needed(db, device, run, entry, reason=reason, source="self_heal")
+        return True
+
     async def clear_pending_auto_stop_on_recovery(
         self,
         db: AsyncSession,
