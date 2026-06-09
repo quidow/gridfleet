@@ -2,6 +2,19 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.26.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.25.0...gridfleet-agent-v0.26.0) (2026-06-09)
+
+
+### Features
+
+* **backend:** tvos appium_env rename and prefer_devicectl toggle ([2e52296](https://github.com/quidow/gridfleet/commit/2e5229642f69d13e5ba32510d3aacab434718cb4))
+* **main:** add runtime_packages manifest field for required appium deps ([01383cd](https://github.com/quidow/gridfleet/commit/01383cd4b7d725572fe4c4056b70bca228797d97))
+
+
+### Bug Fixes
+
+* **agent:** keep runtime-id stable for packs without runtime_packages ([06ab1d4](https://github.com/quidow/gridfleet/commit/06ab1d47fe069fb64d3104be7f948655b45cd80a))
+
 ## [0.25.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.24.0...gridfleet-agent-v0.25.0) (2026-06-07)
 
 
