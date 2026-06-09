@@ -890,3 +890,34 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
     assert node.desired_port == 4725, (
         f"applier must pin live node.port over the stale payload snapshot; got {node.desired_port}"
     )
+
+
+async def test_full_scan_corrects_drifted_offline_device_end_to_end(
+    db_session: AsyncSession,
+    db_host: Host,
+    seeded_driver_packs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Safety net for transition-gating: a device with healthy facts whose
+    operational_state drifted to offline (no dirty row, no observation transition)
+    is re-derived off offline by the authoritative full scan."""
+    device = await create_device(db_session, host_id=db_host.id, name="drifted")
+    await _seed_node(db_session, device.id)
+    # Make the node observed-running and the device-checks healthy so the reconciler
+    # derives a non-offline state.
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    with state_write_guard.bypass():
+        node.pid = 1
+        node.active_connection_target = "target"
+        node.health_running = True
+        device.device_checks_healthy = True
+        device.operational_state = DeviceOperationalState.offline  # the drift
+    await db_session.commit()
+
+    monkeypatch.setattr("app.devices.services.intent_reconciler.deliver_agent_reconfigures", AsyncMock())
+
+    await _reconcile_all_devices_once(
+        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    )
+    await db_session.refresh(device)
+    assert device.operational_state != DeviceOperationalState.offline  # drift corrected
