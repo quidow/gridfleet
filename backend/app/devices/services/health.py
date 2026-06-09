@@ -160,6 +160,8 @@ class DeviceHealthService:
 
         # UNSET = caller is not making a health statement: leave the columns
         # (and the checked-at stamp) untouched. Explicit None = clear.
+        prev_running = locked_node.health_running
+        prev_state = locked_node.health_state
         health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
         if not isinstance(health_running, UnsetType):
             locked_node.health_running = health_running
@@ -168,19 +170,32 @@ class DeviceHealthService:
         if health_provided:
             locked_node.last_health_checked_at = _now()
 
+        # Transition gate: an explicit health observation that does not change the
+        # node's health columns is the steady-state node-health churn (node_health
+        # re-asserts health_running=True/health_state=None every cycle). Skip the
+        # reconcile/mark in that case. Callers that make NO health statement (UNSET,
+        # e.g. mark_node_started after setting pid) and explicit mark_offline=True
+        # must still act — operational_state (not part of the public verdict) may
+        # need re-derivation, and offline is an explicit intent. The full scan is the
+        # backstop for any drift with no observation transition.
+        running_changed = not isinstance(health_running, UnsetType) and health_running != prev_running
+        state_changed = not isinstance(health_state, UnsetType) and health_state != prev_state
+        health_changed = running_changed or state_changed
+        should_act = mark_offline or not health_provided or health_changed
+
         # Reconcile when: (a) mark_offline=True (explicit offline intent), or
         # (b) the call clears or does not touch the health signal (→ may restore
         # to available). Do NOT reconcile when mark_offline=False and
         # health_running=False (below-threshold failure recording — hysteresis:
         # let the threshold be reached before offline derivation).
         should_reconcile = mark_offline or health_running is not False
-        if should_reconcile:
+        if should_act and should_reconcile:
             await IntentService(db).mark_dirty_and_reconcile(
                 locked.id,
                 reason=reason or f"node: {_node_reason_label(locked_node)}",
                 publisher=self._publisher,
             )
-        else:
+        elif should_act:
             await IntentService(db).mark_dirty(
                 locked.id,
                 reason=reason or f"node: {_node_reason_label(locked_node)}",
