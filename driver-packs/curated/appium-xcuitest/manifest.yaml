@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.4
+release: 2026.06.5
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -199,7 +199,6 @@ platforms:
           - id: wda_base_url
             label: "WDA base URL"
             type: network_endpoint
-            required_for_session: true
             capability_name: "appium:wdaBaseUrl"
           - id: use_preinstalled_wda
             label: "Use pre-installed WDA"
