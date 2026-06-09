@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.6
+release: 2026.06.7
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -30,6 +30,8 @@ appium_env:
     applies_when:
       platform_ids: [tvos]
       device_types: [real_device]
+      device_config:
+        prefer_devicectl: true
     env:
       APPIUM_XCUITEST_PREFER_DEVICECTL: "1"
 platforms:
@@ -219,6 +221,10 @@ platforms:
             type: string
             default: "Apple Development"
             capability_name: "appium:xcodeSigningId"
+          - id: prefer_devicectl
+            label: "Prefer devicectl (uncheck for RemoteXPC tunnel)"
+            type: bool
+            default: true
         connection_behavior:
           default_device_type: real_device
           default_connection_type: usb

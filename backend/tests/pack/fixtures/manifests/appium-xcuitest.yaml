@@ -23,6 +23,8 @@ appium_env:
     applies_when:
       platform_ids: [tvos]
       device_types: [real_device]
+      device_config:
+        prefer_devicectl: true
     env:
       APPIUM_XCUITEST_PREFER_DEVICECTL: "1"
 platforms:

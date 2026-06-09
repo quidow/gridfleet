@@ -81,6 +81,7 @@ async def test_get_single_pack_exposes_manifest_details(client: AsyncClient, db_
                 "platform_ids": ["tvos"],
                 "device_types": ["real_device"],
                 "min_os_version": None,
+                "device_config": {"prefer_devicectl": True},
             },
             "env": {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
         }

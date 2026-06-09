@@ -283,6 +283,10 @@ class AppiumEnvAppliesWhen(BaseModel):
     platform_ids: list[str] = Field(default_factory=list)
     device_types: list[str] = Field(default_factory=list)
     min_os_version: str | None = None
+    # Gate on per-device config: the rule applies only when each listed device
+    # field equals the given value. An unset device field is treated as that
+    # value, so the value here encodes the default (opt-out) behavior.
+    device_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppiumEnvRule(BaseModel):

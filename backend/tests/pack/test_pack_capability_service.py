@@ -216,3 +216,37 @@ async def test_resolve_appium_env_skips_when_device_type_mismatch(
         os_version="18.0",
     )
     assert env == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_appium_env_skips_devicectl_pref_when_prefer_devicectl_false(
+    db_session: AsyncSession,
+) -> None:
+    await seed_test_packs(db_session)
+    await db_session.flush()
+    env = await resolve_appium_env(
+        db_session,
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        device_type="real_device",
+        os_version="18.0",
+        device_config={"prefer_devicectl": False},
+    )
+    assert env == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_appium_env_applies_devicectl_pref_when_prefer_devicectl_absent(
+    db_session: AsyncSession,
+) -> None:
+    await seed_test_packs(db_session)
+    await db_session.flush()
+    env = await resolve_appium_env(
+        db_session,
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        device_type="real_device",
+        os_version="18.0",
+        device_config={},
+    )
+    assert env == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}

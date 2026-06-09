@@ -144,6 +144,7 @@ async def build_pack_start_payload(
         platform_id=platform_id,
         device_type=device_type,
         os_version=device.os_version,
+        device_config=device.device_config or {},
     )
     pack = await session.scalar(
         select(DriverPack)
