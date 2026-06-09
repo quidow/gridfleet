@@ -65,7 +65,7 @@ class NpmRunner(Protocol):
 
 
 class RealNpmRunner:
-    async def install_appium(self, package: str, version: str, appium_home: str) -> str:
+    async def _npm_install_exact(self, package: str, version: str, appium_home: str, *, error_prefix: str) -> None:
         Path(appium_home).mkdir(parents=True, exist_ok=True)
         env = {**dict(os.environ), "APPIUM_HOME": appium_home}
         proc = await asyncio.create_subprocess_exec(
@@ -81,25 +81,14 @@ class RealNpmRunner:
         )
         _out, err = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(f"appium install failed: {err.decode(errors='replace')}")
+            raise RuntimeError(f"{error_prefix}: {err.decode(errors='replace')}")
+
+    async def install_appium(self, package: str, version: str, appium_home: str) -> str:
+        await self._npm_install_exact(package, version, appium_home, error_prefix="appium install failed")
         return str(Path(appium_home) / "node_modules" / ".bin" / "appium")
 
     async def install_package(self, package: str, version: str, appium_home: str) -> None:
-        env = {**dict(os.environ), "APPIUM_HOME": appium_home}
-        proc = await asyncio.create_subprocess_exec(
-            "npm",
-            "install",
-            "--prefix",
-            appium_home,
-            "--save-exact",
-            f"{package}@{version}",
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _out, err = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"runtime package install failed: {err.decode(errors='replace')}")
+        await self._npm_install_exact(package, version, appium_home, error_prefix="runtime package install failed")
 
     async def install_driver(
         self,
@@ -268,11 +257,13 @@ def _adopt_runtime_from_disk(rid: str, appium_home: str) -> RuntimeEnv | None:
     runtime_packages = data.get("runtime_packages") or []
     if not isinstance(runtime_packages, list):
         return None
-    # A declared runtime package missing on disk means an incomplete install; do
-    # NOT adopt it (else it sticks forever) — fall through to a clean reinstall.
-    node_modules = Path(appium_home) / "node_modules"
+    # A declared runtime package missing (or version-drifted) on disk means an
+    # incomplete install; do NOT adopt it (else it sticks forever) — fall through
+    # to a clean reinstall.
     for entry in runtime_packages:
-        if not (isinstance(entry, list) and len(entry) == 2 and (node_modules / str(entry[0])).is_dir()):
+        if not (isinstance(entry, list) and len(entry) == 2):
+            return None
+        if _installed_package_version(appium_home, str(entry[0])) != str(entry[1]):
             return None
     return RuntimeEnv(
         runtime_id=rid,
@@ -303,9 +294,12 @@ class AppiumRuntimeManager:
             "server": f"{spec.server_package}@{spec.server_version}",
             "drivers": sorted([f"{n}@{v}:{s}:{g}" for n, v, s, g in spec.drivers]),
             "plugins": sorted([f"{n}@{v}:{s}:{p}" for n, v, s, p in spec.plugins]),
-            "runtime_packages": sorted([f"{p}@{v}" for p, v in spec.runtime_packages]),
             "node_major": spec.node_major,
         }
+        # Only add the key when non-empty so existing packs keep their runtime id
+        # (and adopt their on-disk runtime) instead of all reinstalling on upgrade.
+        if spec.runtime_packages:
+            payload["runtime_packages"] = sorted([f"{p}@{v}" for p, v in spec.runtime_packages])
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
     def refcount(self, runtime_id: str) -> int:

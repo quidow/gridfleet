@@ -424,7 +424,7 @@ async def start_remote_node(
             if key in pack_overrides:
                 payload[key] = pack_overrides[key]
         # Merge host tool_env (operator per-host config) under pack appium_env
-        # (pack-specific fixes). Pack appium_env win for duplicate keys.
+        # (pack-specific fixes). Pack appium_env wins for duplicate keys.
         pack_appium_env = pack_overrides.get("appium_env") or {}
         if host.tool_env or pack_appium_env:
             merged_env = dict(host.tool_env or {})

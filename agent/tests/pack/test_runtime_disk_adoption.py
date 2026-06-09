@@ -29,7 +29,9 @@ class _CountingRunner:
         return str(bin_path)
 
     async def install_package(self, package: str, version: str, appium_home: str) -> None:
-        (Path(appium_home) / "node_modules" / package).mkdir(parents=True, exist_ok=True)
+        pkg_dir = Path(appium_home) / "node_modules" / package
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "package.json").write_text(json.dumps({"version": version}))
 
     async def install_driver(
         self,
@@ -144,7 +146,9 @@ async def test_reconcile_adopts_when_declared_runtime_package_present(tmp_path: 
     spec = dataclasses.replace(_spec(), runtime_packages=(("appium-ios-remotexpc", "0.44.0"),))
     rid = AppiumRuntimeManager.runtime_id_for(spec)
     appium_home = _seed_completed_runtime(tmp_path, rid)
-    (appium_home / "node_modules" / "appium-ios-remotexpc").mkdir(parents=True)
+    pkg_dir = appium_home / "node_modules" / "appium-ios-remotexpc"
+    pkg_dir.mkdir(parents=True)
+    (pkg_dir / "package.json").write_text(json.dumps({"version": "0.44.0"}))
     _seed_runtime_package_marker(appium_home)
 
     runner = _CountingRunner()
