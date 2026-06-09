@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.3
+release: 2026.06.4
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -195,7 +195,6 @@ platforms:
       real_device:
         default_capabilities:
           "appium:platformVersion": "{device.os_version}"
-          "appium:usePreinstalledWDA": true
         device_fields_schema:
           - id: wda_base_url
             label: "WDA base URL"
@@ -205,13 +204,22 @@ platforms:
           - id: use_preinstalled_wda
             label: "Use pre-installed WDA"
             type: bool
-            default: true
+            default: false
             capability_name: "appium:usePreinstalledWDA"
           - id: updated_wda_bundle_id
             label: "Updated WDA bundle ID"
             type: string
             required_for_session: true
             capability_name: "appium:updatedWDABundleId"
+          - id: xcode_org_id
+            label: "Xcode team ID"
+            type: string
+            capability_name: "appium:xcodeOrgId"
+          - id: xcode_signing_id
+            label: "Xcode signing ID"
+            type: string
+            default: "Apple Development"
+            capability_name: "appium:xcodeSigningId"
         connection_behavior:
           default_device_type: real_device
           default_connection_type: usb
