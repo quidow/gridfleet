@@ -3551,6 +3551,10 @@ export interface components {
              * @default false
              */
             required_for_session: boolean;
+            /** Required For Session When */
+            required_for_session_when?: {
+                [key: string]: unknown;
+            };
             /**
              * Sensitive
              * @default false
