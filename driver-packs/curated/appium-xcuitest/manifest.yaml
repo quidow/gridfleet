@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.7
+release: 2026.06.8
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -20,8 +20,8 @@ appium_server:
 appium_driver:
   source: npm
   package: appium-xcuitest-driver
-  version: "==10.33.0"
-  recommended: "10.33.0"
+  version: "==10.43.1"
+  recommended: "10.43.1"
   known_bad: []
 insecure_features:
   - "*:session_discovery"
