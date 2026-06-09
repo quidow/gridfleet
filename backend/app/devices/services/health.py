@@ -133,8 +133,9 @@ class DeviceHealthService:
             await IntentService(db).mark_dirty_and_reconcile(
                 locked.id, reason=error or "session viability failed", publisher=self._publisher
             )
-        else:
+        elif _verdict_changed(previous, locked):
             await IntentService(db).mark_dirty(locked.id, reason="session viability passed")
+
         _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def apply_node_state_transition(

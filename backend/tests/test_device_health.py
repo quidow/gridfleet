@@ -440,6 +440,54 @@ async def test_apply_node_state_transition_health_state_overrides_lifecycle(
     assert device.appium_node.observed_running
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_session_viability_passed_steady_state_skips_mark_dirty(
+    db_with_device: tuple[AsyncSession, Device],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, device = db_with_device
+    device.session_viability_status = "passed"
+    await db.commit()
+
+    calls: list[str] = []
+    original = svc.IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+
+    await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
+    await db.commit()
+    assert calls == []
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_session_viability_transition_marks_dirty_once(
+    db_with_device: tuple[AsyncSession, Device],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, device = db_with_device
+    # session_viability_status starts None (verdict "unknown")
+    await db.commit()
+
+    calls: list[str] = []
+    original = svc.IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+
+    await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
+    await db.commit()
+    assert calls == ["session viability passed"]
+
+
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When lock_device raises NoResultFound, all health update methods must return early."""
     db = object()
