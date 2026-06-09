@@ -91,7 +91,7 @@ async def render_stereotype(
     return template.interpolate(device_context)
 
 
-async def resolve_workaround_env(
+async def resolve_appium_env(
     session: AsyncSession,
     *,
     pack_id: str,
@@ -108,7 +108,7 @@ async def resolve_workaround_env(
     if release is None:
         return {}
     out: dict[str, str] = {}
-    for wk in release.manifest_json.get("workarounds") or []:
+    for wk in release.manifest_json.get("appium_env") or []:
         applies = wk.get("applies_when") or {}
         if applies.get("platform_ids") and platform_id not in applies["platform_ids"]:
             continue

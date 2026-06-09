@@ -18,7 +18,7 @@ appium_driver:
   version: ">=7,<10"
   recommended: "9.3.1"
   known_bad: ["9.0.0"]
-workarounds:
+appium_env:
   - id: tvos_devicectl_preference
     applies_when:
       platform_ids: [tvos]

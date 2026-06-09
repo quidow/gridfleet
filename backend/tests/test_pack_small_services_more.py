@@ -324,7 +324,7 @@ async def test_pack_capability_rendering_edges() -> None:
         await pack_capability_service.render_stereotype(session, pack_id="missing", platform_id="android")
 
     assert (
-        await pack_capability_service.resolve_workaround_env(
+        await pack_capability_service.resolve_appium_env(
             session,
             pack_id="missing",
             platform_id="android",

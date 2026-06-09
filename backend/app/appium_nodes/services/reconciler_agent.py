@@ -423,16 +423,16 @@ async def start_remote_node(
         for key in ("lifecycle_actions", "connection_behavior", "insecure_features"):
             if key in pack_overrides:
                 payload[key] = pack_overrides[key]
-        # Merge host tool_env (operator per-host config) under pack workaround_env
-        # (pack-specific fixes). Pack workarounds win for duplicate keys.
-        pack_workaround_env = pack_overrides.get("workaround_env") or {}
-        if host.tool_env or pack_workaround_env:
+        # Merge host tool_env (operator per-host config) under pack appium_env
+        # (pack-specific fixes). Pack appium_env win for duplicate keys.
+        pack_appium_env = pack_overrides.get("appium_env") or {}
+        if host.tool_env or pack_appium_env:
             merged_env = dict(host.tool_env or {})
-            merged_env.update(pack_workaround_env)
-            payload["workaround_env"] = merged_env
+            merged_env.update(pack_appium_env)
+            payload["appium_env"] = merged_env
     elif host.tool_env:
         # No pack overrides, but host provides tool_env — pass it through.
-        payload["workaround_env"] = dict(host.tool_env)
+        payload["appium_env"] = dict(host.tool_env)
     try:
         resp = await appium_start(
             agent_base,

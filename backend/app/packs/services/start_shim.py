@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.packs.models import DriverPack, DriverPackRelease
-from app.packs.services.capability import render_stereotype, resolve_workaround_env
+from app.packs.services.capability import render_stereotype, resolve_appium_env
 from app.packs.services.platform_resolver import resolve_pack_platform
 from app.packs.services.release_ordering import selected_release
 
@@ -138,7 +138,7 @@ async def build_pack_start_payload(
             raise PackStartPayloadError(
                 f"Pack platform {pack_id}:{platform_id} is not available for device {device.id}"
             ) from exc
-    workaround_env = await resolve_workaround_env(
+    appium_env = await resolve_appium_env(
         session,
         pack_id=pack_id,
         platform_id=platform_id,
@@ -160,7 +160,7 @@ async def build_pack_start_payload(
         "pack_id": pack_id,
         "platform_id": platform_id,
         "appium_platform_name": appium_platform_name,
-        "workaround_env": workaround_env,
+        "appium_env": appium_env,
         "insecure_features": insecure_features,
         "grid_slots": resolved_platform.grid_slots,
         "lifecycle_actions": resolved_platform.lifecycle_actions,

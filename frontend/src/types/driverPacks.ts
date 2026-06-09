@@ -73,7 +73,7 @@ export type RuntimePolicy = Schemas['RuntimePolicy'];
 export type AppiumInstallable = Omit<Schemas['AppiumInstallableOut'], 'known_bad'> & {
   known_bad: string[];
 };
-export type ManifestWorkaround = Omit<Schemas['ManifestWorkaroundOut'], 'applies_when' | 'env'> & {
+export type ManifestAppiumEnvRule = Omit<Schemas['ManifestAppiumEnvOut'], 'applies_when' | 'env'> & {
   applies_when: Record<string, unknown>;
   env: Record<string, string>;
 };
@@ -88,12 +88,12 @@ export type DriverPack = Omit<
   | 'platforms'
   | 'runtime_policy'
   | 'state'
-  | 'workarounds'
+  | 'appium_env'
 > & {
   state: PackState;
   appium_server?: AppiumInstallable | null;
   appium_driver?: AppiumInstallable | null;
-  workarounds?: ManifestWorkaround[];
+  appium_env?: ManifestAppiumEnvRule[];
   doctor?: ManifestDoctorCheck[];
   features?: Record<string, PackFeature>;
   runtime_policy: RuntimePolicy;

@@ -6,7 +6,7 @@ from app.packs.services.capability import (
     render_default_capabilities,
     render_device_field_capabilities,
     render_stereotype,
-    resolve_workaround_env,
+    resolve_appium_env,
 )
 from app.packs.services.platform_resolver import resolve_pack_platform
 from tests.pack.factories import seed_test_packs
@@ -187,12 +187,12 @@ async def test_ios_real_device_wda_fields_render_to_capabilities(db_session: Asy
 
 
 @pytest.mark.asyncio
-async def test_resolve_workaround_env_for_tvos_includes_devicectl_pref(
+async def test_resolve_appium_env_for_tvos_includes_devicectl_pref(
     db_session: AsyncSession,
 ) -> None:
     await seed_test_packs(db_session)
     await db_session.flush()
-    env = await resolve_workaround_env(
+    env = await resolve_appium_env(
         db_session,
         pack_id="appium-xcuitest",
         platform_id="tvos",
@@ -203,12 +203,12 @@ async def test_resolve_workaround_env_for_tvos_includes_devicectl_pref(
 
 
 @pytest.mark.asyncio
-async def test_resolve_workaround_env_skips_when_device_type_mismatch(
+async def test_resolve_appium_env_skips_when_device_type_mismatch(
     db_session: AsyncSession,
 ) -> None:
     await seed_test_packs(db_session)
     await db_session.flush()
-    env = await resolve_workaround_env(
+    env = await resolve_appium_env(
         db_session,
         pack_id="appium-xcuitest",
         platform_id="tvos",

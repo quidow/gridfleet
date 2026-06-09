@@ -129,9 +129,9 @@ def test_manifest_accepts_insecure_features() -> None:
     assert "uiautomator2:chromedriver_autodownload" in manifest.insecure_features
 
 
-def test_manifest_accepts_workarounds_block() -> None:
+def test_manifest_accepts_appium_env_block() -> None:
     yaml_text = _valid_yaml() + (
-        "\nworkarounds:\n"
+        "\nappium_env:\n"
         "  - id: wk1\n"
         "    applies_when:\n"
         "      platform_ids: [android_mobile]\n"
@@ -140,12 +140,12 @@ def test_manifest_accepts_workarounds_block() -> None:
         '      FOO: "1"\n'
     )
     manifest = load_manifest_yaml(yaml_text)
-    assert manifest.workarounds[0].id == "wk1"
-    assert manifest.workarounds[0].env == {"FOO": "1"}
+    assert manifest.appium_env[0].id == "wk1"
+    assert manifest.appium_env[0].env == {"FOO": "1"}
 
 
-def test_manifest_rejects_workaround_without_id() -> None:
-    yaml_text = _valid_yaml() + '\nworkarounds:\n  - env:\n      FOO: "1"\n'
+def test_manifest_rejects_appium_env_rule_without_id() -> None:
+    yaml_text = _valid_yaml() + '\nappium_env:\n  - env:\n      FOO: "1"\n'
     with pytest.raises(ManifestValidationError):
         load_manifest_yaml(yaml_text)
 

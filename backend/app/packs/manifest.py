@@ -277,7 +277,7 @@ class Requires(BaseModel):
     tool_dependencies: list[ToolDependency] = Field(default_factory=list)
 
 
-class WorkaroundAppliesWhen(BaseModel):
+class AppiumEnvAppliesWhen(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     platform_ids: list[str] = Field(default_factory=list)
@@ -285,11 +285,11 @@ class WorkaroundAppliesWhen(BaseModel):
     min_os_version: str | None = None
 
 
-class Workaround(BaseModel):
+class AppiumEnvRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    applies_when: WorkaroundAppliesWhen = Field(default_factory=WorkaroundAppliesWhen)
+    applies_when: AppiumEnvAppliesWhen = Field(default_factory=AppiumEnvAppliesWhen)
     env: dict[str, str] = Field(default_factory=dict)
 
 
@@ -328,7 +328,7 @@ class Manifest(BaseModel):
     platforms: list[Platform]
     doctor: list[DoctorCheck] = []
     insecure_features: list[str] = Field(default_factory=list)
-    workarounds: list[Workaround] = Field(default_factory=list)
+    appium_env: list[AppiumEnvRule] = Field(default_factory=list)
     features: dict[str, FeatureManifest] = Field(default_factory=dict)
 
 

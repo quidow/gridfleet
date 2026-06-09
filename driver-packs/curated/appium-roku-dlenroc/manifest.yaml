@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-roku-dlenroc
-release: 2026.06.4
+release: 2026.06.5
 display_name: "Roku (dlenroc)"
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -64,4 +64,4 @@ platforms:
       default_connection_type: network
       requires_ip_address: true
       requires_connection_target: false
-workarounds: []
+appium_env: []

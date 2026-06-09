@@ -52,8 +52,8 @@ function ManifestPanel({ pack }: { pack: DriverPack }) {
         <dd className="text-text-1">{pack.platforms?.length ?? 0}</dd>
         <dt className="text-text-3">Operations</dt>
         <dd className="text-text-1">{operationCount}</dd>
-        <dt className="text-text-3">Workarounds</dt>
-        <dd className="text-text-1">{pack.workarounds?.length ?? 0}</dd>
+        <dt className="text-text-3">Appium env</dt>
+        <dd className="text-text-1">{pack.appium_env?.length ?? 0}</dd>
         <dt className="text-text-3">Doctor Checks</dt>
         <dd className="text-text-1">{pack.doctor?.length ?? 0}</dd>
         <dt className="text-text-3">Insecure Features</dt>

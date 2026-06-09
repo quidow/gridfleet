@@ -189,7 +189,7 @@ def _build_env(
     *,
     appium_bin: str | None = None,
     appium_home: str | None = None,
-    workaround_env: dict[str, str] | None = None,
+    appium_env: dict[str, str] | None = None,
     adapter_env: SubprocessEnvContribution | None = None,
 ) -> dict[str, str]:
     """Build a subprocess env with appium and java on PATH."""
@@ -205,7 +205,7 @@ def _build_env(
         for d in adapter_env.extra_path_dirs:
             if d and d not in env.get("PATH", ""):
                 extra_paths.append(d)
-        # setdefault: host env wins; workaround_env overrides later via update()
+        # setdefault: host env wins; appium_env overrides later via update()
         for k, v in adapter_env.env_vars.items():
             env.setdefault(k, v)
 
@@ -225,8 +225,8 @@ def _build_env(
     if appium_home is not None:
         env["APPIUM_HOME"] = appium_home
 
-    if workaround_env:
-        env.update(workaround_env)
+    if appium_env:
+        env.update(appium_env)
 
     return env
 
@@ -254,7 +254,7 @@ class AppiumLaunchSpec:
     stop_pending: bool = False
     grid_run_id: uuid.UUID | None = None
     appium_platform_name: str | None = None
-    workaround_env: dict[str, str] | None = None
+    appium_env: dict[str, str] | None = None
     insecure_features: list[str] = field(default_factory=list)
     grid_slots: list[str] = field(default_factory=lambda: ["native"])
     lifecycle_actions: list[dict[str, Any]] = field(default_factory=list)
@@ -603,7 +603,7 @@ class AppiumProcessManager:
             ip_address=spec.ip_address,
             pack_id=spec.pack_id,
             appium_platform_name=spec.appium_platform_name,
-            workaround_env=spec.workaround_env,
+            appium_env=spec.appium_env,
             insecure_features=spec.insecure_features,
             grid_slots=spec.grid_slots,
             lifecycle_actions=list(spec.lifecycle_actions),
@@ -634,7 +634,7 @@ class AppiumProcessManager:
         env = _build_env(
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
-            workaround_env=spec.workaround_env,
+            appium_env=spec.appium_env,
             adapter_env=adapter_env,
         )
         appium_bin = invocation.binary
@@ -725,7 +725,7 @@ class AppiumProcessManager:
         ip_address: str | None = None,
         headless: bool = True,
         appium_platform_name: str | None = None,
-        workaround_env: dict[str, str] | None = None,
+        appium_env: dict[str, str] | None = None,
         insecure_features: list[str] | None = None,
         grid_slots: list[str] | None = None,
         lifecycle_actions: list[dict[str, Any]] | None = None,
@@ -782,7 +782,7 @@ class AppiumProcessManager:
             pack_id=pack_id,
             platform_id=platform_id,
             appium_platform_name=appium_platform_name,
-            workaround_env=dict(workaround_env) if workaround_env else None,
+            appium_env=dict(appium_env) if appium_env else None,
             insecure_features=list(insecure_features) if insecure_features else [],
             grid_slots=list(grid_slots) if grid_slots else ["native"],
             lifecycle_actions=list(lifecycle_actions) if lifecycle_actions else [],
@@ -864,7 +864,7 @@ class AppiumProcessManager:
                 pack_id=spec.pack_id,
                 platform_id=spec.platform_id,
                 appium_platform_name=spec.appium_platform_name,
-                workaround_env=spec.workaround_env,
+                appium_env=spec.appium_env,
                 insecure_features=list(spec.insecure_features),
                 grid_slots=list(spec.grid_slots),
                 lifecycle_actions=list(spec.lifecycle_actions),

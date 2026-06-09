@@ -61,4 +61,4 @@ platforms:
       requires_ip_address: true
       requires_connection_target: false
 
-workarounds: []
+appium_env: []

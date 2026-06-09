@@ -33,6 +33,7 @@ class AppiumReconfigureResponse(BaseModel):
 class AppiumStartRequest(BaseModel):
     accepting_new_sessions: Annotated[bool | None, Field(title="Accepting New Sessions")] = True
     allocated_caps: Annotated[dict[str, Any] | None, Field(title="Allocated Caps")] = None
+    appium_env: Annotated[dict[str, str] | None, Field(title="Appium Env")] = None
     appium_platform_name: Annotated[str | None, Field(title="Appium Platform Name")] = None
     connection_behavior: Annotated[dict[str, Any] | None, Field(title="Connection Behavior")] = {}
     connection_target: Annotated[str, Field(max_length=512, min_length=1, title="Connection Target")]
@@ -57,7 +58,6 @@ class AppiumStartRequest(BaseModel):
     port: Annotated[int, Field(ge=1024, le=65535, title="Port")]
     session_override: Annotated[bool | None, Field(title="Session Override")] = True
     stop_pending: Annotated[bool | None, Field(title="Stop Pending")] = False
-    workaround_env: Annotated[dict[str, str] | None, Field(title="Workaround Env")] = None
 
 
 class AppiumStartResponse(BaseModel):

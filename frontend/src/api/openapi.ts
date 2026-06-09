@@ -4552,17 +4552,8 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** ManifestDoctorCheckOut */
-        ManifestDoctorCheckOut: {
-            /** Adapter Hook */
-            adapter_hook?: string | null;
-            /** Description */
-            description: string;
-            /** Id */
-            id: string;
-        };
-        /** ManifestWorkaroundOut */
-        ManifestWorkaroundOut: {
+        /** ManifestAppiumEnvOut */
+        ManifestAppiumEnvOut: {
             /** Applies When */
             applies_when?: {
                 [key: string]: unknown;
@@ -4571,6 +4562,15 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            /** Id */
+            id: string;
+        };
+        /** ManifestDoctorCheckOut */
+        ManifestDoctorCheckOut: {
+            /** Adapter Hook */
+            adapter_hook?: string | null;
+            /** Description */
+            description: string;
             /** Id */
             id: string;
         };
@@ -4610,6 +4610,8 @@ export interface components {
              */
             active_runs: number;
             appium_driver?: components["schemas"]["AppiumInstallableOut"] | null;
+            /** Appium Env */
+            appium_env?: components["schemas"]["ManifestAppiumEnvOut"][];
             appium_server?: components["schemas"]["AppiumInstallableOut"] | null;
             /** Current Release */
             current_release: string | null;
@@ -4646,8 +4648,6 @@ export interface components {
             runtime_summary?: components["schemas"]["PackRuntimeSummaryOut"];
             /** State */
             state: string;
-            /** Workarounds */
-            workarounds?: components["schemas"]["ManifestWorkaroundOut"][];
         };
         /** PackPatch */
         PackPatch: {

@@ -74,7 +74,7 @@ async def test_get_single_pack_exposes_manifest_details(client: AsyncClient, db_
         "known_bad": ["9.0.0"],
         "github_repo": None,
     }
-    assert data["workarounds"] == [
+    assert data["appium_env"] == [
         {
             "id": "tvos_devicectl_preference",
             "applies_when": {
