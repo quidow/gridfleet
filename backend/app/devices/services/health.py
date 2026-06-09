@@ -178,10 +178,14 @@ class DeviceHealthService:
         # must still act — operational_state (not part of the public verdict) may
         # need re-derivation, and offline is an explicit intent. The full scan is the
         # backstop for any drift with no observation transition.
+        # health_running is not True covers the recovery/None path: health_running=None
+        # (clear) or =False are not the confirmed-running steady state, so they must
+        # always act even when the column value is already the same (e.g. a fresh node
+        # with health_running=None being probed again during maintenance recovery).
         running_changed = not isinstance(health_running, UnsetType) and health_running != prev_running
         state_changed = not isinstance(health_state, UnsetType) and health_state != prev_state
         health_changed = running_changed or state_changed
-        should_act = mark_offline or not health_provided or health_changed
+        should_act = mark_offline or not health_provided or health_changed or health_running is not True
 
         # Reconcile when: (a) mark_offline=True (explicit offline intent), or
         # (b) the call clears or does not touch the health signal (→ may restore
