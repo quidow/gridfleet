@@ -25,6 +25,7 @@ class _FakeDevice:
     platform_id = "android_mobile"
     device_type = "real_device"
     os_version = "14"
+    device_config: dict[str, object] | None = None
 
 
 @pytest.mark.asyncio
