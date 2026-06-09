@@ -196,7 +196,8 @@ platforms:
           - id: wda_base_url
             label: "WDA base URL"
             type: network_endpoint
-            required_for_session: true
+            required_for_session_when:
+              prefer_devicectl: true
             capability_name: "appium:wdaBaseUrl"
           - id: use_preinstalled_wda
             label: "Use pre-installed WDA"
@@ -208,6 +209,10 @@ platforms:
             type: string
             required_for_session: true
             capability_name: "appium:updatedWDABundleId"
+          - id: prefer_devicectl
+            label: "Prefer devicectl"
+            type: bool
+            default: true
         connection_behavior:
           default_device_type: real_device
           default_connection_type: usb

@@ -139,3 +139,18 @@ async def test_tvos_real_device_requires_wda_base_url(db_session: AsyncSession) 
     result = await assess_device_async(db_session, device)
     assert result.readiness_state == "setup_required"
     assert result.missing_setup_fields == ["wda_base_url", "updated_wda_bundle_id"]
+
+
+async def test_tvos_real_device_tunnel_mode_does_not_require_wda_base_url(db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    await db_session.flush()
+    device = _make_device(
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        ip_address="10.0.0.42",
+        device_type="real_device",
+        device_config={"prefer_devicectl": False, "updated_wda_bundle_id": "com.example.wda"},
+    )
+    result = await assess_device_async(db_session, device)
+    assert "wda_base_url" not in result.missing_setup_fields
+    assert result.readiness_state != "setup_required"

@@ -53,6 +53,23 @@ class DeviceAssessment:
     missing_setup_fields: list[str]
 
 
+def _field_required_for_session(field: dict[str, Any], config: dict[str, Any], fields: list[dict[str, Any]]) -> bool:
+    """A field is required if ``required_for_session`` is True, or if its
+    ``required_for_session_when`` device_config gate matches the device. An unset
+    gated field falls back to its own schema ``default`` so the gate tracks the
+    field's effective value rather than encoding the default per-rule."""
+    if field.get("required_for_session") is True:
+        return True
+    when = field.get("required_for_session_when") or {}
+    if not when:
+        return False
+    for key, expected in when.items():
+        default = next((f.get("default") for f in fields if f.get("id") == key), None)
+        if config.get(key, default) != expected:
+            return False
+    return True
+
+
 def assess_device_from_required_fields(device: Device, fields: list[dict[str, Any]]) -> DeviceAssessment:
     """Assess device readiness against a list of pack ``device_fields_schema`` entries.
 
@@ -63,7 +80,7 @@ def assess_device_from_required_fields(device: Device, fields: list[dict[str, An
     missing = [
         field["id"]
         for field in fields
-        if field.get("required_for_session") is True
+        if _field_required_for_session(field, config, fields)
         and not (getattr(device, field["id"], None) if field["id"] in DEVICE_FIELD_ATTRS else config.get(field["id"]))
     ]
     if missing:

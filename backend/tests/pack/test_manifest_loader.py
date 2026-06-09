@@ -157,6 +157,20 @@ def test_manifest_parses_runtime_packages() -> None:
     assert manifest.runtime_packages[0].version == "0.44.0"
 
 
+def test_manifest_rejects_appium_env_gate_on_unknown_field() -> None:
+    yaml_text = _valid_yaml() + (
+        "\nappium_env:\n"
+        "  - id: r\n"
+        "    applies_when:\n"
+        "      device_config:\n"
+        "        no_such_field: true\n"
+        "    env:\n"
+        '      FOO: "1"\n'
+    )
+    with pytest.raises(ManifestValidationError):
+        load_manifest_yaml(yaml_text)
+
+
 def test_manifest_accepts_tool_dependencies() -> None:
     old = "requires:\n  host_os: [linux, macos]"
     new = (

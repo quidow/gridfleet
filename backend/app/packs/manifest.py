@@ -94,6 +94,11 @@ class FieldSchema(BaseModel):
     label: str
     type: Literal["string", "int", "bool", "path", "network_endpoint", "file_upload"]
     required_for_session: bool = False
+    # Conditional requiredness: required only when each listed device_config field
+    # equals the given value (e.g. {prefer_devicectl: true}). An unset gated field
+    # falls back to its schema default. Use instead of required_for_session when a
+    # field is only needed in some modes.
+    required_for_session_when: dict[str, Any] = Field(default_factory=dict)
     sensitive: bool = False
     default: str | int | bool | None = None
     capability_name: str | None = None
@@ -349,6 +354,33 @@ class Manifest(BaseModel):
     appium_env: list[AppiumEnvRule] = Field(default_factory=list)
     runtime_packages: list[RuntimePackage] = Field(default_factory=list)
     features: dict[str, FeatureManifest] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _gate_keys_reference_known_fields(self) -> "Manifest":
+        """Reject device_config gate keys that don't name a declared device field
+        — a typo'd key would otherwise silently never match (always-apply for
+        appium_env, never-required for required_for_session_when)."""
+        all_ids: set[str] = set()
+        schemas: list[list[FieldSchema]] = []
+        for plat in self.platforms:
+            schemas.append(plat.device_fields_schema)
+            for override in plat.device_type_overrides.values():
+                if override.device_fields_schema:
+                    schemas.append(override.device_fields_schema)
+        for schema in schemas:
+            all_ids.update(field.id for field in schema)
+        for rule in self.appium_env:
+            for key in rule.applies_when.device_config:
+                if key not in all_ids:
+                    raise ValueError(f"appium_env rule '{rule.id}' gates on unknown device field '{key}'")
+        for schema in schemas:
+            for field_def in schema:
+                for key in field_def.required_for_session_when:
+                    if key not in all_ids:
+                        raise ValueError(
+                            f"field '{field_def.id}' required_for_session_when gates on unknown device field '{key}'"
+                        )
+        return self
 
 
 def load_manifest_yaml(text: str) -> Manifest:

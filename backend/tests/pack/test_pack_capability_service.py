@@ -131,7 +131,7 @@ async def test_tvos_wda_base_url_is_required_for_real_device_sessions(
         device_type="real_device",
     )
     wda_field = next(field for field in resolved.device_fields_schema if field["id"] == "wda_base_url")
-    assert wda_field["required_for_session"] is True
+    assert wda_field.get("required_for_session_when") == {"prefer_devicectl": True}
     assert wda_field["capability_name"] == "appium:wdaBaseUrl"
 
 
