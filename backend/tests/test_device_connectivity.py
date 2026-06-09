@@ -2198,3 +2198,86 @@ async def test_answered_probe_resets_unanswered_counter(db_session: AsyncSession
             await svc.check_connectivity(db_session)
 
     lifecycle_policy.handle_health_failure.assert_not_awaited()
+
+
+async def test_disconnected_already_recorded_device_skips_reconcile(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A busy device already recorded disconnected (device_checks_healthy=False, no
+    running node) must not re-mark dirty every cycle while it stays disconnected."""
+    _host, device, _ = await _setup_host_and_device(
+        db_session,
+        connection_target="dc-gate-001",
+        device_operational_state=DeviceOperationalState.busy,
+        with_node=False,
+    )
+    with state_write_guard.bypass():
+        device.device_checks_healthy = False
+    await db_session.commit()
+
+    from app.devices.services.intent import IntentService
+
+    calls: list[str] = []
+    original = IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IntentService, "mark_dirty", _spy)
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    assert calls == []  # already-recorded disconnect did not re-enqueue
+
+
+async def test_disconnected_first_observation_still_reconciles(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First disconnect (device_checks_healthy not yet False) must still be handled."""
+    _host, device, _ = await _setup_host_and_device(
+        db_session,
+        connection_target="dc-gate-002",
+        device_operational_state=DeviceOperationalState.busy,
+        with_node=False,
+    )
+    with state_write_guard.bypass():
+        device.device_checks_healthy = True  # was healthy → this cycle is the transition
+    await db_session.commit()
+
+    from app.devices.services.intent import IntentService
+
+    calls: list[str] = []
+    original = IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IntentService, "mark_dirty", _spy)
+
+    with (
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value=set()),
+        patch("app.devices.services.connectivity._get_device_health", new_callable=AsyncMock, return_value=None),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 5}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    assert len(calls) >= 1  # the connected→disconnected transition was handled

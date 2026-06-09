@@ -767,6 +767,16 @@ class ConnectivityService:
                     # behavior (no connectivity_lost event, no lifecycle write).
                     if device.operational_state == DeviceOperationalState.maintenance:
                         continue
+                    # Transition gate: this disconnect was already recorded
+                    # (health failed and the node already stopped), so re-running the
+                    # stop / health-write / reconcile would only re-enqueue the device
+                    # every cycle while it stays disconnected. Skip it; the full scan
+                    # re-derives if state drifts. The first disconnect (device still
+                    # marked healthy, or its node still observed-running) falls through
+                    # to the existing handling below.
+                    node = device.appium_node
+                    if device.device_checks_healthy is False and (node is None or not node.observed_running):
+                        continue
                     await assert_current_leader(db, settings=self._settings)
                     await _stop_disconnected_node(db, device, health=self._health, publisher=self._publisher)
                     if device.operational_state == DeviceOperationalState.offline:
