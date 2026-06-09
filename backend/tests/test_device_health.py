@@ -612,6 +612,49 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
     assert len(calls) >= 1  # UNSET caller still reconciles
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_apply_node_state_transition_mark_offline_always_acts(
+    db_with_device: tuple[AsyncSession, Device],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_offline=True must always reconcile even when health columns are unchanged."""
+    db, device = db_with_device
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+
+    with state_write_guard.bypass():
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="target",
+            health_running=True,
+            health_state=None,
+        )
+    db.add(node)
+    await db.flush()
+    await db.refresh(device, attribute_names=["appium_node"])
+
+    calls: list[str] = []
+    original = svc.IntentService.mark_dirty
+
+    async def _spy(self: object, device_id: object, *, reason: str) -> int:
+        calls.append(reason)
+        return await original(self, device_id, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(svc.IntentService, "mark_dirty", _spy)
+
+    # Health columns are unchanged (True/None == True/None), but mark_offline=True
+    # must still force reconcile regardless.
+    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
+        db, device, health_running=True, health_state=None, mark_offline=True
+    )
+    await db.commit()
+    assert len(calls) >= 1  # mark_offline=True always reconciles
+
+
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     """When lock_device raises NoResultFound, all health update methods must return early."""
     db = object()

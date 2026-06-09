@@ -104,8 +104,8 @@ class DeviceHealthService:
         locked.device_checks_summary = summary
         locked.device_checks_checked_at = _now()
         # Reconcile immediately only on failure so the device goes offline right
-        # away. On success, defer to apply_node_state_transition (which always
-        # reconciles) or the background reconciler. This preserves the old
+        # away. On success, defer to apply_node_state_transition (which reconciles
+        # on state transitions) or the background reconciler. This preserves the old
         # behavior: a healthy device_checks signal alone does not restore an
         # offline device — the node must also be observed running.
         if not healthy:
