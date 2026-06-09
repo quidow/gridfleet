@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.4
+release: 2026.06.10
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -20,16 +20,24 @@ appium_server:
 appium_driver:
   source: npm
   package: appium-xcuitest-driver
-  version: "==10.33.0"
-  recommended: "10.33.0"
+  version: "==10.43.1"
+  recommended: "10.43.1"
   known_bad: []
+runtime_packages:
+  # appium-xcuitest-driver declares this as an optional dependency, which npm
+  # silently skips in the agent's headless install env. Declare it explicitly so
+  # the RemoteXPC tunnel path works (prefer_devicectl=false). See docs/tvos.
+  - package: appium-ios-remotexpc
+    version: "0.44.0"
 insecure_features:
   - "*:session_discovery"
-workarounds:
+appium_env:
   - id: tvos_devicectl_preference
     applies_when:
       platform_ids: [tvos]
       device_types: [real_device]
+      device_config:
+        prefer_devicectl: true
     env:
       APPIUM_XCUITEST_PREFER_DEVICECTL: "1"
 platforms:
@@ -199,7 +207,8 @@ platforms:
           - id: wda_base_url
             label: "WDA base URL"
             type: network_endpoint
-            required_for_session: true
+            required_for_session_when:
+              prefer_devicectl: true
             capability_name: "appium:wdaBaseUrl"
           - id: use_preinstalled_wda
             label: "Use pre-installed WDA"
@@ -220,6 +229,10 @@ platforms:
             type: string
             default: "Apple Development"
             capability_name: "appium:xcodeSigningId"
+          - id: prefer_devicectl
+            label: "Prefer devicectl (uncheck for RemoteXPC tunnel)"
+            type: bool
+            default: true
         connection_behavior:
           default_device_type: real_device
           default_connection_type: usb

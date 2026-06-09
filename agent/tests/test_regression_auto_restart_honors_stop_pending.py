@@ -39,7 +39,7 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         appium_platform_name=None,
-        workaround_env=None,
+        appium_env=None,
         insecure_features=[],
         grid_slots=["native"],
         lifecycle_actions=[],

@@ -110,7 +110,7 @@ async def test_uiautomator2_stereotype_uses_device_template(
 
 
 @pytest.mark.asyncio
-async def test_temporary_start_forwards_pack_workaround_env(
+async def test_temporary_start_forwards_pack_appium_env(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     _patched_remote_start: dict[str, Any],
@@ -164,7 +164,7 @@ async def test_temporary_start_forwards_pack_workaround_env(
         circuit_breaker=Mock(),
     )
 
-    assert _patched_remote_start["payload"]["workaround_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
+    assert _patched_remote_start["payload"]["appium_env"] == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
 
 
 @pytest.mark.asyncio

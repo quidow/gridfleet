@@ -31,7 +31,7 @@ class AppiumStartRequest(BaseModel):
     platform_id: str = Field(min_length=1, pattern=PLATFORM_ID_PATTERN)
 
     appium_platform_name: str | None = None
-    workaround_env: dict[str, str] | None = None
+    appium_env: dict[str, str] | None = None
     insecure_features: list[str] = []
     grid_slots: list[str] = ["native"]
     lifecycle_actions: list[dict[str, Any]] = []

@@ -32,7 +32,7 @@ async def test_auto_restart_exits_when_launch_spec_removed() -> None:
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         appium_platform_name=None,
-        workaround_env=None,
+        appium_env=None,
         insecure_features=[],
         grid_slots=["native"],
         lifecycle_actions=[],

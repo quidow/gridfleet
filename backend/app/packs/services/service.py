@@ -28,8 +28,8 @@ from app.packs.schemas import (
     AppiumInstallableOut,
     FeatureActionOut,
     FeatureOut,
+    ManifestAppiumEnvOut,
     ManifestDoctorCheckOut,
-    ManifestWorkaroundOut,
     PackCatalog,
     PackOut,
     PackRuntimeSummaryOut,
@@ -61,7 +61,7 @@ def build_pack_out(pack: DriverPack, runtime_summary: PackRuntimeSummaryOut | No
         platforms=[_platform_out(p) for p in latest.platforms] if latest else [],
         appium_server=_installable_out(manifest.get("appium_server")),
         appium_driver=_installable_out(manifest.get("appium_driver")),
-        workarounds=_workarounds_out(manifest.get("workarounds", [])),
+        appium_env=_appium_env_out(manifest.get("appium_env", [])),
         doctor=_doctor_out(manifest.get("doctor", [])),
         insecure_features=manifest.get("insecure_features", []),
         features=_features_out(latest) if latest else {},
@@ -97,11 +97,11 @@ def _installable_out(data: object) -> AppiumInstallableOut | None:
     )
 
 
-def _workarounds_out(items: object) -> list[ManifestWorkaroundOut]:
+def _appium_env_out(items: object) -> list[ManifestAppiumEnvOut]:
     if not isinstance(items, list):
         return []
     return [
-        ManifestWorkaroundOut(
+        ManifestAppiumEnvOut(
             id=str(item["id"]),
             applies_when=dict(item.get("applies_when") or {}),
             env={str(key): str(value) for key, value in (item.get("env") or {}).items()},
@@ -211,7 +211,7 @@ class PackCatalogService:
                     platforms=[_platform_out(platform) for platform in latest.platforms] if latest else [],
                     appium_server=_installable_out(manifest.get("appium_server")),
                     appium_driver=_installable_out(manifest.get("appium_driver")),
-                    workarounds=_workarounds_out(manifest.get("workarounds", [])),
+                    appium_env=_appium_env_out(manifest.get("appium_env", [])),
                     doctor=_doctor_out(manifest.get("doctor", [])),
                     insecure_features=manifest.get("insecure_features", []),
                     features=_features_out(latest) if latest else {},

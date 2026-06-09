@@ -91,13 +91,14 @@ async def render_stereotype(
     return template.interpolate(device_context)
 
 
-async def resolve_workaround_env(
+async def resolve_appium_env(
     session: AsyncSession,
     *,
     pack_id: str,
     platform_id: str,
     device_type: str,
     os_version: str | None,
+    device_config: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     pack = await session.scalar(
         select(DriverPack).where(DriverPack.id == pack_id).options(selectinload(DriverPack.releases))
@@ -107,8 +108,9 @@ async def resolve_workaround_env(
     release = selected_release(pack.releases, pack.current_release)
     if release is None:
         return {}
+    cfg = device_config or {}
     out: dict[str, str] = {}
-    for wk in release.manifest_json.get("workarounds") or []:
+    for wk in release.manifest_json.get("appium_env") or []:
         applies = wk.get("applies_when") or {}
         if applies.get("platform_ids") and platform_id not in applies["platform_ids"]:
             continue
@@ -119,6 +121,11 @@ async def resolve_workaround_env(
             and os_version is not None
             and not _semver_ge(os_version, applies["min_os_version"])
         ):
+            continue
+        # An unset device field defaults to the listed value, so the rule
+        # applies unless the operator explicitly overrides it.
+        device_gate = applies.get("device_config") or {}
+        if any(cfg.get(key, expected) != expected for key, expected in device_gate.items()):
             continue
         out.update(wk.get("env") or {})
     return out

@@ -74,13 +74,14 @@ async def test_get_single_pack_exposes_manifest_details(client: AsyncClient, db_
         "known_bad": ["9.0.0"],
         "github_repo": None,
     }
-    assert data["workarounds"] == [
+    assert data["appium_env"] == [
         {
             "id": "tvos_devicectl_preference",
             "applies_when": {
                 "platform_ids": ["tvos"],
                 "device_types": ["real_device"],
                 "min_os_version": None,
+                "device_config": {"prefer_devicectl": True},
             },
             "env": {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
         }
@@ -149,7 +150,7 @@ async def test_catalog_exposes_default_capabilities(client: AsyncClient, db_sess
     assert "appium:wdaBaseUrl" not in real_override["default_capabilities"]
     assert "appium:updatedWDABundleId" not in real_override["default_capabilities"]
     wda_field = next(field for field in real_override["device_fields_schema"] if field["id"] == "wda_base_url")
-    assert wda_field["required_for_session"] is True
+    assert wda_field.get("required_for_session_when") == {"prefer_devicectl": True}
     assert wda_field["capability_name"] == "appium:wdaBaseUrl"
     bundle_field = next(
         field for field in real_override["device_fields_schema"] if field["id"] == "updated_wda_bundle_id"

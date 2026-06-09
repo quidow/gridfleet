@@ -681,7 +681,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     )
 
     assert (
-        await pack_capability_service.resolve_workaround_env(
+        await pack_capability_service.resolve_appium_env(
             AsyncMock(
                 scalar=AsyncMock(
                     return_value=SimpleNamespace(

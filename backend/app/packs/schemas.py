@@ -110,7 +110,7 @@ class AppiumInstallableOut(BaseModel):
     github_repo: str | None = None
 
 
-class ManifestWorkaroundOut(BaseModel):
+class ManifestAppiumEnvOut(BaseModel):
     id: str
     applies_when: dict[str, Any] = Field(default_factory=dict)
     env: dict[str, str] = Field(default_factory=dict)
@@ -151,7 +151,7 @@ class PackOut(BaseModel):
     platforms: list[PlatformOut] = Field(default_factory=list)
     appium_server: AppiumInstallableOut | None = None
     appium_driver: AppiumInstallableOut | None = None
-    workarounds: list[ManifestWorkaroundOut] = Field(default_factory=list)
+    appium_env: list[ManifestAppiumEnvOut] = Field(default_factory=list)
     doctor: list[ManifestDoctorCheckOut] = Field(default_factory=list)
     insecure_features: list[str] = Field(default_factory=list)
     features: dict[str, FeatureOut] = Field(default_factory=dict)

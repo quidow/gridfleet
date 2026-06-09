@@ -290,7 +290,7 @@ def test_curated_manifests_pin_appium_and_driver_versions() -> None:
     expected = {
         "appium-roku-dlenroc": ("==3.3.1", "3.3.1", "==0.13.3", "0.13.3"),
         "appium-uiautomator2": ("==3.3.1", "3.3.1", "==5.0.6", "5.0.6"),
-        "appium-xcuitest": ("==3.3.1", "3.3.1", "==10.33.0", "10.33.0"),
+        "appium-xcuitest": ("==3.3.1", "3.3.1", "==10.43.1", "10.43.1"),
     }
 
     for pack_id, pins in expected.items():

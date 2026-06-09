@@ -69,7 +69,7 @@ const basePack = {
     github_repo: null,
   },
   insecure_features: ['uiautomator2:chromedriver_autodownload'],
-  workarounds: [
+  appium_env: [
     {
       id: 'android_host_resolution',
       applies_when: { platform_ids: ['android_mobile'] },

@@ -18,11 +18,13 @@ appium_driver:
   version: ">=7,<10"
   recommended: "9.3.1"
   known_bad: ["9.0.0"]
-workarounds:
+appium_env:
   - id: tvos_devicectl_preference
     applies_when:
       platform_ids: [tvos]
       device_types: [real_device]
+      device_config:
+        prefer_devicectl: true
     env:
       APPIUM_XCUITEST_PREFER_DEVICECTL: "1"
 platforms:
@@ -194,7 +196,8 @@ platforms:
           - id: wda_base_url
             label: "WDA base URL"
             type: network_endpoint
-            required_for_session: true
+            required_for_session_when:
+              prefer_devicectl: true
             capability_name: "appium:wdaBaseUrl"
           - id: use_preinstalled_wda
             label: "Use pre-installed WDA"
@@ -206,6 +209,10 @@ platforms:
             type: string
             required_for_session: true
             capability_name: "appium:updatedWDABundleId"
+          - id: prefer_devicectl
+            label: "Prefer devicectl"
+            type: bool
+            default: true
         connection_behavior:
           default_device_type: real_device
           default_connection_type: usb

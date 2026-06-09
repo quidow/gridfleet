@@ -149,7 +149,7 @@ def test_build_env_adds_paths() -> None:
     assert "/opt/android/platform-tools" in env["PATH"]
 
 
-def test_build_env_applies_workaround_env() -> None:
+def test_build_env_applies_appium_env() -> None:
     with (
         patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
@@ -160,12 +160,12 @@ def test_build_env_applies_workaround_env() -> None:
         env = _build_env(
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
-            workaround_env={"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
+            appium_env={"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
         )
     assert env["APPIUM_XCUITEST_PREFER_DEVICECTL"] == "1"
 
 
-def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> None:
+def test_build_env_does_not_set_devicectl_pref_when_appium_env_omitted() -> None:
     with (
         patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
@@ -176,7 +176,7 @@ def test_build_env_does_not_set_devicectl_pref_when_workaround_env_omitted() -> 
         env = _build_env(
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
-            workaround_env=None,
+            appium_env=None,
         )
     assert "APPIUM_XCUITEST_PREFER_DEVICECTL" not in env
 
@@ -1698,7 +1698,7 @@ def test_build_env_adapter_env_uses_setdefault() -> None:
     assert env["ANDROID_HOME"] == "/host/android"
 
 
-def test_build_env_workaround_env_overrides_adapter_env() -> None:
+def test_build_env_appium_env_overrides_adapter_env() -> None:
     with (
         patch("agent_app.appium.process._find_java", return_value="/usr/bin/java"),
         patch("agent_app.appium.process.os.path.realpath", return_value="/usr/lib/jvm/java-21/bin/java"),
@@ -1711,7 +1711,7 @@ def test_build_env_workaround_env_overrides_adapter_env() -> None:
         )
         env = _build_env(
             adapter_env=adapter_env,
-            workaround_env={"ANDROID_HOME": "/operator/android"},
+            appium_env={"ANDROID_HOME": "/operator/android"},
         )
 
     assert env["ANDROID_HOME"] == "/operator/android"

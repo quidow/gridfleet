@@ -12,6 +12,9 @@ class _FakeRunner:
     async def install_appium(self, package: str, version: str, appium_home: str) -> str:
         return f"{appium_home}/node_modules/.bin/appium"
 
+    async def install_package(self, package: str, version: str, appium_home: str) -> None:
+        return None
+
     async def install_driver(
         self,
         name: str,

@@ -179,25 +179,25 @@ export function DriverRuntimePanel({ pack }: { pack: DriverPack }) {
       </Card>
 
       <Card padding="md" className="lg:col-span-2">
-        <h2 className="mb-3 text-sm font-semibold text-text-1">Workarounds</h2>
-        {(pack.workarounds?.length ?? 0) === 0 ? (
-          <p className="text-sm text-text-3">No workarounds declared.</p>
+        <h2 className="mb-3 text-sm font-semibold text-text-1">Appium environment</h2>
+        {(pack.appium_env?.length ?? 0) === 0 ? (
+          <p className="text-sm text-text-3">No Appium env rules declared.</p>
         ) : (
           <div className="grid gap-3">
-            {pack.workarounds?.map((workaround) => (
-              <div key={workaround.id} className="rounded border border-border px-3 py-2">
-                <div className="font-mono text-sm text-text-1">{workaround.id}</div>
+            {pack.appium_env?.map((rule) => (
+              <div key={rule.id} className="rounded border border-border px-3 py-2">
+                <div className="font-mono text-sm text-text-1">{rule.id}</div>
                 <div className="mt-2 grid gap-2 md:grid-cols-2">
                   <DefinitionList
                     layout="stacked"
-                    items={objectEntries(workaround.applies_when).map(([key, value]) => ({
+                    items={objectEntries(rule.applies_when).map(([key, value]) => ({
                       term: key,
                       definition: scalarValue(value),
                     }))}
                   />
                   <DefinitionList
                     layout="stacked"
-                    items={objectEntries(workaround.env).map(([key, value]) => ({
+                    items={objectEntries(rule.env).map(([key, value]) => ({
                       term: key,
                       definition: <span className="font-mono">{scalarValue(value)}</span>,
                     }))}

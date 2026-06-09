@@ -179,7 +179,7 @@ async def test_start_remote_node_error_and_override_paths(
                 "lifecycle_actions": {"health": "check"},
                 "connection_behavior": {"default_connection_type": "usb"},
                 "insecure_features": ["adb_shell"],
-                "workaround_env": {"A": "B"},
+                "appium_env": {"A": "B"},
             }
         ),
     )
@@ -330,12 +330,12 @@ def _standard_start_monkeypatches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.appium_nodes.services.reconciler_agent._merge_appium_default_pack_caps", AsyncMock())
 
 
-async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
+async def test_start_remote_node_merges_host_tool_env_and_pack_appium_env(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """host.tool_env is the base; pack workaround_env overrides on top."""
+    """host.tool_env is the base; pack appium_env overrides on top."""
     db_host.tool_env = {"ANDROID_HOME": "/custom", "SHARED": "host-value"}
     device = await _loaded_device(db_session, db_host, "tool-env-merge")
     _standard_start_monkeypatches(monkeypatch)
@@ -347,7 +347,7 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
                 "platform_id": "android_mobile",
                 "appium_platform_name": "Android",
                 "stereotype_caps": {},
-                "workaround_env": {"OTHER": "pack-val", "SHARED": "pack-value"},
+                "appium_env": {"OTHER": "pack-val", "SHARED": "pack-value"},
             }
         ),
     )
@@ -373,17 +373,17 @@ async def test_start_remote_node_merges_host_tool_env_and_pack_workaround_env(
     )
 
     assert len(captured_payload) == 1
-    merged = captured_payload[0].get("workaround_env")
+    merged = captured_payload[0].get("appium_env")
     # Both host and pack keys present
     assert merged == {"ANDROID_HOME": "/custom", "OTHER": "pack-val", "SHARED": "pack-value"}
 
 
-async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
+async def test_start_remote_node_pack_appium_env_wins_on_conflict(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pack workaround_env takes precedence over host tool_env for duplicate keys."""
+    """Pack appium_env takes precedence over host tool_env for duplicate keys."""
     db_host.tool_env = {"X": "host"}
     device = await _loaded_device(db_session, db_host, "tool-env-conflict")
     _standard_start_monkeypatches(monkeypatch)
@@ -395,7 +395,7 @@ async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
                 "platform_id": "android_mobile",
                 "appium_platform_name": "Android",
                 "stereotype_caps": {},
-                "workaround_env": {"X": "pack"},
+                "appium_env": {"X": "pack"},
             }
         ),
     )
@@ -421,7 +421,7 @@ async def test_start_remote_node_pack_workaround_env_wins_on_conflict(
     )
 
     assert len(captured_payload) == 1
-    assert captured_payload[0].get("workaround_env") == {"X": "pack"}
+    assert captured_payload[0].get("appium_env") == {"X": "pack"}
 
 
 async def test_start_remote_node_no_tool_env_behavior_unchanged(
@@ -429,7 +429,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When host.tool_env is None and pack has no workaround_env, no workaround_env is sent."""
+    """When host.tool_env is None and pack has no appium_env, no appium_env is sent."""
     db_host.tool_env = None
     device = await _loaded_device(db_session, db_host, "tool-env-none")
     _standard_start_monkeypatches(monkeypatch)
@@ -441,7 +441,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
                 "platform_id": "android_mobile",
                 "appium_platform_name": "Android",
                 "stereotype_caps": {},
-                # no workaround_env key
+                # no appium_env key
             }
         ),
     )
@@ -467,7 +467,7 @@ async def test_start_remote_node_no_tool_env_behavior_unchanged(
     )
 
     assert len(captured_payload) == 1
-    assert "workaround_env" not in captured_payload[0]
+    assert "appium_env" not in captured_payload[0]
 
 
 async def test_start_remote_node_host_tool_env_no_pack_overrides(
@@ -505,7 +505,7 @@ async def test_start_remote_node_host_tool_env_no_pack_overrides(
     )
 
     assert len(captured_payload) == 1
-    assert captured_payload[0].get("workaround_env") == {"JAVA_HOME": "/opt/java"}
+    assert captured_payload[0].get("appium_env") == {"JAVA_HOME": "/opt/java"}
 
 
 async def test_start_stop_restart_node_guard_paths(
