@@ -315,6 +315,20 @@ class FeatureManifest(BaseModel):
     actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class RuntimePackage(BaseModel):
+    """An extra npm package the agent installs into the Appium runtime.
+
+    Used for driver companion libraries (e.g. appium-ios-remotexpc) that npm
+    treats as an optional dependency and may silently skip in the agent's
+    headless install environment. Declaring them here installs them explicitly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    version: str
+
+
 class Manifest(BaseModel):
     """A driver-pack manifest describing Appium server, driver, platforms, and diagnostics."""
 
@@ -333,6 +347,7 @@ class Manifest(BaseModel):
     doctor: list[DoctorCheck] = []
     insecure_features: list[str] = Field(default_factory=list)
     appium_env: list[AppiumEnvRule] = Field(default_factory=list)
+    runtime_packages: list[RuntimePackage] = Field(default_factory=list)
     features: dict[str, FeatureManifest] = Field(default_factory=dict)
 
 

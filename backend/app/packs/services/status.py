@@ -467,6 +467,7 @@ class PackStatusService:
                     "release": latest.release,
                     "appium_server": manifest["appium_server"],
                     "appium_driver": manifest["appium_driver"],
+                    "runtime_packages": manifest.get("runtime_packages", []),
                     "platforms": manifest["platforms"],
                     "features": manifest.get("features", {}),
                     "requires": manifest.get("requires", {}),

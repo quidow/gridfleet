@@ -45,6 +45,12 @@ class ToolDependency:
     description: str
 
 
+@dataclass(frozen=True)
+class RuntimePackage:
+    package: str
+    version: str
+
+
 @dataclass
 class DesiredPack:
     id: str
@@ -56,6 +62,7 @@ class DesiredPack:
     runtime_policy: RuntimePolicy = field(default_factory=RuntimePolicy)
     tarball_sha256: str | None = None
     tool_dependencies: list[ToolDependency] = field(default_factory=list)
+    runtime_packages: list[RuntimePackage] = field(default_factory=list)
 
     @property
     def has_adapter_platform(self) -> bool:
@@ -102,6 +109,10 @@ def parse_desired_payload(payload: dict[str, Any]) -> DesiredPayload:
                 runtime_policy=_runtime_policy(raw.get("runtime_policy") or {"strategy": "recommended"}),
                 tarball_sha256=raw.get("tarball_sha256"),
                 tool_dependencies=tool_deps,
+                runtime_packages=[
+                    RuntimePackage(package=rp["package"], version=rp["version"])
+                    for rp in (raw.get("runtime_packages") or [])
+                ],
             )
         )
     return DesiredPayload(

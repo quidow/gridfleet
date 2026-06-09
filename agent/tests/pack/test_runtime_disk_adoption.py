@@ -6,6 +6,7 @@ Adoption requires the completion marker (written as the last step of a
 successful install) and an executable appium binary.
 """
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,9 @@ class _CountingRunner:
         bin_path.write_text("#!/bin/sh\n")
         bin_path.chmod(0o755)
         return str(bin_path)
+
+    async def install_package(self, package: str, version: str, appium_home: str) -> None:
+        (Path(appium_home) / "node_modules" / package).mkdir(parents=True, exist_ok=True)
 
     async def install_driver(
         self,
@@ -112,6 +116,43 @@ async def test_reconcile_reinstalls_when_marker_missing(tmp_path: Path) -> None:
 
     assert errors == {}
     assert runner.install_appium_calls == 1
+
+
+def _seed_runtime_package_marker(appium_home: Path) -> None:
+    marker = json.loads((appium_home / ".runtime-complete").read_text())
+    marker["runtime_packages"] = [["appium-ios-remotexpc", "0.44.0"]]
+    (appium_home / ".runtime-complete").write_text(json.dumps(marker))
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reinstalls_when_declared_runtime_package_missing(tmp_path: Path) -> None:
+    spec = dataclasses.replace(_spec(), runtime_packages=(("appium-ios-remotexpc", "0.44.0"),))
+    rid = AppiumRuntimeManager.runtime_id_for(spec)
+    appium_home = _seed_completed_runtime(tmp_path, rid)
+    _seed_runtime_package_marker(appium_home)  # declared, but package dir never created
+
+    runner = _CountingRunner()
+    manager = AppiumRuntimeManager(root_dir=tmp_path, runner=runner)
+    _envs, errors = await manager.reconcile({"appium-xcuitest": spec})
+
+    assert errors == {}
+    assert runner.install_appium_calls == 1  # not adopted: declared package was absent
+
+
+@pytest.mark.asyncio
+async def test_reconcile_adopts_when_declared_runtime_package_present(tmp_path: Path) -> None:
+    spec = dataclasses.replace(_spec(), runtime_packages=(("appium-ios-remotexpc", "0.44.0"),))
+    rid = AppiumRuntimeManager.runtime_id_for(spec)
+    appium_home = _seed_completed_runtime(tmp_path, rid)
+    (appium_home / "node_modules" / "appium-ios-remotexpc").mkdir(parents=True)
+    _seed_runtime_package_marker(appium_home)
+
+    runner = _CountingRunner()
+    manager = AppiumRuntimeManager(root_dir=tmp_path, runner=runner)
+    _envs, errors = await manager.reconcile({"appium-xcuitest": spec})
+
+    assert errors == {}
+    assert runner.install_appium_calls == 0  # adopted: declared package present
 
 
 @pytest.mark.asyncio

@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,14 @@ class RecordingRunner:
     def __init__(self) -> None:
         self.appium_calls: list[tuple[str, str, str]] = []
         self.driver_calls: list[dict] = []
+        self.package_calls: list[tuple[str, str, str]] = []
 
     async def install_appium(self, package: str, version: str, appium_home: str) -> str:
         self.appium_calls.append((package, version, appium_home))
         return f"{appium_home}/node_modules/.bin/appium"
+
+    async def install_package(self, package: str, version: str, appium_home: str) -> None:
+        self.package_calls.append((package, version, appium_home))
 
     async def install_driver(
         self,
@@ -131,3 +136,31 @@ def test_github_install_spec_preserves_explicit_ref() -> None:
         _github_npm_install_spec("dlenroc/appium-roku-driver#main", "0.13.1")
         == "git+https://github.com/dlenroc/appium-roku-driver.git#main"
     )
+
+
+def test_runtime_id_differs_by_runtime_packages() -> None:
+    base = RuntimeSpec(
+        server_package="appium",
+        server_version="3.3.1",
+        drivers=(("xcuitest", "10.43.1", "npm", None),),
+        plugins=(),
+        node_major=None,
+    )
+    with_pkg = dataclasses.replace(base, runtime_packages=(("appium-ios-remotexpc", "0.44.0"),))
+    assert AppiumRuntimeManager.runtime_id_for(base) != AppiumRuntimeManager.runtime_id_for(with_pkg)
+
+
+@pytest.mark.asyncio
+async def test_runtime_packages_are_installed_explicitly(tmp_path: Path) -> None:
+    runner = RecordingRunner()
+    mgr = AppiumRuntimeManager(runner=runner, root_dir=tmp_path)
+    spec = RuntimeSpec(
+        server_package="appium",
+        server_version="3.3.1",
+        drivers=(("xcuitest", "10.43.1", "npm", None),),
+        plugins=(),
+        node_major=None,
+        runtime_packages=(("appium-ios-remotexpc", "0.44.0"),),
+    )
+    await mgr.reconcile({"appium-xcuitest": spec})
+    assert [(pkg, ver) for pkg, ver, _home in runner.package_calls] == [("appium-ios-remotexpc", "0.44.0")]

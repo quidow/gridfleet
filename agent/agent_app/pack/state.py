@@ -106,6 +106,7 @@ class PackStateLoop:
             desired_by_pack[pack.id] = dataclasses.replace(
                 resolution.runtime_spec,
                 plugins=tuple((p.name, p.version, p.source, p.package) for p in parsed.plugins),
+                runtime_packages=tuple((rp.package, rp.version) for rp in pack.runtime_packages),
             )
 
         prev_runtime_ids: dict[str, str] = {}

@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.8
+release: 2026.06.9
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -23,6 +23,12 @@ appium_driver:
   version: "==10.43.1"
   recommended: "10.43.1"
   known_bad: []
+runtime_packages:
+  # appium-xcuitest-driver declares this as an optional dependency, which npm
+  # silently skips in the agent's headless install env. Declare it explicitly so
+  # the RemoteXPC tunnel path works (prefer_devicectl=false). See docs/tvos.
+  - package: appium-ios-remotexpc
+    version: "0.44.0"
 insecure_features:
   - "*:session_discovery"
 appium_env:

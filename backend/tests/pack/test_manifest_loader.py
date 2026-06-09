@@ -150,6 +150,13 @@ def test_manifest_rejects_appium_env_rule_without_id() -> None:
         load_manifest_yaml(yaml_text)
 
 
+def test_manifest_parses_runtime_packages() -> None:
+    yaml_text = _valid_yaml() + '\nruntime_packages:\n  - package: appium-ios-remotexpc\n    version: "0.44.0"\n'
+    manifest = load_manifest_yaml(yaml_text)
+    assert manifest.runtime_packages[0].package == "appium-ios-remotexpc"
+    assert manifest.runtime_packages[0].version == "0.44.0"
+
+
 def test_manifest_accepts_tool_dependencies() -> None:
     old = "requires:\n  host_os: [linux, macos]"
     new = (
