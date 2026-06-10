@@ -21,7 +21,9 @@ class HostPackInstallation(Base):
         ForeignKey("hosts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    pack_id: Mapped[str] = mapped_column(String, ForeignKey("driver_packs.id", ondelete="CASCADE"), nullable=False)
+    pack_id: Mapped[str] = mapped_column(
+        String, ForeignKey("driver_packs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     pack_release: Mapped[str] = mapped_column(String, nullable=False)
     runtime_id: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="pending", nullable=False, server_default="pending")
@@ -49,7 +51,9 @@ class HostPackDoctorResult(Base):
         ForeignKey("hosts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    pack_id: Mapped[str] = mapped_column(String, ForeignKey("driver_packs.id", ondelete="CASCADE"), nullable=False)
+    pack_id: Mapped[str] = mapped_column(
+        String, ForeignKey("driver_packs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     check_id: Mapped[str] = mapped_column(String, nullable=False)
     ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
     message: Mapped[str] = mapped_column(String, default="", nullable=False, server_default="")
