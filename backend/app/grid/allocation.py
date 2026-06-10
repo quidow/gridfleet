@@ -7,13 +7,13 @@ lock, the intent reconciler — and owns no writes to protected state columns:
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from prometheus_client import Counter, Gauge
-from sqlalchemy import or_, select, update
+from sqlalchemy import ColumnElement, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from sqlalchemy.orm import selectinload
@@ -127,6 +127,48 @@ def transition_ticket(ticket: GridSessionQueueTicket, to: GridQueueStatus, *, re
     ticket.status = to
 
 
+# Bulk Core UPDATE paths only ever terminalize a ``claimed`` ticket to ``expired``
+# (session ended / orphan reaped). The per-row ``_legal_ticket_transition`` table
+# deliberately omits ``claimed -> expired`` — that terminalization is bulk-only — so
+# the bulk seam carries its own small legal set rather than widening the per-row table
+# (which would also relax what the single-ticket seam permits).
+_LEGAL_BULK_TRANSITIONS = frozenset({(GridQueueStatus.claimed, GridQueueStatus.expired)})
+
+
+def _legal_bulk_ticket_transition(from_status: GridQueueStatus, to: GridQueueStatus) -> bool:
+    return (from_status, to) in _LEGAL_BULK_TRANSITIONS
+
+
+async def transition_tickets_bulk(
+    db: DbSession,
+    *,
+    from_status: GridQueueStatus,
+    to: GridQueueStatus,
+    reason: str,
+    extra_where: Sequence[ColumnElement[bool]] = (),
+    synchronize_session: Literal[False, "auto"] = "auto",
+) -> int:
+    """Bulk counterpart of ``transition_ticket`` for Core ``UPDATE`` paths.
+
+    Enforces a bulk legality table against the statically-known source status
+    (the ``status == from_status`` WHERE arm guarantees every transitioned row
+    matches it), so bulk terminalization stays inside the single-seam contract
+    instead of bypassing it. Returns the number of rows transitioned.
+    """
+    if not _legal_bulk_ticket_transition(from_status, to):
+        raise ValueError(f"illegal bulk ticket transition {from_status} -> {to} (reason={reason})")
+    result = await db.execute(
+        update(GridSessionQueueTicket)
+        .where(GridSessionQueueTicket.status == from_status, *extra_where)
+        .values(status=to)
+        .execution_options(synchronize_session=synchronize_session)
+    )
+    count = int(getattr(result, "rowcount", 0) or 0)
+    if count:
+        logger.debug("grid_ticket_bulk_transition %s->%s count=%d reason=%s", from_status, to, count, reason)
+    return count
+
+
 IntentFactory = Callable[[DbSession], IntentService]
 # A per-attempt cache of pack-rendered stereotype templates keyed by (pack_id,
 # platform_id). The template half is device-independent (#11), so a fleet of
@@ -171,15 +213,14 @@ async def expire_tickets_for_session(db: DbSession, session_row_id: uuid.UUID) -
     + session_sync sweep). Idempotent — the ``status='claimed'`` guard makes a second
     call a no-op. Returns the number of tickets transitioned.
     """
-    result = await db.execute(
-        update(GridSessionQueueTicket)
-        .where(
-            GridSessionQueueTicket.session_row_id == session_row_id,
-            GridSessionQueueTicket.status == GridQueueStatus.claimed,
-        )
-        .values(status=GridQueueStatus.expired)
+    # Bulk claimed -> expired through the guarded bulk seam (transition_tickets_bulk).
+    return await transition_tickets_bulk(
+        db,
+        from_status=GridQueueStatus.claimed,
+        to=GridQueueStatus.expired,
+        reason="session_ended",
+        extra_where=(GridSessionQueueTicket.session_row_id == session_row_id,),
     )
-    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def _ticket_passes_reservation(ticket_run_id: uuid.UUID | None, reservation_run_id: uuid.UUID | None) -> bool:
@@ -455,23 +496,22 @@ class AllocationService:
                 Session.status.not_in((SessionStatus.pending, SessionStatus.running)),
             )
         )
-        # Bulk claimed -> expired, mirroring expire_tickets_for_session: the transition guard
-        # reserves this terminalization for the session-expiry seam, so a Core update (not
-        # transition_ticket) is the sanctioned path.
-        result = await db.execute(
-            update(GridSessionQueueTicket)
-            .where(
-                GridSessionQueueTicket.status == GridQueueStatus.claimed,
+        # Bulk claimed -> expired through the guarded bulk seam (transition_tickets_bulk),
+        # mirroring expire_tickets_for_session.
+        reaped = await transition_tickets_bulk(
+            db,
+            from_status=GridQueueStatus.claimed,
+            to=GridQueueStatus.expired,
+            reason="orphan_claim_reaped",
+            extra_where=(
                 GridSessionQueueTicket.last_polled_at < stale_cutoff,
                 or_(
                     GridSessionQueueTicket.session_row_id.is_(None),
                     GridSessionQueueTicket.session_row_id.in_(not_live_session_ids),
                 ),
-            )
-            .values(status=GridQueueStatus.expired)
-            .execution_options(synchronize_session=False)
+            ),
+            synchronize_session=False,
         )
-        reaped = int(getattr(result, "rowcount", 0) or 0)
         if reaped:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="orphan_claim_reaped").inc(reaped)
         await db.flush()
