@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.http_errors import found_or_404
 from app.hosts.dependencies import HostServicesDep  # noqa: TC001
 from app.plugins.dependencies import PluginServicesDep  # noqa: TC001
 from app.plugins.models import AppiumPlugin  # noqa: TC001 - used in return type annotations
@@ -42,10 +43,7 @@ async def update_plugin(
     db: DbDep,
     plugin_services: PluginServicesDep,
 ) -> AppiumPlugin:
-    plugin = await plugin_services.plugin.update_plugin(db, plugin_id, data)
-    if plugin is None:
-        raise HTTPException(status_code=404, detail="Plugin not found")
-    return plugin
+    return found_or_404(await plugin_services.plugin.update_plugin(db, plugin_id, data), "Plugin not found")
 
 
 @router.delete("/plugins/{plugin_id}", status_code=204)
@@ -64,9 +62,7 @@ async def sync_all_plugins(db: DbDep, plugin_services: PluginServicesDep) -> dic
 async def host_plugins(
     host_id: UUID, db: DbDep, plugin_services: PluginServicesDep, host_services: HostServicesDep
 ) -> list[dict[str, Any]]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     all_plugins = await plugin_services.plugin.list_plugins(db)
     return await plugin_services.plugin.get_host_plugin_statuses(host, all_plugins)
 
@@ -75,8 +71,6 @@ async def host_plugins(
 async def sync_host_plugins(
     host_id: UUID, db: DbDep, plugin_services: PluginServicesDep, host_services: HostServicesDep
 ) -> dict[str, Any]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     all_plugins = await plugin_services.plugin.list_plugins(db)
     return await plugin_services.plugin.sync_host_plugins(host, all_plugins)

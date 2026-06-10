@@ -19,7 +19,12 @@ if TYPE_CHECKING:
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationService, pack_slot_stereotype
+from app.grid.allocation import (
+    AllocationService,
+    _legal_bulk_ticket_transition,
+    pack_slot_stereotype,
+    transition_tickets_bulk,
+)
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import seed_host_and_device, seed_host_and_running_node
@@ -420,3 +425,23 @@ async def test_resume_claimed_falls_back_to_stored_target(
     assert result is not None
     assert result.target == "http://stored.example:4730"
     assert ticket.status == GridQueueStatus.claimed
+
+
+def test_bulk_transition_legal_table_terminalizes_claimed() -> None:
+    # The bulk seam permits the claimed -> expired terminalization the per-row table
+    # deliberately omits, and rejects anything else.
+    assert _legal_bulk_ticket_transition(GridQueueStatus.claimed, GridQueueStatus.expired) is True
+    assert _legal_bulk_ticket_transition(GridQueueStatus.cancelled, GridQueueStatus.waiting) is False
+    assert _legal_bulk_ticket_transition(GridQueueStatus.waiting, GridQueueStatus.expired) is False
+
+
+@pytest.mark.asyncio
+async def test_transition_tickets_bulk_raises_on_illegal_transition() -> None:
+    from unittest.mock import AsyncMock
+
+    db = AsyncMock()
+    with pytest.raises(ValueError, match="illegal bulk ticket transition"):
+        await transition_tickets_bulk(
+            db, from_status=GridQueueStatus.cancelled, to=GridQueueStatus.waiting, reason="test"
+        )
+    db.execute.assert_not_called()

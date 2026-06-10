@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
+from app.core.http_errors import found_or_404
 from app.core.leader.models import ControlPlaneStateEntry
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import get_device_or_404
@@ -158,9 +159,7 @@ async def get_device_diagnostic_snapshot(
     redact: bool = Query(default=False),
 ) -> DiagnosticSnapshotDetail:
     await get_device_or_404(device_id, db, device_services.crud)
-    row = await diagnostics_services.export.get_snapshot(db, device_id, snapshot_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Snapshot not found")
+    row = found_or_404(await diagnostics_services.export.get_snapshot(db, device_id, snapshot_id), "Snapshot not found")
     payload = row.payload
     if redact:
         payload = await diagnostics_services.export.redact_bundle(db, payload)

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException
-from sqlalchemy.exc import NoResultFound
-
+from app.core.http_errors import convert_not_found, found_or_404
 from app.devices import locking as device_locking
 
 if TYPE_CHECKING:
@@ -17,14 +15,9 @@ if TYPE_CHECKING:
 
 
 async def get_device_or_404(device_id: uuid.UUID, db: AsyncSession, crud: DeviceCrudProtocol) -> Device:
-    device = await crud.get_device(db, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
-    return device
+    return found_or_404(await crud.get_device(db, device_id), "Device not found")
 
 
 async def get_device_for_update_or_404(device_id: uuid.UUID, db: AsyncSession) -> Device:
-    try:
+    with convert_not_found("Device not found"):
         return await device_locking.lock_device(db, device_id)
-    except NoResultFound as exc:
-        raise HTTPException(status_code=404, detail="Device not found") from exc

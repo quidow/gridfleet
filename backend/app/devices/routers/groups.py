@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     BulkMaintenanceEnter,
@@ -47,9 +48,7 @@ async def list_groups(db: DbDep, device_services: DeviceServicesDep) -> list[dic
 
 @router.get("/{group_id}", response_model=DeviceGroupDetail, response_model_exclude_none=True)
 async def get_group(group_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    group = await device_services.groups.get_group(db, group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = found_or_404(await device_services.groups.get_group(db, group_id), "Group not found")
 
     payload = dict(group)
     payload["devices"] = [
@@ -65,9 +64,7 @@ async def update_group(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    group = await device_services.groups.update_group(db, group_id, data)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = found_or_404(await device_services.groups.update_group(db, group_id, data), "Group not found")
     return await device_services.groups.get_group(db, group.id) or {}
 
 
@@ -85,9 +82,7 @@ async def add_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
-    group = await device_services.groups.get_group(db, group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = found_or_404(await device_services.groups.get_group(db, group_id), "Group not found")
     if group["group_type"] == "dynamic":
         raise HTTPException(status_code=400, detail="Cannot manually add members to a dynamic group")
     added = await device_services.groups.add_members(db, group_id, body.device_ids)
@@ -101,9 +96,7 @@ async def remove_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
-    group = await device_services.groups.get_group(db, group_id)
-    if group is None:
-        raise HTTPException(status_code=404, detail="Group not found")
+    group = found_or_404(await device_services.groups.get_group(db, group_id), "Group not found")
     if group["group_type"] == "dynamic":
         raise HTTPException(status_code=400, detail="Cannot manually remove members from a dynamic group")
     removed = await device_services.groups.remove_members(db, group_id, body.device_ids)

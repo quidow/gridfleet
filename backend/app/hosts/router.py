@@ -14,6 +14,7 @@ from app.agent_comm.protocols import CircuitBreakerProtocol
 from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.http_errors import found_or_404
 from app.core.protocols import SettingsReader
 from app.core.type_defs import AsyncTaskFactory
 from app.devices.dependencies import DeviceServicesDep
@@ -202,9 +203,7 @@ async def approve_host(
     agent_comm: AgentCommServicesDep,
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
-    host = await host_services.crud.approve_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found or not pending")
+    host = found_or_404(await host_services.crud.approve_host(db, host_id), "Host not found or not pending")
     _fire_and_forget(
         _auto_discover,
         host.id,
@@ -256,9 +255,7 @@ async def get_host(
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
 
     payload = _serialize_host(host, settings_services)
     label_map = await platform_label_service.load_platform_label_map(
@@ -335,9 +332,7 @@ async def get_host_events(
 async def host_driver_packs(
     host_id: uuid.UUID, db: DbDep, pack_services: PackServicesDep
 ) -> pack_schemas.HostDriverPacksOut:
-    host = await db.get(Host, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="host not found")
+    found_or_404(await db.get(Host, host_id), "host not found")
     return pack_schemas.HostDriverPacksOut.model_validate(
         await pack_services.status.get_host_driver_pack_status(db, host_id)
     )
@@ -355,9 +350,7 @@ async def trigger_driver_doctor(
     agent_comm: AgentCommServicesDep,
     pack_services: PackServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
-    host = await db.get(Host, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="host not found")
+    host = found_or_404(await db.get(Host, host_id), "host not found")
     if host.status.value != "online":
         raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
 
@@ -386,10 +379,7 @@ async def trigger_driver_doctor(
 
 @router.get("/{host_id}/diagnostics", response_model=HostDiagnosticsRead)
 async def get_host_diagnostics(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> HostDiagnosticsRead:
-    payload = await host_services.diagnostics.get_host_diagnostics(db, host_id)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Host not found")
-    return payload
+    return found_or_404(await host_services.diagnostics.get_host_diagnostics(db, host_id), "Host not found")
 
 
 @router.get("/{host_id}/resource-telemetry", response_model=HostResourceTelemetryResponse)
@@ -415,8 +405,7 @@ async def get_host_resource_telemetry(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    payload = found_or_404(payload, "Host not found")
     return payload
 
 
@@ -428,9 +417,7 @@ async def get_host_tool_status(
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     if host.status.value != "online":
         raise HTTPException(status_code=400, detail="Host must be online to fetch tool status")
     return await get_agent_tool_status(
@@ -459,9 +446,7 @@ async def discover_devices(
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> DiscoveryResult:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     return await pack_services.discovery.discover_devices(db, host)
 
 
@@ -472,9 +457,7 @@ async def intake_candidates(
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> list[IntakeCandidateRead]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     return await pack_services.discovery.list_intake_candidates(db, host)
 
 
@@ -486,9 +469,7 @@ async def confirm_discovery(
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> DiscoveryConfirmResult:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     # Re-run discovery to get fresh data for validation
     result = await pack_services.discovery.discover_devices(db, host)
     try:
@@ -510,9 +491,7 @@ async def confirm_discovery(
     summary="Get per-host tool environment variables",
 )
 async def get_host_tool_env(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> dict[str, Any]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     return {"env": host.tool_env or {}}
 
 
@@ -528,9 +507,7 @@ async def put_host_tool_env(
     db: DbDep,
     host_services: HostServicesDep,
 ) -> dict[str, Any]:
-    host = await host_services.crud.get_host(db, host_id)
-    if host is None:
-        raise HTTPException(status_code=404, detail="Host not found")
+    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
     host.tool_env = body.env if body.env else None
     await db.commit()
     return {"env": host.tool_env or {}}

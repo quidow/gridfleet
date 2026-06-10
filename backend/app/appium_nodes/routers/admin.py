@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid  # noqa: TC003 - FastAPI evaluates path parameter annotations at runtime.
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import locking as appium_node_locking
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI route dependency annotations are runtime API.
+from app.core.http_errors import found_or_404
 from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType
 from app.devices.schemas.device import AppiumNodeRead
@@ -30,14 +31,12 @@ async def clear_transition(
     db: DbDep,
     username: AdminDep,
 ) -> AppiumNode:
-    node = await db.get(AppiumNode, node_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="AppiumNode not found")
+    node = found_or_404(await db.get(AppiumNode, node_id), "AppiumNode not found")
 
     await device_locking.lock_device(db, node.device_id)
-    locked_node = await appium_node_locking.lock_appium_node_for_device(db, node.device_id)
-    if locked_node is None:
-        raise HTTPException(status_code=404, detail="AppiumNode not found")
+    locked_node = found_or_404(
+        await appium_node_locking.lock_appium_node_for_device(db, node.device_id), "AppiumNode not found"
+    )
     if locked_node.transition_token is None:
         await db.refresh(locked_node)
         return locked_node

@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.schemas.device import (
     DeviceVerificationCreate,
@@ -60,9 +61,7 @@ async def create_existing_device_verification_job(
     device_services: DeviceServicesDep,
     verification_services: VerificationServicesDep,
 ) -> dict[str, Any]:
-    device = await device_services.crud.get_device(db, device_id)
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    found_or_404(await device_services.crud.get_device(db, device_id), "Device not found")
     if await device_has_running_session(db, device_id):
         raise HTTPException(
             status_code=409,
@@ -90,10 +89,10 @@ async def get_device_verification_job(
     job_id: str, db: DbDep, verification_services: VerificationServicesDep
 ) -> dict[str, Any]:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Verification job not found")
-    return job
+    return found_or_404(
+        await verification_services.service.get_verification_job(job_id, session_factory=session_factory),
+        "Verification job not found",
+    )
 
 
 @router.get("/jobs/{job_id}/events")
@@ -105,9 +104,10 @@ async def stream_device_verification_job_events(
     verification_services: VerificationServicesDep,
 ) -> EventSourceResponse:
     session_factory = async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False)
-    initial_job = await verification_services.service.get_verification_job(job_id, session_factory=session_factory)
-    if initial_job is None:
-        raise HTTPException(status_code=404, detail="Verification job not found")
+    initial_job = found_or_404(
+        await verification_services.service.get_verification_job(job_id, session_factory=session_factory),
+        "Verification job not found",
+    )
 
     queue = event_services.subscriber.subscribe()
 

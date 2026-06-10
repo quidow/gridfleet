@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.http_errors import convert_not_found
 from app.events.dependencies import EventServicesDep  # noqa: TC001
 from app.settings.dependencies import SettingsServicesDep  # noqa: TC001
 from app.settings.schemas import SettingRead, SettingsBulkUpdate, SettingsGrouped, SettingUpdate
@@ -42,10 +43,8 @@ async def reset_all_settings(
 
 @router.get("/{key:path}", response_model=SettingRead)
 async def get_setting(key: str, settings_services: SettingsServicesDep) -> dict[str, Any]:
-    try:
+    with convert_not_found():
         return settings_services.service.get_setting_response(key)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.put("/{key:path}", response_model=SettingRead)
@@ -71,7 +70,5 @@ async def reset_setting(
     settings_services: SettingsServicesDep,
     events: EventServicesDep,
 ) -> dict[str, Any]:
-    try:
+    with convert_not_found():
         return await settings_services.service.reset(db, key, publisher=events.publisher)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e

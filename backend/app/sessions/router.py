@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
+from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
 from app.devices import schemas as device_schemas
 from app.devices.services import platform_label as platform_label_service
@@ -120,9 +121,7 @@ async def list_sessions(
 
 @router.get("/{session_id}", response_model=SessionDetail)
 async def get_session(session_id: str, db: DbDep, session_services: SessionServicesDep) -> SessionDetail:
-    session = await session_services.crud.get_session(db, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = found_or_404(await session_services.crud.get_session(db, session_id), "Session not found")
     details = await _session_details_with_labels(db, [session])
     return details[0]
 
@@ -137,8 +136,7 @@ async def kill_session(
         outcome = await service_kill.kill_session(db, crud=session_services.crud, session_id=session_id)
     except service_kill.SessionNotKillableError:
         raise HTTPException(status_code=409, detail="Session is not running") from None
-    if outcome is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    outcome = found_or_404(outcome, "Session not found")
     return SessionKillResult(
         terminated=outcome.terminated,
         session=SessionRead.model_validate(outcome.session),
@@ -178,10 +176,9 @@ async def update_session_status(
     db: DbDep,
     session_services: SessionServicesDep,
 ) -> Session:
-    session = await session_services.crud.update_session_status(db, session_id, data.status)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return found_or_404(
+        await session_services.crud.update_session_status(db, session_id, data.status), "Session not found"
+    )
 
 
 @router.post("/{session_id}/finished", status_code=204)
@@ -190,7 +187,5 @@ async def post_session_finished(
     db: DbDep,
     session_services: SessionServicesDep,
 ) -> Response:
-    result = await session_services.crud.mark_session_finished(db, session_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    found_or_404(await session_services.crud.mark_session_finished(db, session_id), "Session not found")
     return Response(status_code=204)

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409
+from app.core.http_errors import found_or_404
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.models import ConnectionType, DeviceType, HardwareHealthStatus
 from app.devices.models import Device as DeviceModel
@@ -148,11 +149,12 @@ async def list_devices(
 
 @router.get("/by-connection-target/{target}", response_model=DeviceRead)
 async def get_device_by_connection_target(target: str, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    result = (
-        await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
-    ).scalar_one_or_none()
-    if result is None:
-        raise HTTPException(status_code=404, detail="Device not found for connection_target")
+    result = found_or_404(
+        (
+            await db.execute(select(DeviceModel).where(DeviceModel.connection_target == target).limit(1))
+        ).scalar_one_or_none(),
+        "Device not found for connection_target",
+    )
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=result.pack_id,
@@ -193,8 +195,7 @@ async def update_device(
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    if device is None:
-        raise HTTPException(status_code=404, detail="Device not found")
+    device = found_or_404(device, "Device not found")
     return await device_services.presenter.serialize_device(db, device)
 
 

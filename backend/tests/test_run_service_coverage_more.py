@@ -4,13 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.pagination import encode_cursor
-from app.devices.models import DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state_write_guard
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.intent import IntentService
@@ -31,7 +33,7 @@ from app.runs.service_allocator import (
 )
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
-from app.runs.service_lifecycle_release import RunReleaseService
+from app.runs.service_lifecycle_release import RunReleaseService, _resolve_session_target
 from app.runs.service_query import RunQueryService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
@@ -748,20 +750,18 @@ async def test_mark_running_sessions_released_leaves_row_when_terminate_fails(
     assert session.ended_at is None
 
 
-@pytest.mark.db
-async def test_session_node_target_no_device_returns_none(db_session: AsyncSession) -> None:
+def test_resolve_session_target_no_device_returns_none() -> None:
     """#9 read-only target resolution: a session with no device_id, and a session whose
-    device row is missing, both resolve to no target without taking a row lock."""
-    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    device row is absent from the batch-loaded map, both resolve to no target."""
     no_device = Session(session_id="no-device-target", device_id=None, status=SessionStatus.running)
-    assert await svc._session_node_target(db_session, no_device) is None
+    assert _resolve_session_target(no_device, {}) is None
 
     missing_device = Session(session_id="missing-device-target", device_id=uuid.uuid4(), status=SessionStatus.running)
-    assert await svc._session_node_target(db_session, missing_device) is None
+    assert _resolve_session_target(missing_device, {}) is None
 
 
 @pytest.mark.db
-async def test_session_node_target_falls_back_to_stored_router_target(
+async def test_resolve_session_target_falls_back_to_stored_router_target(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -786,8 +786,21 @@ async def test_session_node_target_falls_back_to_stored_router_target(
     db_session.add(session)
     await db_session.commit()
 
-    svc = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
-    target = await svc._session_node_target(db_session, session)
+    # Mirror the caller's batch load: eager appium_node/host so the pure resolver
+    # never triggers a lazy load.
+    loaded = (
+        (
+            await db_session.execute(
+                select(Device)
+                .options(selectinload(Device.appium_node), selectinload(Device.host))
+                .where(Device.id == device.id)
+            )
+        )
+        .scalars()
+        .one()
+    )
+
+    target = _resolve_session_target(session, {device.id: loaded})
     assert target == "http://10.0.0.99:4723"
 
 
