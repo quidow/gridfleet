@@ -96,6 +96,49 @@ class _LivenessVerdict:
     defer_detail: str | None = None
 
 
+# Cap keys carrying the client's negotiated idle contract. The W3C request uses
+# the vendor-prefixed key; some driver responses echo it un-prefixed, so both
+# spellings are read (prefixed first).
+_NEW_COMMAND_TIMEOUT_KEYS = ("appium:newCommandTimeout", "newCommandTimeout")
+
+
+def _client_new_command_timeout_sec(session: Session) -> int | None:
+    """The client's negotiated ``newCommandTimeout`` in seconds, or ``None``.
+
+    Prefers ``actual_capabilities`` (what Appium accepted at create) over
+    ``requested_capabilities``. Boolean, negative, and non-numeric values are
+    ignored. ``0`` is returned as ``0`` (Appium semantics: never idle-kill).
+    """
+    for caps in (session.actual_capabilities, session.requested_capabilities):
+        if not isinstance(caps, dict):
+            continue
+        for key in _NEW_COMMAND_TIMEOUT_KEYS:
+            value = caps.get(key)
+            if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+                continue
+            return int(value)
+    return None
+
+
+def _effective_idle_timeout_sec(session: Session, *, idle_timeout: int, ceiling: int) -> int:
+    """Per-session idle budget (7a): the operator timeout, extendable by the
+    client's ``newCommandTimeout`` up to *ceiling*.
+
+    * No client value -> ``idle_timeout`` unchanged.
+    * ``newCommandTimeout: 0`` ("never") -> the ceiling (N14 zombie guarantee).
+    * Otherwise the client may EXTEND the window up to the ceiling, never
+      shorten it: drivers enforce short values themselves (uia2's 60s default,
+      proven live by S21), so the sweep stays a backstop, not the contract
+      enforcer — and a ceiling misconfigured below ``idle_timeout`` can never
+      undercut the operator's window.
+    """
+    nct = _client_new_command_timeout_sec(session)
+    if nct is None:
+        return idle_timeout
+    extension = ceiling if nct == 0 else min(nct, ceiling)
+    return max(idle_timeout, extension)
+
+
 # Module-level wake hook (P2). The session_sync loop registers its running service's
 # ``wake`` here on startup; other leader-owned loops (e.g. the allocation reaper, which
 # runs in the same process as the leader's session_sync loop) call
@@ -203,15 +246,18 @@ class SessionSyncService:
              WebDriver traffic): never-commanded when ``started_at`` (the claim
              time) is older than ``grid.session_first_command_grace_sec``.
 
-           Appium does not reliably enforce newCommandTimeout idle kills, so an
-           abandoned client that crashed without a DELETE would otherwise pin its
-           device busy forever.
+           Driver enforcement of newCommandTimeout is config-dependent (uia2's
+           60s default kills eagerly; 0 disables it — proven live by S21), so
+           this sweep is the backstop: it honors a client-negotiated idle
+           contract up to grid.session_idle_timeout_ceiling_sec and guarantees
+           an abandoned client cannot pin its device busy forever.
         """
         idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
-        idle_cutoff = now_utc() - timedelta(seconds=idle_timeout)
+        idle_ceiling = int(self._settings.get("grid.session_idle_timeout_ceiling_sec"))
         grace = int(self._settings.get("grid.session_first_command_grace_sec"))
-        grace_cutoff = now_utc() - timedelta(seconds=grace)
-        fresh_cutoff = now_utc() - timedelta(seconds=ACTIVITY_FRESH_WINDOW_SEC)
+        now = now_utc()
+        grace_cutoff = now - timedelta(seconds=grace)
+        fresh_cutoff = now - timedelta(seconds=ACTIVITY_FRESH_WINDOW_SEC)
 
         running_stmt = (
             select(Session)
@@ -237,13 +283,15 @@ class SessionSyncService:
             """Return why a session should be reaped (idle / never-commanded), else None.
 
             NULL activity means the client never issued a command — age it against
-            the first-command grace from ``started_at`` (the claim time). Any
-            observed activity ages against the idle timeout; the ``started_at``
-            fallback is intentionally gone (grace owns the never-commanded case).
+            the first-command grace from ``started_at`` (the claim time). Observed
+            activity ages against the per-session idle budget: the operator timeout,
+            extendable (never shortenable) by the client's ``appium:newCommandTimeout``
+            up to ``grid.session_idle_timeout_ceiling_sec`` (7a).
             """
             if session.last_activity_at is None:
                 return "never_commanded" if session.started_at < grace_cutoff else None
-            return "idle" if session.last_activity_at < idle_cutoff else None
+            effective = _effective_idle_timeout_sec(session, idle_timeout=idle_timeout, ceiling=idle_ceiling)
+            return "idle" if session.last_activity_at < now - timedelta(seconds=effective) else None
 
         def _node_stopped(session: Session) -> bool:
             node = session.device.appium_node if session.device is not None else None
@@ -344,11 +392,13 @@ class SessionSyncService:
                 else:
                     GRID_IDLE_SESSIONS_REAPED_TOTAL.inc()
                     logger.warning(
-                        "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s",
+                        "grid_idle_session_reaped session=%s device=%s last_activity=%s idle_timeout_sec=%s "
+                        "effective_idle_timeout_sec=%s",
                         session.session_id,
                         device.id,
                         session.last_activity_at.isoformat() if session.last_activity_at else None,
                         idle_timeout,
+                        _effective_idle_timeout_sec(session, idle_timeout=idle_timeout, ceiling=idle_ceiling),
                     )
             elif verdict.action == "close_node_stopped":
                 GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL.inc()

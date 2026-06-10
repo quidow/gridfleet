@@ -415,10 +415,27 @@ _DEFINITIONS: list[SettingDefinition] = [
         default=1800,
         description=(
             "How long a running session may go without reported client activity before the observation sweep "
-            "terminates it. Replaces the relay's idle timeout (Appium does not enforce newCommandTimeout idle kills "
-            "reliably), so an abandoned client that crashes without a DELETE cannot pin its device busy forever."
+            "terminates it. Replaces the relay's idle timeout (driver enforcement of newCommandTimeout is "
+            "config-dependent), so an abandoned client that crashes without a DELETE cannot pin its device busy "
+            "forever. A client appium:newCommandTimeout above this value extends the window per session, up to "
+            "grid.session_idle_timeout_ceiling_sec."
         ),
         env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_SEC",
+        min_value=60,
+        max_value=86400,
+    ),
+    SettingDefinition(
+        key="grid.session_idle_timeout_ceiling_sec",
+        category="grid",
+        setting_type="int",
+        default=7200,
+        description=(
+            "Hard ceiling on how far a client's appium:newCommandTimeout may extend the idle reap window. "
+            "The observation sweep honors an idle contract the client negotiated above "
+            "grid.session_idle_timeout_sec, up to this ceiling; newCommandTimeout=0 ('never idle-kill') clamps "
+            "here, preserving the zombie-session guarantee. Clients can extend the idle window, never shorten it."
+        ),
+        env_var="GRIDFLEET_GRID_SESSION_IDLE_TIMEOUT_CEILING_SEC",
         min_value=60,
         max_value=86400,
     ),
