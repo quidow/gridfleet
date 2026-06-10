@@ -19,7 +19,6 @@ class AgentReconfigureOutbox(Base):
         UUID(as_uuid=True),
         ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     accepting_new_sessions: Mapped[bool] = mapped_column(Boolean, nullable=False)

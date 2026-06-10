@@ -34,7 +34,6 @@ class HostPackFeatureStatus(Base):
         UUID(as_uuid=True),
         ForeignKey("hosts.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     pack_id: Mapped[str] = mapped_column(String, nullable=False)
     feature_id: Mapped[str] = mapped_column(String, nullable=False)

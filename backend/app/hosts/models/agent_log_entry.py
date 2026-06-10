@@ -19,7 +19,6 @@ class HostAgentLogEntry(Base):
     host_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("hosts.id", ondelete="CASCADE"),
-        index=True,
         nullable=False,
     )
     boot_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
