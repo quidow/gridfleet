@@ -35,6 +35,7 @@ from app.runs.models import RunState
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
 from app.sessions.probe_inflight import is_probe_inflight
+from app.sessions.service import device_has_running_session
 
 if TYPE_CHECKING:
     import uuid
@@ -188,6 +189,22 @@ async def _get_device_health(
         )
     except AgentCallError:
         return None
+
+
+async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
+    """True when any device on this host has a live/pending session row or an
+    in-flight viability probe — the adapter's disruptive cure rung (adb bounce)
+    must not run then, it would sever every transport on the host."""
+    row = await db.execute(
+        select(Session.id)
+        .join(Device, Session.device_id == Device.id)
+        .where(Device.host_id == device.host_id, live_session_predicate())
+        .limit(1)
+    )
+    if row.first() is not None:
+        return True
+    host_device_ids = (await db.scalars(select(Device.id).where(Device.host_id == device.host_id))).all()
+    return any(is_probe_inflight(str(device_id)) for device_id in host_device_ids)
 
 
 async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
@@ -458,6 +475,8 @@ class ConnectivityService:
         db: AsyncSession,
         device: Device,
         health_result: dict[str, Any],
+        *,
+        claimed_ports: dict[str, int] | None = None,
     ) -> bool:
         """If the probe recommends a manifest-declared action and the pack is not
         draining, dispatch it (bounded). Returns True if a re-probe then showed the
@@ -492,15 +511,37 @@ class ConnectivityService:
             metrics.record_device_repair_attempt(action=action, outcome="budget_exhausted")
             return False
 
+        # Fresh facts at dispatch time (the probe-phase snapshot is stale by the
+        # agent round-trips): a session/probe that appeared since the probe makes
+        # the adapter refuse port cures; host-wide liveness gates its bounce rung.
+        fresh_live = await device_has_running_session(db, device.id) or is_probe_inflight(str(device.id))
+        host_live = await _host_has_live_sessions(db, device)
+        extra_args: dict[str, Any] = {"has_live_session": fresh_live, "host_has_live_sessions": host_live}
+        if claimed_ports:
+            extra_args["claimed_ports"] = claimed_ports
+
         try:
             result = await link_repair.dispatch_recommended_action(
-                device, action, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+                device,
+                action,
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+                extra_args=extra_args,
             )
         except AgentCallError:
             result = {"success": False}
         success = bool(result.get("success"))
         await record_event(
-            db, device.id, DeviceEventType.repair_attempted, {"action": action, "attempt": attempt, "success": success}
+            db,
+            device.id,
+            DeviceEventType.repair_attempted,
+            {
+                "action": action,
+                "attempt": attempt,
+                "success": success,
+                "detail": str(result.get("detail") or "")[:200],
+            },
         )
         metrics.record_device_repair_attempt(action=action, outcome="success" if success else "failed")
         if not success:
@@ -510,6 +551,8 @@ class ConnectivityService:
             device,
             ip_ping_timeout_sec=None,
             ip_ping_count=None,
+            claimed_ports=claimed_ports,
+            has_live_session=fresh_live,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
             pool=self._pool,
@@ -798,7 +841,9 @@ class ConnectivityService:
                     )
 
                 if not healthy and health_result is not None:
-                    repaired = await self._maybe_dispatch_repair(db, device, health_result)
+                    repaired = await self._maybe_dispatch_repair(
+                        db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
+                    )
                     if repaired:
                         healthy = True
                         ip_ping_entry = None

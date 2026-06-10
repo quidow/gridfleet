@@ -2306,3 +2306,50 @@ async def test_probe_passes_claimed_ports_and_live_flag(
     )
     assert seen["claimed_ports"] == {"appium:systemPort": 8200}
     assert seen["has_live_session"] is False
+
+
+async def _device_event_payload(db_session: AsyncSession, device_id: uuid.UUID, event_type: str) -> dict[str, Any]:
+    from sqlalchemy import select as _select
+
+    from app.devices.models.event import DeviceEvent
+
+    rows = (await db_session.execute(_select(DeviceEvent).where(DeviceEvent.device_id == device_id))).scalars().all()
+    for row in rows:
+        if row.event_type.value == event_type:
+            return dict(row.details or {})
+    raise AssertionError(f"no {event_type} event for {device_id}")
+
+
+async def test_repair_event_records_curing_rung(db_session: AsyncSession) -> None:
+    # dispatch succeeds with a rung detail; re-probe healthy → repair_attempted
+    # event carries that detail.
+    _host, device, _ = await _setup_host_and_device(db_session, with_node=True)
+    unhealthy = {
+        "healthy": False,
+        "checks": [{"check_id": "claimed_ports_free", "ok": False}],
+        "recommended_action": "release_forwarded_ports",
+    }
+    dispatch = AsyncMock(return_value={"success": True, "detail": "cured_by=forward_remove"})
+    rp, ph = _recommend_repair_patches()
+    with (
+        rp,
+        ph,
+        patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new_callable=AsyncMock,
+            side_effect=[unhealthy, {"healthy": True, "checks": [{"check_id": "claimed_ports_free", "ok": True}]}],
+        ),
+        patch("app.devices.services.link_repair.dispatch_recommended_action", new=dispatch),
+    ):
+        await ConnectivityService(
+            publisher=Mock(),
+            settings=FakeSettingsReader({}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=DeviceHealthService(publisher=Mock()),
+        ).check_connectivity(db_session)
+
+    dispatch.assert_awaited_once()
+    payload = await _device_event_payload(db_session, device.id, "repair_attempted")
+    assert payload["detail"] == "cured_by=forward_remove"

@@ -59,6 +59,7 @@ async def dispatch_recommended_action(
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     pool: AgentHttpPool | None = None,
+    extra_args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Dispatch a manifest-declared lifecycle action for ``device`` via its agent.
 
@@ -75,9 +76,9 @@ async def dispatch_recommended_action(
         pack_id=device.pack_id,
         platform_id=device.platform_id,
         action=action,
-        # Driver-agnostic: pass only the generic target. Platform defaults (e.g.
-        # the android adapter's adb port 5555) belong to the adapter, not core.
-        args={"ip_address": device.ip_address},
+        # Driver-agnostic: the generic target plus caller-supplied facts (e.g.
+        # claimed_ports / live-session flags). Core never interprets them.
+        args={"ip_address": device.ip_address, **(extra_args or {})},
         http_client_factory=httpx.AsyncClient,
         settings=settings,
         circuit_breaker=circuit_breaker,
