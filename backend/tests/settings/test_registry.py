@@ -193,3 +193,17 @@ def test_appium_reconciler_host_parallelism_is_registered() -> None:
     assert setting.default == 8
     assert setting.min_value == 1
     assert setting.max_value == 32
+
+
+def test_unbounded_table_retention_settings_are_registered() -> None:
+    for key in (
+        "retention.system_events_days",
+        "retention.test_runs_days",
+        "retention.jobs_days",
+    ):
+        definition = settings_registry.SETTINGS_REGISTRY[key]
+        assert definition.category == "retention"
+        assert definition.setting_type == "int"
+        assert definition.default == 30
+        assert definition.min_value == 1
+        assert definition.max_value == 3650
