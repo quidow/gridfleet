@@ -45,6 +45,19 @@ logger = logging.getLogger(__name__)
 TERMINATE_CONCURRENCY_PER_HOST = 2
 
 
+def _resolve_session_target(session: Session, devices_by_id: dict[uuid.UUID, Device]) -> str | None:
+    """Resolve a session's Appium target from a pre-loaded device map.
+
+    resolve_router_target reads ``session.device`` for the live target; attach the
+    batch-loaded device (eager appium_node/host) so it resolves without a lazy load.
+    """
+    device = devices_by_id.get(session.device_id) if session.device_id is not None else None
+    if device is None:
+        return None
+    set_committed_value(session, "device", device)
+    return resolve_router_target(session)
+
+
 class RunReleaseService:
     def __init__(
         self,
@@ -232,13 +245,33 @@ class RunReleaseService:
         # wall time under lock. Resolve targets serially (DB reads), gather the
         # DELETEs concurrently bounded per host (no DB access inside the gather —
         # the AsyncSession is not task-safe), then do the DB writes serially.
+        # Read-only target resolution: the caller awaits 10s Appium DELETEs next, so
+        # row locks here would serialize the reconciler and every state writer on
+        # these devices against Appium latency. One batched load (was one query per
+        # session) with the eager-loaded appium_node/host that resolve_router_target
+        # needs. Resolution falls back to the router_target stored at allocation for
+        # a node whose port was transiently stale-cleared (recovery backoff) (#9).
+        running_device_ids = {
+            session.device_id
+            for session in sessions
+            if session.status == SessionStatus.running and session.device_id is not None
+        }
+        devices_by_id: dict[uuid.UUID, Device] = {}
+        if running_device_ids:
+            device_stmt = (
+                select(Device)
+                .options(selectinload(Device.appium_node), selectinload(Device.host))
+                .where(Device.id.in_(running_device_ids))
+            )
+            devices_by_id = {device.id: device for device in (await db.execute(device_stmt)).scalars()}
+
         targets: dict[uuid.UUID, str | None] = {}
         for session in sessions:
             if session.status == SessionStatus.running:
                 # A live Appium session: best-effort DELETE on the node before closing
                 # the DB row. With no reachable target or a failed delete, leave the row
                 # running so it is not falsely marked ended (the idle reaper backstops).
-                targets[session.id] = await self._session_node_target(db, session)
+                targets[session.id] = _resolve_session_target(session, devices_by_id)
 
         host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(TERMINATE_CONCURRENCY_PER_HOST)
@@ -284,25 +317,3 @@ class RunReleaseService:
             await session_service.close_running_session(
                 db, session, attached_run=session.run, publisher=self._publisher
             )
-
-    async def _session_node_target(self, db: AsyncSession, session: Session) -> str | None:
-        if session.device_id is None:
-            return None
-        # Read-only target resolution: the caller awaits a 10s Appium DELETE next, so a
-        # row lock here would serialize the reconciler and every state writer on this
-        # device against Appium latency. Plain load with the eager-loaded
-        # appium_node/host. Resolve via resolve_router_target so a session whose node
-        # port was transiently stale-cleared (recovery backoff) still resolves via the
-        # router_target stored at allocation (#9).
-        stmt = (
-            select(Device)
-            .options(selectinload(Device.appium_node), selectinload(Device.host))
-            .where(Device.id == session.device_id)
-        )
-        device = (await db.execute(stmt)).scalars().first()
-        if device is None:
-            return None
-        # resolve_router_target reads session.device for the live target; attach the
-        # freshly-loaded device so it sees the eager-loaded node/host.
-        set_committed_value(session, "device", device)
-        return resolve_router_target(session)
