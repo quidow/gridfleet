@@ -56,6 +56,11 @@ def state(device: Device) -> dict[str, Any]:
     return {**default_state(), **raw}
 
 
+def in_maintenance(device: Device) -> bool:
+    """True when a maintenance reason is recorded in the device's lifecycle policy state."""
+    return state(device).get("maintenance_reason") is not None
+
+
 def write_state(device: Device, next_state: dict[str, Any]) -> None:
     device_state = sa_inspect(device, raiseerr=False)
     assert device_state is not None and device_state.persistent, (

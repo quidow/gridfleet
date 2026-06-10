@@ -245,7 +245,7 @@ async def _execute_action(
         return
     if action.kind == "clear_expired_token":
         APPIUM_RECONCILER_TRANSITION_TOKEN_EXPIRED.inc()
-        await clear_token(row=row, reason="deadline_elapsed")
+        await clear_token(row=row)
         return
     if action.kind == "db_clear_stale_running":
         await write_observed(row=row, state="stopped", port=None, pid=None, active_connection_target=None)

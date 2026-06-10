@@ -256,49 +256,29 @@ def _split_ip_ping(checks: list[dict[str, Any]]) -> tuple[dict[str, Any] | None,
     return ip_ping, others
 
 
-async def _apply_ip_ping_hysteresis(
+async def _apply_failure_hysteresis(
     db: AsyncSession,
     device: Device,
     *,
+    namespace: str,
     ok: bool,
     threshold: int,
 ) -> bool:
-    """Increment / reset the consecutive-failure counter and return the gated boolean.
+    """Consecutive-failure debounce backed by the control-plane state store.
 
-    Returns True while the failure count is below threshold (suppressing the
-    failure), False once the count reaches or exceeds threshold, and always
-    True (plus counter reset) on success.
+    Returns True while the failure count is below ``threshold`` (suppressing
+    the failure), False once the count reaches or exceeds it, and always True
+    (plus counter reset) on success. Keyed per device under ``namespace``
+    (``IP_PING_NAMESPACE`` for the ip_ping check, ``PROBE_FAILED_NAMESPACE``
+    for manifest-declared debounceable checks).
     """
     if ok:
-        await control_plane_state_store.delete_value(db, IP_PING_NAMESPACE, device.identity_value)
+        await control_plane_state_store.delete_value(db, namespace, device.identity_value)
         return True
 
-    current = await control_plane_state_store.get_value(db, IP_PING_NAMESPACE, device.identity_value)
+    current = await control_plane_state_store.get_value(db, namespace, device.identity_value)
     counter = int(current) + 1 if isinstance(current, int) else 1
-    await control_plane_state_store.set_value(db, IP_PING_NAMESPACE, device.identity_value, counter)
-    return counter < threshold
-
-
-async def _apply_probe_failure_hysteresis(
-    db: AsyncSession,
-    device: Device,
-    *,
-    ok: bool,
-    threshold: int,
-) -> bool:
-    """Consecutive-failure debounce for manifest-declared debounceable checks.
-
-    Same shape as ``_apply_ip_ping_hysteresis`` but keyed on its own namespace:
-    returns True (suppressing the failure) while the count is below threshold,
-    False once it reaches threshold, and always True + counter reset on success.
-    """
-    if ok:
-        await control_plane_state_store.delete_value(db, PROBE_FAILED_NAMESPACE, device.identity_value)
-        return True
-
-    current = await control_plane_state_store.get_value(db, PROBE_FAILED_NAMESPACE, device.identity_value)
-    counter = int(current) + 1 if isinstance(current, int) else 1
-    await control_plane_state_store.set_value(db, PROBE_FAILED_NAMESPACE, device.identity_value, counter)
+    await control_plane_state_store.set_value(db, namespace, device.identity_value, counter)
     return counter < threshold
 
 
@@ -375,9 +355,10 @@ class ConnectivityService:
         # regardless, and mutating the persisted counter and failure gauges
         # would skew ip_ping telemetry for devices that are simply gone.
         if others_ok and ip_ping_entry is not None and device.operational_state != DeviceOperationalState.maintenance:
-            gated_ip_ping_ok = await _apply_ip_ping_hysteresis(
+            gated_ip_ping_ok = await _apply_failure_hysteresis(
                 db,
                 device,
+                namespace=IP_PING_NAMESPACE,
                 ok=bool(ip_ping_entry.get("ok")),
                 threshold=ip_ping_threshold,
             )
@@ -399,13 +380,15 @@ class ConnectivityService:
         gated_others_ok = others_ok
         if raw_checks_list and device.operational_state != DeviceOperationalState.maintenance:
             if others_ok:
-                await _apply_probe_failure_hysteresis(db, device, ok=True, threshold=probe_failed_threshold)
+                await _apply_failure_hysteresis(
+                    db, device, namespace=PROBE_FAILED_NAMESPACE, ok=True, threshold=probe_failed_threshold
+                )
             else:
                 failing = [c for c in other_checks if isinstance(c, dict) and not c.get("ok")]
                 debounceable = await self._debounceable_check_ids(db, device)
                 if failing and all(c.get("check_id") in debounceable for c in failing):
-                    gated_others_ok = await _apply_probe_failure_hysteresis(
-                        db, device, ok=False, threshold=probe_failed_threshold
+                    gated_others_ok = await _apply_failure_hysteresis(
+                        db, device, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=probe_failed_threshold
                     )
         return gated_others_ok and gated_ip_ping_ok, ip_ping_entry
 
@@ -632,6 +615,37 @@ class ConnectivityService:
 
         return dict(await asyncio.gather(*[_probe(device) for device in devices]))
 
+    async def _record_disconnect_if_stable(self, db: AsyncSession, device: Device, *, held: bool) -> None:
+        """Record a device disconnect unless its held/reserved classification flipped under the lock.
+
+        ``held`` is the pre-lock classification (busy/maintenance or actively
+        reserved). The durable writes are identical on both sides; the post-lock
+        re-check only guards against acting on a stale classification (TOCTOU
+        across the lock acquisition).
+        """
+        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
+        locked_device = await device_locking.lock_device(db, device.id)
+        held_after = locked_device.operational_state in (
+            DeviceOperationalState.busy,
+            DeviceOperationalState.maintenance,
+        ) or await device_is_reserved(db, locked_device.id)
+        if held_after != held:
+            logger.info(
+                "Device %s (%s) changed held/reserved classification to %s before disconnect write — skipping",
+                locked_device.name,
+                locked_device.identity_value,
+                _audit_label(locked_device),
+            )
+            return
+        await IntentService(db).mark_dirty_and_reconcile(
+            locked_device.id,
+            reason="Device disconnected",
+            publisher=self._publisher,
+            observed_reason=ObservationReason.disconnected,
+        )
+        await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+        await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
+
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
         ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
@@ -802,31 +816,7 @@ class ConnectivityService:
                             host.hostname,
                             _audit_label(device),
                         )
-                        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
-                        locked_device = await device_locking.lock_device(db, device.id)
-                        if (
-                            locked_device.operational_state == DeviceOperationalState.busy
-                            or locked_device.operational_state == DeviceOperationalState.maintenance
-                            or await device_is_reserved(db, locked_device.id)
-                        ):
-                            await IntentService(db).mark_dirty_and_reconcile(
-                                locked_device.id,
-                                reason="Device disconnected",
-                                publisher=self._publisher,
-                                observed_reason=ObservationReason.disconnected,
-                            )
-                            await self._lifecycle_policy.note_connectivity_loss(
-                                db, locked_device, reason="Device disconnected"
-                            )
-                            await control_plane_state_store.set_value(
-                                db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
-                            )
-                        else:
-                            logger.info(
-                                "Device %s (%s) left held/busy state before lifecycle write — skipping",
-                                locked_device.name,
-                                locked_device.identity_value,
-                            )
+                        await self._record_disconnect_if_stable(db, device, held=True)
                         continue
                     logger.warning(
                         "Device %s (%s) disconnected from host %s",
@@ -834,32 +824,7 @@ class ConnectivityService:
                         device.identity_value,
                         host.hostname,
                     )
-                    await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
-                    locked_device = await device_locking.lock_device(db, device.id)
-                    if (
-                        locked_device.operational_state != DeviceOperationalState.busy
-                        and locked_device.operational_state != DeviceOperationalState.maintenance
-                        and not await device_is_reserved(db, locked_device.id)
-                    ):
-                        await IntentService(db).mark_dirty_and_reconcile(
-                            locked_device.id,
-                            reason="Device disconnected",
-                            publisher=self._publisher,
-                            observed_reason=ObservationReason.disconnected,
-                        )
-                        await self._lifecycle_policy.note_connectivity_loss(
-                            db, locked_device, reason="Device disconnected"
-                        )
-                        await control_plane_state_store.set_value(
-                            db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
-                        )
-                    else:
-                        logger.info(
-                            "Device %s (%s) transitioned to %s before offline write — skipping",
-                            locked_device.name,
-                            locked_device.identity_value,
-                            _audit_label(locked_device),
-                        )
+                    await self._record_disconnect_if_stable(db, device, held=False)
 
         await db.commit()
 

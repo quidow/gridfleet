@@ -397,7 +397,7 @@ async def _eval_node_running(db: AsyncSession, precondition: dict[str, object]) 
 
 async def _eval_maintenance_active(db: AsyncSession, precondition: dict[str, object]) -> bool:
     from app.devices.models import Device  # noqa: PLC0415
-    from app.devices.services.lifecycle_policy_state import state  # noqa: PLC0415
+    from app.devices.services.lifecycle_policy_state import in_maintenance  # noqa: PLC0415
 
     raw_device_id = precondition.get("device_id")
     if not isinstance(raw_device_id, str):
@@ -409,4 +409,4 @@ async def _eval_maintenance_active(db: AsyncSession, precondition: dict[str, obj
     device = await db.get(Device, device_uuid)
     if device is None:
         return False
-    return state(device).get("maintenance_reason") is not None
+    return in_maintenance(device)

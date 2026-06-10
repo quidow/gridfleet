@@ -200,7 +200,7 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
 
     clear_token = _reconciler_svc._clear_token_factory(require_leader=False, session_scope=lambda: db)
     monkeypatch.setattr(appium_reconciler, "_clear_transition_token", AsyncMock())
-    await clear_token(row=row, reason="done")
+    await clear_token(row=row)
     appium_reconciler._clear_transition_token.assert_awaited_once_with(db, row)
 
 

@@ -36,6 +36,8 @@ from app.core.errors import AgentResponseError, AgentUnreachableError
 if TYPE_CHECKING:
     import uuid
 
+    from pydantic import BaseModel
+
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
@@ -151,6 +153,59 @@ def _raise_for_status(response: httpx.Response, *, host: str, action: str) -> No
         ) from exc
 
 
+def _decode_model_payload(
+    response: httpx.Response,
+    *,
+    host: str,
+    action: str,
+    model: type[BaseModel],
+) -> dict[str, Any]:
+    """Strict decode: HTTP error -> AgentResponseError; invalid JSON or payload -> AgentUnreachableError."""
+    _raise_for_status(response, host=host, action=action)
+    try:
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError as exc:
+        raise AgentUnreachableError(host, f"Agent {action} failed on host {host} (invalid JSON payload)") from exc
+    try:
+        model.model_validate(raw)
+    except PydanticValidationError as exc:
+        raise AgentUnreachableError(host, f"Agent {action} failed on host {host} (invalid payload)") from exc
+    return raw
+
+
+def _decode_model_payload_lenient(
+    response: httpx.Response,
+    *,
+    host: str,
+    action: str,
+    model: type[BaseModel],
+    none_on_404: bool = False,
+    require_200: bool = False,
+) -> dict[str, Any] | None:
+    """Lenient decode: invalid JSON or payload -> None.
+
+    ``require_200`` returns None for ANY non-200 status without raising.
+    ``none_on_404`` returns None for 404 and raises (via ``_raise_for_status``)
+    for other error statuses.
+    """
+    if require_200:
+        if response.status_code != 200:
+            return None
+    else:
+        if none_on_404 and response.status_code == 404:
+            return None
+        _raise_for_status(response, host=host, action=action)
+    try:
+        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
+    except ValueError:
+        return None
+    try:
+        model.model_validate(raw)
+    except PydanticValidationError:
+        return None
+    return raw
+
+
 def _as_dict(payload: object) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
@@ -177,16 +232,7 @@ async def agent_health(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="health check")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError:
-        return None
-    try:
-        HealthResponse.model_validate(raw)
-    except PydanticValidationError:
-        return None
-    return raw
+    return _decode_model_payload_lenient(response, host=host, action="health check", model=HealthResponse)
 
 
 async def agent_host_telemetry(
@@ -211,17 +257,9 @@ async def agent_host_telemetry(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    if response.status_code != 200:
-        return None
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError:
-        return None
-    try:
-        HostTelemetryResponse.model_validate(raw)
-    except PydanticValidationError:
-        return None
-    return raw
+    return _decode_model_payload_lenient(
+        response, host=host, action="fetch host telemetry", model=HostTelemetryResponse, require_200=True
+    )
 
 
 async def appium_logs(
@@ -249,18 +287,7 @@ async def appium_logs(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="fetch Appium logs")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent fetch Appium logs failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        AppiumLogsResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent fetch Appium logs failed on host {host} (invalid payload)") from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="fetch Appium logs", model=AppiumLogsResponse)
 
 
 async def appium_status(
@@ -286,17 +313,9 @@ async def appium_status(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    if response.status_code != 200:
-        return None
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError:
-        return None
-    try:
-        AppiumStatusResponse.model_validate(raw)
-    except PydanticValidationError:
-        return None
-    return raw
+    return _decode_model_payload_lenient(
+        response, host=host, action="fetch Appium status", model=AppiumStatusResponse, require_200=True
+    )
 
 
 async def appium_start(
@@ -384,16 +403,7 @@ async def agent_appium_reconfigure(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="reconfigure Appium node")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid JSON payload)") from exc
-    try:
-        AppiumReconfigureResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent reconfigure failed on host {host} (invalid payload)") from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="reconfigure Appium node", model=AppiumReconfigureResponse)
 
 
 def parse_agent_error_detail(response: httpx.Response | None) -> tuple[str | None, str]:
@@ -476,16 +486,7 @@ async def sync_plugins(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="sync plugins")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(host, f"Agent sync plugins failed on host {host} (invalid JSON payload)") from exc
-    try:
-        PluginSyncResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent sync plugins failed on host {host} (invalid payload)") from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="sync plugins", model=PluginSyncResponse)
 
 
 async def get_tool_status(
@@ -510,18 +511,7 @@ async def get_tool_status(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="fetch tool status")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent fetch tool status failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        ToolsStatusResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent fetch tool status failed on host {host} (invalid payload)") from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="fetch tool status", model=ToolsStatusResponse)
 
 
 async def get_pack_devices(
@@ -546,18 +536,7 @@ async def get_pack_devices(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="list pack devices")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent list pack devices failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        PackDevicesResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(host, f"Agent list pack devices failed on host {host} (invalid payload)") from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="list pack devices", model=PackDevicesResponse)
 
 
 async def get_pack_device_properties(
@@ -589,18 +568,9 @@ async def get_pack_device_properties(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    if response.status_code == 404:
-        return None
-    _raise_for_status(response, host=host, action="fetch pack device properties")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError:
-        return None
-    try:
-        PackDevicePropertiesResponse.model_validate(raw)
-    except PydanticValidationError:
-        return None
-    return raw
+    return _decode_model_payload_lenient(
+        response, host=host, action="fetch pack device properties", model=PackDevicePropertiesResponse, none_on_404=True
+    )
 
 
 async def normalize_pack_device(
@@ -637,20 +607,7 @@ async def normalize_pack_device(
     )
     if response.status_code == 404:
         return None
-    _raise_for_status(response, host=host, action="normalize pack device")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent normalize pack device failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        NormalizeDeviceResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent normalize pack device failed on host {host} (invalid payload)"
-        ) from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="normalize pack device", model=NormalizeDeviceResponse)
 
 
 async def pack_device_health(
@@ -705,20 +662,7 @@ async def pack_device_health(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action="fetch pack device health")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent fetch pack device health failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        PackDeviceHealthResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent fetch pack device health failed on host {host} (invalid payload)"
-        ) from exc
-    return raw
+    return _decode_model_payload(response, host=host, action="fetch pack device health", model=PackDeviceHealthResponse)
 
 
 async def pack_device_telemetry(
@@ -759,18 +703,9 @@ async def pack_device_telemetry(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    if response.status_code == 404:
-        return None
-    _raise_for_status(response, host=host, action="fetch pack device telemetry")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError:
-        return None
-    try:
-        PackDeviceTelemetryResponse.model_validate(raw)
-    except PydanticValidationError:
-        return None
-    return raw
+    return _decode_model_payload_lenient(
+        response, host=host, action="fetch pack device telemetry", model=PackDeviceTelemetryResponse, none_on_404=True
+    )
 
 
 async def pack_device_lifecycle_action(
@@ -802,20 +737,8 @@ async def pack_device_lifecycle_action(
         pool=pool,
         circuit_breaker=circuit_breaker,
     )
-    _raise_for_status(response, host=host, action=f"run pack device lifecycle action {action}")
-    try:
-        raw: dict[str, Any] = cast("dict[str, Any]", response.json())
-    except ValueError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent lifecycle action {action} failed on host {host} (invalid JSON payload)"
-        ) from exc
-    try:
-        PackDeviceLifecycleResponse.model_validate(raw)
-    except PydanticValidationError as exc:
-        raise AgentUnreachableError(
-            host, f"Agent lifecycle action {action} failed on host {host} (invalid payload)"
-        ) from exc
-    return raw
+    action_label = f"run pack device lifecycle action {action}"
+    return _decode_model_payload(response, host=host, action=action_label, model=PackDeviceLifecycleResponse)
 
 
 async def pack_doctor(
