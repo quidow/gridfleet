@@ -4498,7 +4498,7 @@ export interface components {
              * Id
              * @enum {string}
              */
-            id: "state" | "reconnect" | "boot" | "shutdown";
+            id: "state" | "reconnect" | "boot" | "shutdown" | "release_forwarded_ports";
         };
         /** LifecycleIncidentListRead */
         LifecycleIncidentListRead: {
