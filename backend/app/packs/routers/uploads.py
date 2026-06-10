@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.http_errors import convert_not_found, found_or_404
 from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
@@ -91,10 +92,7 @@ async def fetch_tarball(
 
 @router.get("/{pack_id}/releases", response_model=PackReleasesOut)
 async def list_releases(pack_id: str, session: DbDep, packs: PackServicesDep) -> PackReleasesOut:
-    result = await packs.release.list_releases(session, pack_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
-    return result
+    return found_or_404(await packs.release.list_releases(session, pack_id), f"Pack {pack_id!r} not found")
 
 
 @router.patch("/{pack_id}/releases/current", response_model=PackOut)
@@ -105,10 +103,8 @@ async def update_current_release(
     session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    try:
+    with convert_not_found():
         pack = await packs.release.set_current_release(session, pack_id, body.release)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
     await session.commit()
     return build_pack_out(pack)
 

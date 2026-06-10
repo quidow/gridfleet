@@ -10,6 +10,7 @@ from app.agent_comm.reconfigure_delivery import InlineReconfigureDeliveryFailedE
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404, RESPONSES_409, RESPONSES_422
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
 from app.devices.models import Device
 from app.runs import service as run_service
@@ -173,9 +174,7 @@ async def list_runs(
 
 @router.get("/{run_id}", response_model=RunDetail)
 async def get_run(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> dict[str, Any]:
-    run = await run_service.get_run(db, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    run = found_or_404(await run_service.get_run(db, run_id), "Run not found")
     devices = [ReservedDeviceInfo(**d) for d in (run.reserved_devices or [])]
     counts_map = await run_services.query.fetch_session_counts(db, [run.id])
     base = run_service.build_run_read(run, counts_map.get(run.id))

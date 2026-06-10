@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.dependencies import AdminDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.core.dependencies import DbDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
+from app.core.http_errors import convert_not_found, found_or_404
 from app.packs.dependencies import PackServicesDep  # noqa: TC001 - FastAPI inspects dependency aliases at runtime.
 from app.packs.models import PackState
 from app.packs.schemas import (
@@ -25,16 +26,12 @@ async def catalog(session: DbDep, packs: PackServicesDep) -> PackCatalog:
 
 @router.get("/{pack_id}", response_model=PackOut)
 async def get_pack(pack_id: str, session: DbDep, packs: PackServicesDep) -> PackOut:
-    result = await packs.catalog.get_pack_detail(session, pack_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
-    return result
+    return found_or_404(await packs.catalog.get_pack_detail(session, pack_id), f"Pack {pack_id!r} not found")
 
 
 @router.get("/{pack_id}/hosts", response_model=DriverPackHostsOut)
 async def hosts(pack_id: str, session: DbDep, packs: PackServicesDep) -> DriverPackHostsOut:
-    if await packs.catalog.get_pack_detail(session, pack_id) is None:
-        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found")
+    found_or_404(await packs.catalog.get_pack_detail(session, pack_id), f"Pack {pack_id!r} not found")
     return DriverPackHostsOut.model_validate(await packs.status.get_driver_pack_host_status(session, pack_id))
 
 
@@ -68,10 +65,8 @@ async def update_runtime_policy(
     session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    try:
+    with convert_not_found(f"Pack {pack_id!r} not found"):
         pack = await packs.catalog.set_runtime_policy(session, pack_id, body.runtime_policy)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     return build_pack_out(pack)
 
 
