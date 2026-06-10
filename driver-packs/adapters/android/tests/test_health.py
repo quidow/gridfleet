@@ -431,3 +431,69 @@ async def test_health_check_identity_skipped_when_not_connected(
     results = await health_check(_network_ctx())
 
     assert not any(result.check_id == "identity" for result in results)
+
+
+def _orphan_ctx(*, has_live: bool | None, ports: dict[str, int] | None) -> _Ctx:
+    ctx = _Ctx()  # plain USB serial — no ping check interference
+    ctx.has_live_session = has_live  # type: ignore[attr-defined]
+    ctx.claimed_ports = ports  # type: ignore[attr-defined]
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_orphan_system_port_detected_when_no_live_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_run_cmd(cmd: list[str], *, timeout: float = 30.0) -> str:
+        if cmd[-1] == "get-state":
+            return "device"
+        if cmd[-1] == "ok":
+            return "ok"
+        if cmd[-1] == "sys.boot_completed":
+            return "1"
+        return ""
+
+    monkeypatch.setattr("adapter.health.run_cmd", fake_run_cmd)
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=True))  # port BOUND
+
+    results = await health_check(_orphan_ctx(has_live=False, ports={"appium:systemPort": 8200}))
+
+    failed = [r for r in results if r.check_id == "claimed_ports_free"]
+    assert len(failed) == 1 and failed[0].ok is False
+    assert "8200" in failed[0].detail
+    assert _recommendation(results) == "release_forwarded_ports"
+
+
+@pytest.mark.asyncio
+async def test_orphan_check_green_when_port_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("adapter.health._adb_shell_echo", AsyncMock(return_value=True))
+    monkeypatch.setattr("adapter.health.run_cmd", AsyncMock(return_value="device"))
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    monkeypatch.setattr("adapter.health.tcp_reachable", AsyncMock(return_value=False))  # port free
+
+    results = await health_check(_orphan_ctx(has_live=False, ports={"appium:systemPort": 8200}))
+
+    entry = [r for r in results if r.check_id == "claimed_ports_free"]
+    assert len(entry) == 1 and entry[0].ok is True and entry[0].recommended_action is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("has_live", "ports"),
+    [
+        (True, {"appium:systemPort": 8200}),  # session live → port legitimately bound
+        (None, {"appium:systemPort": 8200}),  # unknown (old backend) → degrade to skip
+        (False, None),  # no claims supplied → skip
+        (False, {"appium:chromedriverPort": 9515}),  # no systemPort claim → skip
+    ],
+)
+async def test_orphan_check_skipped(
+    monkeypatch: pytest.MonkeyPatch, has_live: bool | None, ports: dict[str, int] | None
+) -> None:
+    monkeypatch.setattr("adapter.health.run_cmd", AsyncMock(return_value="device"))
+    monkeypatch.setattr("adapter.health.find_adb", lambda: "adb")
+    connect = AsyncMock(return_value=True)
+    monkeypatch.setattr("adapter.health.tcp_reachable", connect)
+
+    results = await health_check(_orphan_ctx(has_live=has_live, ports=ports))
+
+    assert not [r for r in results if r.check_id == "claimed_ports_free"]
