@@ -11,12 +11,13 @@ from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.core.errors import AppError
+from app.core.observability import get_logger
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.intent import IntentService
-from app.devices.services.state import set_operational_state
+from app.devices.services.state import GATING_VIOLATION, set_operational_state
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
 from app.sessions.filters import exclude_non_test_sessions, exclude_reserved_sessions
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
     from app.sessions.protocols import DeviceSessionLifecycle
+
+logger = get_logger(__name__)
 
 
 class DeviceLiveSessionConflictError(AppError):
@@ -531,6 +534,24 @@ class SessionCrudService:
                 if conflicting is not None:
                     raise DeviceLiveSessionConflictError(
                         f"device {device.id} already has a live session ({conflicting})"
+                    )
+                if device.operational_state in (
+                    DeviceOperationalState.maintenance,
+                    DeviceOperationalState.offline,
+                    DeviceOperationalState.verifying,
+                ):
+                    # Gating tripwire: a running session landing here is an invariant
+                    # breach the state derivation then ABSORBS (has_running_session wins
+                    # over every other fact, so the device just reads ``busy``) — this
+                    # counter is the only production witness. Detection only: the
+                    # registration proceeds unchanged. ``busy`` is excluded (the
+                    # live-session guard above owns double-binds).
+                    GATING_VIOLATION.labels(kind="session_on_non_available").inc()
+                    logger.warning(
+                        "session_gating_violation device=%s state=%s session=%s",
+                        device.id,
+                        device.operational_state.value,
+                        session_id,
                     )
         else:
             device = await _resolve_device_for_session(
