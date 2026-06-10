@@ -734,6 +734,31 @@ class AllocationService:
         candidate: dict[str, Any],
         run_id: uuid.UUID | None,
     ) -> AllocationResult | None:
+        # A session-viability probe is a REAL Appium session on an ``available``
+        # device, posted directly to the node — no Session row exists until the
+        # probe completes, so the live-session recheck below cannot see it. Its
+        # only allocation-visible footprint is the control-plane probe lock.
+        # Claiming mid-probe races the probe's uia2 startup for the device's
+        # static systemPort and fails the client create ("local port #8200 is
+        # busy", proven live 2026-06-07). Skip the device for this tick — the
+        # ticket stays waiting and retries on its next poll. Checked BEFORE the
+        # row lock (DEBT-2): the read costs a DB round trip and must not extend
+        # the lock hold; the probe's own staleness rule tolerates the tiny
+        # unlocked-check-to-locked-claim race (one failed create + retry, same
+        # exposure as the _eligible_devices snapshot).
+        viability_timeout_sec = (
+            int(cast("int", self._settings.get("general.session_viability_timeout_sec")))
+            if self._settings is not None
+            else _SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC
+        )
+        if await viability_probe_lock_active(db, device.id, timeout_sec=viability_timeout_sec):
+            GRID_ALLOCATION_PROBE_DEFERRED_TOTAL.inc()
+            logger.info(
+                "grid_allocation_deferred_probe_inflight device=%s ticket=%s",
+                device.id,
+                ticket.id,
+            )
+            return None
         locked = await device_locking.lock_device(db, device.id)
         # Re-verify under the row lock: state, node viability, and absence of active
         # sessions may have changed since _eligible_devices ran.
@@ -743,28 +768,6 @@ class AllocationService:
             return None
         recheck = await db.execute(select(Session.id).where(live_session_predicate(locked.id)))
         if recheck.first() is not None:
-            return None
-        # A session-viability probe is a REAL Appium session on an ``available``
-        # device, posted directly to the node — no Session row exists until the
-        # probe completes, so the live-session recheck above cannot see it. Its
-        # only allocation-visible footprint is the control-plane probe lock.
-        # Claiming mid-probe races the probe's uia2 startup for the device's
-        # static systemPort and fails the client create ("local port #8200 is
-        # busy", proven live 2026-06-07). Skip the device for this tick — the
-        # ticket stays waiting and retries on its next poll. Staleness uses the
-        # probe's own reclaim rule so a leaked lock cannot park the device.
-        viability_timeout_sec = (
-            int(cast("int", self._settings.get("general.session_viability_timeout_sec")))
-            if self._settings is not None
-            else _SESSION_VIABILITY_TIMEOUT_FALLBACK_SEC
-        )
-        if await viability_probe_lock_active(db, locked.id, timeout_sec=viability_timeout_sec):
-            GRID_ALLOCATION_PROBE_DEFERRED_TOTAL.inc()
-            logger.info(
-                "grid_allocation_deferred_probe_inflight device=%s ticket=%s",
-                locked.id,
-                ticket.id,
-            )
             return None
         target = node_target(locked)
         if target is None:
