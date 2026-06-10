@@ -336,6 +336,12 @@ class ConnectivityService:
 
         Must run exactly once per device per cycle — the hysteresis counter and
         metrics side effects must not be applied twice.
+
+        NOTE: the post-repair re-probe in ``_maybe_dispatch_repair`` deliberately
+        does NOT go through this method — it needs positive evidence (missing
+        ``healthy`` defaults False, see BUG-2) and must not double-apply the
+        hysteresis side effects. If you change check filtering or aggregation
+        semantics here, review that path too.
         """
         raw_checks = health_result.get("checks") or []
         raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
@@ -503,7 +509,7 @@ class ConnectivityService:
         # ip_ping hysteresis counter/metrics are not applied twice; the repair verdict
         # never hinges on ip_ping.
         checks = reprobe.get("checks") or []
-        others = [c for c in checks if isinstance(c, dict) and c.get("check_id") != IP_PING_CHECK_ID]
+        _, others = _split_ip_ping([c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else [])
         # Default False (BUG-2): post-repair recovery requires POSITIVE evidence. A
         # malformed/empty re-probe (missing ``healthy``, no non-ip_ping checks) must
         # not reset the repair budget and declare a dead-link device recovered.
