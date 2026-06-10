@@ -13,8 +13,12 @@ from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger, schedule_background_loop
 from app.devices.models import DeviceEvent, DeviceTestDataAuditLog
 from app.diagnostics.models import DeviceDiagnosticSnapshot
+from app.events.models import SystemEvent
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import HostAgentLogEntry, HostResourceSample
+from app.jobs.models import Job
+from app.jobs.statuses import JOB_STATUS_COMPLETED, JOB_STATUS_FAILED
+from app.runs.models import TERMINAL_STATES, TestRun
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings.models import ConfigAuditLog
@@ -44,6 +48,9 @@ CleanupModel = (
     | type[HostAgentLogEntry]
     | type[AnalyticsCapacitySnapshot]
     | type[GridSessionQueueTicket]
+    | type[SystemEvent]
+    | type[TestRun]
+    | type[Job]
 )
 
 
@@ -93,6 +100,9 @@ class DataCleanupService:
         diagnostic_snapshots_deleted = 0
         agent_reconfigure_outbox_deleted = 0
         grid_queue_tickets_deleted = 0
+        system_events_deleted = 0
+        test_runs_deleted = 0
+        jobs_deleted = 0
 
         # Sessions (only completed ones) — exclude probe rows; they have their own
         # retention.probe_sessions_days window below.
@@ -237,10 +247,48 @@ class DataCleanupService:
                 cutoff=cutoff,
             )
 
+        # SystemEvent — webhook_deliveries rows cascade via FK ON DELETE CASCADE.
+        system_events_days: int = self._settings.get("retention.system_events_days")
+        if system_events_days > 0:
+            cutoff = now - timedelta(days=system_events_days)
+            system_events_deleted = await _delete_in_batches(
+                db,
+                model=SystemEvent,
+                timestamp_column=SystemEvent.created_at,
+                cutoff=cutoff,
+            )
+
+        # TestRun (terminal states only) — device_reservations cascade via FK ON DELETE CASCADE.
+        # Cutoff on created_at: terminal runs cannot resurrect, and created_at is never NULL
+        # (completed_at is NULL for reaper-expired runs).
+        test_runs_days: int = self._settings.get("retention.test_runs_days")
+        if test_runs_days > 0:
+            cutoff = now - timedelta(days=test_runs_days)
+            test_runs_deleted = await _delete_in_batches(
+                db,
+                model=TestRun,
+                timestamp_column=TestRun.created_at,
+                cutoff=cutoff,
+                extra_predicates=(TestRun.state.in_(TERMINAL_STATES),),
+            )
+
+        # Job (terminal statuses only) — pending/running rows are the worker's queue, never touched.
+        jobs_days: int = self._settings.get("retention.jobs_days")
+        if jobs_days > 0:
+            cutoff = now - timedelta(days=jobs_days)
+            jobs_deleted = await _delete_in_batches(
+                db,
+                model=Job,
+                timestamp_column=Job.created_at,
+                cutoff=cutoff,
+                extra_predicates=(Job.status.in_((JOB_STATUS_COMPLETED, JOB_STATUS_FAILED)),),
+            )
+
         logger.info(
             "Data cleanup completed: sessions=%d, probe_sessions=%d, audit_logs=%d, test_data_audit_logs=%d, "
             "device_events=%d, host_resource_samples=%d, agent_log_entries=%d, capacity_snapshots=%d, "
-            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d, grid_queue_tickets=%d",
+            "diagnostic_snapshots=%d, agent_reconfigure_outbox=%d, grid_queue_tickets=%d"
+            ", system_events=%d, test_runs=%d, jobs=%d",
             sessions_deleted,
             probe_sessions_deleted,
             audit_deleted,
@@ -252,6 +300,9 @@ class DataCleanupService:
             diagnostic_snapshots_deleted,
             agent_reconfigure_outbox_deleted,
             grid_queue_tickets_deleted,
+            system_events_deleted,
+            test_runs_deleted,
+            jobs_deleted,
         )
         await self._publisher.publish(
             "system.cleanup_completed",
@@ -267,6 +318,9 @@ class DataCleanupService:
                 "diagnostic_snapshots_deleted": diagnostic_snapshots_deleted,
                 "agent_reconfigure_outbox_deleted": agent_reconfigure_outbox_deleted,
                 "grid_queue_tickets_deleted": grid_queue_tickets_deleted,
+                "system_events_deleted": system_events_deleted,
+                "test_runs_deleted": test_runs_deleted,
+                "jobs_deleted": jobs_deleted,
             },
         )
 
