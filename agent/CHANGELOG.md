@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.27.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.26.1...gridfleet-agent-v0.27.0) (2026-06-10)
+
+
+### Features
+
+* **agent:** pass claimed ports and live-session fact to adapter health checks ([7fabb44](https://github.com/quidow/gridfleet/commit/7fabb44e7697f43d59239476264e7a98d17084a9))
+* **backend:** detect and cure orphan adb-server systemPort socket ([4bc42f9](https://github.com/quidow/gridfleet/commit/4bc42f97de89818c52f66d89ca16a2a963c366c8))
+
 ## [0.26.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.26.0...gridfleet-agent-v0.26.1) (2026-06-10)
 
 
