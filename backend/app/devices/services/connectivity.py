@@ -661,6 +661,11 @@ class ConnectivityService:
             # one slow/hung device cannot serialize the whole host (the cycle was O(devices)
             # in agent round-trip latency). No DB access happens inside the gather — the
             # apply loop below performs all writes sequentially. Mirrors session_sync.
+            # Commit before the slow concurrent probe phase: any row locks from
+            # the previous host's write window must not be held across this
+            # host's agent HTTP round-trips (measured holds reached seconds and
+            # starved the allocator's SKIP LOCKED matching).
+            await db.commit()
             health_by_device_id = await self._probe_host_health(
                 devices, ip_ping_timeout=ip_ping_timeout, ip_ping_count=ip_ping_count
             )
@@ -677,6 +682,11 @@ class ConnectivityService:
             enumeration_done = False
 
             for device in devices:
+                # Per-device commit (see repo contract: observation loops commit
+                # per device after the locked write window). Without this the
+                # cycle ran as one transaction and the first written device row
+                # stayed locked across every later device's agent HTTP call.
+                await db.commit()
                 lifecycle_state = await _get_lifecycle_state(
                     db, device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
                 )

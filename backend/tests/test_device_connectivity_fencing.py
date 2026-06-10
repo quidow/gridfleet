@@ -17,7 +17,7 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest.mark.db
@@ -298,3 +298,92 @@ async def test_check_connectivity_post_probe_fence_aborts_before_connected_write
     assert device.operational_state == initial_state
     # Aborted at the post-probe fence, before the device loop: lifecycle never ran.
     mock_lifecycle.assert_not_called()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_check_connectivity_commits_per_device(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A mid-cycle abort must not roll back earlier devices' committed writes.
+
+    The cycle previously ran as ONE transaction (single commit at the end), so
+    the first device's row lock was held across every later device's agent HTTP
+    call — measured holds up to 2.3s blocked the allocator. Pins the
+    commit-per-device boundary: device 1's state-store write survives an abort
+    during device 2.
+    """
+    from app.core.leader import state_store as control_plane_state_store
+    from app.devices.services.connectivity import PROBE_UNANSWERED_NAMESPACE
+
+    host = Host(
+        id=uuid.uuid4(),
+        hostname="conn-pc-h",
+        ip="10.0.0.46",
+        agent_port=5100,
+        status=HostStatus.online,
+        os_type=OSType.linux,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    identity_values = ["conn-pc-001", "conn-pc-002"]
+    with state_write_guard.bypass():
+        for identity_value in identity_values:
+            db_session.add(
+                Device(
+                    pack_id="appium-uiautomator2",
+                    platform_id="android_mobile",
+                    identity_scheme="android_serial",
+                    identity_scope="host",
+                    identity_value=identity_value,
+                    connection_target=identity_value,
+                    name=f"Conn PC {identity_value}",
+                    os_version="14",
+                    host_id=host.id,
+                    operational_state=DeviceOperationalState.available,
+                    device_type=DeviceType.real_device,
+                    connection_type=ConnectionType.usb,
+                )
+            )
+    await db_session.commit()
+
+    with (
+        patch(
+            "app.devices.services.connectivity._get_agent_devices",
+            new_callable=AsyncMock,
+            return_value=set(),
+        ),
+        patch(
+            "app.devices.services.connectivity._get_device_health",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.devices.services.connectivity._get_lifecycle_state",
+            new=AsyncMock(return_value=None),
+        ),
+        # Fence sequence: post-probe (1), device-1 after-lifecycle (2) — device 1
+        # then writes its probe_unanswered counter and short-circuits (threshold
+        # 1 flips immediately) — device-2 after-lifecycle (3) raises.
+        patch(
+            "app.devices.services.connectivity.assert_current_leader",
+            side_effect=[None, None, LeadershipLost("mid-cycle")],
+        ),
+        pytest.raises(LeadershipLost),
+    ):
+        await ConnectivityService(
+            publisher=event_bus,
+            settings=FakeSettingsReader({"device_checks.probe_unanswered.consecutive_fail_threshold": 1}),
+            circuit_breaker=Mock(),
+            lifecycle_policy=AsyncMock(),
+            health=AsyncMock(),
+        ).check_connectivity(db_session)
+
+    # Verify from a FRESH session: exactly one device's counter was committed
+    # (the loop order between the two devices is not guaranteed, so count both).
+    async with db_session_maker() as verify:
+        values = [
+            await control_plane_state_store.get_value(verify, PROBE_UNANSWERED_NAMESPACE, iv) for iv in identity_values
+        ]
+    committed = [v for v in values if v is not None]
+    assert len(committed) == 1, f"expected exactly one committed probe_unanswered counter, got {values!r}"
