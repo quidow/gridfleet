@@ -107,7 +107,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "serve":
-        uvicorn.run("agent_app.main:app", host=args.host, port=args.port)
+        uvicorn.run(
+            "agent_app.main:app",
+            host=args.host,
+            port=args.port,
+            timeout_keep_alive=agent_settings.core.http_keepalive_timeout_sec,
+        )
         return 0
 
     if args.command == "install":

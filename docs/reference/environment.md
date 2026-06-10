@@ -80,6 +80,7 @@ These are read directly by `agent/agent_app/config.py`.
 | `AGENT_BACKEND_URL` | falls back to `AGENT_MANAGER_URL` | agent process | Override of the backend base URL used for pack desired-state polling. |
 | `AGENT_HOST_ID` | unset | agent process | Pre-assigned host UUID. When set, the agent skips manager-issued identity and enables the pack state loop immediately. |
 | `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` | `30` | agent process | How often the agent re-registers to refresh mutable host fields such as IP address and capabilities |
+| `AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC` | `630` | agent process | uvicorn keep-alive timeout for the agent API. Must stay above the backend's `agent.http_pool_idle_seconds` setting (max 600) so pooled backend→agent connections never outlive the server's keep-alive (otherwise non-idempotent calls fail with `RemoteProtocolError`). |
 | `AGENT_MANAGER_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username used for manager API calls when the backend auth gate is enabled |
 | `AGENT_MANAGER_AUTH_PASSWORD` | unset | agent process | Optional Basic-auth password used for manager API calls when the backend auth gate is enabled |
 | `AGENT_API_AUTH_USERNAME` | unset | agent process | Optional Basic-auth username; required together with `AGENT_API_AUTH_PASSWORD`. When set, the agent enforces HTTP Basic on all `/agent/*` HTTP routes. |

@@ -53,6 +53,7 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
     db_session.add(device)
     await db_session.commit()
 
+    health = AsyncMock()
     with (
         patch(
             "app.devices.services.connectivity._get_agent_devices",
@@ -63,9 +64,9 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.devices.services.connectivity._get_lifecycle_state",
+            "app.devices.services.connectivity._fetch_lifecycle_state",
             new_callable=AsyncMock,
-        ) as mock_lifecycle,
+        ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
             side_effect=LeadershipLost("test"),
@@ -77,13 +78,15 @@ async def test_check_connectivity_aborts_after_agent_call_when_leadership_lost(
             settings=FakeSettingsReader({}),
             circuit_breaker=Mock(),
             lifecycle_policy=AsyncMock(),
-            health=AsyncMock(),
+            health=health,
         ).check_connectivity(db_session)
 
-    # The first fence is the post-probe fence (before the device loop): aborting
-    # there means the per-device lifecycle probe is never reached. Pins that fence
-    # so its removal would surface here instead of silently passing.
-    mock_lifecycle.assert_not_called()
+    # The first fence is the post-probe fence (before the device loop). The
+    # lifecycle fetch now runs inside the concurrent probe phase ahead of that
+    # fence (DEBT-4); the fence still aborts the apply loop, so no per-device
+    # state mutation occurs. Pins that fence: removing it would surface here.
+    health.update_device_checks.assert_not_called()
+    health.update_emulator_state.assert_not_called()
 
 
 @pytest.mark.db
@@ -277,9 +280,9 @@ async def test_check_connectivity_post_probe_fence_aborts_before_connected_write
             return_value={"healthy": True},
         ),
         patch(
-            "app.devices.services.connectivity._get_lifecycle_state",
+            "app.devices.services.connectivity._fetch_lifecycle_state",
             new_callable=AsyncMock,
-        ) as mock_lifecycle,
+        ),
         patch(
             "app.devices.services.connectivity.assert_current_leader",
             side_effect=LeadershipLost("site c"),
@@ -295,9 +298,9 @@ async def test_check_connectivity_post_probe_fence_aborts_before_connected_write
         ).check_connectivity(db_session)
 
     await db_session.refresh(device, attribute_names=["operational_state"])
+    # Aborted at the post-probe fence, before the apply loop: device state is
+    # untouched (the lifecycle fetch now runs in the probe phase ahead of the fence).
     assert device.operational_state == initial_state
-    # Aborted at the post-probe fence, before the device loop: lifecycle never ran.
-    mock_lifecycle.assert_not_called()
 
 
 @pytest.mark.db
@@ -359,7 +362,7 @@ async def test_check_connectivity_commits_per_device(
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.devices.services.connectivity._get_lifecycle_state",
+            "app.devices.services.connectivity._fetch_lifecycle_state",
             new=AsyncMock(return_value=None),
         ),
         # Fence sequence: post-probe (1), device-1 after-lifecycle (2) — device 1

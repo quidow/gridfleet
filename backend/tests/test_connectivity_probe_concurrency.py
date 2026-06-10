@@ -24,7 +24,7 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 @pytest.fixture(autouse=True)
 def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
 
 
 @pytest.fixture(autouse=True)

@@ -80,19 +80,13 @@ async def test_connectivity_get_agent_devices_forwards_pool(monkeypatch: pytest.
     assert fetch.await_args.kwargs["pool"] is pool
 
 
-async def test_connectivity_get_lifecycle_state_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_connectivity_fetch_lifecycle_state_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     pool = _auth_pool()
     action = AsyncMock(return_value={"state": "ready"})
     monkeypatch.setattr(device_connectivity, "pack_device_lifecycle_action", action)
-    monkeypatch.setattr(
-        device_connectivity,
-        "resolve_pack_platform",
-        AsyncMock(return_value=SimpleNamespace(lifecycle_actions={"state": {}})),
-    )
-    monkeypatch.setattr(device_connectivity, "platform_has_lifecycle_action", Mock(return_value=True))
 
-    await device_connectivity._get_lifecycle_state(
-        object(), _conn_device(), settings=FakeSettingsReader(), circuit_breaker=Mock(), pool=pool
+    await device_connectivity._fetch_lifecycle_state(
+        _conn_device(), settings=FakeSettingsReader(), circuit_breaker=Mock(), pool=pool
     )
 
     assert action.await_args.kwargs["pool"] is pool

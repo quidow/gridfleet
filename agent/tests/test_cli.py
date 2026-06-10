@@ -21,7 +21,7 @@ def test_serve_runs_uvicorn_with_default_settings(monkeypatch: pytest.MonkeyPatc
     recorded: dict[str, Any] = {}
     monkeypatch.setattr(cli.agent_settings.core, "agent_port", 5301)
 
-    def fake_run(app: str, *, host: str, port: int) -> None:
+    def fake_run(app: str, *, host: str, port: int, **kwargs: object) -> None:
         recorded.update({"app": app, "host": host, "port": port})
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
@@ -33,13 +33,27 @@ def test_serve_runs_uvicorn_with_default_settings(monkeypatch: pytest.MonkeyPatc
 def test_serve_allows_host_and_port_override(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, Any] = {}
 
-    def fake_run(app: str, *, host: str, port: int) -> None:
+    def fake_run(app: str, *, host: str, port: int, **kwargs: object) -> None:
         recorded.update({"app": app, "host": host, "port": port})
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
 
     assert cli.main(["serve", "--host", "127.0.0.1", "--port", "5200"]) == 0
     assert recorded == {"app": "agent_app.main:app", "host": "127.0.0.1", "port": 5200}
+
+
+def test_serve_sets_keepalive_above_backend_pool_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agent must hold keep-alives longer than the backend's max pool idle
+    (agent.http_pool_idle_seconds <= 600), otherwise pooled backend connections
+    go stale and non-idempotent calls fail with RemoteProtocolError (DEBT-6)."""
+    captured: dict[str, object] = {}
+
+    def fake_run(app: str, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli.uvicorn, "run", fake_run)
+    assert cli.main(["serve", "--host", "127.0.0.1", "--port", "5100"]) == 0
+    assert captured["timeout_keep_alive"] == 630
 
 
 def test_version_prints_public_package_version(capsys: pytest.CaptureFixture[str]) -> None:

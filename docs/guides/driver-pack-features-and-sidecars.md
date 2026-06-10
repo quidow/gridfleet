@@ -113,6 +113,18 @@ Status is updated after each feature action call and from the sidecar snapshot t
 
 Both events appear in the System Event stream (category `operations_and_settings`) and are delivered to any webhooks subscribed to those event kinds. The webhook payload carries `host_id`, `pack_id`, `feature_id`, `ok`, and `detail` fields.
 
+### Lifecycle action names are platform-specific
+
+Action names in a manifest's `lifecycle_actions` (and the `recommended_action`
+string an adapter's health result may carry) are opaque, platform-specific
+identifiers. The backend matches them verbatim against the device's resolved
+manifest (`platform_has_lifecycle_action`) and attaches no semantics to the
+string itself — `"reconnect"` is an Android/adb idiom, not a core concept. A
+pack that wants adapter-recommended repair must declare the action under the
+exact name its adapter recommends. There is currently no canonical cross-pack
+action taxonomy; if a second pack family needs shared repair semantics,
+introduce one in the manifest schema rather than special-casing names in core.
+
 ---
 
 ## Sidecars

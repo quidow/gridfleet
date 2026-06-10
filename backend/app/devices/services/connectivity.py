@@ -28,7 +28,6 @@ from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host, HostStatus
-from app.packs.models.pack import DriverPack, PackState
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
@@ -183,15 +182,10 @@ async def _get_device_health(
         return None
 
 
-async def _get_lifecycle_state(
-    db: AsyncSession,
-    device: Device,
-    *,
-    settings: SettingsReader,
-    circuit_breaker: CircuitBreakerProtocol,
-    pool: AgentHttpPool | None = None,
-) -> str | None:
-    """Poll the agent for the pack-owned lifecycle state."""
+async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
+    """True when the device's platform manifest declares a ``state`` lifecycle
+    action. DB-only — runs in the sequential pre-pass so the concurrent probe
+    phase below stays free of shared-session access."""
     try:
         resolved = await resolve_pack_platform(
             db,
@@ -200,13 +194,22 @@ async def _get_lifecycle_state(
             device_type=device.device_type.value if device.device_type else None,
         )
     except LookupError:
-        return None
-    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "state"):
-        return None
+        return False
+    return platform_has_lifecycle_action(resolved.lifecycle_actions, "state")
+
+
+async def _fetch_lifecycle_state(
+    device: Device,
+    *,
+    settings: SettingsReader,
+    circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
+) -> str | None:
+    """Poll the agent for the pack-owned lifecycle state. Pure agent I/O — no DB.
+    Caller must have established capability via ``_lifecycle_state_capable``."""
     host = device.host
     if host is None or device.connection_target is None:
         return None
-
     try:
         result = await pack_device_lifecycle_action(
             host.ip,
@@ -222,7 +225,6 @@ async def _get_lifecycle_state(
         )
     except AgentCallError:
         return None
-
     state = result.get("state")
     return str(state) if isinstance(state, str) and state else None
 
@@ -337,6 +339,12 @@ class ConnectivityService:
 
         Must run exactly once per device per cycle — the hysteresis counter and
         metrics side effects must not be applied twice.
+
+        NOTE: the post-repair re-probe in ``_maybe_dispatch_repair`` deliberately
+        does NOT go through this method — it needs positive evidence (missing
+        ``healthy`` defaults False, see BUG-2) and must not double-apply the
+        hysteresis side effects. If you change check filtering or aggregation
+        semantics here, review that path too.
         """
         raw_checks = health_result.get("checks") or []
         raw_checks_list = list(raw_checks) if isinstance(raw_checks, list) else []
@@ -464,9 +472,9 @@ class ConnectivityService:
             return False
         if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
             return False
-        pack_state = await db.scalar(select(DriverPack.state).where(DriverPack.id == device.pack_id))
-        if pack_state == PackState.draining:
-            return False  # pack runtime going away — do not dispatch
+        # No separate draining check: resolve_pack_platform above only resolves
+        # enabled packs, so a draining/disabled pack already returned False via
+        # the LookupError path (pinned by test_repair_not_dispatched_when_pack_draining).
 
         attempt = await link_repair.next_repair_attempt(db, device.identity_value)
         if attempt is None:
@@ -504,7 +512,7 @@ class ConnectivityService:
         # ip_ping hysteresis counter/metrics are not applied twice; the repair verdict
         # never hinges on ip_ping.
         checks = reprobe.get("checks") or []
-        others = [c for c in checks if isinstance(c, dict) and c.get("check_id") != IP_PING_CHECK_ID]
+        _, others = _split_ip_ping([c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else [])
         # Default False (BUG-2): post-repair recovery requires POSITIVE evidence. A
         # malformed/empty re-probe (missing ``healthy``, no non-ip_ping checks) must
         # not reset the repair budget and declare a dead-link device recovered.
@@ -512,6 +520,15 @@ class ConnectivityService:
         if healthy:
             await link_repair.reset_repair_attempts(db, device.identity_value)
         return healthy
+
+    async def _escalate_health_failure(self, db: AsyncSession, device: Device, *, summary: str) -> None:
+        """Shared unhealthy escalation: record the failed check, then hand the
+        device to lifecycle policy unless it is already offline (re-escalating
+        an offline device would churn recovery intents every cycle)."""
+        was_offline = device.operational_state == DeviceOperationalState.offline
+        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
+        if not was_offline:
+            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
 
     async def _note_unanswered_probe(self, db: AsyncSession, device: Device, host: Host, *, threshold: int) -> bool:
         """Count consecutive unanswered probes (AgentCallError → health_result None).
@@ -532,11 +549,7 @@ class ConnectivityService:
         )
         if counter < threshold:
             return False
-        summary = "Health probe unanswered (agent/adapter error)"
-        was_offline = device.operational_state == DeviceOperationalState.offline
-        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
-        if not was_offline:
-            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+        await self._escalate_health_failure(db, device, summary="Health probe unanswered (agent/adapter error)")
         return True
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
@@ -593,18 +606,29 @@ class ConnectivityService:
         *,
         ip_ping_timeout: float | None,
         ip_ping_count: int | None,
-    ) -> dict[uuid.UUID, dict[str, Any] | None]:
-        """Concurrently probe device health for one host, bounded by a semaphore.
+        lifecycle_capable: set[uuid.UUID],
+    ) -> dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
+        """Concurrently probe device health (and, where the platform declares a
+        ``state`` action, lifecycle state) for one host, bounded by a semaphore.
 
         Pure agent I/O — no DB access — so the shared session is untouched here and
         the caller's apply loop owns every write. ``Device.host`` must be eager-loaded
-        by the caller (read inside ``_get_device_health``).
+        by the caller. The two fetches for one device run sequentially inside its
+        semaphore slot; the win is cross-device concurrency (DEBT-4: the lifecycle
+        poll used to add one serial agent RTT per device to the apply loop).
         """
         semaphore = asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
 
-        async def _probe(device: Device) -> tuple[uuid.UUID, dict[str, Any] | None]:
+        async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
             async with semaphore:
-                return device.id, await _get_device_health(
+                lifecycle_state = (
+                    await _fetch_lifecycle_state(
+                        device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+                    )
+                    if device.id in lifecycle_capable
+                    else None
+                )
+                health = await _get_device_health(
                     device,
                     ip_ping_timeout_sec=ip_ping_timeout,
                     ip_ping_count=ip_ping_count,
@@ -612,6 +636,7 @@ class ConnectivityService:
                     circuit_breaker=self._circuit_breaker,
                     pool=self._pool,
                 )
+                return device.id, (health, lifecycle_state)
 
         return dict(await asyncio.gather(*[_probe(device) for device in devices]))
 
@@ -679,9 +704,16 @@ class ConnectivityService:
             # the previous host's write window must not be held across this
             # host's agent HTTP round-trips (measured holds reached seconds and
             # starved the allocator's SKIP LOCKED matching).
+            # Sequential DB pre-pass: which devices' manifests declare a "state"
+            # lifecycle action. Must complete before the concurrent phase — the
+            # gather must not touch the shared session.
+            lifecycle_capable = {device.id for device in devices if await _lifecycle_state_capable(db, device)}
             await db.commit()
             health_by_device_id = await self._probe_host_health(
-                devices, ip_ping_timeout=ip_ping_timeout, ip_ping_count=ip_ping_count
+                devices,
+                ip_ping_timeout=ip_ping_timeout,
+                ip_ping_count=ip_ping_count,
+                lifecycle_capable=lifecycle_capable,
             )
             # Re-fence after the slow probe phase: leadership may have changed while we
             # awaited the agents (session_sync pattern). The per-device asserts below
@@ -701,17 +733,13 @@ class ConnectivityService:
                 # cycle ran as one transaction and the first written device row
                 # stayed locked across every later device's agent HTTP call.
                 await db.commit()
-                lifecycle_state = await _get_lifecycle_state(
-                    db, device, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
-                )
+                # Both values come from the concurrent probe phase above, which was
+                # re-fenced once after the gather; these are plain dict lookups. The
+                # per-device assert below guards the sequential write window.
+                health_result, lifecycle_state = health_by_device_id[device.id]
                 await assert_current_leader(db, settings=self._settings)
                 if lifecycle_state is not None:
                     await self._health.update_emulator_state(db, device, lifecycle_state)
-
-                # Health was probed in the concurrent phase above and re-fenced once
-                # afterward; this is a plain dict lookup, so no per-device re-fence is
-                # needed here (the after-lifecycle fence above already re-checked).
-                health_result = health_by_device_id[device.id]
                 if health_result is None:
                     flipped = await self._note_unanswered_probe(db, device, host, threshold=probe_unanswered_threshold)
                     if flipped:
@@ -768,21 +796,7 @@ class ConnectivityService:
                         # the recovery-only behavior of the old presence gate.
                         await self._maybe_auto_recover(db, device)
                         continue
-                    summary = _summarize_unhealthy_result(health_result)
-                    was_offline = device.operational_state == DeviceOperationalState.offline
-                    await self._health.update_device_checks(
-                        db,
-                        device,
-                        healthy=False,
-                        summary=summary,
-                    )
-                    if not was_offline:
-                        await self._lifecycle_policy.handle_health_failure(
-                            db,
-                            device,
-                            source="device_checks",
-                            reason=summary,
-                        )
+                    await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
                     await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
                 else:
                     # Device disconnected

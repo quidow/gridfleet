@@ -15,8 +15,9 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import state_write_guard
 from app.devices.services.connectivity import (
     ConnectivityService,
+    _fetch_lifecycle_state,
     _get_agent_devices,
-    _get_lifecycle_state,
+    _lifecycle_state_capable,
 )
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -30,7 +31,8 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 @pytest.fixture(autouse=True)
 def _skip_lifecycle_state_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.devices.services.connectivity._lifecycle_state_capable", AsyncMock(return_value=False))
+    monkeypatch.setattr("app.devices.services.connectivity._fetch_lifecycle_state", AsyncMock(return_value=None))
 
 
 @pytest.fixture(autouse=True)
@@ -524,17 +526,16 @@ async def test_agent_device_aliases_include_running_avd_name(db_session: AsyncSe
 
 async def test_lifecycle_state_uses_pack_lifecycle_action(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("app.devices.services.connectivity._get_lifecycle_state", _get_lifecycle_state)
     _host, device, _node = await _setup_host_and_device(db_session)
 
+    assert await _lifecycle_state_capable(db_session, device) is True
     with patch(
         "app.devices.services.connectivity.pack_device_lifecycle_action",
         new_callable=AsyncMock,
         return_value={"state": "running"},
     ) as mock_lifecycle:
-        state = await _get_lifecycle_state(db_session, device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
+        state = await _fetch_lifecycle_state(device, settings=FakeSettingsReader({}), circuit_breaker=Mock())
 
     assert state == "running"
     mock_lifecycle.assert_awaited_once()
@@ -1343,6 +1344,7 @@ def _roku_payload(*, reachable: bool) -> dict[str, object]:
 class _ResolvedPlatformStub:
     def __init__(self, health_checks: list[dict[str, object]]) -> None:
         self.health_checks = health_checks
+        self.lifecycle_actions: list[dict[str, object]] = []
 
 
 def _patch_debounceable(monkeypatch: pytest.MonkeyPatch, ids: set[str]) -> None:
@@ -2084,10 +2086,9 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
         "recommended_action": "reconnect",
     }
     dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
+    # No resolver patch: the draining guarantee now rests on resolve_pack_platform
+    # filtering to enabled packs (PackPlatformNotFound -> repair skipped).
     with (
-        rp,
-        ph,
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
             "app.devices.services.connectivity._get_device_health",

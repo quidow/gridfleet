@@ -136,14 +136,17 @@ async def request(
             try:
                 response = cast("httpx.Response", await requester(url, **request_kwargs))
             except httpx.RemoteProtocolError:
-                # Stale keepalive reuse: the agent's uvicorn keep-alive (uvicorn
-                # default 5s) is shorter than our pool idle
+                # Stale keepalive reuse: agents older than the
+                # AGENT_HTTP_KEEPALIVE_TIMEOUT_SEC fix run uvicorn's default 5s
+                # keep-alive, shorter than our pool idle
                 # (agent.http_pool_idle_seconds, up to 600s), so the pool can
                 # return a connection the server already closed -> it disconnects
-                # before reading our request. httpx has evicted the dead
-                # connection, so one retry reuses the pool on a fresh one. Only
-                # idempotent methods are safe (the request never reached the
-                # server).
+                # before reading our request. Upgraded agents hold keep-alives
+                # for 630s (> pool idle max), so this should no longer trigger;
+                # retained as defense-in-depth for mixed-version fleets. httpx
+                # has evicted the dead connection, so one retry reuses the pool
+                # on a fresh one. Only idempotent methods are safe (the request
+                # never reached the server).
                 if method_name not in _IDEMPOTENT_METHODS:
                     raise
                 client_mode = "pooled_retried"
