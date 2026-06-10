@@ -51,7 +51,7 @@ async def test_offline_write_skips_when_device_enters_active_state_before_lock(
     async def runner() -> None:
         with (
             patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
-            patch("app.devices.services.connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
@@ -122,7 +122,7 @@ async def test_active_state_lifecycle_write_skips_when_device_leaves_active_stat
     async def runner() -> None:
         with (
             patch("app.devices.services.connectivity._get_agent_devices", new=AsyncMock(return_value=set())),
-            patch("app.devices.services.connectivity._get_lifecycle_state", new=AsyncMock(return_value=None)),
+            patch("app.devices.services.connectivity._fetch_lifecycle_state", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._get_device_health", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity._stop_disconnected_node", new=AsyncMock(return_value=None)),
             patch("app.devices.services.connectivity.device_locking.lock_device", side_effect=gated_lock),
