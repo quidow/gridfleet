@@ -12,7 +12,7 @@ from app.core.observability import get_logger
 from app.devices.models import Device
 from app.devices.routers.helpers import get_device_for_update_or_404
 from app.devices.schemas.device import AppiumNodeRead
-from app.devices.services.lifecycle_policy_state import state as lps_state
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import assess_device_async, is_ready_for_use_async, readiness_error_detail_async
 from app.runs import service as run_service
 
@@ -30,8 +30,7 @@ async def _assert_device_not_reserved(device: Device, db: AsyncSession) -> None:
 
 
 def _assert_startable_outside_maintenance(device: Device) -> None:
-    in_maintenance = lps_state(device).get("maintenance_reason") is not None
-    if in_maintenance:
+    if in_maintenance(device):
         raise HTTPException(status_code=409, detail="Device is in maintenance mode")
 
 

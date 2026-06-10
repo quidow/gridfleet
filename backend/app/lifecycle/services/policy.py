@@ -33,6 +33,7 @@ from app.devices.services.lifecycle_policy_state import (
     clear_backoff,
     clear_deferred_stop,
     clear_self_heal_suppression,
+    in_maintenance,
     loaded_node,
     now,
     parse_iso,
@@ -184,7 +185,7 @@ class LifecyclePolicyService:
                 suppression_reason="Device setup or verification is incomplete",
                 run=run,
             )
-        if policy_state(device).get("maintenance_reason") is not None:
+        if in_maintenance(device):
             return await self._actions.record_recovery_suppressed(
                 db,
                 device,

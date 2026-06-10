@@ -24,7 +24,7 @@ from app.devices.models.intent import DeviceIntent
 from app.devices.services.event import record_event
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent_types import NODE_PROCESS, verification_intent_source
-from app.devices.services.lifecycle_policy_state import state as policy_state
+from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.observation_reason import ObservationReason, map_transition_event
 from app.devices.services.readiness import is_ready_for_use_async
 from app.sessions.live_session_predicate import live_session_predicate
@@ -172,11 +172,7 @@ def device_in_service(device: Device) -> bool:
     baseline-starting. Keep in lockstep with the withdrawal facts in
     ``gather_device_state_facts``.
     """
-    return (
-        device.verified_at is not None
-        and policy_state(device).get("maintenance_reason") is None
-        and not device.review_required
-    )
+    return device.verified_at is not None and not in_maintenance(device) and not device.review_required
 
 
 async def gather_device_state_facts(
@@ -216,7 +212,7 @@ async def gather_device_state_facts(
         )
     ).first() is not None
 
-    in_maintenance = policy_state(device).get("maintenance_reason") is not None
+    device_in_maintenance = in_maintenance(device)
     ready = (
         await is_ready_for_use_async(db, device, packs=packs)
         and device_allows_allocation(device)
@@ -226,7 +222,7 @@ async def gather_device_state_facts(
     return DeviceStateFacts(
         has_running_session=has_running_session,
         has_verification_lease=has_verification_lease,
-        in_maintenance=in_maintenance,
+        in_maintenance=device_in_maintenance,
         stop_in_flight=appium_node_stop_in_flight(device),
         ready=ready,
     )

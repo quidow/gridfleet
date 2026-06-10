@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 from app.devices.services.lifecycle_policy_state import (
     clear_deferred_stop,
     default_state,
+    in_maintenance,
     parse_iso,
     record_backoff_suppressed,
     record_recovery_failed,
@@ -12,6 +15,21 @@ from app.devices.services.lifecycle_policy_state import (
     record_recovery_started,
     set_deferred_stop,
 )
+
+if TYPE_CHECKING:
+    from app.devices.models import Device
+
+
+class _DeviceStub:
+    def __init__(self, lifecycle_policy_state: dict[str, object] | None) -> None:
+        self.lifecycle_policy_state = lifecycle_policy_state
+
+
+def test_in_maintenance_reads_reason_with_defaults_merged() -> None:
+    assert in_maintenance(cast("Device", _DeviceStub({"maintenance_reason": "operator"}))) is True
+    assert in_maintenance(cast("Device", _DeviceStub({"maintenance_reason": None}))) is False
+    assert in_maintenance(cast("Device", _DeviceStub({}))) is False
+    assert in_maintenance(cast("Device", _DeviceStub(None))) is False
 
 
 def test_set_deferred_stop_sets_pending_fields_and_action() -> None:
