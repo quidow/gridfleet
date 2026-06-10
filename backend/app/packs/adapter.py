@@ -68,6 +68,15 @@ class HealthContext(Protocol):
     platform_id: str | None
     device_type: str | None
     connection_type: str | None
+    # Mirrors agent ``adapter_types.HealthContext``. Manifest-claimed
+    # parallel-resource ports for the device's node, keyed by capability name
+    # (e.g. "appium:systemPort"); None when the caller supplies no claims.
+    # ``has_live_session`` is False only when the control plane positively knows
+    # no client session or viability probe is live for this device; None =
+    # unknown. Adapters read both via ``getattr(ctx, "...", None)`` so old/new
+    # agent-adapter combos degrade to skipping port checks.
+    claimed_ports: dict[str, int] | None
+    has_live_session: bool | None
 
 
 class DoctorContext(Protocol):
@@ -160,7 +169,7 @@ class DriverPackAdapter(Protocol):
 
     async def lifecycle_action(
         self,
-        action_id: Literal["reconnect", "boot", "shutdown", "state"],
+        action_id: Literal["reconnect", "boot", "shutdown", "state", "release_forwarded_ports"],
         args: dict[str, Any],
         ctx: LifecycleContext,
     ) -> LifecycleActionResult:

@@ -136,7 +136,7 @@ class LifecycleAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["state", "reconnect", "boot", "shutdown"]
+    id: Literal["state", "reconnect", "boot", "shutdown", "release_forwarded_ports"]
 
 
 class HealthCheckAppliesWhen(BaseModel):
