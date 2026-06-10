@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.26.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.26.0...gridfleet-agent-v0.26.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **agent:** raise uvicorn keep-alive above backend http pool idle ceiling ([aeee570](https://github.com/quidow/gridfleet/commit/aeee57096fb8c5dc22387b2a0e49fd41ea8f48a3))
+* **backend:** resolve open grid-findings review issues (round 2) ([fdfc4bd](https://github.com/quidow/gridfleet/commit/fdfc4bd7f1c24d40bf53f271e9292afd33bb6949))
+
 ## [0.26.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.25.0...gridfleet-agent-v0.26.0) (2026-06-09)
 
 
