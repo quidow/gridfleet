@@ -16,7 +16,7 @@ class ControlPlaneStateEntry(Base):
     __table_args__ = (UniqueConstraint("namespace", "key", name="uq_control_plane_state_entries_namespace_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    namespace: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(String, nullable=False)
     key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     value: Mapped[Any] = mapped_column(JSON, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

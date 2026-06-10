@@ -22,7 +22,6 @@ class WebhookDelivery(Base):
         UUID(as_uuid=True),
         ForeignKey("webhooks.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     system_event_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -31,7 +30,7 @@ class WebhookDelivery(Base):
         index=True,
     )
     event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    status: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

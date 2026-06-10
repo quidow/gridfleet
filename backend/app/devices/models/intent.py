@@ -23,7 +23,6 @@ class DeviceIntent(Base):
         UUID(as_uuid=True),
         ForeignKey("devices.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     source: Mapped[str] = mapped_column(String, nullable=False, index=True)
     axis: Mapped[str] = mapped_column(String, nullable=False, index=True)

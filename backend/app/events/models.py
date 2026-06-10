@@ -25,7 +25,7 @@ class SystemEvent(Base):
         server_default=text("(uuidv7())::text"),
         index=True,
     )
-    type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
     severity: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

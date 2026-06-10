@@ -48,7 +48,7 @@ class DeviceGroupMembership(Base):
         UUID(as_uuid=True), ForeignKey("device_groups.id", ondelete="CASCADE"), nullable=False
     )
     device_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
     )
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

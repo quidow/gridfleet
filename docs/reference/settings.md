@@ -90,6 +90,9 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `retention.host_resource_telemetry_hours` | `retention` | `int` | `24` | none | `1..720` | Delete host resource telemetry older than N hours |
 | `retention.capacity_snapshots_days` | `retention` | `int` | `30` | none | `1..3650` | Delete fleet capacity snapshots older than N days |
 | `retention.diagnostic_snapshots_days` | `retention` | `int` | `30` | none | `1..3650` | Delete device diagnostic snapshots older than N days |
+| `retention.system_events_days` | `retention` | `int` | `30` | none | `1..3650` | Delete system events older than N days; their webhook delivery records cascade |
+| `retention.test_runs_days` | `retention` | `int` | `30` | none | `1..3650` | Delete terminal test runs older than N days; their device reservations cascade |
+| `retention.jobs_days` | `retention` | `int` | `30` | none | `1..3650` | Delete completed or failed durable jobs older than N days |
 | `retention.cleanup_interval_hours` | `retention` | `int` | `1` | none | `1..168` | Interval for the retention cleanup loop |
 
 ## Notes

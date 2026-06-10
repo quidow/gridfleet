@@ -46,7 +46,7 @@ class DeviceEvent(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()"))
     device_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False
     )
     event_type: Mapped[DeviceEventType] = mapped_column(Enum(DeviceEventType), nullable=False)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
