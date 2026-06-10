@@ -168,6 +168,31 @@ async def test_reserve_same_owner_idempotent_under_contention(
     assert len(successful) == 1, f"Expected exactly one winner under same-owner contention: {results}"
 
 
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_get_port_claims_for_nodes_batches_and_filters_internal(db_session: AsyncSession) -> None:
+    host_id = uuidlib.uuid4()
+    node1 = await _make_node(db_session, host_id)
+    node2 = await _make_node(db_session, host_id)
+
+    p1 = await svc.reserve(
+        db_session, host_id=host_id, capability_key="appium:systemPort", start_port=8200, node_id=node1
+    )
+    await svc.reserve(
+        db_session, host_id=host_id, capability_key=svc.INTERNAL_APPIUM_PORT_CAPABILITY, start_port=4723, node_id=node1
+    )
+    p2 = await svc.reserve(
+        db_session, host_id=host_id, capability_key="appium:systemPort", start_port=8200, node_id=node2
+    )
+    await db_session.commit()
+
+    claims = await svc.get_port_claims_for_nodes(db_session, node_ids=[node1, node2])
+
+    assert claims[node1] == {"appium:systemPort": p1}
+    assert claims[node2] == {"appium:systemPort": p2}
+    assert p1 != p2
+
+
 async def _make_node(db_session: AsyncSession, host_id: uuidlib.UUID) -> uuidlib.UUID:
     from sqlalchemy import select
 

@@ -11,6 +11,7 @@ from app.appium_nodes.models import AppiumNode, AppiumNodeResourceClaim
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,6 +128,34 @@ async def set_node_extra_capability(
         ),
         {"k": capability_key, "v": json.dumps(value), "node_id": node_id},
     )
+
+
+async def get_port_claims_for_nodes(
+    db: AsyncSession, *, node_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, int]]:
+    """Batch the managed port claims for many nodes, keyed node_id → {capability: port}.
+
+    Excludes the internal Appium server port — callers want only the
+    parallel-resource claims that surface in session capabilities.
+    """
+    if not node_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                AppiumNodeResourceClaim.node_id,
+                AppiumNodeResourceClaim.capability_key,
+                AppiumNodeResourceClaim.port,
+            ).where(
+                AppiumNodeResourceClaim.node_id.in_(list(node_ids)),
+                AppiumNodeResourceClaim.capability_key != INTERNAL_APPIUM_PORT_CAPABILITY,
+            )
+        )
+    ).all()
+    claims: dict[uuid.UUID, dict[str, int]] = {}
+    for node_id, capability_key, port in rows:
+        claims.setdefault(node_id, {})[str(capability_key)] = int(port)
+    return claims
 
 
 def _rowcount(result: object) -> int:

@@ -17,6 +17,7 @@ from app.devices.services.connectivity import (
     ConnectivityService,
     _fetch_lifecycle_state,
     _get_agent_devices,
+    _get_device_health,
     _lifecycle_state_capable,
 )
 from app.devices.services.health import DeviceHealthService
@@ -2282,3 +2283,26 @@ async def test_disconnected_first_observation_still_reconciles(
         ).check_connectivity(db_session)
 
     assert len(calls) >= 1  # the connected→disconnected transition was handled
+
+
+async def test_probe_passes_claimed_ports_and_live_flag(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # _get_device_health must forward the new facts to fetch_pack_device_health
+    _host, device, _ = await _setup_host_and_device(db_session)
+    seen: dict[str, Any] = {}
+
+    async def fake_fetch(*a: object, **kw: object) -> dict[str, Any]:
+        seen.update(kw)
+        return {"healthy": True, "checks": []}
+
+    monkeypatch.setattr("app.devices.services.connectivity.fetch_pack_device_health", fake_fetch)
+    await _get_device_health(
+        device,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        claimed_ports={"appium:systemPort": 8200},
+        has_live_session=False,
+    )
+    assert seen["claimed_ports"] == {"appium:systemPort": 8200}
+    assert seen["has_live_session"] is False

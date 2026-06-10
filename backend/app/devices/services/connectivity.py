@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
@@ -31,6 +32,9 @@ from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
+from app.sessions.probe_inflight import is_probe_inflight
 
 if TYPE_CHECKING:
     import uuid
@@ -149,6 +153,8 @@ async def _get_device_health(
     *,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
+    claimed_ports: dict[str, int] | None = None,
+    has_live_session: bool | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     pool: AgentHttpPool | None = None,
@@ -169,6 +175,8 @@ async def _get_device_health(
             ip_address=device.ip_address,
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
+            claimed_ports=claimed_ports,
+            has_live_session=has_live_session,
             # Adapters that can read the device identity at the probed target
             # verify it (WI-7) — a different device answering on a reused
             # address fails the probe instead of reporting false-healthy.
@@ -607,6 +615,8 @@ class ConnectivityService:
         ip_ping_timeout: float | None,
         ip_ping_count: int | None,
         lifecycle_capable: set[uuid.UUID],
+        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
+        live_flag_by_id: dict[uuid.UUID, bool],
     ) -> dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
         """Concurrently probe device health (and, where the platform declares a
         ``state`` action, lifecycle state) for one host, bounded by a semaphore.
@@ -632,6 +642,8 @@ class ConnectivityService:
                     device,
                     ip_ping_timeout_sec=ip_ping_timeout,
                     ip_ping_count=ip_ping_count,
+                    claimed_ports=claimed_ports_by_id.get(device.id),
+                    has_live_session=live_flag_by_id.get(device.id),
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
                     pool=self._pool,
@@ -708,12 +720,39 @@ class ConnectivityService:
             # lifecycle action. Must complete before the concurrent phase — the
             # gather must not touch the shared session.
             lifecycle_capable = {device.id for device in devices if await _lifecycle_state_capable(db, device)}
+            # Sequential DB pre-pass (same contract as lifecycle_capable): facts the
+            # adapters need for claimed-port checks. Driver-agnostic — core supplies
+            # facts, only adapters interpret them. has_live_session is False only on
+            # positive knowledge: no live/pending Session row AND no in-flight
+            # viability probe (in-memory registry is valid here — this loop is
+            # leader-owned, same process as the probe runner).
+            node_device_pairs = [(d.appium_node.id, d.id) for d in devices if d.appium_node is not None]
+            claims_by_node = await appium_node_resource_service.get_port_claims_for_nodes(
+                db, node_ids=[node_id for node_id, _ in node_device_pairs]
+            )
+            claimed_ports_by_id = {
+                device_id: claims_by_node[node_id]
+                for node_id, device_id in node_device_pairs
+                if node_id in claims_by_node
+            }
+            live_ids = set(
+                (
+                    await db.scalars(
+                        select(Session.device_id).where(
+                            live_session_predicate(), Session.device_id.in_([d.id for d in devices])
+                        )
+                    )
+                ).all()
+            )
+            live_flag_by_id = {d.id: (d.id in live_ids or is_probe_inflight(str(d.id))) for d in devices}
             await db.commit()
             health_by_device_id = await self._probe_host_health(
                 devices,
                 ip_ping_timeout=ip_ping_timeout,
                 ip_ping_count=ip_ping_count,
                 lifecycle_capable=lifecycle_capable,
+                claimed_ports_by_id=claimed_ports_by_id,
+                live_flag_by_id=live_flag_by_id,
             )
             # Re-fence after the slow probe phase: leadership may have changed while we
             # awaited the agents (session_sync pattern). The per-device asserts below
