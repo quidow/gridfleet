@@ -2084,10 +2084,9 @@ async def test_repair_not_dispatched_when_pack_draining(db_session: AsyncSession
         "recommended_action": "reconnect",
     }
     dispatch = AsyncMock(return_value={"success": True})
-    rp, ph = _recommend_repair_patches()
+    # No resolver patch: the draining guarantee now rests on resolve_pack_platform
+    # filtering to enabled packs (PackPlatformNotFound -> repair skipped).
     with (
-        rp,
-        ph,
         patch("app.devices.services.connectivity._get_agent_devices", new_callable=AsyncMock, return_value={"dc-001"}),
         patch(
             "app.devices.services.connectivity._get_device_health",

@@ -28,7 +28,6 @@ from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.reservation_query import device_is_reserved
 from app.hosts.models import Host, HostStatus
-from app.packs.models.pack import DriverPack, PackState
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
@@ -464,9 +463,9 @@ class ConnectivityService:
             return False
         if not platform_has_lifecycle_action(resolved.lifecycle_actions, action):
             return False
-        pack_state = await db.scalar(select(DriverPack.state).where(DriverPack.id == device.pack_id))
-        if pack_state == PackState.draining:
-            return False  # pack runtime going away — do not dispatch
+        # No separate draining check: resolve_pack_platform above only resolves
+        # enabled packs, so a draining/disabled pack already returned False via
+        # the LookupError path (pinned by test_repair_not_dispatched_when_pack_draining).
 
         attempt = await link_repair.next_repair_attempt(db, device.identity_value)
         if attempt is None:
