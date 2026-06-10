@@ -615,6 +615,37 @@ class ConnectivityService:
 
         return dict(await asyncio.gather(*[_probe(device) for device in devices]))
 
+    async def _record_disconnect_if_stable(self, db: AsyncSession, device: Device, *, held: bool) -> None:
+        """Record a device disconnect unless its held/reserved classification flipped under the lock.
+
+        ``held`` is the pre-lock classification (busy/maintenance or actively
+        reserved). The durable writes are identical on both sides; the post-lock
+        re-check only guards against acting on a stale classification (TOCTOU
+        across the lock acquisition).
+        """
+        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
+        locked_device = await device_locking.lock_device(db, device.id)
+        held_after = locked_device.operational_state in (
+            DeviceOperationalState.busy,
+            DeviceOperationalState.maintenance,
+        ) or await device_is_reserved(db, locked_device.id)
+        if held_after != held:
+            logger.info(
+                "Device %s (%s) changed held/reserved classification to %s before disconnect write — skipping",
+                locked_device.name,
+                locked_device.identity_value,
+                _audit_label(locked_device),
+            )
+            return
+        await IntentService(db).mark_dirty_and_reconcile(
+            locked_device.id,
+            reason="Device disconnected",
+            publisher=self._publisher,
+            observed_reason=ObservationReason.disconnected,
+        )
+        await self._lifecycle_policy.note_connectivity_loss(db, locked_device, reason="Device disconnected")
+        await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True)
+
     async def check_connectivity(self, db: AsyncSession) -> None:
         ip_ping_threshold = int(self._settings.get("device_checks.ip_ping.consecutive_fail_threshold"))
         ip_ping_timeout = float(self._settings.get("device_checks.ip_ping.timeout_sec"))
@@ -785,31 +816,7 @@ class ConnectivityService:
                             host.hostname,
                             _audit_label(device),
                         )
-                        await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
-                        locked_device = await device_locking.lock_device(db, device.id)
-                        if (
-                            locked_device.operational_state == DeviceOperationalState.busy
-                            or locked_device.operational_state == DeviceOperationalState.maintenance
-                            or await device_is_reserved(db, locked_device.id)
-                        ):
-                            await IntentService(db).mark_dirty_and_reconcile(
-                                locked_device.id,
-                                reason="Device disconnected",
-                                publisher=self._publisher,
-                                observed_reason=ObservationReason.disconnected,
-                            )
-                            await self._lifecycle_policy.note_connectivity_loss(
-                                db, locked_device, reason="Device disconnected"
-                            )
-                            await control_plane_state_store.set_value(
-                                db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
-                            )
-                        else:
-                            logger.info(
-                                "Device %s (%s) left held/busy state before lifecycle write — skipping",
-                                locked_device.name,
-                                locked_device.identity_value,
-                            )
+                        await self._record_disconnect_if_stable(db, device, held=True)
                         continue
                     logger.warning(
                         "Device %s (%s) disconnected from host %s",
@@ -817,32 +824,7 @@ class ConnectivityService:
                         device.identity_value,
                         host.hostname,
                     )
-                    await self._health.update_device_checks(db, device, healthy=False, summary="Disconnected")
-                    locked_device = await device_locking.lock_device(db, device.id)
-                    if (
-                        locked_device.operational_state != DeviceOperationalState.busy
-                        and locked_device.operational_state != DeviceOperationalState.maintenance
-                        and not await device_is_reserved(db, locked_device.id)
-                    ):
-                        await IntentService(db).mark_dirty_and_reconcile(
-                            locked_device.id,
-                            reason="Device disconnected",
-                            publisher=self._publisher,
-                            observed_reason=ObservationReason.disconnected,
-                        )
-                        await self._lifecycle_policy.note_connectivity_loss(
-                            db, locked_device, reason="Device disconnected"
-                        )
-                        await control_plane_state_store.set_value(
-                            db, CONNECTIVITY_NAMESPACE, locked_device.identity_value, True
-                        )
-                    else:
-                        logger.info(
-                            "Device %s (%s) transitioned to %s before offline write — skipping",
-                            locked_device.name,
-                            locked_device.identity_value,
-                            _audit_label(locked_device),
-                        )
+                    await self._record_disconnect_if_stable(db, device, held=False)
 
         await db.commit()
 
