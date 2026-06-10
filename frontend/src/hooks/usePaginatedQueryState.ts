@@ -4,7 +4,8 @@ import type { SortDirection } from '../types';
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
-type QueryValue = string | number | null | undefined;
+type QueryScalar = string | number | null | undefined;
+type QueryValue = QueryScalar | ((prev: string | null) => QueryScalar);
 
 function readPositiveInt(searchParams: URLSearchParams, key: string, fallback: number): number {
   const raw = searchParams.get(key);
@@ -58,7 +59,8 @@ export function usePaginatedQueryState<SortKey extends string = never>({
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
 
-      for (const [key, value] of Object.entries(updates)) {
+      for (const [key, rawValue] of Object.entries(updates)) {
+        const value = typeof rawValue === 'function' ? rawValue(prev.get(key)) : rawValue;
         if (value === null || value === undefined || value === '') {
           next.delete(key);
         } else {

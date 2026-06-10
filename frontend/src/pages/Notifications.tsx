@@ -120,9 +120,13 @@ function NotificationsContent() {
   }, [events, isLoading, page, setPage]);
 
   function toggleSeverity(target: EventSeverity) {
-    const next = toggleSeverityInSet(severities, target);
     updateParams(
-      { severity: next.length ? next.join(',') : null },
+      {
+        severity: (prev) => {
+          const next = toggleSeverityInSet(parseSeverities(prev), target);
+          return next.length ? next.join(',') : null;
+        },
+      },
       { resetPage: true },
     );
   }
