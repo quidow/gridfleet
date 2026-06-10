@@ -512,6 +512,15 @@ class ConnectivityService:
             await link_repair.reset_repair_attempts(db, device.identity_value)
         return healthy
 
+    async def _escalate_health_failure(self, db: AsyncSession, device: Device, *, summary: str) -> None:
+        """Shared unhealthy escalation: record the failed check, then hand the
+        device to lifecycle policy unless it is already offline (re-escalating
+        an offline device would churn recovery intents every cycle)."""
+        was_offline = device.operational_state == DeviceOperationalState.offline
+        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
+        if not was_offline:
+            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+
     async def _note_unanswered_probe(self, db: AsyncSession, device: Device, host: Host, *, threshold: int) -> bool:
         """Count consecutive unanswered probes (AgentCallError → health_result None).
 
@@ -531,11 +540,7 @@ class ConnectivityService:
         )
         if counter < threshold:
             return False
-        summary = "Health probe unanswered (agent/adapter error)"
-        was_offline = device.operational_state == DeviceOperationalState.offline
-        await self._health.update_device_checks(db, device, healthy=False, summary=summary)
-        if not was_offline:
-            await self._lifecycle_policy.handle_health_failure(db, device, source="device_checks", reason=summary)
+        await self._escalate_health_failure(db, device, summary="Health probe unanswered (agent/adapter error)")
         return True
 
     async def _maybe_auto_recover(self, db: AsyncSession, device: Device) -> None:
@@ -767,21 +772,7 @@ class ConnectivityService:
                         # the recovery-only behavior of the old presence gate.
                         await self._maybe_auto_recover(db, device)
                         continue
-                    summary = _summarize_unhealthy_result(health_result)
-                    was_offline = device.operational_state == DeviceOperationalState.offline
-                    await self._health.update_device_checks(
-                        db,
-                        device,
-                        healthy=False,
-                        summary=summary,
-                    )
-                    if not was_offline:
-                        await self._lifecycle_policy.handle_health_failure(
-                            db,
-                            device,
-                            source="device_checks",
-                            reason=summary,
-                        )
+                    await self._escalate_health_failure(db, device, summary=_summarize_unhealthy_result(health_result))
                     await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
                 else:
                     # Device disconnected
