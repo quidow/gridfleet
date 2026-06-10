@@ -1114,10 +1114,10 @@ def test_split_ip_ping_when_absent() -> None:
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
-    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
     assert gated is True
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
     assert counter == 1
@@ -1126,12 +1126,12 @@ async def test_apply_ip_ping_hysteresis_increments_below_threshold(db_session: A
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
     for _ in range(2):
-        await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+        await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
     assert gated is False
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
     assert counter == 3
@@ -1140,12 +1140,12 @@ async def test_apply_ip_ping_hysteresis_flips_at_threshold(db_session: AsyncSess
 @pytest.mark.asyncio
 async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_ip_ping_hysteresis
+    from app.devices.services.connectivity import IP_PING_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
-    await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    await _apply_ip_ping_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_ip_ping_hysteresis(db_session, fake, ok=True, threshold=3)  # type: ignore[arg-type]
+    await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=IP_PING_NAMESPACE, ok=True, threshold=3)  # type: ignore[arg-type]
     assert gated is True
     counter = await control_plane_state_store.get_value(db_session, IP_PING_NAMESPACE, "dev-1")
     assert counter is None
@@ -1154,10 +1154,10 @@ async def test_apply_ip_ping_hysteresis_resets_on_success(db_session: AsyncSessi
 @pytest.mark.asyncio
 async def test_apply_probe_failure_hysteresis_increments_below_threshold(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
-    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
     assert gated is True
     counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
     assert counter == 1
@@ -1166,12 +1166,12 @@ async def test_apply_probe_failure_hysteresis_increments_below_threshold(db_sess
 @pytest.mark.asyncio
 async def test_apply_probe_failure_hysteresis_flips_at_threshold(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
     for _ in range(2):
-        await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
+        await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
     assert gated is False
     counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
     assert counter == 3
@@ -1180,12 +1180,12 @@ async def test_apply_probe_failure_hysteresis_flips_at_threshold(db_session: Asy
 @pytest.mark.asyncio
 async def test_apply_probe_failure_hysteresis_resets_on_success(db_session: AsyncSession) -> None:
     from app.core.leader import state_store as control_plane_state_store
-    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_probe_failure_hysteresis
+    from app.devices.services.connectivity import PROBE_FAILED_NAMESPACE, _apply_failure_hysteresis
 
     fake = _FakeDevice(identity_value="dev-1")
-    await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    await _apply_probe_failure_hysteresis(db_session, fake, ok=False, threshold=3)  # type: ignore[arg-type]
-    gated = await _apply_probe_failure_hysteresis(db_session, fake, ok=True, threshold=3)  # type: ignore[arg-type]
+    await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=False, threshold=3)  # type: ignore[arg-type]
+    gated = await _apply_failure_hysteresis(db_session, fake, namespace=PROBE_FAILED_NAMESPACE, ok=True, threshold=3)  # type: ignore[arg-type]
     assert gated is True
     counter = await control_plane_state_store.get_value(db_session, PROBE_FAILED_NAMESPACE, "dev-1")
     assert counter is None
