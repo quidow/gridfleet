@@ -100,3 +100,44 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
             )
         ).scalar_one_or_none()
     assert reservation is not None
+
+
+async def test_create_run_exhausts_widened_retry_budget(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-match budget must be 5 attempts (lab-measured loop lock holds had a
+    ~600ms median; the old 3x50ms budget could not bridge them). Pins the
+    attempt count on the exhaustion path."""
+    device = await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="retry-budget",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    await db_session.commit()
+
+    calls = 0
+
+    async def always_empty(db: AsyncSession, requirement: object, excluded_device_ids: object = None) -> list[Device]:
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(service_allocator, "_find_matching_devices", always_empty)
+    monkeypatch.setattr(service_allocator, "_MATCH_RETRY_BACKOFF_SEC", 0.0)  # keep the test fast
+
+    async with db_session_maker() as session:
+        with pytest.raises(ValueError, match="Not enough devices"):
+            await _allocator_svc.create_run(
+                session,
+                RunCreate(
+                    name="retry-budget-run",
+                    requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
+                ),
+            )
+
+    assert calls == 5
