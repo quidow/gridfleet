@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated, Any
 
@@ -43,6 +44,20 @@ router = APIRouter(prefix="/agent/pack", tags=["pack"])
 
 PackIdQuery = Annotated[str, Query(min_length=1, pattern=PACK_ID_PATTERN)]
 PlatformIdQuery = Annotated[str, Query(min_length=1, pattern=PLATFORM_ID_PATTERN)]
+
+
+def _parse_claimed_ports(raw: str | None) -> dict[str, int] | None:
+    """Lenient decode of the claimed-ports JSON query param; malformed input
+    degrades to None (adapter skips port checks) rather than failing the probe."""
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+        if not isinstance(decoded, dict):
+            return None
+        return {str(k): int(v) for k, v in decoded.items()}
+    except (ValueError, TypeError):
+        return None
 
 
 @router.get(
@@ -122,6 +137,8 @@ async def pack_device_health_route(
     ip_ping_timeout_sec: Annotated[float | None, Query(gt=0)] = None,
     ip_ping_count: Annotated[int | None, Query(ge=1)] = None,
     identity_value: Annotated[str | None, Query()] = None,
+    claimed_ports: Annotated[str | None, Query()] = None,
+    has_live_session: Annotated[bool | None, Query()] = None,
 ) -> dict[str, Any]:
     _platform_def, release = platform
     if adapter_registry is not None:
@@ -138,6 +155,8 @@ async def pack_device_health_route(
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
             expected_identity_value=identity_value,
+            claimed_ports=_parse_claimed_ports(claimed_ports),
+            has_live_session=has_live_session,
         )
         if payload is not None:
             return payload

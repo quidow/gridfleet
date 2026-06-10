@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import get_pack_devices, pack_device_lifecycle_action
 from app.agent_comm.operations import pack_device_health as fetch_pack_device_health
+from app.appium_nodes.services import resource_service as appium_node_resource_service
 from app.core import metrics_recorders as metrics
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentCallError
@@ -31,6 +32,10 @@ from app.hosts.models import Host, HostStatus
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs.models import RunState
+from app.sessions.live_session_predicate import live_session_predicate
+from app.sessions.models import Session
+from app.sessions.probe_inflight import is_probe_inflight
+from app.sessions.service import device_has_running_session
 
 if TYPE_CHECKING:
     import uuid
@@ -149,6 +154,8 @@ async def _get_device_health(
     *,
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
+    claimed_ports: dict[str, int] | None = None,
+    has_live_session: bool | None = None,
     settings: SettingsReader,
     circuit_breaker: CircuitBreakerProtocol,
     pool: AgentHttpPool | None = None,
@@ -169,6 +176,8 @@ async def _get_device_health(
             ip_address=device.ip_address,
             ip_ping_timeout_sec=ip_ping_timeout_sec,
             ip_ping_count=ip_ping_count,
+            claimed_ports=claimed_ports,
+            has_live_session=has_live_session,
             # Adapters that can read the device identity at the probed target
             # verify it (WI-7) — a different device answering on a reused
             # address fails the probe instead of reporting false-healthy.
@@ -180,6 +189,22 @@ async def _get_device_health(
         )
     except AgentCallError:
         return None
+
+
+async def _host_has_live_sessions(db: AsyncSession, device: Device) -> bool:
+    """True when any device on this host has a live/pending session row or an
+    in-flight viability probe — the adapter's disruptive cure rung (adb bounce)
+    must not run then, it would sever every transport on the host."""
+    row = await db.execute(
+        select(Session.id)
+        .join(Device, Session.device_id == Device.id)
+        .where(Device.host_id == device.host_id, live_session_predicate())
+        .limit(1)
+    )
+    if row.first() is not None:
+        return True
+    host_device_ids = (await db.scalars(select(Device.id).where(Device.host_id == device.host_id))).all()
+    return any(is_probe_inflight(str(device_id)) for device_id in host_device_ids)
 
 
 async def _lifecycle_state_capable(db: AsyncSession, device: Device) -> bool:
@@ -450,6 +475,8 @@ class ConnectivityService:
         db: AsyncSession,
         device: Device,
         health_result: dict[str, Any],
+        *,
+        claimed_ports: dict[str, int] | None = None,
     ) -> bool:
         """If the probe recommends a manifest-declared action and the pack is not
         draining, dispatch it (bounded). Returns True if a re-probe then showed the
@@ -484,15 +511,37 @@ class ConnectivityService:
             metrics.record_device_repair_attempt(action=action, outcome="budget_exhausted")
             return False
 
+        # Fresh facts at dispatch time (the probe-phase snapshot is stale by the
+        # agent round-trips): a session/probe that appeared since the probe makes
+        # the adapter refuse port cures; host-wide liveness gates its bounce rung.
+        fresh_live = await device_has_running_session(db, device.id) or is_probe_inflight(str(device.id))
+        host_live = await _host_has_live_sessions(db, device)
+        extra_args: dict[str, Any] = {"has_live_session": fresh_live, "host_has_live_sessions": host_live}
+        if claimed_ports:
+            extra_args["claimed_ports"] = claimed_ports
+
         try:
             result = await link_repair.dispatch_recommended_action(
-                device, action, settings=self._settings, circuit_breaker=self._circuit_breaker, pool=self._pool
+                device,
+                action,
+                settings=self._settings,
+                circuit_breaker=self._circuit_breaker,
+                pool=self._pool,
+                extra_args=extra_args,
             )
         except AgentCallError:
             result = {"success": False}
         success = bool(result.get("success"))
         await record_event(
-            db, device.id, DeviceEventType.repair_attempted, {"action": action, "attempt": attempt, "success": success}
+            db,
+            device.id,
+            DeviceEventType.repair_attempted,
+            {
+                "action": action,
+                "attempt": attempt,
+                "success": success,
+                "detail": str(result.get("detail") or "")[:200],
+            },
         )
         metrics.record_device_repair_attempt(action=action, outcome="success" if success else "failed")
         if not success:
@@ -502,6 +551,8 @@ class ConnectivityService:
             device,
             ip_ping_timeout_sec=None,
             ip_ping_count=None,
+            claimed_ports=claimed_ports,
+            has_live_session=fresh_live,
             settings=self._settings,
             circuit_breaker=self._circuit_breaker,
             pool=self._pool,
@@ -607,6 +658,8 @@ class ConnectivityService:
         ip_ping_timeout: float | None,
         ip_ping_count: int | None,
         lifecycle_capable: set[uuid.UUID],
+        claimed_ports_by_id: dict[uuid.UUID, dict[str, int]],
+        live_flag_by_id: dict[uuid.UUID, bool],
     ) -> dict[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
         """Concurrently probe device health (and, where the platform declares a
         ``state`` action, lifecycle state) for one host, bounded by a semaphore.
@@ -632,6 +685,8 @@ class ConnectivityService:
                     device,
                     ip_ping_timeout_sec=ip_ping_timeout,
                     ip_ping_count=ip_ping_count,
+                    claimed_ports=claimed_ports_by_id.get(device.id),
+                    has_live_session=live_flag_by_id.get(device.id),
                     settings=self._settings,
                     circuit_breaker=self._circuit_breaker,
                     pool=self._pool,
@@ -708,12 +763,39 @@ class ConnectivityService:
             # lifecycle action. Must complete before the concurrent phase — the
             # gather must not touch the shared session.
             lifecycle_capable = {device.id for device in devices if await _lifecycle_state_capable(db, device)}
+            # Sequential DB pre-pass (same contract as lifecycle_capable): facts the
+            # adapters need for claimed-port checks. Driver-agnostic — core supplies
+            # facts, only adapters interpret them. has_live_session is False only on
+            # positive knowledge: no live/pending Session row AND no in-flight
+            # viability probe (in-memory registry is valid here — this loop is
+            # leader-owned, same process as the probe runner).
+            node_device_pairs = [(d.appium_node.id, d.id) for d in devices if d.appium_node is not None]
+            claims_by_node = await appium_node_resource_service.get_port_claims_for_nodes(
+                db, node_ids=[node_id for node_id, _ in node_device_pairs]
+            )
+            claimed_ports_by_id = {
+                device_id: claims_by_node[node_id]
+                for node_id, device_id in node_device_pairs
+                if node_id in claims_by_node
+            }
+            live_ids = set(
+                (
+                    await db.scalars(
+                        select(Session.device_id).where(
+                            live_session_predicate(), Session.device_id.in_([d.id for d in devices])
+                        )
+                    )
+                ).all()
+            )
+            live_flag_by_id = {d.id: (d.id in live_ids or is_probe_inflight(str(d.id))) for d in devices}
             await db.commit()
             health_by_device_id = await self._probe_host_health(
                 devices,
                 ip_ping_timeout=ip_ping_timeout,
                 ip_ping_count=ip_ping_count,
                 lifecycle_capable=lifecycle_capable,
+                claimed_ports_by_id=claimed_ports_by_id,
+                live_flag_by_id=live_flag_by_id,
             )
             # Re-fence after the slow probe phase: leadership may have changed while we
             # awaited the agents (session_sync pattern). The per-device asserts below
@@ -759,7 +841,9 @@ class ConnectivityService:
                     )
 
                 if not healthy and health_result is not None:
-                    repaired = await self._maybe_dispatch_repair(db, device, health_result)
+                    repaired = await self._maybe_dispatch_repair(
+                        db, device, health_result, claimed_ports=claimed_ports_by_id.get(device.id)
+                    )
                     if repaired:
                         healthy = True
                         ip_ping_entry = None

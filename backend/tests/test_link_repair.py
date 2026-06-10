@@ -46,6 +46,35 @@ async def test_dispatch_passes_only_driver_agnostic_args(monkeypatch: pytest.Mon
     assert "port" not in captured["args"]  # type: ignore[operator]
 
 
+@pytest.mark.asyncio
+async def test_dispatch_merges_extra_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_action(*_args: object, **kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {"success": True}
+
+    monkeypatch.setattr(link_repair, "pack_device_lifecycle_action", fake_action)
+    device = SimpleNamespace(
+        host=SimpleNamespace(ip="10.0.0.5", agent_port=5100),
+        connection_target="10.0.0.20:5555",
+        ip_address="10.0.0.20",
+        pack_id="appium-uiautomator2",
+        platform_id="firetv_real",
+    )
+    await dispatch_recommended_action(
+        device,
+        "release_forwarded_ports",
+        settings=AsyncMock(),
+        circuit_breaker=AsyncMock(),
+        extra_args={"claimed_ports": {"appium:systemPort": 8200}, "has_live_session": False},
+    )
+    args = seen["args"]
+    assert args["ip_address"] == device.ip_address  # type: ignore[index]
+    assert args["claimed_ports"] == {"appium:systemPort": 8200}  # type: ignore[index]
+    assert args["has_live_session"] is False  # type: ignore[index]
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_attempt_budget_increments_then_exhausts(db_session: AsyncSession) -> None:

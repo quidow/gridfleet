@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-uiautomator2
-release: 2026.06.6
+release: 2026.06.7
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -58,9 +58,13 @@ platforms:
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
+      - id: claimed_ports_free
+        label: Driver Ports Free
+        debounce: true
     lifecycle_actions:
       - id: state
       - id: reconnect
+      - id: release_forwarded_ports
     connection_behavior:
       default_device_type: real_device
       default_connection_type: usb
@@ -74,6 +78,7 @@ platforms:
           - id: state
           - id: boot
           - id: shutdown
+          - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
           default_connection_type: virtual
@@ -120,9 +125,13 @@ platforms:
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
+      - id: claimed_ports_free
+        label: Driver Ports Free
+        debounce: true
     lifecycle_actions:
       - id: state
       - id: reconnect
+      - id: release_forwarded_ports
     connection_behavior:
       default_device_type: real_device
       default_connection_type: usb
@@ -136,6 +145,7 @@ platforms:
           - id: state
           - id: boot
           - id: shutdown
+          - id: release_forwarded_ports
         connection_behavior:
           default_device_type: emulator
           default_connection_type: virtual
@@ -182,9 +192,13 @@ platforms:
         applies_when:
           connection_types: [usb]
           requires_ip_address: true
+      - id: claimed_ports_free
+        label: Driver Ports Free
+        debounce: true
     lifecycle_actions:
       - id: state
       - id: reconnect
+      - id: release_forwarded_ports
     connection_behavior:
       default_device_type: real_device
       default_connection_type: usb

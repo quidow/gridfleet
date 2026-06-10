@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Final, cast
 from urllib.parse import quote
 
@@ -625,6 +626,8 @@ async def pack_device_health(
     ip_ping_timeout_sec: float | None = None,
     ip_ping_count: int | None = None,
     identity_value: str | None = None,
+    claimed_ports: dict[str, int] | None = None,
+    has_live_session: bool | None = None,
     http_client_factory: AgentClientFactory = httpx.AsyncClient,
     timeout: float | int = _PACK_ADAPTER_BACKEND_TIMEOUT,
     settings: SettingsReader,
@@ -649,6 +652,10 @@ async def pack_device_health(
         params["ip_ping_timeout_sec"] = ip_ping_timeout_sec
     if ip_ping_count is not None:
         params["ip_ping_count"] = ip_ping_count
+    if claimed_ports is not None:
+        params["claimed_ports"] = json.dumps(claimed_ports)
+    if has_live_session is not None:
+        params["has_live_session"] = has_live_session
     response = await _send_request(
         "GET",
         f"{agent_base_url(host, agent_port)}/agent/pack/devices/{quote(connection_target, safe='')}/health",

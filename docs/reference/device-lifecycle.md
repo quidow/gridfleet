@@ -120,3 +120,22 @@ columns; the runtime guard and row-lock contract apply to application code only.
 `backoff_until`, `maintenance_reason`, `recovery_suppressed_reason`, etc.) is NOT
 derived by the reconciler.  Helpers in `app.devices.services.lifecycle_policy_state`
 manage that column directly under the same row lock.
+
+### Adapter-recommended link repair
+
+The `device_connectivity` loop dispatches manifest-declared lifecycle actions when
+a health check returns a `recommended_action` (driver-agnostic: the adapter decides
+whether and which action remediates; core only validates, bounds, and dispatches).
+The canonical case is the android pack's `reconnect` (I10): adb transport down but
+device TCP-reachable.
+
+**Orphan systemPort cure.** When the control plane reports no live session or
+in-flight probe for a device, the android adapter connect-tests the node's claimed
+`appium:systemPort` (`claimed_ports_free` health check, debounced). A bound socket
+with nothing live is the orphan adb-server binding (the forward table reads empty —
+only a connect test sees it); the adapter recommends `release_forwarded_ports`, an
+instrumented cure ladder (`forward --remove` → rebind+remove → adb bounce, the
+bounce gated on no live sessions anywhere on the host). The curing rung is recorded
+in the `repair_attempted` device event `detail`. Repair shares the standard attempt
+budget (3, reset on healthy probe); an uncured device escalates to lifecycle policy
+instead of silently failing every create.

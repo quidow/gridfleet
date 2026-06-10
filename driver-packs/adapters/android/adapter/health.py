@@ -10,6 +10,7 @@ from agent_app.pack.adapter_utils import icmp_reachable, run_cmd, tcp_reachable
 
 _IP_PORT_RE = re.compile(r"^(?P<host>\d+\.\d+\.\d+\.\d+):(?P<port>\d+)$")
 _EMULATOR_SERIAL_RE = re.compile(r"^emulator-\d+$")
+_SYSTEM_PORT_CAPABILITY = "appium:systemPort"
 
 
 async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
@@ -76,7 +77,35 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
                 detail="" if reachable else "ICMP echo unanswered",
             )
         )
+    orphan_result = await _orphan_system_port_check(ctx)
+    if orphan_result is not None:
+        results.append(orphan_result)
     return results
+
+
+async def _orphan_system_port_check(ctx: HealthContext) -> HealthCheckResult | None:
+    """Detect the orphan adb-server systemPort binding.
+
+    Runs only when the control plane positively reports no live session or
+    in-flight probe (``has_live_session is False``, not None): with nothing
+    live, no one may legitimately hold the claimed systemPort on this host.
+    The adb forward table is the wrong detector — the orphan server socket
+    survives with an EMPTY table — so connect-test the port, exactly the
+    uia2 driver's own busy check that fails the next create.
+    """
+    if getattr(ctx, "has_live_session", None) is not False:
+        return None
+    claimed = getattr(ctx, "claimed_ports", None)
+    port = claimed.get(_SYSTEM_PORT_CAPABILITY) if isinstance(claimed, dict) else None
+    if not port:
+        return None
+    bound = await tcp_reachable("127.0.0.1", int(port), timeout=2)
+    return HealthCheckResult(
+        check_id="claimed_ports_free",
+        ok=not bound,
+        detail="" if not bound else f"systemPort {port} bound with no live session (orphan adb-server socket)",
+        recommended_action=None if not bound else "release_forwarded_ports",
+    )
 
 
 async def _verify_identity(adb: str, serial: str, expected: str) -> HealthCheckResult | None:
