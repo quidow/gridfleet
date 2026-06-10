@@ -47,9 +47,12 @@ if TYPE_CHECKING:
 # ``SELECT ... FOR UPDATE SKIP LOCKED`` skipped a candidate whose row was
 # momentarily locked by a background reconcile loop (the device is fully
 # allocatable). Re-match a bounded number of times before surfacing the
-# shortfall; those lock windows are sub-second.
-_MATCH_RETRY_ATTEMPTS = 3
-_MATCH_RETRY_BACKOFF_SEC = 0.05
+# shortfall. Lab measurement (2026-06-10) put loop lock holds at a ~600ms
+# median (max ~2.3s) before the connectivity sweep committed per device;
+# 5 x 250ms outlasts the residual windows while adding at most ~1s before a
+# genuine shortfall surfaces.
+_MATCH_RETRY_ATTEMPTS = 5
+_MATCH_RETRY_BACKOFF_SEC = 0.25
 
 
 class _UnmetRequirementError(Exception):
