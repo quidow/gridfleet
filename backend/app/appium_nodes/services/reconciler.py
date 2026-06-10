@@ -966,40 +966,24 @@ class ReconcilerService:
                         publisher=self._publisher,
                         settings=self._settings,
                     )
-                    if clear_desired_port:
-                        device = await _lock_device_for_reconciler(db, row.device_id)
-                        if device is None or device.appium_node is None:
-                            return
-                        node = device.appium_node
-                        await write_desired_state(
-                            db,
-                            node=node,
-                            target=node.desired_state,
-                            caller="appium_reconciler",
-                            transition_token=node.transition_token,
-                            transition_deadline=node.transition_deadline,
-                        )
-                        await db.commit()
-                    return
                 else:
                     await mark_node_stopped(db, device, publisher=self._publisher)
-                if clear_desired_port or clear_transition:
+                # The running path delegates token clearing to mark_node_started
+                # (clear_transition passed through), so it re-writes desired state
+                # only to drop the port; the stopped path also clears the token here.
+                if clear_desired_port or (state != "running" and clear_transition):
                     device = await _lock_device_for_reconciler(db, row.device_id)
                     if device is None or device.appium_node is None:
                         return
                     node = device.appium_node
-                    target = node.desired_state
-                    desired_port = None if clear_desired_port else node.desired_port
-                    transition_token = None if clear_transition else node.transition_token
-                    transition_deadline = None if clear_transition else node.transition_deadline
                     await write_desired_state(
                         db,
                         node=node,
-                        target=target,
+                        target=node.desired_state,
                         caller="appium_reconciler",
-                        desired_port=desired_port,
-                        transition_token=transition_token,
-                        transition_deadline=transition_deadline,
+                        desired_port=None if clear_desired_port else node.desired_port,
+                        transition_token=None if clear_transition else node.transition_token,
+                        transition_deadline=None if clear_transition else node.transition_deadline,
                     )
                     await db.commit()
 
@@ -1013,7 +997,7 @@ class ReconcilerService:
     ) -> Callable[..., Awaitable[None]]:
         resolved_session_scope = session_scope or self._session_factory
 
-        async def _clear(*, row: DesiredRow, reason: str) -> None:
+        async def _clear(*, row: DesiredRow) -> None:
             async with resolved_session_scope() as db:
                 if require_leader:
                     await assert_current_leader(db, settings=self._settings)

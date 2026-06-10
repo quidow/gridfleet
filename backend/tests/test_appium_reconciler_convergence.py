@@ -538,7 +538,7 @@ async def test_converge_host_rows_clear_token_and_db_clear_branches() -> None:
         reset_start_failure=AsyncMock(),
     )
 
-    clear_token.assert_awaited_once_with(row=expired, reason="deadline_elapsed")
+    clear_token.assert_awaited_once_with(row=expired)
     write_observed.assert_awaited_once_with(
         row=stale,
         state="stopped",
