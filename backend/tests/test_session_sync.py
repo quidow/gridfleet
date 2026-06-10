@@ -359,13 +359,16 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
 # --------------------------------------------------------------------------- #
 
 
-def _idle_sync_service(idle_timeout_sec: int, *, first_command_grace_sec: int = 180) -> SessionSyncService:
+def _idle_sync_service(
+    idle_timeout_sec: int, *, first_command_grace_sec: int = 180, idle_ceiling_sec: int = 7200
+) -> SessionSyncService:
     return SessionSyncService(
         publisher=event_bus,
         settings=FakeSettingsReader(
             {
                 "grid.session_idle_timeout_sec": idle_timeout_sec,
                 "grid.session_first_command_grace_sec": first_command_grace_sec,
+                "grid.session_idle_timeout_ceiling_sec": idle_ceiling_sec,
             }
         ),
         lifecycle=AsyncMock(),
@@ -1029,4 +1032,173 @@ async def test_write_phase_drops_when_leadership_lost_after_probes(
     await db_session.rollback()
     await db_session.refresh(session)
     assert session.status == SessionStatus.running  # untouched: no stale-leader write
+    assert session.ended_at is None
+
+
+# --------------------------------------------------------------------------- #
+# Cap-aware idle reap (7a): pure helpers                                       #
+# --------------------------------------------------------------------------- #
+
+
+def _caps_session(requested: object = None, actual: object = None) -> Session:
+    return Session(
+        session_id="caps-helper",
+        status=SessionStatus.running,
+        requested_capabilities=requested,
+        actual_capabilities=actual,
+    )
+
+
+def test_new_command_timeout_reads_prefixed_and_bare_keys() -> None:
+    assert service_sync._client_new_command_timeout_sec(_caps_session(actual={"appium:newCommandTimeout": 600})) == 600
+    assert service_sync._client_new_command_timeout_sec(_caps_session(actual={"newCommandTimeout": 300})) == 300
+
+
+def test_new_command_timeout_prefers_actual_over_requested() -> None:
+    session = _caps_session(requested={"appium:newCommandTimeout": 0}, actual={"appium:newCommandTimeout": 60})
+    assert service_sync._client_new_command_timeout_sec(session) == 60
+
+
+def test_new_command_timeout_falls_back_to_requested() -> None:
+    session = _caps_session(requested={"appium:newCommandTimeout": 45}, actual={"platformName": "Android"})
+    assert service_sync._client_new_command_timeout_sec(session) == 45
+
+
+def test_new_command_timeout_rejects_garbage_values() -> None:
+    for bad in (True, False, "60", -1, None, [60], {"v": 60}):
+        assert (
+            service_sync._client_new_command_timeout_sec(_caps_session(actual={"appium:newCommandTimeout": bad}))
+            is None
+        )
+    assert service_sync._client_new_command_timeout_sec(_caps_session()) is None
+
+
+def test_new_command_timeout_truncates_float() -> None:
+    assert service_sync._client_new_command_timeout_sec(_caps_session(actual={"appium:newCommandTimeout": 90.7})) == 90
+
+
+def test_effective_idle_timeout_formula() -> None:
+    def effective(nct: object, *, idle: int = 1800, ceiling: int = 7200) -> int:
+        caps = {"appium:newCommandTimeout": nct} if nct is not None else {}
+        return service_sync._effective_idle_timeout_sec(_caps_session(actual=caps), idle_timeout=idle, ceiling=ceiling)
+
+    assert effective(None) == 1800  # no client value: operator timeout unchanged
+    assert effective(2700) == 2700  # client extends past the operator timeout
+    assert effective(0) == 7200  # "never" clamps to the ceiling (N14 guarantee)
+    assert effective(99999) == 7200  # huge value clamps to the ceiling
+    assert effective(30) == 1800  # client can never SHORTEN the window
+    assert effective(0, idle=1800, ceiling=600) == 1800  # misconfigured ceiling never undercuts the operator timeout
+
+
+# --------------------------------------------------------------------------- #
+# Cap-aware idle reap (7a): behavioral                                         #
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_running_session(
+    db: AsyncSession,
+    host: Host,
+    *,
+    identity: str,
+    session_id: str,
+    last_activity_age_sec: int,
+    actual_capabilities: dict[str, Any] | None = None,
+) -> Session:
+    device = await _seed_device_with_node(
+        db, host, identity_value=identity, operational_state=DeviceOperationalState.busy
+    )
+    session = Session(
+        session_id=session_id,
+        device_id=device.id,
+        status=SessionStatus.running,
+        last_activity_at=datetime.now(UTC) - timedelta(seconds=last_activity_age_sec),
+        actual_capabilities=actual_capabilities,
+    )
+    db.add(session)
+    await db.commit()
+    return session
+
+
+async def test_client_new_command_timeout_extends_idle_window(db_session: AsyncSession, db_host: Host) -> None:
+    """Activity past the operator idle timeout but inside the client's larger
+    newCommandTimeout is NOT reaped — the client contract is honored (7a)."""
+    session = await _seed_running_session(
+        db_session,
+        db_host,
+        identity="nct-extend",
+        session_id="sess-nct-extend",
+        last_activity_age_sec=300,
+        actual_capabilities={"appium:newCommandTimeout": 600},
+    )
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
+async def test_extended_window_still_reaps_past_client_timeout(db_session: AsyncSession, db_host: Host) -> None:
+    """The extension is a window, not immunity: activity older than the client's
+    newCommandTimeout is reaped through the idle path."""
+    session = await _seed_running_session(
+        db_session,
+        db_host,
+        identity="nct-expire",
+        session_id="sess-nct-expire",
+        last_activity_age_sec=700,
+        actual_capabilities={"appium:newCommandTimeout": 600},
+    )
+    before = service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get()
+    await _idle_sync_service(idle_timeout_sec=60).sync(db_session)
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+    assert service_sync.GRID_IDLE_SESSIONS_REAPED_TOTAL._value.get() == before + 1
+
+
+async def test_new_command_timeout_zero_clamps_to_ceiling(db_session: AsyncSession, db_host: Host) -> None:
+    """newCommandTimeout=0 ('never') does not disable the reap: it clamps to the
+    ceiling (N14 zombie guarantee). Past the ceiling -> reaped."""
+    session = await _seed_running_session(
+        db_session,
+        db_host,
+        identity="nct-zero",
+        session_id="sess-nct-zero",
+        last_activity_age_sec=200,
+        actual_capabilities={"appium:newCommandTimeout": 0},
+    )
+    await _idle_sync_service(idle_timeout_sec=60, idle_ceiling_sec=120).sync(db_session)
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+
+
+async def test_new_command_timeout_zero_inside_ceiling_survives(db_session: AsyncSession, db_host: Host) -> None:
+    """The same 'never' session inside the ceiling survives even though it is
+    past the operator idle timeout — proving the extension actually applied."""
+    session = await _seed_running_session(
+        db_session,
+        db_host,
+        identity="nct-zero-live",
+        session_id="sess-nct-zero-live",
+        last_activity_age_sec=90,
+        actual_capabilities={"appium:newCommandTimeout": 0},
+    )
+    await _idle_sync_service(idle_timeout_sec=60, idle_ceiling_sec=600).sync(db_session)
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
+    assert session.ended_at is None
+
+
+async def test_short_new_command_timeout_never_shortens_window(db_session: AsyncSession, db_host: Host) -> None:
+    """A client newCommandTimeout BELOW the operator idle timeout does not pull
+    the reap earlier: the driver owns short timeouts (S21), the sweep is a backstop."""
+    session = await _seed_running_session(
+        db_session,
+        db_host,
+        identity="nct-short",
+        session_id="sess-nct-short",
+        last_activity_age_sec=100,
+        actual_capabilities={"appium:newCommandTimeout": 30},
+    )
+    await _idle_sync_service(idle_timeout_sec=300).sync(db_session)
+    await db_session.refresh(session)
+    assert session.status == SessionStatus.running
     assert session.ended_at is None
