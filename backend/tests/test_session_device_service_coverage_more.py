@@ -360,19 +360,8 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     )
 
     monkeypatch.setattr(
-        "app.devices.services.service.run_service.get_device_reservation_map", AsyncMock(return_value={})
-    )
-    monkeypatch.setattr(
         "app.devices.services.service.device_readiness.assess_device_async",
         AsyncMock(return_value=SimpleNamespace(readiness_state="ready")),
-    )
-    monkeypatch.setattr(
-        "app.devices.services.service.lifecycle_policy_summary.build_lifecycle_policy",
-        AsyncMock(return_value=object()),
-    )
-    monkeypatch.setattr(
-        "app.devices.services.service.lifecycle_policy_summary.build_lifecycle_policy_summary",
-        lambda _policy: {"state": "healthy"},
     )
     monkeypatch.setattr(
         "app.devices.services.service.device_health.build_public_summary",

@@ -90,9 +90,8 @@ class DevicePresenterService:
             health_summary = device_health.build_public_summary(device)
         hardware_status = hardware_telemetry.current_hardware_health_status(device)
         needs_attention = device_attention.compute_needs_attention(
-            lifecycle_summary["state"],
+            device.operational_state,
             readiness.readiness_state,
-            health_overall=health_summary.get("overall") if health_summary else None,
             hardware_health_status=hardware_status,
             review_required=bool(device.review_required),
         )

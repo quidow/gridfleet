@@ -460,7 +460,7 @@ async def test_start_node_clears_operator_stop_suppression(
     loop then records ``recovery_suppressed_reason="Operator stopped the node"``
     onto ``lifecycle_policy_state``. The start path revokes the deny intent but
     must also clear the JSON residue, otherwise the device keeps deriving
-    ``lifecycle_policy_summary.state == "suppressed"`` (and ``needs_attention``)
+    ``lifecycle_policy_summary.state == "suppressed"`` ("Recovery Paused" badge)
     while it is actually running and available.
     """
     device = await _create_device(db_session, default_host_id, operational_state="available")
@@ -487,10 +487,12 @@ async def test_start_node_clears_operator_stop_suppression(
     )
     await db_session.commit()
 
-    # Sanity: the residue derives a suppressed summary before the start.
+    # Sanity: the residue derives a suppressed summary before the start. It no
+    # longer drives needs_attention — attention follows the operational axis,
+    # so suppression residue on an available device is not flagged.
     before = await client.get(f"/api/devices/{device_id}")
     assert before.json()["lifecycle_policy_summary"]["state"] == "suppressed"
-    assert before.json()["needs_attention"] is True
+    assert before.json()["needs_attention"] is False
 
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 200

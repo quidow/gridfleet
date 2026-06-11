@@ -407,7 +407,7 @@ class LifecyclePolicyService:
             # The probe could not run because another viability probe holds the device's
             # lock, or the device left a probeable state mid-attempt (see _run_recovery_probe).
             # Record a *skip* — not a suppression, not a failure: no auto-stop, no backoff, no
-            # review_required, and crucially no ``suppressed``/``needs_attention`` badge. A
+            # review_required, and crucially no ``suppressed`` badge. A
             # lock collision is benign and self-resolving — the flow that won the lock (the
             # exit-maintenance verification lease, or the next device_connectivity tick) does
             # the real recovery. (ex-N11 "Fix B": suppressing here raised a false "Recovery
