@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.11.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.10.0...gridfleet-testkit-v0.11.0) (2026-06-11)
+
+
+### Features
+
+* **testkit:** add reserved filter passthrough to list_devices ([a00162a](https://github.com/quidow/gridfleet/commit/a00162a084b981e4c9ae28852fb0bc1fcd1720de))
+
 ## [0.10.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.9.5...gridfleet-testkit-v0.10.0) (2026-06-07)
 
 
