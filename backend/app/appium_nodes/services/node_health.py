@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 LOOP_NAME = "node_health"
-PROBE_CONCURRENCY_PER_HOST = 2
 
 NODE_HEALTH_WAKE_SOURCE_TOTAL = Counter(
     "gridfleet_node_health_wake_source",
@@ -142,8 +141,9 @@ class NodeHealthService:
             )
             for node in nodes
         ]
+        probe_concurrency = self._settings.get_int("general.probe_concurrency_per_host")
         host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+            lambda: asyncio.Semaphore(probe_concurrency)
         )
         results = await asyncio.gather(
             *[

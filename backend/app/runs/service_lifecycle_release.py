@@ -42,8 +42,8 @@ from app.sessions.models import Session, SessionStatus
 
 logger = logging.getLogger(__name__)
 # Bound concurrent Appium DELETEs per host during run release so a single hung
-# node cannot stall the whole release. Mirrors session_sync's
-# PROBE_CONCURRENCY_PER_HOST.
+# node cannot stall the whole release. Mirrors the observation loops' per-host
+# probe ceiling (settings key general.probe_concurrency_per_host).
 TERMINATE_CONCURRENCY_PER_HOST = 2
 
 

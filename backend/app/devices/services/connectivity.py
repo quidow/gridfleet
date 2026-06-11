@@ -66,9 +66,6 @@ IP_PING_NAMESPACE = "device_checks.ip_ping_failures"
 PROBE_UNANSWERED_NAMESPACE = "device_checks.probe_unanswered"
 PROBE_FAILED_NAMESPACE = "device_checks.probe_failed"
 IP_PING_CHECK_ID = "ip_ping"
-# Concurrent agent health probes per host during the probe phase. Matches the
-# ceiling node_health / session_sync use so a single host agent is not overwhelmed.
-PROBE_CONCURRENCY_PER_HOST = 2
 LOOP_NAME = "device_connectivity"
 
 
@@ -670,7 +667,10 @@ class ConnectivityService:
         semaphore slot; the win is cross-device concurrency (DEBT-4: the lifecycle
         poll used to add one serial agent RTT per device to the apply loop).
         """
-        semaphore = asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
+        # Per-host probe ceiling comes from the settings registry
+        # (general.probe_concurrency_per_host) — shared with node_health and
+        # session_sync so one host agent sees a consistent concurrent load.
+        semaphore = asyncio.Semaphore(self._settings.get_int("general.probe_concurrency_per_host"))
 
         async def _probe(device: Device) -> tuple[uuid.UUID, tuple[dict[str, Any] | None, str | None]]:
             async with semaphore:

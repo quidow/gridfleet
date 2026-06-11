@@ -27,6 +27,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.intent_reconcile_full_scan_every_cycles` | `general` | `int` | `720` | none | `1..17280` | Run a full device scan after this many intent reconciler cycles |
 | `general.node_check_interval_sec` | `general` | `int` | `30` | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `10..600` | Interval for managed Appium node health checks |
 | `general.node_max_failures` | `general` | `int` | `3` | `GRIDFLEET_NODE_MAX_FAILURES` | `1..20` | Consecutive failed node checks before restart or suppression logic runs |
+| `general.probe_concurrency_per_host` | `general` | `int` | `4` | `GRIDFLEET_PROBE_CONCURRENCY_PER_HOST` | `1..16` | Concurrent agent health probes per host in the observation loops (connectivity, node health, session sync) |
 | `general.device_check_interval_sec` | `general` | `int` | `60` | `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `10..600` | Interval for host-reported device connectivity checks |
 | `general.session_queue_timeout_sec` | `general` | `int` | `300` | `GRIDFLEET_SESSION_QUEUE_TIMEOUT_SEC` | `30..3600` | Timeout budget for session queueing |
 | `general.device_cooldown_max_sec` | `general` | `int` | `3600` | `GRIDFLEET_DEVICE_COOLDOWN_MAX_SEC` | `60..86400` | Maximum run-scoped device cooldown accepted from clients |

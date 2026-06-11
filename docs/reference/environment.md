@@ -56,6 +56,7 @@ These are not the authoritative settings store. They only provide the initial se
 | `GRIDFLEET_PROPERTY_REFRESH_INTERVAL_SEC` | `general.property_refresh_interval_sec` | `600` | Property refresh cadence |
 | `GRIDFLEET_NODE_CHECK_INTERVAL_SEC` | `general.node_check_interval_sec` | `30` | Appium node health-check cadence |
 | `GRIDFLEET_NODE_MAX_FAILURES` | `general.node_max_failures` | `3` | Failed node health checks before auto-restart |
+| `GRIDFLEET_PROBE_CONCURRENCY_PER_HOST` | `general.probe_concurrency_per_host` | `4` | Per-host probe concurrency in observation loops (seeds the registry default) |
 | `GRIDFLEET_DEVICE_CHECK_INTERVAL_SEC` | `general.device_check_interval_sec` | `60` | Device connectivity verification cadence |
 | `GRIDFLEET_GRID_QUEUE_TIMEOUT_SEC` | `grid.queue_timeout_sec` | `300` | How long a queued new-session request waits for a device before failing |
 | `GRIDFLEET_GRID_CLAIM_WINDOW_SEC` | `grid.claim_window_sec` | `120` | How long an allocated (pending) session may stay unconfirmed before the allocation reaper fails it |
