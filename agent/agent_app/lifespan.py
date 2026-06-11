@@ -2,8 +2,7 @@
 
 Extracted from ``agent_app/main.py``. Owns the long-running background
 tasks (capabilities refresh, registration, pack state loop) plus the
-adapter loader used by the pack state loop, plus the manager-auth
-helper and pack-state HTTP client.
+adapter loader used by the pack state loop, plus the pack-state HTTP client.
 """
 
 from __future__ import annotations
@@ -15,11 +14,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-import httpx
-
 from agent_app import observability as agent_observability
 from agent_app.appium import appium_mgr
-from agent_app.config import agent_settings, secret_value
+from agent_app.config import agent_settings
 from agent_app.host.capabilities import CapabilitiesCache
 from agent_app.host.version_guidance import VersionGuidanceStore
 from agent_app.http_client import close as close_shared_http_client
@@ -35,6 +32,7 @@ from agent_app.pack.state import PackStateClient, PackStateLoop
 from agent_app.pack.tarball_fetch import download_and_verify
 from agent_app.pack.version_catalog import NpmVersionCatalog
 from agent_app.registration import RegistrationService
+from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -71,14 +69,6 @@ def _watchdog(
             restart()
 
     return _cb
-
-
-def _manager_auth() -> httpx.BasicAuth | None:
-    username = agent_settings.manager.manager_auth_username
-    password = secret_value(agent_settings.manager.manager_auth_password)
-    if not username or not password:
-        return None
-    return httpx.BasicAuth(username, password)
 
 
 class HttpPackStateClient(PackStateClient):

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from agent_app.host.version_guidance import VersionGuidanceStore
     from agent_app.pack.host_identity import HostIdentity
 
-__all__ = ["RegistrationService", "get_local_ip"]
+__all__ = ["RegistrationService", "get_local_ip", "manager_auth"]
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def _map_os_type() -> str:
     return "linux"
 
 
-def _manager_auth() -> httpx.BasicAuth | None:
+def manager_auth() -> httpx.BasicAuth | None:
     username = agent_settings.manager.manager_auth_username
     password = secret_value(agent_settings.manager.manager_auth_password)
     if not username or not password:
@@ -85,7 +85,7 @@ class RegistrationService:
 
         client = get_shared_http_client()
         request_kwargs: dict[str, Any] = {"json": payload, "timeout": 10}
-        if (auth := _manager_auth()) is not None:
+        if (auth := manager_auth()) is not None:
             request_kwargs["auth"] = auth
         resp = await client.post(f"{manager_url}/api/hosts/register", **request_kwargs)
         resp.raise_for_status()

@@ -40,7 +40,7 @@ async def test_adapter_loader_reuses_shared_client(tmp_path: Path) -> None:
 
     try:
         with (
-            patch("agent_app.lifespan.httpx.AsyncClient", side_effect=AssertionError("must not allocate AsyncClient")),
+            patch("httpx.AsyncClient", side_effect=AssertionError("must not allocate AsyncClient")),
             patch("agent_app.lifespan.get_shared_http_client", return_value=shared_client),
             patch("agent_app.lifespan.load_adapter", new_callable=AsyncMock, return_value=object()),
         ):
