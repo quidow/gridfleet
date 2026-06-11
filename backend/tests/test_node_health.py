@@ -1064,6 +1064,7 @@ async def test_per_host_probe_concurrency_capped(db_session: AsyncSession, db_ho
             settings=FakeSettingsReader(
                 {
                     "general.node_max_failures": 3,
+                    "general.probe_concurrency_per_host": 2,
                     "appium_reconciler.restart_window_sec": 300,
                     "appium.startup_timeout_sec": 30,
                 }
