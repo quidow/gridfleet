@@ -217,6 +217,76 @@ export function groupLifecycleIncidents(incidents: LifecycleIncidentRead[] = [])
   return [...grouped.values()].toSorted((a, b) => timestamp(b.latestCreatedAt) - timestamp(a.latestCreatedAt));
 }
 
+export interface AttentionRow {
+  deviceId: string;
+  deviceName: string;
+  reason: string | null;
+  /** Non-null only when the device has an active lifecycle summary (renders LifecyclePolicyBadge). */
+  lifecycleSummary: DeviceRead['lifecycle_policy_summary'] | null;
+  tone: BadgeTone;
+  badgeLabel: string;
+  latestAt: string | null;
+}
+
+export interface AttentionSummary {
+  rows: AttentionRow[];
+  total: number;
+}
+
+const ATTENTION_TONE_RANK: Record<BadgeTone, number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+  neutral: 3,
+  success: 4,
+};
+
+export function deriveAttentionRows(
+  devices: DeviceRead[] = [],
+  incidents: LifecycleIncidentRead[] = [],
+): AttentionSummary {
+  const grouped = groupLifecycleIncidents(incidents);
+  const unresolvedByDevice = new Map<string, GroupedLifecycleIncident>();
+  for (const incident of grouped) {
+    const tone = incidentToneFromEventType(incident.eventType);
+    // Success-tone incidents are resolved — they never produce attention rows.
+    // grouped is sorted newest-first, so the first hit per device is its latest problem.
+    if ((tone === 'critical' || tone === 'warning') && !unresolvedByDevice.has(incident.deviceId)) {
+      unresolvedByDevice.set(incident.deviceId, incident);
+    }
+  }
+
+  const rows: AttentionRow[] = [];
+  for (const device of devices) {
+    const summary = device.lifecycle_policy_summary;
+    const active = isLifecycleSummaryActive(summary);
+    const incident = unresolvedByDevice.get(device.id);
+    if (!active && !device.needs_attention && !incident) continue;
+    const tone = incident ? incidentToneFromEventType(incident.eventType) : 'warning';
+    rows.push({
+      deviceId: device.id,
+      deviceName: device.name,
+      reason:
+        incident?.detail
+        ?? incident?.reason
+        ?? summary.detail
+        ?? summary.maintenance_reason
+        ?? null,
+      lifecycleSummary: active ? summary : null,
+      tone,
+      badgeLabel: incident?.label ?? (active ? summary.label : 'Needs attention'),
+      latestAt: incident?.latestCreatedAt ?? null,
+    });
+  }
+
+  const sorted = rows.toSorted((a, b) => {
+    const rank = ATTENTION_TONE_RANK[a.tone] - ATTENTION_TONE_RANK[b.tone];
+    if (rank !== 0) return rank;
+    return timestamp(b.latestAt ?? '') - timestamp(a.latestAt ?? '');
+  });
+  return { rows: sorted, total: sorted.length };
+}
+
 export function incidentToneFromEventType(eventType: DeviceEventType): BadgeTone {
   switch (eventType) {
     case 'node_crash':

@@ -112,10 +112,9 @@ test.describe('Dashboard analytics widgets', () => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({ timeout: 15_000 });
 
-    // The fleet overview widgets should appear
-    await expect(page.getByText('Last 7 days')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Pass rate')).toBeVisible();
-    await expect(page.getByText('Fleet utilization')).toBeVisible();
-    await expect(page.getByText('Reliability watchlist')).toBeVisible();
+    // The fleet overview widgets now appear as scorecard cells
+    await expect(page.getByText('Pass rate · 7d', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Utilization · 7d', { exact: true })).toBeVisible();
+    await expect(page.getByText('Needs attention', { exact: true }).first()).toBeVisible();
   });
 });

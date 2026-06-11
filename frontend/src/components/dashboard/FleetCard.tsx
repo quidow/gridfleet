@@ -44,7 +44,7 @@ const BAR_SEGMENTS = [
 
 type SegmentKey = (typeof BAR_SEGMENTS)[number]['key'];
 
-export function FleetByPlatformCard() {
+export function FleetCard() {
   const devicesQuery = useDevices();
   const { data: devices } = devicesQuery;
   const { data: catalog = [] } = useDriverPackCatalog();
@@ -90,26 +90,6 @@ export function FleetByPlatformCard() {
       if (bOrder !== undefined) return 1;
       return a.localeCompare(b);
     });
-  const annotations = [
-    fleet.reserved > 0
-      ? {
-          key: 'reserved',
-          label: 'Reserved',
-          count: fleet.reserved,
-          to: '/devices?status=reserved',
-          dotClass: 'bg-info-strong',
-        }
-      : null,
-    fleet.needsAttention > 0
-      ? {
-          key: 'needs_attention',
-          label: 'Needs attention',
-          count: fleet.needsAttention,
-          to: '/devices?needs_attention=true',
-          dotClass: 'bg-danger-strong',
-        }
-      : null,
-  ].filter((item) => item !== null);
 
   return (
     <Card padding="lg" className="flex h-full flex-col">
@@ -131,48 +111,37 @@ export function FleetByPlatformCard() {
       ) : (
         <>
           <ProportionalBar
-            segments={BAR_SEGMENTS.map((segment) => ({
-              ...segment,
-              count: counts[segment.key],
-            }))}
+            segments={BAR_SEGMENTS.map((segment) => ({ ...segment, count: counts[segment.key] }))}
+            legendExtras={
+              fleet.reserved > 0
+                ? [{
+                    key: 'reserved',
+                    label: 'Reserved',
+                    count: fleet.reserved,
+                    barClassName: 'bg-info-strong',
+                    to: '/devices?status=reserved',
+                  }]
+                : undefined
+            }
           />
 
-          {annotations.length > 0 ? (
-            <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
-              {annotations.map((annotation) => (
-                <Link
-                  key={annotation.key}
-                  to={annotation.to}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-text-2 transition-colors hover:border-border-strong hover:bg-surface-1"
-                >
-                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${annotation.dotClass}`} />
-                  <span>{annotation.label}</span>
-                  <span className="font-mono tabular-nums text-text-1">{annotation.count}</span>
-                </Link>
-              ))}
-            </div>
-          ) : null}
-
           {platformChips.length > 0 && (
-            <>
-              <div className="mt-4 border-t border-border pt-4" />
-              <div className="flex flex-wrap gap-2">
-                {platformChips.map((platform) => {
-                  const label = resolvePlatformLabel(platform, platformCatalog.labels.get(platform));
-                  return (
-                    <Link
-                      key={platform}
-                      to={`/devices?platform_id=${platform}`}
-                      className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-text-1 hover:border-border-strong hover:bg-surface-1 transition-colors"
-                      aria-label={`${label} — ${fleet.platformCounts[platform]} devices`}
-                    >
-                      <PlatformIcon platformId={platform} platformLabel={label} showLabel />
-                      <span className="font-mono tabular-nums text-text-2">{fleet.platformCounts[platform]}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </>
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
+              {platformChips.map((platform) => {
+                const label = resolvePlatformLabel(platform, platformCatalog.labels.get(platform));
+                return (
+                  <Link
+                    key={platform}
+                    to={`/devices?platform_id=${platform}`}
+                    className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-text-1 hover:border-border-strong hover:bg-surface-1 transition-colors"
+                    aria-label={`${label} — ${fleet.platformCounts[platform]} devices`}
+                  >
+                    <PlatformIcon platformId={platform} platformLabel={label} showLabel />
+                    <span className="font-mono tabular-nums text-text-2">{fleet.platformCounts[platform]}</span>
+                  </Link>
+                );
+              })}
+            </div>
           )}
 
           <FleetHealthHistory

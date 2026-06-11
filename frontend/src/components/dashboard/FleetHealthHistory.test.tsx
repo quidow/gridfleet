@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FleetHealthHistory } from './FleetHealthHistory';
@@ -49,7 +50,7 @@ describe('FleetHealthHistory', () => {
       },
     } as unknown as ReturnType<typeof useFleetCapacityTimeline>);
 
-    render(<FleetHealthHistory />);
+    render(<FleetHealthHistory />, { wrapper: MemoryRouter });
     expect(screen.getByText(/not enough history/i)).toBeInTheDocument();
   });
 
@@ -88,7 +89,7 @@ describe('FleetHealthHistory', () => {
       },
     } as unknown as ReturnType<typeof useFleetCapacityTimeline>);
 
-    render(<FleetHealthHistory />);
+    render(<FleetHealthHistory />, { wrapper: MemoryRouter });
     expect(screen.getByText('75%')).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
   });
@@ -105,6 +106,7 @@ describe('FleetHealthHistory', () => {
 
     const { container } = render(
       <FleetHealthHistory livePoint={{ devices_total: 2, devices_offline: 0, devices_maintenance: 0 }} />,
+      { wrapper: MemoryRouter },
     );
     const circle = container.querySelector('circle');
     expect(circle).not.toBeNull();
@@ -130,7 +132,7 @@ describe('FleetHealthHistory', () => {
       },
     } as unknown as ReturnType<typeof useFleetCapacityTimeline>);
 
-    render(<FleetHealthHistory livePoint={{ devices_total: 2, devices_offline: 1, devices_maintenance: 0 }} />);
+    render(<FleetHealthHistory livePoint={{ devices_total: 2, devices_offline: 1, devices_maintenance: 0 }} />, { wrapper: MemoryRouter });
     expect(screen.getByText('50')).toBeInTheDocument();
   });
 });

@@ -12,6 +12,10 @@ export async function fetchGridQueue(): Promise<GridQueueRead> {
 }
 
 export async function fetchHealth(): Promise<HealthStatus> {
-  const { data } = await api.get('/health');
+  // /api/health signals degraded with a 503 plus a full payload — that body is
+  // data the dashboard renders (DB pill, degraded states), not a transport error.
+  const { data } = await api.get('/health', {
+    validateStatus: (status) => (status >= 200 && status < 300) || status === 503,
+  });
   return data;
 }
