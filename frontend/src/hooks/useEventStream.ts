@@ -7,6 +7,7 @@ import { fetchEventCatalog } from '../api/events';
 import type { SettingsGrouped } from '../types';
 import { formatEventDetails } from '../components/notifications/eventRegistry';
 import { qk } from '../lib/queryKeys';
+import { createReconnectingEventSource } from '../lib/reconnectingEventSource';
 
 const EVENT_QUERY_MAP: Record<string, ReadonlyArray<readonly string[]>> = {
   'device.operational_state_changed': [qk.devices.root, qk.device.root, qk.deviceCapabilities.root],
@@ -83,8 +84,6 @@ const TOAST_EVENTS: Record<string, (data: Record<string, unknown>) => ToastResul
   }),
 };
 
-const INITIAL_RECONNECT_DELAY = 1_000;
-const MAX_RECONNECT_DELAY = 30_000;
 const HIGH_VOLUME_INVALIDATION_DELAY = 3_000;
 
 const DEFAULT_TOAST_EVENTS = [
@@ -186,7 +185,6 @@ export function useEventStream() {
     return { toastEvents, dismissSec, toastThreshold };
   }, [settings]);
   const toastConfigRef = useRef<ToastConfig>(toastConfig);
-  const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY);
   const pendingInvalidationsRef = useRef<Set<string>>(new Set());
   const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -200,9 +198,6 @@ export function useEventStream() {
     }
 
     const pendingInvalidations = pendingInvalidationsRef.current;
-    let eventSource: EventSource | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let disposed = false;
 
     function flushPendingInvalidations() {
       const pending = Array.from(pendingInvalidationsRef.current);
@@ -226,96 +221,65 @@ export function useEventStream() {
       invalidationTimerRef.current = setTimeout(flushPendingInvalidations, HIGH_VOLUME_INVALIDATION_DELAY);
     }
 
-    function connect() {
-      if (disposed) {
+    function handleEvent(eventType: string, e: MessageEvent) {
+      let parsed: { data: Record<string, unknown> };
+      try {
+        parsed = JSON.parse(e.data);
+      } catch {
         return;
       }
-      if (eventSource) {
-        eventSource.close();
+
+      const queryKeys = EVENT_QUERY_MAP[eventType] || [];
+      if (isHighVolumeEvent(eventType)) {
+        scheduleHighVolumeInvalidation(queryKeys);
+      } else {
+        for (const key of queryKeys) {
+          invalidateQueryTarget(queryClient, key);
+        }
+        void queryClient.invalidateQueries({ queryKey: qk.notifications.root });
       }
 
-      const es = new EventSource('/api/events');
-      eventSource = es;
-
-      es.onopen = () => {
-        reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
-        setConnected(true);
-      };
-
-      es.onerror = () => {
-        if (disposed) {
+      const toastFn = TOAST_EVENTS[eventType];
+      const formatted = formatEventDetails(eventType, parsed.data);
+      const fallbackMessage = formatted.kind === 'text' ? formatted.text : JSON.stringify(parsed.data);
+      const result = toastFn
+        ? toastFn(parsed.data)
+        : { type: 'info' as const, message: fallbackMessage };
+      if (result) {
+        const { toastEvents, dismissSec, toastThreshold } = toastConfigRef.current;
+        const severity = toSeverity(result.type);
+        if (!toastEvents.includes(eventType) || !meetsSeverityThreshold(severity, toastThreshold)) {
           return;
         }
-        setConnected(false);
-        es.close();
-        eventSource = null;
-        void (async () => {
-          const authSession = await auth.probeSession();
-          if (disposed || (authSession.enabled && !authSession.authenticated)) {
-            return;
-          }
 
-          const delay = reconnectDelayRef.current;
-          reconnectTimer = setTimeout(connect, delay);
-          reconnectDelayRef.current = Math.min(delay * 2, MAX_RECONNECT_DELAY);
-        })();
-      };
-
-      for (const eventType of eventTypes) {
-        es.addEventListener(eventType, (e: MessageEvent) => {
-          let parsed: { data: Record<string, unknown> };
-          try {
-            parsed = JSON.parse(e.data);
-          } catch {
-            return;
-          }
-
-          const queryKeys = EVENT_QUERY_MAP[eventType] || [];
-          if (isHighVolumeEvent(eventType)) {
-            scheduleHighVolumeInvalidation(queryKeys);
-          } else {
-            for (const key of queryKeys) {
-              invalidateQueryTarget(queryClient, key);
-            }
-            void queryClient.invalidateQueries({ queryKey: qk.notifications.root });
-          }
-
-          const toastFn = TOAST_EVENTS[eventType];
-          const formatted = formatEventDetails(eventType, parsed.data);
-          const fallbackMessage = formatted.kind === 'text' ? formatted.text : JSON.stringify(parsed.data);
-          const result = toastFn
-            ? toastFn(parsed.data)
-            : { type: 'info' as const, message: fallbackMessage };
-          if (result) {
-            const { toastEvents, dismissSec, toastThreshold } = toastConfigRef.current;
-            const severity = toSeverity(result.type);
-            if (!toastEvents.includes(eventType) || !meetsSeverityThreshold(severity, toastThreshold)) {
-              return;
-            }
-
-            const duration = result.type === 'error'
-              ? Infinity
-              : (dismissSec <= 0 ? Infinity : dismissSec * 1000);
-            toast[result.type](result.message, {
-              duration,
-            });
-          }
+        const duration = result.type === 'error'
+          ? Infinity
+          : (dismissSec <= 0 ? Infinity : dismissSec * 1000);
+        toast[result.type](result.message, {
+          duration,
         });
       }
     }
 
-    connect();
+    const listeners: Record<string, (e: MessageEvent) => void> = {};
+    for (const eventType of eventTypes) {
+      listeners[eventType] = (e) => handleEvent(eventType, e);
+    }
+
+    const handle = createReconnectingEventSource({
+      url: '/api/events',
+      listeners,
+      onOpen: () => setConnected(true),
+      onDisconnect: () => setConnected(false),
+      beforeReconnect: async () => {
+        const authSession = await auth.probeSession();
+        return !(authSession.enabled && !authSession.authenticated);
+      },
+    });
 
     return () => {
-      disposed = true;
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
+      handle.close();
       setConnected(false);
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
       if (invalidationTimerRef.current) {
         clearTimeout(invalidationTimerRef.current);
         invalidationTimerRef.current = null;
