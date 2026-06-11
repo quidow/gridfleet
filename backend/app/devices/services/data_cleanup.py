@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -90,6 +91,7 @@ class DataCleanupService:
 
     async def cleanup_old_data(self, db: AsyncSession) -> None:
         now = datetime.now(UTC)
+        started = time.monotonic()
         sessions_deleted = 0
         audit_deleted = 0
         test_data_audit_deleted = 0
@@ -321,6 +323,7 @@ class DataCleanupService:
                 "system_events_deleted": system_events_deleted,
                 "test_runs_deleted": test_runs_deleted,
                 "jobs_deleted": jobs_deleted,
+                "duration_seconds": round(time.monotonic() - started, 3),
             },
         )
 

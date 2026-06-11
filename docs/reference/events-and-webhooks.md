@@ -143,7 +143,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `device_group.members_changed` | `group_id`, `added`, `removed` | `neutral` | `neutral`, `info` | static group membership writes |
 | `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
-| `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted` | `neutral` | `neutral`, `warning` | retention cleanup loop |
+| `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
 | `webhook.test` | `webhook_id`, `webhook_name`, `message` | `neutral` | `neutral` | webhook test endpoint |
 | `pack_feature.degraded` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `warning` | `warning`, `critical` | driver pack feature monitor |
 | `pack_feature.recovered` | `host_id`, `pack_id`, `feature_id`, `ok`, `detail` | `success` | `success` | driver pack feature monitor |
