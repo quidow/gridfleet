@@ -395,10 +395,10 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert isinstance(metrics, Response)
     assert metrics.body == b"metrics"
 
-    ready_device = SimpleNamespace(id=uuid.uuid4())
-    blocked_device = SimpleNamespace(id=uuid.uuid4())
+    ready_device = SimpleNamespace(id=uuid.uuid4(), review_required=False, appium_node=None)
+    blocked_device = SimpleNamespace(id=uuid.uuid4(), review_required=False, appium_node=None)
     mock_crud = AsyncMock()
-    mock_crud.list_devices = AsyncMock(return_value=[ready_device, blocked_device])
+    mock_crud.list_devices_by_filters = AsyncMock(return_value=[ready_device, blocked_device])
     monkeypatch.setattr(
         main,
         "assess_devices_async",
@@ -428,3 +428,8 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
         "matched": 1,
         "platform_id": "android_mobile",
     }
+    # The endpoint must count only capacity the run allocator can use:
+    # reserved devices are excluded at the query layer.
+    availability_filters = mock_crud.list_devices_by_filters.await_args.args[1]
+    assert availability_filters.reserved is False
+    assert availability_filters.status == "available"

@@ -6,10 +6,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services import state_write_guard
 from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
+from app.runs.models import RunState, TestRun
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -208,6 +209,103 @@ async def test_availability_restores_when_unhealthy_offline_device_recovers(
     data = resp.json()
     assert data["available"] is True
     assert data["matched"] == 1
+
+
+async def test_availability_excludes_reserved_devices(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Reservation is orthogonal to operational_state, so a reserved device
+    still reads ``available`` — but the run allocator will never match it.
+    The capacity this endpoint reports must be capacity the allocator can
+    actually use."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-reserved",
+            connection_target="avail-reserved",
+            name="Reserved Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    run = TestRun(name="holder-run", state=RunState.active, requirements=[])
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run_id=run.id,
+            device_id=device.id,
+            identity_value=device.identity_value,
+            connection_target=device.connection_target,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            os_version=device.os_version,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+    assert data["matched"] == 0
+
+
+async def test_availability_excludes_devices_with_nonviable_node(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A node mid-transition (or with no live pid/connection target) is
+    rejected by the allocators' node-viability gate; the endpoint must not
+    count it as capacity."""
+    with state_write_guard.bypass():
+        device = Device(
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            identity_value="avail-nonviable-node",
+            connection_target="avail-nonviable-node",
+            name="Transitioning Phone",
+            os_version="14",
+            host_id=db_host.id,
+            operational_state=DeviceOperationalState.available,
+            verified_at=datetime.now(UTC),
+            device_type=DeviceType.real_device,
+            connection_type=ConnectionType.usb,
+        )
+    db_session.add(device)
+    await db_session.flush()
+    with state_write_guard.bypass():
+        db_session.add(
+            AppiumNode(
+                device_id=device.id,
+                port=4723,
+                desired_state=AppiumDesiredState.running,
+                desired_port=4723,
+                pid=None,
+                active_connection_target=None,
+                health_running=True,
+            )
+        )
+    await db_session.commit()
+
+    resp = await client.get("/api/availability", params={"platform_id": "android_mobile", "count": 1})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is False
+    assert data["matched"] == 0
 
 
 async def test_availability_wrong_platform(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:
