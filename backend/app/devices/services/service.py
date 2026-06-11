@@ -287,10 +287,7 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
         stmt = stmt.where(Device.platform_id == filters.platform_id)
     if filters.status is not None:
         if filters.status == "available":
-            stmt = stmt.where(
-                Device.operational_state == DeviceOperationalState.available,
-                ~active_reservation_exists(),
-            )
+            stmt = stmt.where(Device.operational_state == DeviceOperationalState.available)
         elif filters.status == "busy":
             stmt = stmt.where(
                 Device.operational_state.in_([DeviceOperationalState.busy, DeviceOperationalState.verifying])
@@ -299,10 +296,10 @@ def _apply_device_filters(stmt: DeviceQueryStatement, filters: DeviceQueryFilter
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.offline)
         elif filters.status == "maintenance":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.maintenance)
-        elif filters.status == "reserved":
-            stmt = stmt.where(active_reservation_exists())
         elif filters.status == "verifying":
             stmt = stmt.where(Device.operational_state == DeviceOperationalState.verifying)
+    if filters.reserved is not None:
+        stmt = stmt.where(active_reservation_exists() if filters.reserved else ~active_reservation_exists())
     if filters.host_id is not None:
         stmt = stmt.where(Device.host_id == filters.host_id)
     if filters.identity_value is not None:

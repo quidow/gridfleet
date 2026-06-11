@@ -626,7 +626,7 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
     assert str(verifying_reserved.id) in verifying_ids
     assert str(busy_reserved.id) not in verifying_ids
 
-    reserved_resp = await client.get("/api/devices", params={"status": "reserved"})
+    reserved_resp = await client.get("/api/devices", params={"reserved": "true"})
     assert reserved_resp.status_code == 200
     reserved_ids = {item["id"] for item in reserved_resp.json()}
     # The reserved filter is reservation-row based: any device with an active reservation
@@ -642,7 +642,7 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """status filters key off operational_state + active reservation rows, not Device.hold."""
+    """status filters key off operational_state only; reservation is an orthogonal boolean filter."""
     from app.devices.models import DeviceOperationalState
     from tests.helpers import create_reservation
 
@@ -678,12 +678,23 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
     await create_reservation(db_session, device_id=reserved.id)
     await db_session.commit()
 
-    reserved_resp = await client.get("/api/devices", params={"status": "reserved"})
+    reserved_resp = await client.get("/api/devices", params={"reserved": "true"})
     assert reserved_resp.status_code == 200
     reserved_ids = {item["id"] for item in reserved_resp.json()}
     assert str(reserved.id) in reserved_ids
     assert str(maintenance.id) not in reserved_ids
     assert str(available.id) not in reserved_ids
+
+    not_reserved_resp = await client.get("/api/devices", params={"reserved": "false"})
+    assert not_reserved_resp.status_code == 200
+    not_reserved_ids = {item["id"] for item in not_reserved_resp.json()}
+    assert str(reserved.id) not in not_reserved_ids
+    assert str(maintenance.id) in not_reserved_ids
+    assert str(available.id) in not_reserved_ids
+
+    # 'reserved' is no longer a status value; reservation is an orthogonal boolean filter.
+    rejected_resp = await client.get("/api/devices", params={"status": "reserved"})
+    assert rejected_resp.status_code == 422
 
     maintenance_resp = await client.get("/api/devices", params={"status": "maintenance"})
     assert maintenance_resp.status_code == 200
@@ -696,9 +707,16 @@ async def test_list_devices_filter_status_uses_operational_state_and_reservation
     assert available_resp.status_code == 200
     available_ids = {item["id"] for item in available_resp.json()}
     assert str(available.id) in available_ids
-    # Reserved device is operational_state=available but has an active reservation -> excluded.
-    assert str(reserved.id) not in available_ids
+    # Reserved device is operational_state=available; reservation no longer excludes it.
+    assert str(reserved.id) in available_ids
     assert str(maintenance.id) not in available_ids
+
+    combined_resp = await client.get("/api/devices", params={"status": "available", "reserved": "false"})
+    assert combined_resp.status_code == 200
+    combined_ids = {item["id"] for item in combined_resp.json()}
+    assert str(available.id) in combined_ids
+    assert str(reserved.id) not in combined_ids
+    assert str(maintenance.id) not in combined_ids
 
 
 @pytest.mark.asyncio
