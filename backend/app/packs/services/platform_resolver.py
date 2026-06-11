@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -22,6 +22,7 @@ class PackPlatformNotFound(LookupError):  # noqa: N818
 class ResolvedParallelResourcePort:
     capability_name: str
     start: int
+    skip_when: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ async def resolve_pack_platform(
             ResolvedParallelResourcePort(
                 capability_name=p["capability_name"],
                 start=p["start"],
+                skip_when=dict(p.get("skip_when") or {}),
             )
             for p in (raw_pr.get("ports") or [])
         ],
@@ -112,6 +114,29 @@ async def resolve_pack_platform(
         connection_behavior=dict(override.get("connection_behavior") or platform.data.get("connection_behavior", {})),
         parallel_resources=parallel_resources,
     )
+
+
+def applicable_resource_ports(
+    resolved: ResolvedPackPlatform, device_config: dict[str, Any] | None
+) -> list[ResolvedParallelResourcePort]:
+    """Filter parallel-resource ports by their ``skip_when`` device_config gate.
+
+    A port is skipped when every gated field equals its listed value. An unset
+    field falls back to its schema ``default`` (same semantics as
+    ``required_for_session_when``), so a field the device type never declares
+    can't match the gate.
+    """
+    cfg = device_config or {}
+    fields = resolved.device_fields_schema
+    kept: list[ResolvedParallelResourcePort] = []
+    for port in resolved.parallel_resources.ports:
+        if port.skip_when and all(
+            cfg.get(key, next((f.get("default") for f in fields if f.get("id") == key), None)) == expected
+            for key, expected in port.skip_when.items()
+        ):
+            continue
+        kept.append(port)
+    return kept
 
 
 async def assert_runnable(

@@ -122,6 +122,12 @@ class ManifestParallelResourcePort(BaseModel):
 
     capability_name: str
     start: int
+    # Skip allocating this port when each listed device_config field equals the
+    # given value. An unset gated field falls back to its schema default (same
+    # semantics as required_for_session_when). Fields not declared in the
+    # device's effective fields schema never match, so the gate only binds
+    # device types that expose the field.
+    skip_when: dict[str, Any] = Field(default_factory=dict)
 
 
 class ParallelResources(BaseModel):
@@ -379,6 +385,13 @@ class Manifest(BaseModel):
                     if key not in all_ids:
                         raise ValueError(
                             f"field '{field_def.id}' required_for_session_when gates on unknown device field '{key}'"
+                        )
+        for plat in self.platforms:
+            for port in plat.parallel_resources.ports:
+                for key in port.skip_when:
+                    if key not in all_ids:
+                        raise ValueError(
+                            f"port '{port.capability_name}' skip_when gates on unknown device field '{key}'"
                         )
         return self
 

@@ -63,6 +63,7 @@ from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.packs.services import start_shim as pack_start_shim
 
+applicable_resource_ports = pack_platform_resolver.applicable_resource_ports
 assert_runnable = pack_platform_resolver.assert_runnable
 build_device_context = pack_start_shim.build_device_context
 build_pack_start_payload = pack_start_shim.build_pack_start_payload
@@ -561,7 +562,7 @@ async def _start_for_node(
             platform_id=device.platform_id,
             device_type=device.device_type.value if device.device_type else None,
         )
-        resource_ports = {p.capability_name: p.start for p in resolved.parallel_resources.ports}
+        resource_ports = {p.capability_name: p.start for p in applicable_resource_ports(resolved, device.device_config)}
         needs_derived_data_path = resolved.parallel_resources.derived_data_path
     except LookupError:
         # Pack platform missing or unresolved — fall back to no parallel
