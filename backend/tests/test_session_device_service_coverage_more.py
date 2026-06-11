@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import encode_cursor
@@ -216,8 +217,10 @@ async def test_mark_session_finished_commits_when_device_row_vanished(monkeypatc
     session = SimpleNamespace(session_id="vanished-device", id=_uuid.uuid4(), device_id=_uuid.uuid4(), ended_at=None)
     db = AsyncMock()
     db.get = AsyncMock(return_value=None)
-    # The conditional close-claim UPDATE (re-review B3) must report a win.
-    db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+    # First execute is the lock-order device row lock — the vanished device
+    # raises NoResultFound, which the close path must tolerate. Second is the
+    # conditional close-claim UPDATE (re-review B3), which must report a win.
+    db.execute = AsyncMock(side_effect=[NoResultFound(), SimpleNamespace(rowcount=1)])
     db.refresh = AsyncMock()
     db.flush = AsyncMock()
     db.commit = AsyncMock()
