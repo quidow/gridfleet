@@ -125,6 +125,23 @@ def resolve_appium_invocation_for_pack(
     )
 
 
+def _macos_java_home() -> str | None:
+    """Resolve a JDK home via /usr/libexec/java_home; None when unavailable."""
+    try:
+        result = subprocess.run(
+            ["/usr/libexec/java_home"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _find_java() -> str:
     """Find the java binary, checking PATH, JAVA_HOME, sdkman, and common locations."""
     found = shutil.which("java")
@@ -136,20 +153,10 @@ def _find_java() -> str:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     if platform.system() == "Darwin" and found and os.path.realpath(found) == "/usr/bin/java":
-        try:
-            result = subprocess.run(
-                ["/usr/libexec/java_home"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                jh = result.stdout.strip()
-                candidate = os.path.join(jh, "bin", "java") if jh else ""
-                if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    return candidate
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
+        jh = _macos_java_home()
+        candidate = os.path.join(jh, "bin", "java") if jh else ""
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     search_paths = [
         os.path.expanduser("~/.sdkman/candidates/java/current/bin"),
         "/usr/local/bin",
@@ -165,19 +172,9 @@ def _find_java() -> str:
                 search_paths.append(candidate_dir)
     # macOS java_home
     if platform.system() == "Darwin":
-        try:
-            result = subprocess.run(
-                ["/usr/libexec/java_home"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                jh = result.stdout.strip()
-                if jh:
-                    search_paths.append(os.path.join(jh, "bin"))
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.debug("/usr/libexec/java_home search probe failed", exc_info=True)
+        jh = _macos_java_home()
+        if jh:
+            search_paths.append(os.path.join(jh, "bin"))
     for search_dir in search_paths:
         candidate = os.path.join(search_dir, "java")
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
