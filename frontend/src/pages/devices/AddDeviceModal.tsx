@@ -12,12 +12,10 @@ import type {
   DeviceVerificationJob,
 } from '../../types';
 import { useStartDeviceVerification } from '../../hooks/useDevices';
-import { useIntakeCandidates } from '../../hooks/useHosts';
 import {
   CONNECTION_TYPE_LABELS,
   DEVICE_TYPE_LABELS,
   type HostOption,
-  filterIntakeCandidates,
   getAllowedConnectionTypes,
   getAllowedDeviceTypes,
   laneNeedsCandidate,
@@ -34,6 +32,7 @@ import {
   platformDescriptorForDeviceType,
 } from '../../hooks/usePlatformDescriptor';
 import { buildPlatformOptions } from './platformOptions';
+import { useCandidateDiscovery } from './useCandidateDiscovery';
 
 type Props = {
   isOpen: boolean;
@@ -58,16 +57,11 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
 
   const [deviceType, setDeviceType] = useState<DeviceType>('real_device');
   const [connectionType, setConnectionType] = useState<ConnectionType>('usb');
-  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string>('');
   const [displayName, setDisplayName] = useState('');
   const [manualConnectionTarget, setManualConnectionTarget] = useState('');
   const [manualIpAddress, setManualIpAddress] = useState('');
   const [deviceConfig, setDeviceConfig] = useState<DeviceConfigDraft>({});
   const [job, setJob] = useState<DeviceVerificationJob | null>(null);
-  const { data: candidates = [], isFetching: isFetchingCandidates = false } = useIntakeCandidates(hostId || null);
-  const [candidateUpdate, setCandidateUpdate] = useState<{ context: string; signature: string } | null>(null);
-  const previousCandidateSignatureRef = useRef<string | null>(null);
-  const previousCandidateContextRef = useRef<string | null>(null);
   const { activeJob, isVerificationRunning, resetCompletionGuard } = useDeviceVerificationJobController({
     isOpen,
     isStarting: startVerification.isPending,
@@ -88,24 +82,22 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
     : activeAllowedConnectionTypes[0] ?? connectionType;
   const effectiveDescriptor = platformDescriptorForDeviceType(activeDescriptor, activeDeviceType);
 
-  const filteredCandidates = useMemo(
-    () => filterIntakeCandidates(candidates, activeDescriptor, activeDeviceType, activeConnectionType),
-    [candidates, activeDescriptor, activeDeviceType, activeConnectionType],
-  );
-  const candidateSignature = useMemo(
-    () => filteredCandidates
-      .map((candidate) => `${candidate.identity_value}:${candidate.connection_target ?? ''}:${candidate.already_registered}`)
-      .toSorted()
-      .join('|'),
-    [filteredCandidates],
-  );
-  const candidateContext = `${hostId}:${activePlatformKey}:${activeDeviceType}:${activeConnectionType}`;
-  const selectedCandidate = filteredCandidates.find(
-    (candidate) => `${candidate.identity_value}:${candidate.connection_target ?? ''}` === selectedCandidateKey,
-  );
-  const observedDeviceCountLabel = `${filteredCandidates.length} ${filteredCandidates.length === 1 ? 'device' : 'devices'} observed`;
-  const showCandidateUpdate =
-    candidateUpdate?.context === candidateContext && candidateUpdate.signature === candidateSignature;
+  const {
+    filteredCandidates,
+    isFetchingCandidates,
+    selectedCandidate,
+    selectedCandidateKey,
+    setSelectedCandidateKey,
+    clearSelection,
+    showCandidateUpdate,
+    observedDeviceCountLabel,
+  } = useCandidateDiscovery({
+    hostId,
+    activePlatformKey,
+    activeDescriptor,
+    activeDeviceType,
+    activeConnectionType,
+  });
 
   const manualRequirements = manualRegistrationRequirements(activeDescriptor, activeDeviceType, activeConnectionType);
   const requiresIpAddress = manualRequirements.ipAddress;
@@ -134,7 +126,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
 
   function selectHost(nextHostId: string) {
     setHostId(nextHostId);
-    setSelectedCandidateKey('');
+    clearSelection();
   }
 
   function selectPlatform(nextKey: string) {
@@ -150,7 +142,7 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
     setPlatformKey(nextKey);
     setDeviceType(nextDeviceType);
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
     setManualIpAddress('');
     setManualConnectionTarget('');
     const nextEffectiveDescriptor = platformDescriptorForDeviceType(nextDescriptor, nextDeviceType);
@@ -164,46 +156,15 @@ export function AddDeviceModal({ isOpen, onClose, onCompleted, hostOptions }: Pr
       : allowedConnectionTypes[0];
     setDeviceType(nextDeviceType);
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
     const nextEffectiveDescriptor = platformDescriptorForDeviceType(activeDescriptor, nextDeviceType);
     setDeviceConfig(nextEffectiveDescriptor ? defaultsForDeviceFields(nextEffectiveDescriptor.deviceFieldsSchema) : {});
   }
 
   function selectConnectionType(nextConnectionType: ConnectionType) {
     setConnectionType(nextConnectionType);
-    setSelectedCandidateKey('');
+    clearSelection();
   }
-
-  useEffect(() => {
-    if (!hostId) {
-      previousCandidateContextRef.current = null;
-      previousCandidateSignatureRef.current = null;
-      return;
-    }
-
-    if (previousCandidateContextRef.current !== candidateContext) {
-      previousCandidateContextRef.current = candidateContext;
-      previousCandidateSignatureRef.current = candidateSignature;
-      return;
-    }
-
-    if (
-      previousCandidateSignatureRef.current !== null &&
-      previousCandidateSignatureRef.current !== candidateSignature
-    ) {
-      previousCandidateSignatureRef.current = candidateSignature;
-      const showTimeout = window.setTimeout(() => {
-        setCandidateUpdate({ context: candidateContext, signature: candidateSignature });
-      }, 0);
-      const hideTimeout = window.setTimeout(() => setCandidateUpdate(null), 3500);
-      return () => {
-        window.clearTimeout(showTimeout);
-        window.clearTimeout(hideTimeout);
-      };
-    }
-
-    previousCandidateSignatureRef.current = candidateSignature;
-  }, [candidateContext, candidateSignature, hostId]);
 
   const displayNameValue = displayName || selectedCandidate?.name || '';
   const derivedConnectionTarget =
