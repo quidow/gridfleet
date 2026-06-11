@@ -10,14 +10,15 @@ import {
   bulkReconnect,
 } from '../api/bulk';
 import type { BulkOperationResult } from '../types';
+import { qk } from '../lib/queryKeys';
 
 function useBulkMutation<T>(mutationFn: (body: T) => Promise<BulkOperationResult>) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device'] });
+      qc.invalidateQueries({ queryKey: qk.devices.root });
+      qc.invalidateQueries({ queryKey: qk.device.root });
     },
   });
 }
