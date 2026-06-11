@@ -31,6 +31,7 @@ class NormalizeDeviceResponse(BaseModel):
     device_type: str
     connection_type: str
     os_version: str
+    os_version_display: str | None = None
     manufacturer: str = ""
     model: str = ""
     model_number: str = ""

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_app.pack.adapter_types import HealthCheckResult
+from agent_app.pack.adapter_types import HealthCheckResult, NormalizedDevice
 from agent_app.pack.contexts import HealthCtx
-from agent_app.pack.dispatch import adapter_health_check
+from agent_app.pack.dispatch import adapter_health_check, adapter_normalize_device
 
 
 class _StubAdapter:
@@ -85,3 +85,38 @@ async def test_adapter_health_check_expected_identity_defaults_to_none() -> None
         ctx=HealthCtx(device_identity_value="10.0.0.5", allow_boot=False),
     )
     assert getattr(adapter.last_ctx, "expected_identity_value", "missing") is None
+
+
+class _NormalizeStubAdapter:
+    pack_id = "pkg"
+    pack_release = "1.0.0"
+
+    async def normalize_device(self, ctx: object) -> NormalizedDevice:
+        return NormalizedDevice(
+            identity_scheme="serial",
+            identity_scope="global",
+            identity_value="SER1",
+            connection_target="10.0.0.9:5555",
+            ip_address="10.0.0.9",
+            device_type="real_device",
+            connection_type="wifi",
+            os_version="17.5",
+            field_errors=[],
+            os_version_display="17.5.1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_adapter_normalize_device_includes_os_version_display() -> None:
+    adapter = _NormalizeStubAdapter()
+    registry = _StubRegistry(adapter)  # type: ignore[arg-type]
+    payload = await adapter_normalize_device(
+        adapter_registry=registry,  # type: ignore[arg-type]
+        pack_id="pkg",
+        pack_release="1.0.0",
+        host_id="h1",
+        platform_id="android",
+        raw_input={"connection_target": "10.0.0.9:5555"},
+    )
+    assert payload is not None
+    assert payload["os_version_display"] == "17.5.1"

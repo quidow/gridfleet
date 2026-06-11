@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 from agent_app.pack.adapter_dispatch import (
@@ -163,21 +164,7 @@ async def adapter_normalize_device(
         return None
     ctx = NormalizeCtx(host_id=host_id, platform_id=platform_id, raw_input=raw_input)
     result = await _dispatch_normalize(adapter, ctx)
-    return {
-        "identity_scheme": result.identity_scheme,
-        "identity_scope": result.identity_scope,
-        "identity_value": result.identity_value,
-        "connection_target": result.connection_target,
-        "ip_address": result.ip_address,
-        "device_type": result.device_type,
-        "connection_type": result.connection_type,
-        "os_version": result.os_version,
-        "manufacturer": result.manufacturer,
-        "model": result.model,
-        "model_number": result.model_number,
-        "software_versions": result.software_versions,
-        "field_errors": [{"field_id": error.field_id, "message": error.message} for error in result.field_errors],
-    }
+    return dataclasses.asdict(result)
 
 
 async def adapter_telemetry(
