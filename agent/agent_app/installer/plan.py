@@ -139,19 +139,13 @@ def _node_version_key(node_path: Path) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def _operator_home(env: Mapping[str, str]) -> Path:
-    """Return the home directory of the user running this process."""
-    del env  # SUDO_USER no longer consulted; install runs as operator.
-    return Path.home()
-
-
 def discover_tools(
     *,
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
 ) -> ToolDiscovery:
     resolved_env = os.environ if env is None else env
-    resolved_home = home or _operator_home(resolved_env)
+    resolved_home = home or Path.home()
     warnings: list[str] = []
 
     node_bin_dir = _find_node_bin_dir(resolved_env, resolved_home)

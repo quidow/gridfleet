@@ -124,7 +124,6 @@ def format_update_dry_run(
     try:
         upgrade_cmd = build_upgrade_command(
             uv_runtime,
-            operator=operator,
             package_spec=package_spec,
             config=config,
         )
@@ -246,7 +245,6 @@ def update_agent(
     try:
         upgrade_cmd = build_upgrade_command(
             uv_runtime,
-            operator=operator,
             package_spec=package_spec,
             config=config,
         )

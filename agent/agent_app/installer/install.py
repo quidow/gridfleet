@@ -113,8 +113,7 @@ def remove_path_shim(config: InstallConfig, operator: OperatorIdentity) -> bool:
     return False
 
 
-def _service_file_path(config: InstallConfig, os_name: str, operator: OperatorIdentity | None = None) -> Path:
-    del operator  # SUDO_USER fallbacks gone; operator is the calling user.
+def _service_file_path(os_name: str) -> Path:
     if os_name == "Linux":
         return _xdg_config_home() / "systemd/user/gridfleet-agent.service"
     if os_name == "Darwin":
@@ -140,7 +139,7 @@ def install_no_start(
     agent_dir = Path(config.agent_dir)
     config_dir = Path(config.config_dir)
     runtime_dir = agent_dir / "runtimes"
-    service_file = _service_file_path(config, resolved_os, operator)
+    service_file = _service_file_path(resolved_os)
 
     runtime_dir.mkdir(parents=True, exist_ok=True)
     config_dir.mkdir(parents=True, exist_ok=True)

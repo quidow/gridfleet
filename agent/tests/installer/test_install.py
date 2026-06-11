@@ -80,29 +80,21 @@ def test_resolve_bin_path_uses_shutil_which_for_bare_command(monkeypatch: pytest
 
 def test_default_linux_service_path_is_user_systemd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-    from agent_app.installer.plan import default_install_config
 
-    config = default_install_config("Linux")
-
-    assert _service_file_path(config, "Linux") == (tmp_path / "cfg/systemd/user/gridfleet-agent.service")
+    assert _service_file_path("Linux") == (tmp_path / "cfg/systemd/user/gridfleet-agent.service")
 
 
 def test_user_systemd_path_falls_back_to_dot_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
-    from agent_app.installer.plan import default_install_config
 
-    config = default_install_config("Linux")
-
-    assert _service_file_path(config, "Linux") == (tmp_path / ".config/systemd/user/gridfleet-agent.service")
+    assert _service_file_path("Linux") == (tmp_path / ".config/systemd/user/gridfleet-agent.service")
 
 
 def test_default_macos_service_path_uses_home_launch_agents(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home/agent")
 
-    assert _service_file_path(InstallConfig(), "Darwin") == (
-        tmp_path / "home/agent/Library/LaunchAgents/com.gridfleet.agent.plist"
-    )
+    assert _service_file_path("Darwin") == (tmp_path / "home/agent/Library/LaunchAgents/com.gridfleet.agent.plist")
 
 
 def test_install_no_start_writes_config_runtime_dir_and_service(
@@ -170,9 +162,7 @@ def test_install_no_start_aligns_linux_writable_paths_to_service_user(
 def test_macos_service_path_uses_current_user_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))  # type: ignore[arg-type]
 
-    assert _service_file_path(InstallConfig(), "Darwin") == (
-        tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist"
-    )
+    assert _service_file_path("Darwin") == (tmp_path / "Library/LaunchAgents/com.gridfleet.agent.plist")
 
 
 def test_install_no_start_uses_private_launchd_path_on_macos(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
