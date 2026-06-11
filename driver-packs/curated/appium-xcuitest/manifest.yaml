@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-xcuitest
-release: 2026.06.10
+release: 2026.06.11
 display_name: Appium XCUITest
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -255,6 +255,13 @@ platforms:
       ports:
         - capability_name: "appium:wdaLocalPort"
           start: 8100
+        # With devicectl preferred there is no RemoteXPC tunnel, so the driver
+        # cannot forward the MJPEG port ("No tunnel found for device ...") and
+        # any session requesting appium:mjpegServerPort fails. Only allocate it
+        # in tunnel mode (prefer_devicectl explicitly false). Simulators never
+        # declare prefer_devicectl, so they keep the port.
         - capability_name: "appium:mjpegServerPort"
           start: 9100
+          skip_when:
+            prefer_devicectl: true
       derived_data_path: true

@@ -285,6 +285,77 @@ def test_health_check_entry_applies_when_optional() -> None:
     assert check.applies_when is None
 
 
+def test_parallel_resource_port_accepts_skip_when_gate() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    device_fields_schema:\n"
+            "      - id: prefer_devicectl\n"
+            "        label: Prefer devicectl\n"
+            "        type: bool\n"
+            "        default: true\n"
+            "    parallel_resources:\n"
+            "      ports:\n"
+            '        - capability_name: "appium:mjpegServerPort"\n'
+            "          start: 9100\n"
+            "          skip_when:\n"
+            "            prefer_devicectl: true\n"
+        ),
+    )
+    manifest = load_manifest_yaml(yaml_text)
+    port = manifest.platforms[0].parallel_resources.ports[0]
+    assert port.skip_when == {"prefer_devicectl": True}
+
+
+def test_parallel_resource_port_skip_when_defaults_empty() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    parallel_resources:\n"
+            "      ports:\n"
+            '        - capability_name: "appium:mjpegServerPort"\n'
+            "          start: 9100\n"
+        ),
+    )
+    manifest = load_manifest_yaml(yaml_text)
+    assert manifest.platforms[0].parallel_resources.ports[0].skip_when == {}
+
+
+def test_parallel_resource_port_skip_when_rejects_unknown_device_field() -> None:
+    yaml_text = _base_yaml().replace(
+        _IDENTITY_LINE,
+        (
+            _IDENTITY_LINE + "\n"
+            "    parallel_resources:\n"
+            "      ports:\n"
+            '        - capability_name: "appium:mjpegServerPort"\n'
+            "          start: 9100\n"
+            "          skip_when:\n"
+            "            no_such_field: true\n"
+        ),
+    )
+    with pytest.raises(ManifestValidationError, match="skip_when gates on unknown device field 'no_such_field'"):
+        load_manifest_yaml(yaml_text)
+
+
+def test_curated_xcuitest_gates_tvos_mjpeg_port_on_devicectl() -> None:
+    curated_dir = Path(__file__).resolve().parents[3] / "driver-packs" / "curated"
+    manifest = load_manifest_yaml((curated_dir / "appium-xcuitest" / "manifest.yaml").read_text())
+    by_id = {platform.id: platform for platform in manifest.platforms}
+
+    tvos_mjpeg = next(
+        p for p in by_id["tvos"].parallel_resources.ports if p.capability_name == "appium:mjpegServerPort"
+    )
+    assert tvos_mjpeg.skip_when == {"prefer_devicectl": True}
+
+    # iOS keeps the unconditional port: the CoreDevice tunnel is required there,
+    # so MJPEG forwarding works regardless of devicectl.
+    ios_mjpeg = next(p for p in by_id["ios"].parallel_resources.ports if p.capability_name == "appium:mjpegServerPort")
+    assert ios_mjpeg.skip_when == {}
+
+
 def test_curated_manifests_pin_appium_and_driver_versions() -> None:
     curated_dir = Path(__file__).resolve().parents[3] / "driver-packs" / "curated"
     expected = {

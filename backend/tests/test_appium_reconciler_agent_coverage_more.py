@@ -831,6 +831,7 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
+        device_config=None,
     )
     node = SimpleNamespace(id=uuid.uuid4())
     reserve_session = AsyncMock()
@@ -848,9 +849,10 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
 
     fake_platform = SimpleNamespace(
         parallel_resources=SimpleNamespace(
-            ports=[SimpleNamespace(capability_name="appium:systemPort", start=8200)],
+            ports=[SimpleNamespace(capability_name="appium:systemPort", start=8200, skip_when={})],
             derived_data_path=True,
-        )
+        ),
+        device_fields_schema=[],
     )
     monkeypatch.setattr(node_agent, "_short_session_factory", lambda _db: SessionFactory())
     monkeypatch.setattr(node_agent, "resolve_pack_platform", AsyncMock(return_value=fake_platform))
@@ -881,6 +883,71 @@ async def test_start_for_node_reserves_resources_and_derived_data(monkeypatch: p
     reserve.assert_not_awaited()
 
 
+async def test_start_for_node_skips_resource_port_gated_by_device_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.packs.services.platform_resolver import ResolvedParallelResourcePort
+
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        host_id=uuid.uuid4(),
+        pack_id="appium-xcuitest",
+        platform_id="tvos",
+        device_type=SimpleNamespace(value="real_device"),
+        device_config={},
+    )
+    node = SimpleNamespace(id=uuid.uuid4())
+    reserve_session = AsyncMock()
+    reserve_session.commit = AsyncMock()
+
+    class SessionFactory:
+        def __call__(self) -> "SessionFactory":
+            return self
+
+        async def __aenter__(self) -> AsyncMock:
+            return reserve_session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    fake_platform = SimpleNamespace(
+        parallel_resources=SimpleNamespace(
+            ports=[
+                ResolvedParallelResourcePort(capability_name="appium:wdaLocalPort", start=8100),
+                ResolvedParallelResourcePort(
+                    capability_name="appium:mjpegServerPort",
+                    start=9100,
+                    skip_when={"prefer_devicectl": True},
+                ),
+            ],
+            derived_data_path=False,
+        ),
+        device_fields_schema=[{"id": "prefer_devicectl", "type": "bool", "default": True}],
+    )
+    monkeypatch.setattr(node_agent, "_short_session_factory", lambda _db: SessionFactory())
+    monkeypatch.setattr(node_agent, "resolve_pack_platform", AsyncMock(return_value=fake_platform))
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "get_capabilities", AsyncMock(return_value={}))
+    reserve = AsyncMock(return_value=8100)
+    monkeypatch.setattr(node_agent.appium_node_resource_service, "reserve", reserve)
+    monkeypatch.setattr(node_agent, "agent_url", AsyncMock(return_value="http://agent"))
+    monkeypatch.setattr(node_agent, "candidate_ports", AsyncMock(return_value=[4723]))
+    monkeypatch.setattr(node_agent, "reserve_appium_port", AsyncMock())
+    monkeypatch.setattr(
+        node_agent,
+        "start_remote_node",
+        AsyncMock(
+            return_value=RemoteStartResult(port=4723, pid=1, active_connection_target="dev", agent_base="http://agent")
+        ),
+    )
+
+    handle = await node_agent._start_for_node(
+        AsyncMock(), device, node=node, settings=FakeSettingsReader({}), circuit_breaker=Mock()
+    )
+
+    reserve.assert_awaited_once()
+    assert reserve.await_args is not None
+    assert reserve.await_args.kwargs["capability_key"] == "appium:wdaLocalPort"
+    assert handle.allocated_caps == {"appium:wdaLocalPort": 8100}
+
+
 async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     hostless = SimpleNamespace(
         id=uuid.uuid4(),
@@ -902,6 +969,7 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         device_type=SimpleNamespace(value="real_device"),
+        device_config=None,
         settings=FakeSettingsReader({"appium.startup_timeout_sec": 30, "grid.hub_url": "http://grid"}),
     )
     reserve_session = AsyncMock()
@@ -919,9 +987,10 @@ async def test_start_for_node_hostless_and_resource_reservation_cleanup(monkeypa
 
     fake_platform = SimpleNamespace(
         parallel_resources=SimpleNamespace(
-            ports=[SimpleNamespace(capability_name="appium:systemPort", start=8200)],
+            ports=[SimpleNamespace(capability_name="appium:systemPort", start=8200, skip_when={})],
             derived_data_path=False,
-        )
+        ),
+        device_fields_schema=[],
     )
     release_managed = AsyncMock()
     monkeypatch.setattr(node_agent, "_short_session_factory", lambda _db: SessionFactory())
