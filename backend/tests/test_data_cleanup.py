@@ -298,6 +298,7 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
     assert len(events) == 1
     assert events[0]["data"]["sessions_deleted"] == 4
     assert events[0]["data"]["host_resource_samples_deleted"] == 0
+    assert events[0]["data"]["duration_seconds"] >= 0.0
 
 
 async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(

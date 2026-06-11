@@ -15,8 +15,10 @@ from app.core.observability import get_logger
 from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_cursor
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceEventType, DeviceOperationalState, DeviceType
+from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
+from app.devices.services.observation_reason import ObservationReason
 from app.devices.services.state import GATING_VIOLATION, set_operational_state
 from app.runs import service as run_service
 from app.runs.models import TERMINAL_STATES, RunState
@@ -611,6 +613,7 @@ class SessionCrudService:
             session = await db.get(Session, inserted_id)
             assert session is not None
             if device is not None:
+                prev_op = device.operational_state
                 await set_operational_state(
                     device,
                     DeviceOperationalState.busy,
@@ -618,6 +621,19 @@ class SessionCrudService:
                     severity="info",
                     publisher=self._publisher,
                 )
+                if prev_op is not DeviceOperationalState.busy:
+                    # The reconciler records audit rows only for derived transitions;
+                    # this direct-writer path must record its own (F1).
+                    await record_event(
+                        db,
+                        device.id,
+                        DeviceEventType.session_started,
+                        {
+                            "from": prev_op.value,
+                            "to": DeviceOperationalState.busy.value,
+                            "reason": ObservationReason.session.value,
+                        },
+                    )
             queue_session_started_event(
                 db,
                 session,
@@ -709,6 +725,7 @@ class SessionCrudService:
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",
                 publisher=self._publisher,
+                observed_reason=ObservationReason.session_ended,
             )
 
             # handle_session_finished re-locks the device row internally via
@@ -766,6 +783,7 @@ class SessionCrudService:
                 sources=[f"active_session:{session_id}"],
                 reason=f"Session {session_id} ended",
                 publisher=self._publisher,
+                observed_reason=ObservationReason.session_ended,
             )
 
             locked_device = await device_locking.lock_device(db, session.device_id)
@@ -785,7 +803,10 @@ class SessionCrudService:
                 # is replaced by reconciler-authoritative derivation.
                 if locked_device.operational_state == DeviceOperationalState.busy:
                     await IntentService(db).mark_dirty_and_reconcile(
-                        locked_device.id, reason="Session ended", publisher=self._publisher
+                        locked_device.id,
+                        reason="Session ended",
+                        publisher=self._publisher,
+                        observed_reason=ObservationReason.session_ended,
                     )
                 deferred_stop_target = locked_device
 

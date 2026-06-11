@@ -372,7 +372,7 @@ class FleetCapacityLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.fleet_capacity_snapshot_interval_sec"))
+        return self._services.settings.get_float("general.fleet_capacity_snapshot_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.fleet_capacity.collect_capacity_snapshot_once(db)

@@ -152,6 +152,26 @@ class SettingsService:
             raise KeyError(f"Unknown setting: {key}")
         return self._cache[key]
 
+    def get_int(self, key: str) -> int:
+        """``get`` narrowed to int (registry-validated; bool is rejected explicitly)."""
+        value = self.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"Setting {key} is not an int: {value!r}")
+        return value
+
+    def get_float(self, key: str) -> float:
+        """``get`` narrowed to float; accepts int and widens."""
+        value = self.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"Setting {key} is not a float: {value!r}")
+        return float(value)
+
+    def get_bool(self, key: str) -> bool:
+        value = self.get(key)
+        if not isinstance(value, bool):
+            raise TypeError(f"Setting {key} is not a bool: {value!r}")
+        return value
+
     def _validate_value(self, key: str, value: SettingValue) -> str | None:
         """Validate a value against the registry definition. Returns error message or None."""
         defn = SETTINGS_REGISTRY[key]

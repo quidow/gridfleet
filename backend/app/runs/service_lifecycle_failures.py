@@ -191,14 +191,14 @@ class RunFailureService:
 
         Returns (excluded_until, cooldown_count, escalated, threshold).
         """
-        max_ttl = int(self._settings.get("general.device_cooldown_max_sec"))
+        max_ttl = self._settings.get_int("general.device_cooldown_max_sec")
         if ttl_seconds > max_ttl:
             raise ValueError(f"ttl_seconds must be <= {max_ttl}")
         clean_reason = reason.strip()
         if not clean_reason:
             raise ValueError("Cooldown reason is required")
 
-        threshold = int(self._settings.get("general.device_cooldown_escalation_threshold"))
+        threshold = self._settings.get_int("general.device_cooldown_escalation_threshold")
 
         run_result = await db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
         run = run_result.scalar_one_or_none()

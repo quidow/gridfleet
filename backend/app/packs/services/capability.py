@@ -91,6 +91,56 @@ async def render_stereotype(
     return template.interpolate(device_context)
 
 
+def coerce_device_config_fields(
+    device_fields_schema: list[dict[str, Any]],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Coerce config values to their schema-declared types (bool fields only for now).
+
+    API clients may store ``"true"``/``1`` for a ``type: bool`` field; the strict
+    equality gates downstream (appium_env ``applies_when.device_config``) would then
+    resolve to the inverse of operator intent with no validation error.
+    """
+    bool_fields = {f["id"] for f in device_fields_schema if f.get("type") == "bool"}
+    if not bool_fields:
+        return config
+    out = dict(config)
+    for key in bool_fields:
+        value = out.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1", "yes", "on"):
+                out[key] = True
+            elif lowered in ("false", "0", "no", "off"):
+                out[key] = False
+        elif isinstance(value, int):
+            out[key] = bool(value)
+    return out
+
+
+def _device_field_defaults(manifest_json: dict[str, Any], *, platform_id: str, device_type: str) -> dict[str, Any]:
+    """Collect ``{field id: declared default}`` for one platform lane (device-type override wins).
+
+    Used by the appium_env device_config gate: an unset field must compare against the
+    schema-declared default, not the rule's expected value — otherwise two opposite-valued
+    rules both match a legacy unset device and their env sets merge.
+    """
+    defaults: dict[str, Any] = {}
+    for plat in manifest_json.get("platforms") or []:
+        if plat.get("id") != platform_id:
+            continue
+        for field_def in plat.get("device_fields_schema") or []:
+            if field_def.get("default") is not None:
+                defaults[field_def["id"]] = field_def["default"]
+        override = (plat.get("device_type_overrides") or {}).get(device_type) or {}
+        for field_def in override.get("device_fields_schema") or []:
+            if field_def.get("default") is not None:
+                defaults[field_def["id"]] = field_def["default"]
+    return defaults
+
+
 async def resolve_appium_env(
     session: AsyncSession,
     *,
@@ -109,6 +159,7 @@ async def resolve_appium_env(
     if release is None:
         return {}
     cfg = device_config or {}
+    field_defaults = _device_field_defaults(release.manifest_json, platform_id=platform_id, device_type=device_type)
     out: dict[str, str] = {}
     for wk in release.manifest_json.get("appium_env") or []:
         applies = wk.get("applies_when") or {}
@@ -122,10 +173,11 @@ async def resolve_appium_env(
             and not _semver_ge(os_version, applies["min_os_version"])
         ):
             continue
-        # An unset device field defaults to the listed value, so the rule
-        # applies unless the operator explicitly overrides it.
+        # An unset device field defaults to its schema-declared default (falling back to
+        # the rule's listed value when the schema declares none), so a rule applies only
+        # when the field's effective value matches its expectation.
         device_gate = applies.get("device_config") or {}
-        if any(cfg.get(key, expected) != expected for key, expected in device_gate.items()):
+        if any(cfg.get(key, field_defaults.get(key, expected)) != expected for key, expected in device_gate.items()):
             continue
         out.update(wk.get("env") or {})
     return out

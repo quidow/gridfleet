@@ -14,6 +14,7 @@ from app.devices.services.identity import (
     parse_ip_from_connection_target,
 )
 from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services.capability import coerce_device_config_fields
 
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
@@ -124,7 +125,11 @@ async def _build_device_config(
     config.pop("canonical_identity", None)
     if payload_config is not None:
         config.update(payload_config)
-    return config
+    try:
+        resolved = await resolve_pack_platform(session, pack_id=pack_id, platform_id=platform_id, device_type=None)
+    except LookupError:
+        return config
+    return coerce_device_config_fields(resolved.device_fields_schema, config)
 
 
 def _build_device_config_sync(

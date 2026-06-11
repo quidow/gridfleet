@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.background_loop import BackgroundLoop
+from app.core.concurrency import per_key_semaphores
 from app.core.leader.advisory import assert_current_leader
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
@@ -252,9 +253,9 @@ class SessionSyncService:
            contract up to grid.session_idle_timeout_ceiling_sec and guarantees
            an abandoned client cannot pin its device busy forever.
         """
-        idle_timeout = int(self._settings.get("grid.session_idle_timeout_sec"))
-        idle_ceiling = int(self._settings.get("grid.session_idle_timeout_ceiling_sec"))
-        grace = int(self._settings.get("grid.session_first_command_grace_sec"))
+        idle_timeout = self._settings.get_int("grid.session_idle_timeout_sec")
+        idle_ceiling = self._settings.get_int("grid.session_idle_timeout_ceiling_sec")
+        grace = self._settings.get_int("grid.session_first_command_grace_sec")
         now = now_utc()
         grace_cutoff = now - timedelta(seconds=grace)
         fresh_cutoff = now - timedelta(seconds=ACTIVITY_FRESH_WINDOW_SEC)
@@ -274,9 +275,7 @@ class SessionSyncService:
         )
         running_sessions = (await db.execute(running_stmt)).scalars().all()
 
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
-        )
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(PROBE_CONCURRENCY_PER_HOST)
         sessions_with_device = [s for s in running_sessions if s.device is not None]
 
         def _reap_reason(session: Session) -> str | None:
@@ -508,9 +507,7 @@ class SessionSyncService:
         # Probe phase: enumerate every candidate node's live sessions concurrently,
         # bounded per host, so a hung node cannot stall the sweep wall time (#10). No
         # DB access inside the gather.
-        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
-            lambda: asyncio.Semaphore(PROBE_CONCURRENCY_PER_HOST)
-        )
+        host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(PROBE_CONCURRENCY_PER_HOST)
 
         async def _enumerate(target: str, host_id: uuid.UUID) -> list[str] | None:
             async with host_semaphores[host_id]:
@@ -638,7 +635,7 @@ class SessionSyncLoop(BackgroundLoop):
         register_session_sync_wake_hook(self._services.sync.wake)
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("grid.session_poll_interval_sec"))
+        return self._services.settings.get_float("grid.session_poll_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.sync.sync(db)

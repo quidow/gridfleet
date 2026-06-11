@@ -93,8 +93,8 @@ PropertyRefreshLoop = device_services.property_refresh.PropertyRefreshLoop
 
 
 def _validate_leader_keepalive_settings(*, settings: SettingsReader) -> None:
-    keepalive_interval_sec = int(settings.get("general.leader_keepalive_interval_sec"))
-    stale_threshold_sec = int(settings.get("general.leader_stale_threshold_sec"))
+    keepalive_interval_sec = settings.get_int("general.leader_keepalive_interval_sec")
+    stale_threshold_sec = settings.get_int("general.leader_stale_threshold_sec")
     error = validate_leader_keepalive_settings(
         keepalive_interval_sec=keepalive_interval_sec,
         stale_threshold_sec=stale_threshold_sec,

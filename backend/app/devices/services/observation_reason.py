@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 class ObservationReason(StrEnum):
     disconnected = "disconnected"
     auto_stopped = "auto_stopped"
+    operator_stopped = "operator_stopped"
     node_crashed = "node_crashed"
     recovered = "recovered"
     maintenance_entered = "maintenance_entered"
@@ -41,6 +42,8 @@ def map_transition_event(
         if reason is ObservationReason.disconnected:
             return DeviceEventType.connectivity_lost, "warning"
         if reason is ObservationReason.auto_stopped:
+            return DeviceEventType.auto_stopped, "info"
+        if reason is ObservationReason.operator_stopped:
             return DeviceEventType.auto_stopped, "info"
         if reason is ObservationReason.node_crashed:
             return DeviceEventType.node_crash, "warning"

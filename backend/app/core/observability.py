@@ -396,7 +396,7 @@ class BackgroundLoopFlushLoop:
 
 def current_background_loop_flush_interval_seconds(*, settings: SettingsReader) -> float:
     """Read the active flush window from the settings registry."""
-    return float(settings.get("general.background_loop_flush_interval_sec"))
+    return settings.get_float("general.background_loop_flush_interval_sec")
 
 
 # Internal alias retained for the flush task default; tests stub it directly.

@@ -20,7 +20,7 @@ class LeaderKeepaliveLoop:
 
     async def run(self) -> None:
         while True:
-            interval = float(self._settings.get("general.leader_keepalive_interval_sec"))
+            interval = self._settings.get_float("general.leader_keepalive_interval_sec")
             try:
                 async with observe_background_loop(LEADER_KEEPALIVE_LOOP_NAME, interval).cycle():
                     await run_keepalive_once(settings=self._settings)

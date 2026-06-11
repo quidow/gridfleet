@@ -693,9 +693,12 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
             **PACK_START_KWARGS,
         )
         first_proc.set_exit(1)
-        await real_sleep(0)
-        await real_sleep(0)
-        await real_sleep(0)
+        # The death-watcher needs a scheduling-dependent number of event-loop hops
+        # to observe the exit and respawn; spin (bounded) instead of a fixed count.
+        for _ in range(200):
+            if [info.pid for info in manager.list_running()] == [2222]:
+                break
+            await real_sleep(0)
 
     assert [info.pid for info in manager.list_running()] == [2222]
     assert delays[0] == 1

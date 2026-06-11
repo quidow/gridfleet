@@ -26,6 +26,9 @@ def _mock_settings(**kwargs: object) -> MagicMock:
     defaults.update(kwargs)
     mock = MagicMock()
     mock.get = lambda key: defaults[key]  # type: ignore[return-value]
+    mock.get_int = lambda key: int(defaults[key])  # type: ignore[call-overload]
+    mock.get_float = lambda key: float(defaults[key])  # type: ignore[arg-type]
+    mock.get_bool = lambda key: bool(defaults[key])
     return mock
 
 

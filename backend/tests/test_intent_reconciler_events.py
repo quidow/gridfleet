@@ -83,3 +83,48 @@ async def test_reconciler_records_metadata_events(db_session: AsyncSession, db_h
         "caller": "intent_reconciler",
         "reason": "blocked by test",
     } in details
+
+
+def test_operator_stopped_maps_to_auto_stopped_event() -> None:
+    from app.devices.models import DeviceOperationalState
+    from app.devices.services.observation_reason import ObservationReason, map_transition_event
+
+    event_type, severity = map_transition_event(DeviceOperationalState.offline, ObservationReason.operator_stopped)
+    assert event_type is DeviceEventType.auto_stopped
+    assert severity == "info"
+
+
+async def test_operator_stop_records_auto_stopped_device_event(db_session: AsyncSession, db_host: Host) -> None:
+    from app.devices.models import DeviceOperationalState
+    from app.devices.services.observation_reason import ObservationReason
+    from app.lifecycle.services.operator_node import operator_stop_intents
+
+    device = await create_device(db_session, host_id=db_host.id, name="op-stop-events")
+    with state_write_guard.bypass():
+        device.operational_state = DeviceOperationalState.available
+    await _seed_node(db_session, device.id)
+    await db_session.commit()
+
+    await IntentService(db_session).register_intents_and_reconcile(
+        device_id=device.id,
+        intents=operator_stop_intents(device.id),
+        reason="operator stop",
+        publisher=event_bus,
+        observed_reason=ObservationReason.operator_stopped,
+    )
+    await db_session.commit()
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.auto_stopped,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(events) == 1
+    assert events[0].details["reason"] == "operator_stopped"

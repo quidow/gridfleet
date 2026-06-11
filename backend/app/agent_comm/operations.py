@@ -110,6 +110,9 @@ async def _send_request(
             circuit_breaker=circuit_breaker,
         )
 
+    # Pool-disabled fallback (agent.http_pool_enabled=false): opens a fresh client per
+    # call, which can exhaust ephemeral ports under burst load. Dev/debug escape hatch
+    # only — production keeps the pool on (the default).
     client_manager = http_client_factory(timeout=timeout)
     async with client_manager as fresh_client:
         return await agent_request(

@@ -96,3 +96,21 @@ async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:
     assert failure_row.snapshot["error"] == "device_recovery job crashed unexpectedly"
     assert failure_row.completed_at is not None
     assert failure_session.committed is True
+
+
+async def test_malformed_payload_marks_job_failed_instead_of_raising() -> None:
+    """A payload without device_id must not escape as KeyError; the job row goes FAILED."""
+    row = _job_row()
+    failure_session = RecoverySession(row)
+
+    await device_recovery_job.RecoveryJobService(
+        session_factory=RecoverySessionFactory(failure_session),  # type: ignore[arg-type]
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        lifecycle_policy=AsyncMock(),
+    ).run_device_recovery_job(str(uuid.uuid4()), {})
+
+    assert row.status == JOB_STATUS_FAILED
+    assert row.snapshot["status"] == JOB_STATUS_FAILED
+    assert row.snapshot["error"] == "device_recovery job crashed unexpectedly"
+    assert failure_session.committed is True

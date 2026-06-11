@@ -165,11 +165,12 @@ class IntentService:
         intents: list[IntentRegistration],
         reason: str,
         publisher: EventPublisher,
+        observed_reason: ObservationReason | None = None,
     ) -> None:
         # Lock Device before the intent/dirty upserts — see mark_dirty_and_reconcile.
         await device_locking.lock_device(self._db, device_id)
         await self.register_intents(device_id=device_id, intents=intents, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher)
+        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)
 
     async def revoke_intents_and_reconcile(
         self,
@@ -178,8 +179,9 @@ class IntentService:
         sources: list[str],
         reason: str,
         publisher: EventPublisher,
+        observed_reason: ObservationReason | None = None,
     ) -> None:
         # Lock Device before the intent/dirty deletes — see mark_dirty_and_reconcile.
         await device_locking.lock_device(self._db, device_id)
         await self.revoke_intents(device_id=device_id, sources=sources, reason=reason)
-        await reconcile_device(self._db, device_id, publisher=publisher)
+        await reconcile_device(self._db, device_id, publisher=publisher, observed_reason=observed_reason)

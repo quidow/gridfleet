@@ -140,7 +140,7 @@ class HostResourceTelemetryService:
         if host_exists is None:
             return None
 
-        retention_hours = int(self._settings.get("retention.host_resource_telemetry_hours"))
+        retention_hours = self._settings.get_int("retention.host_resource_telemetry_hours")
         if since >= until:
             raise ValueError("since must be earlier than until")
         if not 1 <= bucket_minutes <= 1440:
@@ -207,7 +207,7 @@ class HostResourceTelemetryLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.host_resource_telemetry_interval_sec"))
+        return self._services.settings.get_float("general.host_resource_telemetry_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.resource_telemetry.poll_once(db)

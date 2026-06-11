@@ -276,7 +276,7 @@ class AppiumReconcilerLoop(BackgroundLoop):
         return "appium_reconciler_leadership_lost"  # historical name: no "_loop" segment
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("appium_reconciler.interval_sec"))
+        return self._services.settings.get_float("appium_reconciler.interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.reconciler.run_cycle(db)
@@ -508,8 +508,8 @@ async def _record_start_failure(
     session_scope: SessionScope | None = None,
     settings: SettingsReader,
 ) -> None:
-    threshold = int(settings.get("appium_reconciler.start_failure_threshold"))
-    backoff_seconds = int(settings.get("appium.startup_timeout_sec")) * 4
+    threshold = settings.get_int("appium_reconciler.start_failure_threshold")
+    backoff_seconds = settings.get_int("appium.startup_timeout_sec") * 4
     resolved_session_scope = session_scope or async_session
     async with resolved_session_scope() as db:
         if require_leader:
@@ -669,7 +669,7 @@ class ReconcilerService:
         health_by_host: dict[uuid.UUID, dict[str, object]] | None = None,
         require_leader: bool = True,
     ) -> None:
-        semaphore = asyncio.Semaphore(int(self._settings.get("appium_reconciler.host_parallelism")))
+        semaphore = asyncio.Semaphore(self._settings.get_int("appium_reconciler.host_parallelism"))
         now = datetime.now(UTC)
         rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}
         active_rows_by_host: dict[uuid.UUID, list[DesiredRow]] = {}

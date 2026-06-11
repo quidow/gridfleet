@@ -2,6 +2,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.packs.services.capability import (
+    _device_field_defaults,
+    coerce_device_config_fields,
     load_stereotype_template,
     render_default_capabilities,
     render_device_field_capabilities,
@@ -250,3 +252,37 @@ async def test_resolve_appium_env_applies_devicectl_pref_when_prefer_devicectl_a
         device_config={},
     )
     assert env == {"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"}
+
+
+def test_device_field_defaults_collects_platform_and_override_defaults() -> None:
+    manifest = {
+        "platforms": [
+            {
+                "id": "tvos",
+                "device_fields_schema": [{"id": "prefer_devicectl", "type": "bool", "default": False}],
+                "device_type_overrides": {
+                    "real_device": {
+                        "device_fields_schema": [{"id": "prefer_devicectl", "type": "bool", "default": True}]
+                    }
+                },
+            }
+        ]
+    }
+    assert _device_field_defaults(manifest, platform_id="tvos", device_type="real_device") == {"prefer_devicectl": True}
+    assert _device_field_defaults(manifest, platform_id="tvos", device_type="simulator") == {"prefer_devicectl": False}
+
+
+def test_coerce_device_config_fields_normalizes_bool_strings() -> None:
+    schema = [
+        {"id": "prefer_devicectl", "type": "bool"},
+        {"id": "bundle_id", "type": "string"},
+    ]
+    out = coerce_device_config_fields(schema, {"prefer_devicectl": "true", "bundle_id": "1"})
+    assert out["prefer_devicectl"] is True
+    assert out["bundle_id"] == "1"  # non-bool fields untouched
+
+    out = coerce_device_config_fields(schema, {"prefer_devicectl": 0})
+    assert out["prefer_devicectl"] is False
+
+    out = coerce_device_config_fields(schema, {"prefer_devicectl": "not-a-bool"})
+    assert out["prefer_devicectl"] == "not-a-bool"  # unrecognized strings left as-is

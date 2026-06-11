@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from app.devices.services import readiness as device_readiness
+from app.packs.services.capability import coerce_device_config_fields
+from app.packs.services.platform_resolver import resolve_pack_platform
+from app.packs.services.start_shim import resolve_pack_for_device
 from app.settings.models import ConfigAuditLog
 
 if TYPE_CHECKING:
@@ -31,6 +34,23 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+async def _coerce_for_device(db: AsyncSession, device: Device, config: dict[str, Any]) -> dict[str, Any]:
+    resolved_ids = resolve_pack_for_device(device)
+    if resolved_ids is None:
+        return config
+    pack_id, platform_id = resolved_ids
+    try:
+        resolved = await resolve_pack_platform(
+            db,
+            pack_id=pack_id,
+            platform_id=platform_id,
+            device_type=device.device_type.value if device.device_type else None,
+        )
+    except LookupError:
+        return config
+    return coerce_device_config_fields(resolved.device_fields_schema, config)
 
 
 # --- Device config operations ---
@@ -60,6 +80,7 @@ class SettingsConfigService:
     ) -> dict[str, Any]:
         previous = device.device_config or {}
         merged = _deep_merge(previous, partial_config)
+        merged = await _coerce_for_device(db, device, merged)
         if device_readiness.payload_requires_reverification(device, {"device_config": merged}):
             device.verified_at = None
         device.device_config = merged

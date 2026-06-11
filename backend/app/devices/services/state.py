@@ -294,7 +294,8 @@ async def apply_derived_state(
         return False
 
     prev_op = device.operational_state
-    reason = observed_reason if observed_reason is not None else _reason_for(prev_op, facts)
+    fact_reason = _reason_for(prev_op, facts)
+    reason = observed_reason if observed_reason is not None else fact_reason
     event_type, severity = map_transition_event(derived_op, reason)
     # Persist the typed audit row when the cause was
     # explicitly carried in by the observation site — never from the fact-based heuristic, which
@@ -306,6 +307,13 @@ async def apply_derived_state(
             event_type,
             {"from": prev_op.value, "to": derived_op.value, "reason": reason.value},
         )
+    elif observed_reason is not None:
+        # The carried observation maps to no transition event for this derived state
+        # (e.g. session_ended when the device derives to offline rather than available).
+        # Defer the bus-event reason/severity to the fact-based derivation; the heuristic
+        # cause is never recorded as an audit row (guarded above).
+        reason = fact_reason
+        event_type, severity = map_transition_event(derived_op, reason)
     # Maintenance enter/exit are structurally unambiguous (the maintenance operational state has
     # exactly one cause) so the audit row is always recorded, mirroring the old hold-axis behavior.
     if derived_op is DeviceOperationalState.maintenance:

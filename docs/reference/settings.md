@@ -72,7 +72,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `agent.recommended_version` | `agent` | `string` | `""` | `GRIDFLEET_AGENT_RECOMMENDED_VERSION` | none | Recommended `gridfleet-agent` version surfaced to agents and operators; empty disables recommendation messaging |
 | `agent.auto_accept_hosts` | `agent` | `bool` | `true` | `GRIDFLEET_HOST_AUTO_ACCEPT` | boolean | Whether self-registering hosts are automatically approved |
 | `agent.default_port` | `agent` | `int` | `5100` | none | `1024..65535` | Default agent port for new hosts |
-| `agent.http_pool_enabled` | `agent` | `bool` | `true` | none | boolean | When true, pool one `httpx.AsyncClient` per (host, port) tuple for backend-to-agent calls |
+| `agent.http_pool_enabled` | `agent` | `bool` | `true` | none | boolean | When true, pool one `httpx.AsyncClient` per (host, port) tuple for backend-to-agent calls. When false, every backend→agent call opens a fresh client — dev/debug only; do not disable in production. |
 | `agent.http_pool_max_keepalive` | `agent` | `int` | `10` | none | `1..100` | Max keepalive connections per pooled client |
 | `agent.http_pool_idle_seconds` | `agent` | `int` | `60` | none | `5..600` | Idle time (seconds) after which a pooled keepalive connection is closed |
 | `agent.circuit_breaker_failure_threshold` | `agent` | `int` | `5` | none | `1..50` | Consecutive backend-to-agent failures before the circuit opens |

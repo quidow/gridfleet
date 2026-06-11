@@ -681,8 +681,8 @@ class HeartbeatService:
         iteration = self._next_loop_iteration()
         leader_id = str(control_plane_leader.holder_id)
 
-        interval = float(self._settings.get("general.heartbeat_interval_sec"))
-        max_missed = int(self._settings.get("general.max_missed_heartbeats"))
+        interval = self._settings.get_float("general.heartbeat_interval_sec")
+        max_missed = self._settings.get_int("general.max_missed_heartbeats")
         now_mono = time.monotonic()
         prev_mono = self._last_cycle_monotonic
         guard_active = _resume_guard_active(
@@ -767,7 +767,7 @@ class HeartbeatLoop(BackgroundLoop):
         return self._services.session_factory
 
     def _interval(self) -> float:
-        return float(self._services.settings.get("general.heartbeat_interval_sec"))
+        return self._services.settings.get_float("general.heartbeat_interval_sec")
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         await self._services.heartbeat.run_cycle(db)
