@@ -19,6 +19,7 @@ import type {
   PlatformDescriptor,
 
 } from '../../types';
+import { qk } from '../../lib/queryKeys';
 
 export { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS };
 
@@ -297,7 +298,7 @@ export function useDeviceVerificationJobController({
     if (!activeJob) return;
     if (activeJob.status === 'completed' && activeJob.job_id !== handledCompletedVerificationRef.current) {
       handledCompletedVerificationRef.current = activeJob.job_id;
-      queryClient.invalidateQueries({ queryKey: ['devices'] });
+      queryClient.invalidateQueries({ queryKey: qk.devices.root });
       for (const queryKey of extraInvalidationKeys) {
         queryClient.invalidateQueries({ queryKey });
       }

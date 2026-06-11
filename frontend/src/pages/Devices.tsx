@@ -34,6 +34,7 @@ import { ListPageSubheader } from '../components/ui/ListPageSubheader';
 import { DeviceInventoryExportModal } from '../components/devices/DeviceInventoryExportModal';
 import { Pagination } from '../components/ui/Pagination';
 import type { DeviceAction } from './devices/deviceActions';
+import { qk } from '../lib/queryKeys';
 
 function DevicesEmptyPanel({
   hasFilters,
@@ -290,7 +291,7 @@ export function Devices() {
           onClose={() => controller.setShowAdd(false)}
           hostOptions={controller.hostOptions}
           onCompleted={() => {
-            controller.queryClient.invalidateQueries({ queryKey: ['devices'] });
+            controller.queryClient.invalidateQueries({ queryKey: qk.devices.root });
           }}
         />
       ) : null}

@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { uploadDriverPack } from '../../api/driverPackAuthoring';
 import { Card } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
+import { qk } from '../../lib/queryKeys';
 
 const DRIVER_PACK_ACCEPT = '.tar.gz,.tgz,.tar,.gz,application/gzip,application/x-gzip,application/x-tar';
 
@@ -23,7 +24,7 @@ export function UploadDriverPackForm({ onSuccess, onClose }: UploadDriverPackFor
   const upload = useMutation({
     mutationFn: () => uploadDriverPack(file!),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['driver-pack-catalog'] });
+      void qc.invalidateQueries({ queryKey: qk.driverPackCatalog.root });
       onSuccess?.();
       onClose?.();
     },
