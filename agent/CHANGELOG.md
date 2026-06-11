@@ -9,6 +9,7 @@ All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are 
 
 * **agent:** restart appium from the full launch spec ([7e36ac6](https://github.com/quidow/gridfleet/commit/7e36ac68b1d1ade6c805512cbc10fc1f18db088d))
 * **agent:** surface os_version_display from normalize_device ([44365cb](https://github.com/quidow/gridfleet/commit/44365cb45d42128cf862a687498e5c2321a23485))
+* **backend:** easy open-issues batch (audit rows, config coercion, env gate defaults) ([7396db1](https://github.com/quidow/gridfleet/commit/7396db1f6c4f56e9cef1e1d2c15fe25d1dec15a5))
 
 ## [0.27.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.26.1...gridfleet-agent-v0.27.0) (2026-06-10)
 
