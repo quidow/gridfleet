@@ -20,6 +20,7 @@ import type {
 
 } from '../../types';
 import { qk } from '../../lib/queryKeys';
+import { createReconnectingEventSource, type ReconnectingEventSourceHandle } from '../../lib/reconnectingEventSource';
 
 export { CONNECTION_TYPE_LABELS, DEVICE_TYPE_LABELS };
 
@@ -31,10 +32,6 @@ export const VERIFICATION_STAGE_LABELS: Record<string, string> = {
   cleanup: 'Clean Up Probe',
   save_device: 'Save Device',
 };
-
-const INITIAL_RECONNECT_DELAY_MS = 1_000;
-const MAX_RECONNECT_DELAY_MS = 30_000;
-
 
 export type HostOption = {
   id: string;
@@ -288,7 +285,6 @@ export function useDeviceVerificationJobController({
   const queryClient = useQueryClient();
   const auth = useAuth();
   const handledCompletedVerificationRef = useRef<string | null>(null);
-  const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY_MS);
   const jobId = job?.job_id ?? null;
   const activeJob = job;
   const isVerificationRunning =
@@ -315,15 +311,7 @@ export function useDeviceVerificationJobController({
     if (!isOpen || !jobId || !isVerificationRunning) return;
 
     let disposed = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let eventSource: EventSource | null = null;
-
-    const closeEventSource = () => {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
+    let handle: ReconnectingEventSourceHandle | null = null;
 
     const onVerificationEvent = (event: MessageEvent) => {
       let parsed: DeviceVerificationJob;
@@ -335,61 +323,35 @@ export function useDeviceVerificationJobController({
       if (parsed.job_id !== jobId) return;
       onJobChange(parsed);
       if (parsed.status === 'completed' || parsed.status === 'failed') {
-        closeEventSource();
+        handle?.close();
       }
     };
 
-    const scheduleReconnect = async () => {
-      closeEventSource();
-
-      const authSession = await auth.probeSession();
-      if (disposed || (authSession.enabled && !authSession.authenticated)) {
-        return;
-      }
-
-      try {
-        const latestJob = await fetchDeviceVerificationJob(jobId);
-        if (disposed) return;
-        onJobChange(latestJob);
-        if (latestJob.status === 'completed' || latestJob.status === 'failed') {
-          return;
+    handle = createReconnectingEventSource({
+      url: `/api/verification/jobs/${jobId}/events`,
+      listeners: { 'device.verification.updated': onVerificationEvent },
+      beforeReconnect: async () => {
+        const authSession = await auth.probeSession();
+        if (disposed || (authSession.enabled && !authSession.authenticated)) {
+          return false;
         }
-      } catch {
-        if (disposed) return;
-      }
-
-      const delay = reconnectDelayRef.current;
-      reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY_MS);
-      reconnectTimer = window.setTimeout(connect, delay);
-    };
-
-    const connect = () => {
-      if (disposed) return;
-      closeEventSource();
-
-      eventSource = new EventSource(`/api/verification/jobs/${jobId}/events`);
-      eventSource.onopen = () => {
-        reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
-      };
-      eventSource.onerror = () => {
-        if (disposed) return;
-        void scheduleReconnect();
-      };
-      eventSource.addEventListener('device.verification.updated', onVerificationEvent as EventListener);
-    };
-
-    reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
-    connect();
+        try {
+          const latestJob = await fetchDeviceVerificationJob(jobId);
+          if (disposed) return false;
+          onJobChange(latestJob);
+          if (latestJob.status === 'completed' || latestJob.status === 'failed') {
+            return false;
+          }
+        } catch {
+          if (disposed) return false;
+        }
+        return true;
+      },
+    });
 
     return () => {
       disposed = true;
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-      }
-      if (eventSource) {
-        eventSource.removeEventListener('device.verification.updated', onVerificationEvent as EventListener);
-      }
-      closeEventSource();
+      handle?.close();
     };
   }, [auth, isOpen, isVerificationRunning, jobId, onJobChange]);
 
