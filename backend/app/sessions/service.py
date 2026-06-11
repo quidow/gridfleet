@@ -68,10 +68,10 @@ async def device_has_running_session(db: AsyncSession, device_id: uuid.UUID) -> 
 def _session_ended_severity(status: str, error_type: str | None) -> EventSeverity:
     """Derive event severity from session outcome.
 
-    'completed' → success; an error_type means something went wrong → critical;
-    any other terminal state (cancelled, timeout, etc.) → warning.
+    'passed' → success; an error_type means something went wrong → critical;
+    any other terminal state (failed, etc.) → warning.
     """
-    if status == "completed":
+    if status == "passed":
         return "success"
     if error_type:
         return "critical"

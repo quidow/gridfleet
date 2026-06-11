@@ -24,7 +24,7 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.protocols import SessionCrudProtocol
-from app.sessions.service import SessionCrudService
+from app.sessions.service import SessionCrudService, _session_ended_severity
 from tests.fakes import build_review_service
 from tests.helpers import create_device_record, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
@@ -702,3 +702,17 @@ async def test_update_session_status_records_session_ended_event(
     )
     assert len(events) == 1
     assert events[0].details["reason"] == "session_ended"
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "expected"),
+    [
+        (SessionStatus.passed, None, "success"),
+        (SessionStatus.error, "appium_crash", "critical"),
+        (SessionStatus.failed, None, "warning"),
+    ],
+)
+def test_session_ended_severity_maps_outcome_to_severity(
+    status: SessionStatus, error_type: str | None, expected: str
+) -> None:
+    assert _session_ended_severity(str(status), error_type) == expected
