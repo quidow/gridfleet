@@ -144,6 +144,14 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
         async def cycle(self) -> AsyncGenerator[None, None]:
             yield None
 
+    @asynccontextmanager
+    async def _fake_session() -> AsyncGenerator[object, None]:
+        # The real session_factory is a sync callable returning an async context
+        # manager; AsyncMock() here would make ``self._session_factory()`` a
+        # coroutine, failing the ``async with`` before _run_cycle ever runs (so
+        # the simulated RuntimeError would never be exercised).
+        yield MagicMock()
+
     _pr_settings = FakeSettingsReader({"general.property_refresh_interval_sec": 1})
     _pr_publisher = AsyncMock()
 
@@ -184,7 +192,7 @@ async def test_property_refresh_loop_logs_cycle_failure_and_sleeps() -> None:
             ),
             publisher=_pr_publisher,
             settings=_pr_settings,
-            session_factory=AsyncMock(),
+            session_factory=lambda: _fake_session(),
             circuit_breaker=Mock(),
             health=AsyncMock(),
         )

@@ -409,6 +409,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         pack_id=None,
         platform_id=None,
         status=None,
+        reserved=None,
         host_id=None,
         identity_value=None,
         connection_target=None,

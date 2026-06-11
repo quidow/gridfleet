@@ -2683,6 +2683,7 @@ async def test_devices_core_router_branches() -> None:
         pack_id=None,
         platform_id="android_mobile",
         status=None,
+        reserved=None,
         host_id=None,
         identity_value=None,
         connection_target=None,

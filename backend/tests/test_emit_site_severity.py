@@ -19,8 +19,8 @@ from app.verification.services.job_state import _verification_severity
 # ---------------------------------------------------------------------------
 
 
-def test_session_ended_completed_severity() -> None:
-    assert _session_ended_severity("completed", None) == "success"
+def test_session_ended_passed_severity() -> None:
+    assert _session_ended_severity("passed", None) == "success"
 
 
 def test_session_ended_failed_with_error_type_severity() -> None:

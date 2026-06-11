@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 
 class TestDataService:
+    __test__ = False  # not a pytest test class; manages device test-data payloads
+
     def __init__(self, *, publisher: EventPublisher) -> None:
         self._publisher = publisher
 

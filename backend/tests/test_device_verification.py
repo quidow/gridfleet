@@ -57,6 +57,18 @@ def _noop_circuit_breaker() -> Mock:
     return cb
 
 
+def _publisher_mock() -> AsyncMock:
+    """EventPublisher mock whose ``queue_for_session`` stays synchronous.
+
+    ``EventPublisher.queue_for_session`` is a sync method; a bare ``AsyncMock``
+    would return an un-awaited coroutine (RuntimeWarning) when production calls
+    it without ``await`` (e.g. ``set_operational_state``).
+    """
+    publisher = AsyncMock()
+    publisher.queue_for_session = Mock()
+    return publisher
+
+
 DEVICE_PAYLOAD = {
     "identity_value": "verify-001",
     "name": "Verify Pixel",
@@ -131,7 +143,7 @@ async def _wait_for_job(
         if job["status"] in {"completed", "failed"}:
             return dict(job)
         _viability = SessionViabilityService(
-            publisher=AsyncMock(),
+            publisher=_publisher_mock(),
             settings=settings_service,
             session_factory=session_factory,
             capability=DeviceCapabilityService(),
@@ -140,12 +152,12 @@ async def _wait_for_job(
         _viability.probe_session_direct = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
         await DurableJobService(
             session_factory=session_factory,
-            publisher=AsyncMock(),
+            publisher=_publisher_mock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
             verification_runner=VerificationRunnerService(
                 session_factory=session_factory,
-                publisher=AsyncMock(),
+                publisher=_publisher_mock(),
                 settings=settings_service,
                 circuit_breaker=_noop_circuit_breaker(),
                 preparation=VerificationPreparationService(
@@ -158,7 +170,7 @@ async def _wait_for_job(
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
-                    publisher=AsyncMock(),
+                    publisher=_publisher_mock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(
@@ -180,7 +192,7 @@ async def _wait_for_job(
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
-                publisher=AsyncMock(),
+                publisher=_publisher_mock(),
                 settings=settings_service,
                 lifecycle_policy=AsyncMock(),
             ),
@@ -1449,7 +1461,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             await db.commit()
 
         _viability2 = SessionViabilityService(
-            publisher=AsyncMock(),
+            publisher=_publisher_mock(),
             settings=settings_service,
             session_factory=session_factory,
             capability=DeviceCapabilityService(),
@@ -1458,12 +1470,12 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
         _viability2.probe_session_direct = AsyncMock(return_value=(True, None))  # type: ignore[method-assign]
         recovered = await DurableJobService(
             session_factory=session_factory,
-            publisher=AsyncMock(),
+            publisher=_publisher_mock(),
             settings=settings_service,
             circuit_breaker=_noop_circuit_breaker(),
             verification_runner=VerificationRunnerService(
                 session_factory=session_factory,
-                publisher=AsyncMock(),
+                publisher=_publisher_mock(),
                 settings=settings_service,
                 circuit_breaker=_noop_circuit_breaker(),
                 preparation=VerificationPreparationService(
@@ -1476,7 +1488,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
-                    publisher=AsyncMock(),
+                    publisher=_publisher_mock(),
                     settings=settings_service,
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(
@@ -1496,7 +1508,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
             ),
             recovery_runner=RecoveryJobService(
                 session_factory=session_factory,
-                publisher=AsyncMock(),
+                publisher=_publisher_mock(),
                 settings=settings_service,
                 lifecycle_policy=AsyncMock(),
             ),
