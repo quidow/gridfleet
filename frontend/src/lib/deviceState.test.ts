@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deviceChipStatus } from './deviceState';
+import { availabilityTone, deviceChipStatus } from './deviceState';
 import type { DeviceOperationalState } from '../types';
 
 describe('deviceChipStatus', () => {
@@ -20,5 +20,15 @@ describe('deviceChipStatus', () => {
     expect(deviceChipStatus({
       operational_state: 'available' as DeviceOperationalState,
     })).toBe('available');
+  });
+});
+
+describe('availabilityTone', () => {
+  it('maps every chip status to a badge tone', () => {
+    expect(availabilityTone('available')).toBe('success');
+    expect(availabilityTone('busy')).toBe('warning');
+    expect(availabilityTone('verifying')).toBe('warning');
+    expect(availabilityTone('offline')).toBe('critical');
+    expect(availabilityTone('maintenance')).toBe('neutral');
   });
 });
