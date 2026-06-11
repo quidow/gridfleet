@@ -10,7 +10,7 @@ from agent_app.appium.process import (
     AppiumInvocation,
     AppiumLaunchSpec,
     AppiumProcessManager,
-    _build_env,
+    build_env,
     resolve_appium_invocation_for_pack,
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -50,7 +50,7 @@ def test_resolve_raises_when_pack_not_installed() -> None:
 
 
 def test_build_env_prepends_pack_runtime_bin_dir_and_sets_appium_home() -> None:
-    env = _build_env(
+    env = build_env(
         appium_bin="/var/lib/gridfleet-agent/runtimes/abc123/node_modules/.bin/appium",
         appium_home="/var/lib/gridfleet-agent/runtimes/abc123",
     )
@@ -61,7 +61,7 @@ def test_build_env_prepends_pack_runtime_bin_dir_and_sets_appium_home() -> None:
 
 
 def test_build_env_without_appium_bin_still_produces_valid_env() -> None:
-    env = _build_env()
+    env = build_env()
     assert "PATH" in env
 
 

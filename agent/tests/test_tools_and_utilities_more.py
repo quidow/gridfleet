@@ -46,7 +46,7 @@ def test_provider_env_and_prepend_process_path_manage_unique_paths() -> None:
     provider = NodeProvider(name="fnm", node_path="/fnm/bin/node", npm_path="/fnm/bin/npm", bin_paths=["/fnm/bin"])
 
     with (
-        patch("agent_app.tools.manager._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.tools.manager.build_env", return_value={"PATH": "/usr/bin"}),
         patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True),
     ):
         env = _provider_env(provider)

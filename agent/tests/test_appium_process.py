@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import dataclasses
+import inspect
 import json
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -25,9 +27,9 @@ from agent_app.appium.process import (
     AppiumLaunchSpec,
     AppiumProcessInfo,
     AppiumProcessManager,
-    _build_env,
     _find_java,
     _has_lifecycle_action,
+    build_env,
     sanitize_appium_driver_capabilities,
 )
 from agent_app.pack.adapter_registry import AdapterRegistry
@@ -36,6 +38,15 @@ from agent_app.tools.paths import _parse_node_version
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
 PACK_START_KWARGS = {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}
+
+
+def test_launch_spec_fields_match_start_parameters() -> None:
+    """_restart_from_launch_spec does start(**dataclasses.asdict(spec)); the spec
+    fields and start() keyword parameters must stay in lockstep."""
+    spec_fields = {f.name for f in dataclasses.fields(AppiumLaunchSpec)}
+    start_params = set(inspect.signature(AppiumProcessManager.start).parameters) - {"self"}
+    assert spec_fields == start_params
+
 
 # Captured at import so tests that need the real bind probe can opt out of the
 # autouse stub below.
@@ -136,7 +147,7 @@ def test_build_env_adds_paths() -> None:
             env_vars={"ANDROID_HOME": "/opt/android", "ANDROID_SDK_ROOT": "/opt/android"},
             extra_path_dirs=["/opt/android/platform-tools"],
         )
-        env = _build_env(
+        env = build_env(
             appium_bin="/usr/local/bin/appium",
             adapter_env=adapter_env,
         )
@@ -157,7 +168,7 @@ def test_build_env_applies_appium_env() -> None:
         patch("agent_app.appium.process.os.access", return_value=True),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
-        env = _build_env(
+        env = build_env(
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
             appium_env={"APPIUM_XCUITEST_PREFER_DEVICECTL": "1"},
@@ -173,7 +184,7 @@ def test_build_env_does_not_set_devicectl_pref_when_appium_env_omitted() -> None
         patch("agent_app.appium.process.os.access", return_value=True),
         patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
     ):
-        env = _build_env(
+        env = build_env(
             appium_bin="/usr/local/bin/appium",
             appium_home="/tmp/h",
             appium_env=None,
@@ -186,7 +197,7 @@ def test_build_env_does_not_derive_java_home_from_fallback_command() -> None:
         patch("agent_app.appium.process._find_java", return_value="java"),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
-        env = _build_env(appium_bin="/usr/local/bin/appium")
+        env = build_env(appium_bin="/usr/local/bin/appium")
 
     assert "JAVA_HOME" not in env
 
@@ -212,7 +223,7 @@ async def test_start_builds_processes_and_tracks_running_info() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True) as wait_ready,
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
@@ -339,7 +350,7 @@ async def test_start_passes_only_driver_caps_to_appium_server() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
@@ -412,7 +423,7 @@ async def test_start_can_disable_session_override() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=appium_proc) as create_proc,
@@ -434,7 +445,7 @@ async def test_start_timeout_cleans_up_and_surfaces_logs() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=False),
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
@@ -553,7 +564,7 @@ async def test_start_fails_fast_when_port_has_unmanaged_listener() -> None:
     manager = AppiumProcessManager()
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
         pytest.raises(RuntimeError, match="already in use by another Appium listener"),
@@ -588,7 +599,7 @@ async def test_start_fails_fast_when_port_held_by_non_appium_listener(
     try:
         with (
             patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-            patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+            patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
             patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
             patch.object(
                 AppiumProcessManager,
@@ -667,7 +678,7 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True]),
         patch(
@@ -759,7 +770,7 @@ async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
         patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep),
@@ -820,7 +831,7 @@ async def test_auto_restart_aborts_when_target_already_served_by_another_node() 
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=True),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", new_callable=AsyncMock) as create_proc,
         patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep),
@@ -850,7 +861,7 @@ async def test_successful_restart_resets_backoff_step_for_next_crash() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True, True]),
         patch(
@@ -890,7 +901,7 @@ async def test_appium_restart_does_not_create_duplicate_recovery_loop() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True]),
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
@@ -933,7 +944,7 @@ async def test_start_appium_server_does_not_synthesize_wda_url_inline() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -965,7 +976,7 @@ async def test_start_rejects_duplicate_connection_target_on_different_port() -> 
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -998,7 +1009,7 @@ async def test_start_passes_insecure_features_to_appium_command() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -1057,7 +1068,7 @@ async def test_start_uses_adapter_lifecycle_when_manifest_lifecycle_data_provide
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -1094,7 +1105,7 @@ async def test_start_uses_adapter_for_simulator_boot() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -1130,7 +1141,7 @@ async def test_start_boots_based_on_lifecycle_actions_not_device_type() -> None:
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -1182,7 +1193,7 @@ async def test_start_omits_allow_insecure_when_insecure_features_empty() -> None
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch("agent_app.appium.process.os.path.isfile", return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
         patch(
@@ -1505,7 +1516,7 @@ async def test_start_appium_server_raises_runtime_missing_when_binary_not_found(
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
         patch(
             "agent_app.appium.process.asyncio.create_subprocess_exec",
@@ -1536,7 +1547,7 @@ async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true()
 
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=False),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=proc),
@@ -1643,7 +1654,7 @@ async def test_start_appium_server_does_not_append_plugins_when_none() -> None:
     proc = FakeProcess(pid=1234)
     with (
         patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
-        patch("agent_app.appium.process._build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
         patch.object(manager, "_can_connect_to_appium", new_callable=AsyncMock, return_value=False),
         patch("agent_app.appium.process.asyncio.create_subprocess_exec", return_value=proc) as create_proc,
         patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, return_value=True),
@@ -1672,7 +1683,7 @@ def test_build_env_applies_adapter_env() -> None:
             env_vars={"ANDROID_HOME": "/opt/android", "ANDROID_SDK_ROOT": "/opt/android"},
             extra_path_dirs=["/opt/android/platform-tools"],
         )
-        env = _build_env(
+        env = build_env(
             appium_bin="/usr/local/bin/appium",
             adapter_env=adapter_env,
         )
@@ -1693,7 +1704,7 @@ def test_build_env_adapter_env_uses_setdefault() -> None:
         adapter_env = SubprocessEnvContribution(
             env_vars={"ANDROID_HOME": "/adapter/android"},
         )
-        env = _build_env(adapter_env=adapter_env)
+        env = build_env(adapter_env=adapter_env)
 
     assert env["ANDROID_HOME"] == "/host/android"
 
@@ -1709,7 +1720,7 @@ def test_build_env_appium_env_overrides_adapter_env() -> None:
         adapter_env = SubprocessEnvContribution(
             env_vars={"ANDROID_HOME": "/adapter/android"},
         )
-        env = _build_env(
+        env = build_env(
             adapter_env=adapter_env,
             appium_env={"ANDROID_HOME": "/operator/android"},
         )
@@ -1725,7 +1736,7 @@ def test_build_env_no_adapter_env() -> None:
         patch("agent_app.appium.process.os.access", return_value=True),
         patch.dict("os.environ", {"PATH": "/usr/local/bin"}, clear=True),
     ):
-        env = _build_env(appium_bin="/usr/local/bin/appium")
+        env = build_env(appium_bin="/usr/local/bin/appium")
 
     assert "ANDROID_HOME" not in env
     assert "/usr/local/bin" in env["PATH"]

@@ -12,7 +12,7 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from agent_app.appium.process import _build_env
+from agent_app.appium.process import build_env
 from agent_app.tools.paths import _parse_node_version
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class NodeProvider:
 
 
 def _provider_env(provider: NodeProvider | None = None) -> dict[str, str]:
-    env = _build_env()
+    env = build_env()
     if provider and provider.bin_paths:
         existing = env.get("PATH", "")
         paths = [path for path in provider.bin_paths if path and path not in existing.split(os.pathsep)]

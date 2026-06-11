@@ -11,7 +11,7 @@ import signal
 import socket
 import subprocess
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -125,6 +125,23 @@ def resolve_appium_invocation_for_pack(
     )
 
 
+def _macos_java_home() -> str | None:
+    """Resolve a JDK home via /usr/libexec/java_home; None when unavailable."""
+    try:
+        result = subprocess.run(
+            ["/usr/libexec/java_home"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _find_java() -> str:
     """Find the java binary, checking PATH, JAVA_HOME, sdkman, and common locations."""
     found = shutil.which("java")
@@ -136,20 +153,10 @@ def _find_java() -> str:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
     if platform.system() == "Darwin" and found and os.path.realpath(found) == "/usr/bin/java":
-        try:
-            result = subprocess.run(
-                ["/usr/libexec/java_home"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                jh = result.stdout.strip()
-                candidate = os.path.join(jh, "bin", "java") if jh else ""
-                if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    return candidate
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.debug("/usr/libexec/java_home probe failed", exc_info=True)
+        jh = _macos_java_home()
+        candidate = os.path.join(jh, "bin", "java") if jh else ""
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     search_paths = [
         os.path.expanduser("~/.sdkman/candidates/java/current/bin"),
         "/usr/local/bin",
@@ -165,19 +172,9 @@ def _find_java() -> str:
                 search_paths.append(candidate_dir)
     # macOS java_home
     if platform.system() == "Darwin":
-        try:
-            result = subprocess.run(
-                ["/usr/libexec/java_home"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                jh = result.stdout.strip()
-                if jh:
-                    search_paths.append(os.path.join(jh, "bin"))
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.debug("/usr/libexec/java_home search probe failed", exc_info=True)
+        jh = _macos_java_home()
+        if jh:
+            search_paths.append(os.path.join(jh, "bin"))
     for search_dir in search_paths:
         candidate = os.path.join(search_dir, "java")
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
@@ -185,7 +182,7 @@ def _find_java() -> str:
     return "java"
 
 
-def _build_env(
+def build_env(
     *,
     appium_bin: str | None = None,
     appium_home: str | None = None,
@@ -513,19 +510,9 @@ class AppiumProcessManager:
             if port not in self._launch_specs:
                 return
 
-            attempt_number = (
-                len(
-                    self._trim_restart_attempts(
-                        self._appium_restart_attempts,
-                        port,
-                        now=asyncio.get_running_loop().time(),
-                    )
-                )
-                + 1
-            )
-            self._appium_restart_attempts.setdefault(port, collections.deque()).append(
-                asyncio.get_running_loop().time()
-            )
+            history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+            attempt_number = len(history) + 1
+            history.append(asyncio.get_running_loop().time())
             try:
                 restarted = await self._restart_from_launch_spec(port)
             except PortOccupiedError:
@@ -589,26 +576,7 @@ class AppiumProcessManager:
         spec = self._launch_specs.get(port)
         if spec is None:
             raise RuntimeError(f"No launch spec found for port {port}")
-        return await self.start(
-            connection_target=spec.connection_target,
-            platform_id=spec.platform_id,
-            port=spec.port,
-            plugins=spec.plugins,
-            extra_caps=spec.extra_caps,
-            accepting_new_sessions=spec.accepting_new_sessions,
-            stop_pending=spec.stop_pending,
-            grid_run_id=spec.grid_run_id,
-            session_override=spec.session_override,
-            device_type=spec.device_type,
-            ip_address=spec.ip_address,
-            pack_id=spec.pack_id,
-            appium_platform_name=spec.appium_platform_name,
-            appium_env=spec.appium_env,
-            insecure_features=spec.insecure_features,
-            grid_slots=spec.grid_slots,
-            lifecycle_actions=list(spec.lifecycle_actions),
-            connection_behavior=dict(spec.connection_behavior),
-        )
+        return await self.start(**asdict(spec))
 
     async def _start_appium_server(
         self,
@@ -631,7 +599,7 @@ class AppiumProcessManager:
             adapter_env = adapter.subprocess_env()
             if inspect.isawaitable(adapter_env):
                 adapter_env = await adapter_env
-        env = _build_env(
+        env = build_env(
             appium_bin=invocation.binary,
             appium_home=invocation.env_extra.get("APPIUM_HOME"),
             appium_env=spec.appium_env,
@@ -850,26 +818,11 @@ class AppiumProcessManager:
 
         spec = self._launch_specs.get(port)
         if spec is not None:
-            self._launch_specs[port] = AppiumLaunchSpec(
-                connection_target=spec.connection_target,
-                port=spec.port,
-                plugins=spec.plugins,
-                extra_caps=spec.extra_caps,
+            self._launch_specs[port] = replace(
+                spec,
                 accepting_new_sessions=accepting_new_sessions,
                 stop_pending=stop_pending,
                 grid_run_id=grid_run_id,
-                session_override=spec.session_override,
-                device_type=spec.device_type,
-                ip_address=spec.ip_address,
-                pack_id=spec.pack_id,
-                platform_id=spec.platform_id,
-                appium_platform_name=spec.appium_platform_name,
-                appium_env=spec.appium_env,
-                insecure_features=list(spec.insecure_features),
-                grid_slots=list(spec.grid_slots),
-                lifecycle_actions=list(spec.lifecycle_actions),
-                connection_behavior=dict(spec.connection_behavior),
-                headless=spec.headless,
             )
 
         if stop_pending:
@@ -881,32 +834,29 @@ class AppiumProcessManager:
         else:
             self._stop_pending_ports.discard(port)
 
+    def _forget_port(self, port: int) -> asyncio.subprocess.Process | None:
+        """Cancel per-port tasks and drop all bookkeeping; returns the popped process."""
+        self._cancel_task(self._appium_restart_tasks, port)
+        self._cancel_task(self._appium_watch_tasks, port)
+        proc = self._appium_procs.pop(port, None)
+        self._info.pop(port, None)
+        self._launch_specs.pop(port, None)
+        self._appium_restart_attempts.pop(port, None)
+        self._appium_restart_backoff_steps.pop(port, None)
+        return proc
+
     async def _drop_failed_managed_port(self, port: int) -> None:
         """Forget stale ownership for a crashed Appium process.
 
         Release the Appium process and port metadata so the host can recover
         the port.
         """
-        self._cancel_task(self._appium_restart_tasks, port)
-        self._cancel_task(self._appium_watch_tasks, port)
-        self._appium_procs.pop(port, None)
-        self._info.pop(port, None)
-        self._launch_specs.pop(port, None)
-        self._appium_restart_attempts.pop(port, None)
-        self._appium_restart_backoff_steps.pop(port, None)
+        self._forget_port(port)
 
     async def stop(self, port: int) -> None:
         async with self._start_lock:
             self._intentional_stop_ports.add(port)
-            self._cancel_task(self._appium_restart_tasks, port)
-            self._cancel_task(self._appium_watch_tasks, port)
-
-            # Stop Appium
-            appium_proc = self._appium_procs.pop(port, None)
-            self._info.pop(port, None)
-            self._launch_specs.pop(port, None)
-            self._appium_restart_attempts.pop(port, None)
-            self._appium_restart_backoff_steps.pop(port, None)
+            appium_proc = self._forget_port(port)
 
             if appium_proc and appium_proc.returncode is None:
                 appium_proc.send_signal(signal.SIGTERM)
