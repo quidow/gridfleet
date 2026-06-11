@@ -63,19 +63,4 @@ describe('ProportionalBar', () => {
     expect(screen.getByLabelText('Available: 3')).toBeInTheDocument();
   });
 
-  it('renders legendExtras in the legend but not in the bar', () => {
-    render(
-      <MemoryRouter>
-        <ProportionalBar
-          segments={[{ key: 'available', label: 'Available', count: 3, barClassName: 'bg-success-strong' }]}
-          legendExtras={[{ key: 'reserved', label: 'Reserved', count: 2, barClassName: 'bg-info-strong', to: '/devices?status=reserved' }]}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText('Reserved')).toBeInTheDocument();
-    const link = screen.getByText('Reserved').closest('a');
-    expect(link!.getAttribute('href')).toBe('/devices?status=reserved');
-    // bar itself only contains the real segment
-    expect(screen.getAllByRole('img')).toHaveLength(1);
-  });
 });

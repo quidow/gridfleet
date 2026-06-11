@@ -61,7 +61,7 @@ export function DevicesSummaryPills({ stats, searchParams, isLoading }: Props) {
           label="Reserved"
           value={displayValue(isLoading, stats.reserved)}
           tone="neutral"
-          to={buildDevicesSummaryHref(searchParams, { status: 'reserved' })}
+          to={buildDevicesSummaryHref(searchParams, { reserved: true })}
         />
       ) : null}
       <SummaryLink

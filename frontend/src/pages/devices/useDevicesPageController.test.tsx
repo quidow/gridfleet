@@ -93,6 +93,22 @@ describe('useDevicesPageController', () => {
     );
   });
 
+  it('reads the reserved filter from the URL and passes it to the devices query', () => {
+    vi.spyOn(useDevicesModule, 'useDevices').mockReturnValue({ data: [] } as unknown as ReturnType<typeof useDevicesModule.useDevices>);
+    const paginatedSpy = vi.spyOn(useDevicesModule, 'useDevicesPaginated').mockReturnValue({
+      data: { items: [], total: 0, limit: 50, offset: 0 },
+      isLoading: false,
+      dataUpdatedAt: 0,
+    } as unknown as ReturnType<typeof useDevicesModule.useDevicesPaginated>);
+
+    const { result } = renderHook(() => useDevicesPageController(), {
+      wrapper: makeWrapper('/devices?reserved=true'),
+    });
+
+    expect(result.current.hasFilters).toBe(true);
+    expect(paginatedSpy).toHaveBeenCalledWith(expect.objectContaining({ reserved: true }));
+  });
+
   it('ignores invalid per-signal health filter values in the URL', () => {
     vi.spyOn(useDevicesModule, 'useDevices').mockReturnValue({ data: [] } as unknown as ReturnType<typeof useDevicesModule.useDevices>);
     vi.spyOn(useDevicesModule, 'useDevicesPaginated').mockReturnValue({

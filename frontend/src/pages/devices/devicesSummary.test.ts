@@ -70,7 +70,9 @@ describe('devicesSummary', () => {
       makeDevice({ id: 'attn', needs_attention: true }),
     ]);
 
-    expect(stats.available).toBe(2);
+    // Reservation is orthogonal to operational state: a reserved-but-idle
+    // device still counts as available.
+    expect(stats.available).toBe(3);
     expect(stats.busy).toBe(2);
     expect(stats.reserved).toBe(1);
     expect(stats.offline).toBe(1);
@@ -107,6 +109,16 @@ describe('devicesSummary', () => {
   it('emits needs_attention=true URL when option set', () => {
     const url = buildDevicesSummaryHref(new URLSearchParams(), { needsAttention: true });
     expect(url).toContain('needs_attention=true');
+  });
+
+  it('emits reserved=true URL when option set', () => {
+    const url = buildDevicesSummaryHref(new URLSearchParams(), { reserved: true });
+    expect(url).toContain('reserved=true');
+  });
+
+  it('clears the reserved param when building other summary hrefs', () => {
+    const params = new URLSearchParams('reserved=true');
+    expect(buildDevicesSummaryHref(params, { status: 'busy' })).toBe('/devices?status=busy');
   });
 });
 

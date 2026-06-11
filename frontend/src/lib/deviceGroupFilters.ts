@@ -22,6 +22,7 @@ export type DeviceGroupFilterDraft = {
   device_type: DeviceType | '';
   connection_type: ConnectionType | '';
   os_version: string;
+  reserved: boolean;
   needs_attention: boolean;
   tags: DeviceGroupTagDraft[];
 };
@@ -45,6 +46,7 @@ export function createEmptyDeviceGroupFilterDraft(): DeviceGroupFilterDraft {
     device_type: '',
     connection_type: '',
     os_version: '',
+    reserved: false,
     needs_attention: false,
     tags: [],
   };
@@ -65,6 +67,7 @@ export function draftFromDeviceGroupFilters(filters: DeviceGroupFilters | null |
     device_type: filters.device_type ?? '',
     connection_type: filters.connection_type ?? '',
     os_version: filters.os_version ?? '',
+    reserved: filters.reserved ?? false,
     needs_attention: filters.needs_attention ?? false,
     tags: Object.entries(filters.tags ?? {}).map(([key, value]) => ({ key, value })),
   };
@@ -82,6 +85,7 @@ export function draftToDeviceGroupFilters(draft: DeviceGroupFilterDraft): Device
   if (draft.device_type) filters.device_type = draft.device_type;
   if (draft.connection_type) filters.connection_type = draft.connection_type;
   if (draft.os_version.trim()) filters.os_version = draft.os_version.trim();
+  if (draft.reserved) filters.reserved = true;
   if (draft.needs_attention) filters.needs_attention = true;
 
   const tags = Object.fromEntries(
@@ -141,6 +145,9 @@ export function describeDeviceGroupFilters(
     });
   }
   if (filters.os_version) items.push({ key: 'os_version', label: 'OS Version', value: filters.os_version });
+  if (filters.reserved) {
+    items.push({ key: 'reserved', label: 'Reservation', value: 'Reserved' });
+  }
   if (filters.needs_attention) {
     items.push({ key: 'needs_attention', label: 'Attention', value: 'Needs attention' });
   }

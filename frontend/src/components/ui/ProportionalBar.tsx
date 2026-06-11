@@ -11,12 +11,10 @@ interface ProportionalBarSegment {
 
 interface ProportionalBarProps {
   segments: ProportionalBarSegment[];
-  /** Rendered in the legend only (e.g. overlapping counts like Reserved) — never in the bar. */
-  legendExtras?: ProportionalBarSegment[];
   showLegend?: boolean;
 }
 
-export function ProportionalBar({ segments, legendExtras, showLegend = true }: ProportionalBarProps) {
+export function ProportionalBar({ segments, showLegend = true }: ProportionalBarProps) {
   const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.count), 0);
   const safeTotal = total > 0 ? total : 1;
 
@@ -40,7 +38,7 @@ export function ProportionalBar({ segments, legendExtras, showLegend = true }: P
 
       {showLegend ? (
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        {[...segments, ...(legendExtras ?? [])].map((segment) => {
+        {segments.map((segment) => {
           const content = (
             <>
               <span className={`inline-block h-2 w-2 rounded-full ${segment.dotClassName ?? segment.barClassName}`} />
