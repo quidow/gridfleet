@@ -129,13 +129,7 @@ def install_no_start(
     operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
-    download: Callable[[str, Path], None] | None = None,
-    start: bool = False,
 ) -> InstallResult:
-    del download
-    if start:
-        raise NotImplementedError("service start is not implemented in this installer slice")
-
     if not config.bin_path:
         resolved = resolve_bin_path(executable=executable)
         config = InstallConfig(
@@ -317,7 +311,6 @@ def install_with_start(
     operator: OperatorIdentity,
     os_name: str | None = None,
     executable: Path | None = None,
-    download: Callable[[str, Path], None] | None = None,
     run_command: Callable[[list[str]], None] = _run_command,
     health_check: HealthCheckCallable = poll_agent_health,
     registration_check: Callable[[InstallConfig], RegistrationCheckResult] = poll_manager_registration,
@@ -330,7 +323,6 @@ def install_with_start(
         operator=operator,
         os_name=resolved_os,
         executable=executable,
-        download=download,
     )
     _start_service(resolved_os, result.service_file, run_command=run_command)
 

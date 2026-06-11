@@ -156,8 +156,8 @@ def _drain_blockers(payload: object) -> tuple[int, int] | None:
 
     Running nodes are persistent per-connected-device processes, so node
     existence alone must not block an upgrade — only in-flight sessions do.
-    Nodes that do not report ``has_active_session`` (older serving agents,
-    relay still starting) are counted as unknown and treated as blockers
+    Nodes that do not report ``has_active_session`` (older serving agents)
+    are counted as unknown and treated as blockers
     rather than risk killing an in-flight session.
     """
     if not isinstance(payload, dict):
