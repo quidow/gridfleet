@@ -24,24 +24,25 @@ import type {
   DeviceGroupUpdate,
 } from '../types';
 import { useEventStreamStatus } from '../context/EventStreamContext';
-import { sseAdaptivePolling } from './polling';
+import { qk } from '../lib/queryKeys';
+import { POLL_RELAXED_MS, POLL_SLOW_MS, sseAdaptivePolling } from './polling';
 
 export function useDeviceGroups() {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-groups'],
+    queryKey: qk.deviceGroups.root,
     queryFn: fetchDeviceGroups,
-    ...sseAdaptivePolling(connected, 30_000),
+    ...sseAdaptivePolling(connected, POLL_SLOW_MS),
   });
 }
 
 export function useDeviceGroup(id: string) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-group', id],
+    queryKey: qk.deviceGroup.detail(id),
     queryFn: () => fetchDeviceGroup(id),
     enabled: !!id,
-    ...sseAdaptivePolling(connected, 15_000),
+    ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
   });
 }
 
@@ -49,7 +50,7 @@ export function useCreateDeviceGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: DeviceGroupCreate) => createDeviceGroup(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['device-groups'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.deviceGroups.root }),
   });
 }
 
@@ -58,8 +59,8 @@ export function useUpdateDeviceGroup() {
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: DeviceGroupUpdate }) => updateDeviceGroup(id, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['device-groups'] });
-      qc.invalidateQueries({ queryKey: ['device-group'] });
+      qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
+      qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
     },
   });
 }
@@ -68,7 +69,7 @@ export function useDeleteDeviceGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteDeviceGroup(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['device-groups'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.deviceGroups.root }),
   });
 }
 
@@ -78,8 +79,8 @@ export function useAddGroupMembers() {
     mutationFn: ({ groupId, deviceIds }: { groupId: string; deviceIds: string[] }) =>
       addGroupMembers(groupId, deviceIds),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['device-groups'] });
-      qc.invalidateQueries({ queryKey: ['device-group'] });
+      qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
+      qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
     },
   });
 }
@@ -90,8 +91,8 @@ export function useRemoveGroupMembers() {
     mutationFn: ({ groupId, deviceIds }: { groupId: string; deviceIds: string[] }) =>
       removeGroupMembers(groupId, deviceIds),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['device-groups'] });
-      qc.invalidateQueries({ queryKey: ['device-group'] });
+      qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
+      qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
     },
   });
 }
@@ -101,10 +102,10 @@ function useGroupBulkMutation<T>(mutationFn: (input: T) => Promise<BulkOperation
   return useMutation({
     mutationFn,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['device-groups'] });
-      qc.invalidateQueries({ queryKey: ['device-group'] });
-      qc.invalidateQueries({ queryKey: ['devices'] });
-      qc.invalidateQueries({ queryKey: ['device'] });
+      qc.invalidateQueries({ queryKey: qk.deviceGroups.root });
+      qc.invalidateQueries({ queryKey: qk.deviceGroup.root });
+      qc.invalidateQueries({ queryKey: qk.devices.root });
+      qc.invalidateQueries({ queryKey: qk.device.root });
     },
   });
 }

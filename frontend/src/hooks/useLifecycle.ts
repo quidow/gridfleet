@@ -5,15 +5,16 @@ import {
   type LifecycleIncidentParams,
 } from '../api/lifecycle';
 import { useEventStreamStatus } from '../context/EventStreamContext';
-import { sseAdaptivePolling } from './polling';
+import { qk } from '../lib/queryKeys';
+import { POLL_DEFAULT_MS, sseAdaptivePolling } from './polling';
 
 export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
   const { connected } = useEventStreamStatus();
   const isHistorical = Boolean(params?.cursor);
   return useQuery({
-    queryKey: ['lifecycle', 'incidents', params],
+    queryKey: qk.lifecycleIncidents.list(params),
     queryFn: () => fetchLifecycleIncidents(params),
-    ...(isHistorical ? { refetchInterval: false as const, staleTime: Infinity } : sseAdaptivePolling(connected, 10_000)),
+    ...(isHistorical ? { refetchInterval: false as const, staleTime: Infinity } : sseAdaptivePolling(connected, POLL_DEFAULT_MS)),
     placeholderData: keepPreviousData,
   });
 }
@@ -21,8 +22,8 @@ export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
 export function useRecentLifecycleIncidents(params?: { limit?: number; device_id?: string }) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['lifecycle', 'incidents', 'recent', params],
+    queryKey: qk.lifecycleIncidents.recent(params),
     queryFn: () => fetchRecentLifecycleIncidents(params),
-    ...sseAdaptivePolling(connected, 10_000),
+    ...sseAdaptivePolling(connected, POLL_DEFAULT_MS),
   });
 }

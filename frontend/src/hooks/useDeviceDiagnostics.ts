@@ -6,15 +6,16 @@ import {
   listDeviceDiagnosticSnapshots,
 } from '../api/deviceDiagnostics';
 import { useEventStreamStatus } from '../context/EventStreamContext';
-import { sseAdaptivePolling } from './polling';
+import { qk } from '../lib/queryKeys';
+import { POLL_RELAXED_MS, sseAdaptivePolling } from './polling';
 
 export function useDeviceDiagnosticSnapshots(deviceId: string, limit = 5) {
   const { connected } = useEventStreamStatus();
   return useQuery({
-    queryKey: ['device-diagnostic-snapshots', deviceId, limit],
+    queryKey: qk.deviceDiagnosticSnapshots.list(deviceId, limit),
     queryFn: () => listDeviceDiagnosticSnapshots(deviceId, { limit }),
     enabled: Boolean(deviceId),
-    ...sseAdaptivePolling(connected, 15_000),
+    ...sseAdaptivePolling(connected, POLL_RELAXED_MS),
     refetchIntervalInBackground: false,
   });
 }
@@ -25,7 +26,7 @@ export function useDeviceDiagnosticSnapshot(
   redact: boolean,
 ) {
   return useQuery({
-    queryKey: ['device-diagnostic-snapshot', deviceId, snapshotId, redact],
+    queryKey: qk.deviceDiagnosticSnapshot.detail(deviceId, snapshotId, redact),
     queryFn: () => fetchDeviceDiagnosticSnapshot(deviceId, snapshotId!, { redact }),
     enabled: Boolean(deviceId && snapshotId),
     // Snapshot payload is immutable once written — no polling.
@@ -41,7 +42,7 @@ export function useExportDeviceDiagnostics(deviceId: string) {
       exportDeviceDiagnostics(deviceId, options),
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ['device-diagnostic-snapshots', deviceId],
+        queryKey: qk.deviceDiagnosticSnapshots.byDevice(deviceId),
       });
     },
   });
