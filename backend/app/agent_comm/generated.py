@@ -180,6 +180,7 @@ class NormalizeDeviceResponse(BaseModel):
     model: Annotated[str | None, Field(title="Model")] = ""
     model_number: Annotated[str | None, Field(title="Model Number")] = ""
     os_version: Annotated[str, Field(title="Os Version")]
+    os_version_display: Annotated[str | None, Field(title="Os Version Display")] = None
     software_versions: Annotated[dict[str, str] | None, Field(title="Software Versions")] = None
 
 

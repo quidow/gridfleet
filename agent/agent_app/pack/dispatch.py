@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 from agent_app.pack.adapter_dispatch import (
@@ -28,9 +29,11 @@ from agent_app.pack.adapter_types import (
     SessionOutcome,
     SessionSpec,
 )
+from agent_app.pack.contexts import LifecycleCtx, NormalizeCtx, TelemetryCtx
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
+    from agent_app.pack.adapter_types import HealthContext
 
 __all__ = [
     "adapter_health_check",
@@ -40,53 +43,6 @@ __all__ = [
     "adapter_pre_session",
     "adapter_telemetry",
 ]
-
-
-class _HealthCtx:
-    def __init__(
-        self,
-        identity_value: str,
-        allow_boot: bool,
-        platform_id: str | None,
-        device_type: str | None,
-        connection_type: str | None,
-        ip_address: str | None = None,
-        ip_ping_timeout_sec: float | None = None,
-        ip_ping_count: int | None = None,
-        expected_identity_value: str | None = None,
-        claimed_ports: dict[str, int] | None = None,
-        has_live_session: bool | None = None,
-    ) -> None:
-        self.device_identity_value = identity_value
-        self.expected_identity_value = expected_identity_value
-        self.allow_boot = allow_boot
-        self.platform_id = platform_id
-        self.device_type = device_type
-        self.connection_type = connection_type
-        self.ip_address = ip_address
-        self.ip_ping_timeout_sec = ip_ping_timeout_sec
-        self.ip_ping_count = ip_ping_count
-        self.claimed_ports = claimed_ports
-        self.has_live_session = has_live_session
-
-
-class _LifecycleCtx:
-    def __init__(self, host_id: str, identity_value: str) -> None:
-        self.host_id = host_id
-        self.device_identity_value = identity_value
-
-
-class _NormalizeCtx:
-    def __init__(self, host_id: str, platform_id: str, raw_input: dict[str, Any]) -> None:
-        self.host_id = host_id
-        self.platform_id = platform_id
-        self.raw_input = raw_input
-
-
-class _TelemetryCtx:
-    def __init__(self, device_identity_value: str, connection_target: str) -> None:
-        self.device_identity_value = device_identity_value
-        self.connection_target = connection_target
 
 
 def _adapter_health_payload(results: list[HealthCheckResult]) -> dict[str, Any]:
@@ -113,36 +69,13 @@ async def adapter_health_check(
     adapter_registry: AdapterRegistry,
     pack_id: str,
     pack_release: str,
-    identity_value: str,
-    allow_boot: bool,
-    platform_id: str | None = None,
-    device_type: str | None = None,
-    connection_type: str | None = None,
-    ip_address: str | None = None,
-    ip_ping_timeout_sec: float | None = None,
-    ip_ping_count: int | None = None,
-    expected_identity_value: str | None = None,
-    claimed_ports: dict[str, int] | None = None,
-    has_live_session: bool | None = None,
+    ctx: HealthContext,
 ) -> dict[str, Any] | None:
     """Dispatch through the loaded adapter; return ``None`` if not available."""
 
     adapter = adapter_registry.get(pack_id, pack_release)
     if adapter is None:
         return None
-    ctx = _HealthCtx(
-        identity_value=identity_value,
-        allow_boot=allow_boot,
-        platform_id=platform_id,
-        device_type=device_type,
-        connection_type=connection_type,
-        ip_address=ip_address,
-        ip_ping_timeout_sec=ip_ping_timeout_sec,
-        ip_ping_count=ip_ping_count,
-        expected_identity_value=expected_identity_value,
-        claimed_ports=claimed_ports,
-        has_live_session=has_live_session,
-    )
     results = await _dispatch_health(adapter, ctx)
     return _adapter_health_payload(results)
 
@@ -162,7 +95,7 @@ async def adapter_lifecycle_action(
     adapter = adapter_registry.get(pack_id, pack_release)
     if adapter is None:
         return None
-    ctx = _LifecycleCtx(host_id=host_id, identity_value=identity_value)
+    ctx = LifecycleCtx(host_id=host_id, device_identity_value=identity_value)
     result = await _dispatch_lifecycle(adapter, action, args, ctx)
     return _adapter_lifecycle_payload(result)
 
@@ -229,23 +162,9 @@ async def adapter_normalize_device(
     adapter = adapter_registry.get(pack_id, pack_release)
     if adapter is None:
         return None
-    ctx = _NormalizeCtx(host_id=host_id, platform_id=platform_id, raw_input=raw_input)
+    ctx = NormalizeCtx(host_id=host_id, platform_id=platform_id, raw_input=raw_input)
     result = await _dispatch_normalize(adapter, ctx)
-    return {
-        "identity_scheme": result.identity_scheme,
-        "identity_scope": result.identity_scope,
-        "identity_value": result.identity_value,
-        "connection_target": result.connection_target,
-        "ip_address": result.ip_address,
-        "device_type": result.device_type,
-        "connection_type": result.connection_type,
-        "os_version": result.os_version,
-        "manufacturer": result.manufacturer,
-        "model": result.model,
-        "model_number": result.model_number,
-        "software_versions": result.software_versions,
-        "field_errors": [{"field_id": error.field_id, "message": error.message} for error in result.field_errors],
-    }
+    return dataclasses.asdict(result)
 
 
 async def adapter_telemetry(
@@ -261,7 +180,7 @@ async def adapter_telemetry(
     adapter = adapter_registry.get(pack_id, pack_release)
     if adapter is None:
         return None
-    ctx = _TelemetryCtx(device_identity_value=identity_value, connection_target=connection_target)
+    ctx = TelemetryCtx(device_identity_value=identity_value, connection_target=connection_target)
     result = await _dispatch_telemetry(adapter, ctx)
     if not result.supported:
         return {"support_status": "unsupported"}

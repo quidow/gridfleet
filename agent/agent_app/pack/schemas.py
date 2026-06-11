@@ -31,6 +31,7 @@ class NormalizeDeviceResponse(BaseModel):
     device_type: str
     connection_type: str
     os_version: str
+    os_version_display: str | None = None
     manufacturer: str = ""
     model: str = ""
     model_number: str = ""
@@ -95,16 +96,6 @@ class FeatureActionResponse(BaseModel):
     ok: bool
     detail: str | None = None
     data: dict[str, Any] | None = None
-
-
-class _FeatureActionContext:
-    """Concrete LifecycleContext used when dispatching feature actions."""
-
-    __slots__ = ("device_identity_value", "host_id")
-
-    def __init__(self, host_id: str, device_identity_value: str) -> None:
-        self.host_id = host_id
-        self.device_identity_value = device_identity_value
 
 
 class DoctorCheckOut(BaseModel):

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from agent_app.pack.adapter_dispatch import dispatch_doctor
+from agent_app.pack.contexts import DoctorCtx
 from agent_app.pack.manifest import DesiredPack, parse_desired_payload
 from agent_app.pack.runtime_policy import resolve_runtime_spec
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
     from agent_app.pack.adapter_types import DoctorCheckResult
     from agent_app.pack.host_identity import HostIdentity
+    from agent_app.pack.manifest import DesiredPayload
     from agent_app.pack.runtime import RuntimeEnv, RuntimeSpec
     from agent_app.pack.runtime_registry import RuntimeRegistry
     from agent_app.pack.sidecar_supervisor import SidecarSupervisor
@@ -45,11 +47,6 @@ class VersionCatalog(Protocol):
 
 
 @dataclass
-class _DoctorCtx:
-    host_id: str
-
-
-@dataclass
 class PackStateLoop:
     client: PackStateClient
     runtime_mgr: RuntimeMgr
@@ -72,12 +69,8 @@ class PackStateLoop:
             raise RuntimeError("PackStateLoop iteration ran before host identity was assigned")
         return host_id
 
-    async def run_once(self) -> None:
-        host_id = self._resolve_host_id()
-        desired_raw = await self.client.fetch_desired()
-        parsed = parse_desired_payload(desired_raw)
-        self._latest_desired = parsed.packs
-
+    async def _resolve_desired_specs(self, parsed: DesiredPayload) -> tuple[dict[str, RuntimeSpec], dict[str, str]]:
+        """Resolve a RuntimeSpec per pack; returns (desired_by_pack, resolver_blocked_packs)."""
         resolver_blocked_packs: dict[str, str] = {}
         desired_by_pack: dict[str, RuntimeSpec] = {}
         for pack in parsed.packs:
@@ -108,6 +101,96 @@ class PackStateLoop:
                 plugins=tuple((p.name, p.version, p.source, p.package) for p in parsed.plugins),
                 runtime_packages=tuple((rp.package, rp.version) for rp in pack.runtime_packages),
             )
+        return desired_by_pack, resolver_blocked_packs
+
+    async def _start_pack_sidecars(self, pack: DesiredPack) -> list[dict[str, Any]]:
+        """Start desired sidecars for *pack*; failures become doctor entries.
+
+        A sidecar start failure must not bring down the whole reconcile
+        iteration: post_status still has to run so the backend reconciler can
+        see the bad state and decide what to do (restart, disable, alert).
+        """
+        entries: list[dict[str, Any]] = []
+        if self.sidecar_supervisor is None or self.adapter_registry is None:
+            return entries
+        adapter = self.adapter_registry.get(pack.id, pack.release)
+        if adapter is None:
+            return entries
+        for feature_id in pack.sidecar_feature_ids:
+            try:
+                await self.sidecar_supervisor.start(
+                    pack_id=pack.id,
+                    release=pack.release,
+                    feature_id=feature_id,
+                    adapter=adapter,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "sidecar start failed for pack %s@%s feature %s",
+                    pack.id,
+                    pack.release,
+                    feature_id,
+                )
+                entries.append(
+                    {
+                        "pack_id": pack.id,
+                        "check_id": f"sidecar_start:{feature_id}",
+                        "ok": False,
+                        "message": f"sidecar start failed: {exc}",
+                    }
+                )
+        return entries
+
+    async def _stop_stale_sidecars(self, desired_sidecars: set[tuple[str, str, str]]) -> list[dict[str, Any]]:
+        """Stop sidecars no longer desired; failures become doctor entries.
+
+        Same invariant as sidecar start: post_status must still run so the
+        backend reconciler can see the failed teardown.
+        """
+        entries: list[dict[str, Any]] = []
+        if self.sidecar_supervisor is None or self.adapter_registry is None:
+            return entries
+        stale_sidecars = sorted(self.sidecar_supervisor.tracked_keys() - desired_sidecars)
+        for pack_id, release, feature_id in stale_sidecars:
+            adapter = self.adapter_registry.get(pack_id, release)
+            try:
+                if adapter is not None:
+                    await self.sidecar_supervisor.stop(
+                        pack_id=pack_id,
+                        release=release,
+                        feature_id=feature_id,
+                        adapter=adapter,
+                    )
+                else:
+                    await self.sidecar_supervisor.drop(
+                        pack_id=pack_id,
+                        release=release,
+                        feature_id=feature_id,
+                    )
+            except Exception as exc:
+                logger.exception(
+                    "sidecar stop failed for pack %s@%s feature %s",
+                    pack_id,
+                    release,
+                    feature_id,
+                )
+                entries.append(
+                    {
+                        "pack_id": pack_id,
+                        "check_id": f"sidecar_stop:{feature_id}",
+                        "ok": False,
+                        "message": f"sidecar stop failed: {exc}",
+                    }
+                )
+        return entries
+
+    async def run_once(self) -> None:
+        host_id = self._resolve_host_id()
+        desired_raw = await self.client.fetch_desired()
+        parsed = parse_desired_payload(desired_raw)
+        self._latest_desired = parsed.packs
+
+        desired_by_pack, resolver_blocked_packs = await self._resolve_desired_specs(parsed)
 
         prev_runtime_ids: dict[str, str] = {}
         if self.runtime_registry is not None:
@@ -201,38 +284,7 @@ class PackStateLoop:
                         }
                     )
 
-            if self.sidecar_supervisor is not None and self.adapter_registry is not None:
-                adapter = self.adapter_registry.get(pack.id, pack.release)
-                if adapter is not None:
-                    for feature_id in pack.sidecar_feature_ids:
-                        try:
-                            await self.sidecar_supervisor.start(
-                                pack_id=pack.id,
-                                release=pack.release,
-                                feature_id=feature_id,
-                                adapter=adapter,
-                            )
-                        except Exception as exc:
-                            # A sidecar start failure must not bring down the
-                            # whole reconcile iteration: post_status still has
-                            # to run so the backend reconciler can see the
-                            # bad state and decide what to do (restart,
-                            # disable, alert). Surface as a doctor entry
-                            # alongside adapter_load failures.
-                            logger.exception(
-                                "sidecar start failed for pack %s@%s feature %s",
-                                pack.id,
-                                pack.release,
-                                feature_id,
-                            )
-                            doctor_entries.append(
-                                {
-                                    "pack_id": pack.id,
-                                    "check_id": f"sidecar_start:{feature_id}",
-                                    "ok": False,
-                                    "message": f"sidecar start failed: {exc}",
-                                }
-                            )
+            doctor_entries.extend(await self._start_pack_sidecars(pack))
 
             pack_entries.append(
                 {
@@ -265,42 +317,7 @@ class PackStateLoop:
             for feature_id in pack.sidecar_feature_ids
             if pack.id in env_by_pack
         }
-        if self.sidecar_supervisor is not None and self.adapter_registry is not None:
-            stale_sidecars = sorted(self.sidecar_supervisor.tracked_keys() - desired_sidecars)
-            for pack_id, release, feature_id in stale_sidecars:
-                adapter = self.adapter_registry.get(pack_id, release)
-                try:
-                    if adapter is not None:
-                        await self.sidecar_supervisor.stop(
-                            pack_id=pack_id,
-                            release=release,
-                            feature_id=feature_id,
-                            adapter=adapter,
-                        )
-                    else:
-                        await self.sidecar_supervisor.drop(
-                            pack_id=pack_id,
-                            release=release,
-                            feature_id=feature_id,
-                        )
-                except Exception as exc:
-                    # Same invariant as sidecar start: post_status must still
-                    # run so the backend reconciler can see the failed
-                    # teardown.
-                    logger.exception(
-                        "sidecar stop failed for pack %s@%s feature %s",
-                        pack_id,
-                        release,
-                        feature_id,
-                    )
-                    doctor_entries.append(
-                        {
-                            "pack_id": pack_id,
-                            "check_id": f"sidecar_stop:{feature_id}",
-                            "ok": False,
-                            "message": f"sidecar stop failed: {exc}",
-                        }
-                    )
+        doctor_entries.extend(await self._stop_stale_sidecars(desired_sidecars))
 
         sidecars: list[dict[str, Any]] = (
             self.sidecar_supervisor.status_snapshot() if self.sidecar_supervisor is not None else []
@@ -325,7 +342,7 @@ class PackStateLoop:
             adapter = self.adapter_registry.get(pack.id, pack.release)
             if adapter is not None:
                 try:
-                    for result in await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id)):
+                    for result in await dispatch_doctor(adapter, DoctorCtx(host_id=host_id)):
                         entries.append(_adapter_doctor_entry(pack.id, result))
                 except Exception as exc:
                     logger.exception("adapter doctor failed for pack %s@%s", pack.id, pack.release)

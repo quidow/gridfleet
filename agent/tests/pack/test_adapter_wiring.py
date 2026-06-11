@@ -31,6 +31,7 @@ from agent_app.pack.adapter_types import (
     SessionSpec,
     SidecarStatus,
 )
+from agent_app.pack.contexts import HealthCtx
 from agent_app.pack.discovery import enumerate_pack_candidates, pack_device_properties
 from agent_app.pack.dispatch import (
     adapter_health_check,
@@ -388,9 +389,7 @@ async def test_health_check_dispatches_to_adapter() -> None:
         adapter_registry=registry,
         pack_id=pack.id,
         pack_release=pack.release,
-        identity_value="VENDOR-1",
-        allow_boot=False,
-        platform_id="tvos",
+        ctx=HealthCtx(device_identity_value="VENDOR-1", allow_boot=False, platform_id="tvos"),
     )
     assert payload is not None
     assert payload["healthy"] is True
@@ -406,8 +405,7 @@ async def test_health_check_without_adapter_returns_none() -> None:
         adapter_registry=registry,
         pack_id="vendor-foo",
         pack_release="0.1.0",
-        identity_value="VENDOR-1",
-        allow_boot=False,
+        ctx=HealthCtx(device_identity_value="VENDOR-1", allow_boot=False),
     )
     assert payload is None
 
