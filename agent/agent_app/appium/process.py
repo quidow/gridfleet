@@ -510,19 +510,9 @@ class AppiumProcessManager:
             if port not in self._launch_specs:
                 return
 
-            attempt_number = (
-                len(
-                    self._trim_restart_attempts(
-                        self._appium_restart_attempts,
-                        port,
-                        now=asyncio.get_running_loop().time(),
-                    )
-                )
-                + 1
-            )
-            self._appium_restart_attempts.setdefault(port, collections.deque()).append(
-                asyncio.get_running_loop().time()
-            )
+            history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+            attempt_number = len(history) + 1
+            history.append(asyncio.get_running_loop().time())
             try:
                 restarted = await self._restart_from_launch_spec(port)
             except PortOccupiedError:
