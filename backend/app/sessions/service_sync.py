@@ -52,6 +52,10 @@ SESSION_SYNC_WAKE_SOURCE_TOTAL = Counter(
     "Why session_sync_loop ran a cycle: doorbell (bus event) or tick (timeout).",
     labelnames=("source",),
 )
+# Pre-register both wake sources: an absent series on a dashboard is
+# indistinguishable from broken doorbell wiring; an explicit 0 is not.
+for _wake_source in ("doorbell", "tick"):
+    SESSION_SYNC_WAKE_SOURCE_TOTAL.labels(source=_wake_source)
 
 GRID_ORPHAN_SESSIONS_KILLED_TOTAL = Counter(
     "gridfleet_grid_orphan_sessions_killed",
