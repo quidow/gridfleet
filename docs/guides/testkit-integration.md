@@ -50,4 +50,4 @@ client = GridFleetClient("http://manager-ip:8000/api")
 devices = client.list_devices(status="available", platform_id="android_mobile", tags={"team": "qa"})
 ```
 
-The backend response uses `operational_state` and the computed `is_reserved` flag (with details in the `reservation` object) for device state. The client sends the filter as `status` because that is the backend query parameter.
+The backend response uses `operational_state` and the computed `is_reserved` flag (with details in the `reservation` object) for device state. The client sends the filter as `status` because that is the backend query parameter. `status` filters on operational state only — `status="available"` includes devices a run has reserved; pass `reserved=False` alongside it to list only unreserved devices (or `reserved=True` for reserved ones).
