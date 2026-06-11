@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from agent_app.pack.adapter_dispatch import dispatch_doctor
+from agent_app.pack.contexts import DoctorCtx
 from agent_app.pack.manifest import DesiredPack, parse_desired_payload
 from agent_app.pack.runtime_policy import resolve_runtime_spec
 
@@ -42,11 +43,6 @@ class AdapterLoaderFn(Protocol):
 class VersionCatalog(Protocol):
     async def versions(self, package: str) -> list[str]:
         raise NotImplementedError
-
-
-@dataclass
-class _DoctorCtx:
-    host_id: str
 
 
 @dataclass
@@ -325,7 +321,7 @@ class PackStateLoop:
             adapter = self.adapter_registry.get(pack.id, pack.release)
             if adapter is not None:
                 try:
-                    for result in await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id)):
+                    for result in await dispatch_doctor(adapter, DoctorCtx(host_id=host_id)):
                         entries.append(_adapter_doctor_entry(pack.id, result))
                 except Exception as exc:
                     logger.exception("adapter doctor failed for pack %s@%s", pack.id, pack.release)

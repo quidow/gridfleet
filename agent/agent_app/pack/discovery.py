@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from agent_app.async_ttl_cache import AsyncTTLCache
 from agent_app.observability import sanitize_log_value
 from agent_app.pack.adapter_dispatch import dispatch_discover, dispatch_normalize_device
+from agent_app.pack.contexts import DiscoveryCtx, NormalizeCtx
 
 if TYPE_CHECKING:
     from agent_app.pack.adapter_registry import AdapterRegistry
@@ -22,23 +23,6 @@ logger = logging.getLogger(__name__)
 _SWEEP_CACHE_TTL_SECONDS = 15.0
 _SweepKey = tuple[str, frozenset[tuple[str, str]]]
 _sweep_cache: AsyncTTLCache[_SweepKey, dict[str, Any]] = AsyncTTLCache(ttl_seconds=_SWEEP_CACHE_TTL_SECONDS)
-
-
-class _AdapterDiscoveryCtx:
-    """Minimal :class:`agent_app.pack.adapter_types.DiscoveryContext` impl."""
-
-    def __init__(self, host_id: str, platform_id: str) -> None:
-        self.host_id = host_id
-        self.platform_id = platform_id
-
-
-class _AdapterNormalizeCtx:
-    """Minimal :class:`agent_app.pack.adapter_types.NormalizeDeviceContext` impl."""
-
-    def __init__(self, host_id: str, platform_id: str, raw_input: dict[str, Any]) -> None:
-        self.host_id = host_id
-        self.platform_id = platform_id
-        self.raw_input = raw_input
 
 
 async def enumerate_pack_candidates(
@@ -62,7 +46,7 @@ async def enumerate_pack_candidates(
 
         if getattr(adapter, "discovery_scope", "") == "pack" and pack.platforms:
             platform_def = pack.platforms[0]
-            ctx = _AdapterDiscoveryCtx(host_id=host_id, platform_id=platform_def.id)
+            ctx = DiscoveryCtx(host_id=host_id, platform_id=platform_def.id)
             try:
                 results = await dispatch_discover(adapter, ctx)
             except Exception:
@@ -74,7 +58,7 @@ async def enumerate_pack_candidates(
             continue
 
         for platform_def in pack.platforms:
-            ctx = _AdapterDiscoveryCtx(host_id=host_id, platform_id=platform_def.id)
+            ctx = DiscoveryCtx(host_id=host_id, platform_id=platform_def.id)
             try:
                 results = await dispatch_discover(adapter, ctx)
             except Exception:
@@ -197,7 +181,7 @@ async def _direct_device_properties(
         if adapter is None:
             continue
         for platform_def in pack.platforms:
-            ctx = _AdapterNormalizeCtx(
+            ctx = NormalizeCtx(
                 host_id=host_id,
                 platform_id=platform_def.id,
                 raw_input={

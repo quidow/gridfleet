@@ -11,6 +11,7 @@ from fastapi import APIRouter, Body, Query, status
 from agent_app.error_codes import AgentErrorCode, ErrorEnvelope, http_exc
 from agent_app.pack.adapter_dispatch import dispatch_doctor, dispatch_feature_action
 from agent_app.pack.constants import PACK_ID_PATTERN, PLATFORM_ID_PATTERN
+from agent_app.pack.contexts import DoctorCtx, LifecycleCtx
 from agent_app.pack.dependencies import (  # noqa: TC001 - FastAPI resolves these at runtime
     DesiredPlatformDep,
     HostIdDep,
@@ -35,7 +36,6 @@ from agent_app.pack.schemas import (
     PackDevicesResponse,
     PackDeviceTelemetryResponse,
     PackDoctorResponse,
-    _FeatureActionContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -274,7 +274,7 @@ async def feature_action_route(
             message=f"No adapter loaded for pack {body.pack_id!r}",
         )
 
-    ctx = _FeatureActionContext(
+    ctx = LifecycleCtx(
         host_id=host_id,
         device_identity_value=body.device_identity_value or "",
     )
@@ -320,15 +320,6 @@ async def normalize_device_route(
     return result
 
 
-class _DoctorCtx:
-    """Concrete DoctorContext for the doctor route."""
-
-    __slots__ = ("host_id",)
-
-    def __init__(self, host_id: str) -> None:
-        self.host_id = host_id
-
-
 @router.post(
     "/{pack_id}/doctor",
     response_model=PackDoctorResponse,
@@ -344,7 +335,7 @@ async def pack_doctor_route(
     if adapter is None:
         return {"checks": []}
     try:
-        results = await dispatch_doctor(adapter, _DoctorCtx(host_id=host_id))
+        results = await dispatch_doctor(adapter, DoctorCtx(host_id=host_id))
     except Exception as exc:
         safe_id = pack_id.replace("\n", "").replace("\r", "")[:64]
         logger.exception("adapter doctor failed for pack %s", safe_id)
