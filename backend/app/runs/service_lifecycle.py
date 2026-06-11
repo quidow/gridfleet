@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from sqlalchemy.exc import DBAPIError
 
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run
@@ -9,6 +12,7 @@ from app.runs.service_reservation import get_run_for_update as _get_run_for_upda
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +20,34 @@ if TYPE_CHECKING:
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
     from app.runs.protocols import RunReleaseProtocol
+
+# A terminal run transition touches the run row, every reserved device row and
+# their session rows in one transaction, racing teardown traffic on the same
+# rows (terminal session-status writes, background reconciles). Postgres
+# resolves such a collision by killing one transaction with a deadlock error
+# (sqlstate 40P01). Failing the transition over a transient loser pick leaks
+# the run's reservations until the reaper expires them — starving allocation
+# for the whole heartbeat-timeout window — so roll back and re-run the
+# transition a bounded number of times before surfacing.
+_DEADLOCK_RETRY_ATTEMPTS = 3
+_DEADLOCK_RETRY_BACKOFF_SEC = 0.1
+
+_PG_DEADLOCK_SQLSTATE = "40P01"
+
+
+def _is_deadlock_error(exc: DBAPIError) -> bool:
+    """True when the DBAPI error chain carries the Postgres deadlock sqlstate.
+
+    The asyncpg dialect wraps the driver exception (which carries
+    ``sqlstate``) in adapter layers chained via ``__cause__``; walk the chain
+    rather than assuming a fixed nesting depth.
+    """
+    cause: BaseException | None = exc.orig
+    while cause is not None:
+        if getattr(cause, "sqlstate", None) == _PG_DEADLOCK_SQLSTATE:
+            return True
+        cause = cause.__cause__
+    return False
 
 
 def _run_completed_severity(run: TestRun) -> EventSeverity:
@@ -90,7 +122,36 @@ class RunLifecycleService:
         assert run is not None
         return run
 
+    async def _retry_on_deadlock(
+        self, db: AsyncSession, attempt_txn: Callable[[], Awaitable[list[uuid.UUID]]]
+    ) -> list[uuid.UUID]:
+        """Run one terminal-transition transaction, retrying deadlock losses.
+
+        ``attempt_txn`` must own the whole transaction (re-read the run under
+        lock, mutate, commit); the rollback here leaves a clean session for
+        the re-attempt.
+        """
+        attempt = 0
+        while True:
+            try:
+                return await attempt_txn()
+            except DBAPIError as exc:
+                if not _is_deadlock_error(exc):
+                    raise
+                await db.rollback()
+                attempt += 1
+                if attempt >= _DEADLOCK_RETRY_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_DEADLOCK_RETRY_BACKOFF_SEC)
+
     async def complete_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._complete_run_txn(db, run_id))
+        await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
+        run = await get_run(db, run_id)
+        assert run is not None
+        return run
+
+    async def _complete_run_txn(self, db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:
         run = await _get_run_for_update(db, run_id)
         if run is None:
             raise ValueError("Run not found")
@@ -117,12 +178,16 @@ class RunLifecycleService:
             severity=_run_completed_severity(run),
         )
         await db.commit()
+        return cleanup_ids
+
+    async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._cancel_run_txn(db, run_id))
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
         run = await get_run(db, run_id)
         assert run is not None
         return run
 
-    async def cancel_run(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+    async def _cancel_run_txn(self, db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:
         run = await _get_run_for_update(db, run_id)
         if run is None:
             raise ValueError("Run not found")
@@ -144,12 +209,16 @@ class RunLifecycleService:
             severity="warning",
         )
         await db.commit()
+        return cleanup_ids
+
+    async def force_release(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+        cleanup_ids = await self._retry_on_deadlock(db, lambda: self._force_release_txn(db, run_id))
         await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
         run = await get_run(db, run_id)
         assert run is not None
         return run
 
-    async def force_release(self, db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+    async def _force_release_txn(self, db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:
         run = await _get_run_for_update(db, run_id)
         if run is None:
             raise ValueError("Run not found")
@@ -170,10 +239,7 @@ class RunLifecycleService:
             severity="warning",
         )
         await db.commit()
-        await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
-        run = await get_run(db, run_id)
-        assert run is not None
-        return run
+        return cleanup_ids
 
     async def expire_run(self, db: AsyncSession, run: TestRun, reason: str) -> None:
         """Expire a run due to heartbeat or TTL timeout. Called by the reaper."""
