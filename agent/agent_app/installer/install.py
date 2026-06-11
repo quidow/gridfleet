@@ -215,6 +215,39 @@ def _start_service(
     raise RuntimeError(f"Unsupported OS: {os_name}")
 
 
+def _poll_http[PollResultT](
+    url: str,
+    *,
+    timeout_sec: float,
+    interval_sec: float,
+    get: Callable[..., object],
+    auth: tuple[str, str] | None,
+    initial_error: str,
+    interpret: Callable[[object, object], PollResultT | str],
+) -> PollResultT | str:
+    """Poll *url* until *interpret* returns a result; on deadline return the last error string.
+
+    *interpret* receives ``(status_code, json_payload_when_200)`` and returns either
+    the final result object or the next ``last_error`` string.
+    """
+    deadline = time.monotonic() + timeout_sec
+    last_error = initial_error
+    while time.monotonic() <= deadline:
+        try:
+            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
+            status_code = getattr(response, "status_code", None)
+            json_body = getattr(response, "json", None)
+            payload = json_body() if status_code == 200 and callable(json_body) else None
+            outcome = interpret(status_code, payload)
+            if not isinstance(outcome, str):
+                return outcome
+            last_error = outcome
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(interval_sec)
+    return last_error
+
+
 def poll_agent_health(
     url: str,
     *,
@@ -223,25 +256,27 @@ def poll_agent_health(
     get: Callable[..., object] = httpx.get,
     auth: tuple[str, str] | None = None,
 ) -> HealthCheckResult:
-    deadline = time.monotonic() + timeout_sec
-    last_error = "no response"
-    while time.monotonic() <= deadline:
-        try:
-            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
-            status_code = getattr(response, "status_code", None)
-            if status_code == 200:
-                json_body = getattr(response, "json", None)
-                details = json_body() if callable(json_body) else {}
-                return HealthCheckResult(
-                    ok=True,
-                    message="agent health check passed",
-                    details=details if isinstance(details, dict) else {},
-                )
-            last_error = "agent rejected credentials" if status_code == 401 else f"unexpected status {status_code}"
-        except Exception as exc:
-            last_error = str(exc)
-        time.sleep(interval_sec)
-    return HealthCheckResult(ok=False, message=f"agent health check timed out: {last_error}")
+    def interpret(status_code: object, payload: object) -> HealthCheckResult | str:
+        if status_code == 200:
+            return HealthCheckResult(
+                ok=True,
+                message="agent health check passed",
+                details=payload if isinstance(payload, dict) else {},
+            )
+        return "agent rejected credentials" if status_code == 401 else f"unexpected status {status_code}"
+
+    outcome = _poll_http(
+        url,
+        timeout_sec=timeout_sec,
+        interval_sec=interval_sec,
+        get=get,
+        auth=auth,
+        initial_error="no response",
+        interpret=interpret,
+    )
+    if isinstance(outcome, str):
+        return HealthCheckResult(ok=False, message=f"agent health check timed out: {outcome}")
+    return outcome
 
 
 def _manager_hosts_url(config: InstallConfig) -> str:
@@ -263,40 +298,40 @@ def poll_manager_registration(
     get: Callable[..., object] = httpx.get,
 ) -> RegistrationCheckResult:
     resolved_hostname = hostname or socket.gethostname()
-    url = _manager_hosts_url(config)
     auth = (
         (config.manager_auth_username, config.manager_auth_password)
         if config.manager_auth_username and config.manager_auth_password
         else None
     )
-    deadline = time.monotonic() + timeout_sec
-    last_error = f"{resolved_hostname} was not listed"
-    while time.monotonic() <= deadline:
-        try:
-            response = get(url, timeout=2.0, auth=auth) if auth else get(url, timeout=2.0)
-            status_code = getattr(response, "status_code", None)
-            if status_code == 200:
-                json_body = getattr(response, "json", None)
-                hosts = json_body() if callable(json_body) else None
-                if _host_list_contains(hosts, resolved_hostname):
-                    return RegistrationCheckResult(
-                        ok=True,
-                        message=f"agent registered with manager as {resolved_hostname}",
-                    )
-                last_error = f"{resolved_hostname} was not listed"
-            else:
-                if status_code == 401:
-                    last_error = (
-                        "manager requires machine auth; rerun install with "
-                        "--manager-auth-username and --manager-auth-password matching "
-                        "GRIDFLEET_MACHINE_AUTH_USERNAME and GRIDFLEET_MACHINE_AUTH_PASSWORD"
-                    )
-                else:
-                    last_error = f"unexpected status {status_code}"
-        except Exception as exc:
-            last_error = str(exc)
-        time.sleep(interval_sec)
-    return RegistrationCheckResult(ok=False, message=f"agent registration pending: {last_error}")
+
+    def interpret(status_code: object, payload: object) -> RegistrationCheckResult | str:
+        if status_code == 200:
+            if _host_list_contains(payload, resolved_hostname):
+                return RegistrationCheckResult(
+                    ok=True,
+                    message=f"agent registered with manager as {resolved_hostname}",
+                )
+            return f"{resolved_hostname} was not listed"
+        if status_code == 401:
+            return (
+                "manager requires machine auth; rerun install with "
+                "--manager-auth-username and --manager-auth-password matching "
+                "GRIDFLEET_MACHINE_AUTH_USERNAME and GRIDFLEET_MACHINE_AUTH_PASSWORD"
+            )
+        return f"unexpected status {status_code}"
+
+    outcome = _poll_http(
+        _manager_hosts_url(config),
+        timeout_sec=timeout_sec,
+        interval_sec=interval_sec,
+        get=get,
+        auth=auth,
+        initial_error=f"{resolved_hostname} was not listed",
+        interpret=interpret,
+    )
+    if isinstance(outcome, str):
+        return RegistrationCheckResult(ok=False, message=f"agent registration pending: {outcome}")
+    return outcome
 
 
 def install_with_start(
