@@ -10,7 +10,7 @@ Each wrapper:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from agent_app.pack.adapter_types import (
     DiscoveryCandidate,
@@ -31,6 +31,9 @@ from agent_app.pack.adapter_types import (
     SidecarStatus,
     TelemetryContext,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 ADAPTER_HOOK_TIMEOUT_SECONDS: float = 30.0
 
@@ -73,31 +76,37 @@ class AdapterContractError(Exception):
         self.pack_release = pack_release
 
 
-async def dispatch_discover(
+async def _call_hook[T](
     adapter: DriverPackAdapter,
-    ctx: DiscoveryContext,
-) -> list[DiscoveryCandidate]:
-    """Call ``adapter.discover`` with timeout + contract enforcement."""
-    hook = "discover"
+    hook: str,
+    call: Callable[[], Awaitable[object]],
+    expected: type[T],
+) -> T:
+    """Run one adapter hook with timeout, exception wrapping, and contract check."""
     try:
-        result = await asyncio.wait_for(
-            adapter.discover(ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
+        result = await asyncio.wait_for(call(), timeout=ADAPTER_HOOK_TIMEOUT_SECONDS)
     except TimeoutError:
         raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
     except AdapterHookTimeoutError:
         raise
     except Exception as exc:
         raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, list):
+    if not isinstance(result, expected):
         raise AdapterContractError(
             hook,
             adapter.pack_id,
             adapter.pack_release,
-            f"expected list, got {type(result).__name__}",
+            f"expected {expected.__name__}, got {type(result).__name__}",
         )
     return result
+
+
+async def dispatch_discover(
+    adapter: DriverPackAdapter,
+    ctx: DiscoveryContext,
+) -> list[DiscoveryCandidate]:
+    """Call ``adapter.discover`` with timeout + contract enforcement."""
+    return await _call_hook(adapter, "discover", lambda: adapter.discover(ctx), list)
 
 
 async def dispatch_doctor(
@@ -105,26 +114,7 @@ async def dispatch_doctor(
     ctx: DoctorContext,
 ) -> list[DoctorCheckResult]:
     """Call ``adapter.doctor`` with timeout + contract enforcement."""
-    hook = "doctor"
-    try:
-        result = await asyncio.wait_for(
-            adapter.doctor(ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, list):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected list, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(adapter, "doctor", lambda: adapter.doctor(ctx), list)
 
 
 async def dispatch_health_check(
@@ -132,26 +122,7 @@ async def dispatch_health_check(
     ctx: HealthContext,
 ) -> list[HealthCheckResult]:
     """Call ``adapter.health_check`` with timeout + contract enforcement."""
-    hook = "health_check"
-    try:
-        result = await asyncio.wait_for(
-            adapter.health_check(ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, list):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected list, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(adapter, "health_check", lambda: adapter.health_check(ctx), list)
 
 
 async def dispatch_lifecycle_action(
@@ -161,26 +132,12 @@ async def dispatch_lifecycle_action(
     ctx: LifecycleContext,
 ) -> LifecycleActionResult:
     """Call ``adapter.lifecycle_action`` with timeout + contract enforcement."""
-    hook = "lifecycle_action"
-    try:
-        result = await asyncio.wait_for(
-            adapter.lifecycle_action(action_id, args, ctx),  # type: ignore[arg-type]
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, LifecycleActionResult):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected LifecycleActionResult, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(
+        adapter,
+        "lifecycle_action",
+        lambda: adapter.lifecycle_action(action_id, args, ctx),  # type: ignore[arg-type]
+        LifecycleActionResult,
+    )
 
 
 async def dispatch_pre_session(
@@ -188,26 +145,7 @@ async def dispatch_pre_session(
     spec: SessionSpec,
 ) -> dict[str, Any]:
     """Call ``adapter.pre_session`` with timeout + contract enforcement."""
-    hook = "pre_session"
-    try:
-        result = await asyncio.wait_for(
-            adapter.pre_session(spec),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, dict):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected dict, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(adapter, "pre_session", lambda: adapter.pre_session(spec), dict)
 
 
 async def dispatch_post_session(
@@ -216,18 +154,7 @@ async def dispatch_post_session(
     outcome: SessionOutcome,
 ) -> None:
     """Call ``adapter.post_session`` with timeout + contract enforcement."""
-    hook = "post_session"
-    try:
-        await asyncio.wait_for(
-            adapter.post_session(spec, outcome),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
+    await _call_hook(adapter, "post_session", lambda: adapter.post_session(spec, outcome), object)
 
 
 async def dispatch_feature_action(
@@ -238,26 +165,12 @@ async def dispatch_feature_action(
     ctx: LifecycleContext,
 ) -> FeatureActionResult:
     """Call ``adapter.feature_action`` with timeout + contract enforcement."""
-    hook = "feature_action"
-    try:
-        result = await asyncio.wait_for(
-            adapter.feature_action(feature_id, action_id, args, ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, FeatureActionResult):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected FeatureActionResult, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(
+        adapter,
+        "feature_action",
+        lambda: adapter.feature_action(feature_id, action_id, args, ctx),
+        FeatureActionResult,
+    )
 
 
 async def dispatch_sidecar_lifecycle(
@@ -266,26 +179,12 @@ async def dispatch_sidecar_lifecycle(
     action: Literal["start", "stop", "status"],
 ) -> SidecarStatus:
     """Call ``adapter.sidecar_lifecycle`` with timeout + contract enforcement."""
-    hook = "sidecar_lifecycle"
-    try:
-        result = await asyncio.wait_for(
-            adapter.sidecar_lifecycle(feature_id, action),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, SidecarStatus):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected SidecarStatus, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(
+        adapter,
+        "sidecar_lifecycle",
+        lambda: adapter.sidecar_lifecycle(feature_id, action),
+        SidecarStatus,
+    )
 
 
 async def dispatch_normalize_device(
@@ -293,26 +192,7 @@ async def dispatch_normalize_device(
     ctx: NormalizeDeviceContext,
 ) -> NormalizedDevice:
     """Call ``adapter.normalize_device`` with timeout + contract enforcement."""
-    hook = "normalize_device"
-    try:
-        result = await asyncio.wait_for(
-            adapter.normalize_device(ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, NormalizedDevice):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected NormalizedDevice, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(adapter, "normalize_device", lambda: adapter.normalize_device(ctx), NormalizedDevice)
 
 
 async def dispatch_telemetry(
@@ -320,23 +200,4 @@ async def dispatch_telemetry(
     ctx: TelemetryContext,
 ) -> HardwareTelemetry:
     """Call ``adapter.telemetry`` with timeout + contract enforcement."""
-    hook = "telemetry"
-    try:
-        result = await asyncio.wait_for(
-            adapter.telemetry(ctx),
-            timeout=ADAPTER_HOOK_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        raise AdapterHookTimeoutError(hook, adapter.pack_id, adapter.pack_release) from None
-    except AdapterHookTimeoutError:
-        raise
-    except Exception as exc:
-        raise AdapterHookExecutionError(hook, adapter.pack_id, adapter.pack_release, exc) from exc
-    if not isinstance(result, HardwareTelemetry):
-        raise AdapterContractError(
-            hook,
-            adapter.pack_id,
-            adapter.pack_release,
-            f"expected HardwareTelemetry, got {type(result).__name__}",
-        )
-    return result
+    return await _call_hook(adapter, "telemetry", lambda: adapter.telemetry(ctx), HardwareTelemetry)
