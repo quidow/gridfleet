@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import dataclasses
+import inspect
 import json
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -36,6 +38,15 @@ from agent_app.tools.paths import _parse_node_version
 
 _STUB_INVOCATION = AppiumInvocation(binary="/usr/local/bin/appium")
 PACK_START_KWARGS = {"pack_id": "appium-uiautomator2", "platform_id": "android_mobile"}
+
+
+def test_launch_spec_fields_match_start_parameters() -> None:
+    """_restart_from_launch_spec does start(**dataclasses.asdict(spec)); the spec
+    fields and start() keyword parameters must stay in lockstep."""
+    spec_fields = {f.name for f in dataclasses.fields(AppiumLaunchSpec)}
+    start_params = set(inspect.signature(AppiumProcessManager.start).parameters) - {"self"}
+    assert spec_fields == start_params
+
 
 # Captured at import so tests that need the real bind probe can opt out of the
 # autouse stub below.

@@ -11,7 +11,7 @@ import signal
 import socket
 import subprocess
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -589,26 +589,7 @@ class AppiumProcessManager:
         spec = self._launch_specs.get(port)
         if spec is None:
             raise RuntimeError(f"No launch spec found for port {port}")
-        return await self.start(
-            connection_target=spec.connection_target,
-            platform_id=spec.platform_id,
-            port=spec.port,
-            plugins=spec.plugins,
-            extra_caps=spec.extra_caps,
-            accepting_new_sessions=spec.accepting_new_sessions,
-            stop_pending=spec.stop_pending,
-            grid_run_id=spec.grid_run_id,
-            session_override=spec.session_override,
-            device_type=spec.device_type,
-            ip_address=spec.ip_address,
-            pack_id=spec.pack_id,
-            appium_platform_name=spec.appium_platform_name,
-            appium_env=spec.appium_env,
-            insecure_features=spec.insecure_features,
-            grid_slots=spec.grid_slots,
-            lifecycle_actions=list(spec.lifecycle_actions),
-            connection_behavior=dict(spec.connection_behavior),
-        )
+        return await self.start(**asdict(spec))
 
     async def _start_appium_server(
         self,
@@ -850,26 +831,11 @@ class AppiumProcessManager:
 
         spec = self._launch_specs.get(port)
         if spec is not None:
-            self._launch_specs[port] = AppiumLaunchSpec(
-                connection_target=spec.connection_target,
-                port=spec.port,
-                plugins=spec.plugins,
-                extra_caps=spec.extra_caps,
+            self._launch_specs[port] = replace(
+                spec,
                 accepting_new_sessions=accepting_new_sessions,
                 stop_pending=stop_pending,
                 grid_run_id=grid_run_id,
-                session_override=spec.session_override,
-                device_type=spec.device_type,
-                ip_address=spec.ip_address,
-                pack_id=spec.pack_id,
-                platform_id=spec.platform_id,
-                appium_platform_name=spec.appium_platform_name,
-                appium_env=spec.appium_env,
-                insecure_features=list(spec.insecure_features),
-                grid_slots=list(spec.grid_slots),
-                lifecycle_actions=list(spec.lifecycle_actions),
-                connection_behavior=dict(spec.connection_behavior),
-                headless=spec.headless,
             )
 
         if stop_pending:
