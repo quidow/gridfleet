@@ -143,6 +143,25 @@ async def test_request_timeout_middleware_returns_structured_error() -> None:
     assert response.json()["error"]["message"] == "The request exceeded the maximum execution time"
 
 
+async def test_request_timeout_exempts_grid_allocate_long_poll() -> None:
+    """The allocate long-poll (LONG_POLL_SEC + per-attempt work) may legitimately
+    exceed request_timeout_sec; the middleware must not cancel it mid-allocation —
+    a cancelled attempt can orphan a committed claim."""
+
+    async def slow_app(scope: Scope, receive: Receive, send: Send) -> None:
+        await asyncio.sleep(0.02)
+        response = JSONResponse({"status": "allocated"})
+        await response(scope, receive, send)
+
+    middleware = RequestContextMiddleware(slow_app)
+    middleware._request_timeout_sec = 0.001
+
+    async with AsyncClient(transport=ASGITransport(app=middleware), base_url="http://test") as client:
+        response = await client.post("/internal/grid/allocate")
+
+    assert response.status_code == 200
+
+
 async def test_shutdown_rejects_new_non_health_requests(client: AsyncClient) -> None:
     await shutdown_coordinator.begin_shutdown()
 
