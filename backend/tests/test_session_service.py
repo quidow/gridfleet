@@ -7,7 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
+from app.devices.models import (
+    ConnectionType,
+    Device,
+    DeviceEvent,
+    DeviceEventType,
+    DeviceOperationalState,
+    DeviceReservation,
+    DeviceType,
+)
 from app.devices.services import state_write_guard
 from app.hosts.models import Host
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -622,3 +630,75 @@ async def test_device_has_running_session_counts_pending(
 
 def test_session_crud_service_satisfies_protocol() -> None:
     assert issubclass(SessionCrudService, SessionCrudProtocol)
+
+
+async def test_register_session_records_session_started_event(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="evt-start",
+        connection_target="evt-start",
+        name="evt-start",
+        os_version="14",
+        operational_state="available",
+    )
+    await db_session.commit()
+
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    await crud.register_session(db_session, session_id="evt-sess-start", test_name=None, device_id=device.id)
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.session_started,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(events) == 1
+    assert events[0].details["reason"] == "session"
+
+
+async def test_update_session_status_records_session_ended_event(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="evt-end",
+        connection_target="evt-end",
+        name="evt-end",
+        os_version="14",
+        operational_state="busy",
+    )
+    session = Session(session_id="evt-sess-end", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    device.verified_at = datetime.now(UTC)
+    await db_session.commit()
+
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    updated = await crud.update_session_status(db_session, "evt-sess-end", SessionStatus.passed)
+    assert updated is not None
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type == DeviceEventType.session_ended,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(events) == 1
+    assert events[0].details["reason"] == "session_ended"

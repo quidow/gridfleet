@@ -30,6 +30,7 @@ from app.devices.services.intent_types import (
     NodeRunningPrecondition,
 )
 from app.devices.services.lifecycle_policy_state import clear_operator_start_suppression
+from app.devices.services.observation_reason import ObservationReason
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -219,8 +220,8 @@ class OperatorNodeLifecycleService:
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
     ) -> AppiumNode:
         """Register operator:stop intents (node + grid). Returns the node row for the
-        convenience of route handlers; the caller column ``caller`` is accepted for
-        symmetry with request_start/request_restart and future audit-logging use.
+        convenience of route handlers; ``caller`` distinguishes genuine operator stops
+        (which record an audit row) from verification-driven stops (which do not).
 
         Invariant — callers must gate ``observed_running``: this helper only checks
         that an ``AppiumNode`` row exists. Wrappers in ``reconciler_agent.stop_node``
@@ -230,7 +231,6 @@ class OperatorNodeLifecycleService:
         already-stopped node is otherwise idempotent (the intent reconciler maps to
         ``desired_state="stopped"`` either way).
         """
-        del caller  # currently unused — kept for parity with request_start/request_restart
         node: AppiumNode | None = device.appium_node
         if node is None:
             raise NodeManagerError(f"No node row for device {device.id}")
@@ -240,6 +240,12 @@ class OperatorNodeLifecycleService:
             intents=operator_stop_intents(device.id),
             reason=reason,
             publisher=self._publisher,
+            # Verification-driven stops carry their own reason via the verification
+            # flow; only label genuine operator calls (same caller set request_start
+            # uses for its operator-override branches).
+            observed_reason=(
+                ObservationReason.operator_stopped if caller in {"operator_route", "operator_restart"} else None
+            ),
         )
         await db.refresh(node)
         return node
