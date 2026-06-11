@@ -45,7 +45,7 @@ export const qk = {
     list: (deviceId: string, limit: number) => ['device-diagnostic-snapshots', deviceId, limit] as const,
   },
   deviceDiagnosticSnapshot: {
-    detail: (deviceId: string, snapshotId: string, redact: boolean) =>
+    detail: (deviceId: string, snapshotId: string | null, redact: boolean) =>
       ['device-diagnostic-snapshot', deviceId, snapshotId, redact] as const,
   },
   deviceGroups: { root: ['device-groups'] as const },
