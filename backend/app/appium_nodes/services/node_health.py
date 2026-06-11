@@ -5,6 +5,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import TYPE_CHECKING
 
 import httpx
@@ -23,6 +24,7 @@ from app.appium_nodes.services.reconciler_agent import require_management_host
 from app.core.background_loop import BackgroundLoop
 from app.core.errors import AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader.advisory import assert_current_leader
+from app.core.metrics_recorders import record_background_loop_phase
 from app.core.observability import get_logger
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
@@ -145,6 +147,7 @@ class NodeHealthService:
         host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(probe_concurrency)
         )
+        probe_started = perf_counter()
         results = await asyncio.gather(
             *[
                 self._bounded_check_node_health(
@@ -155,7 +158,9 @@ class NodeHealthService:
                 for request in requests
             ]
         )
+        record_background_loop_phase(LOOP_NAME, "probe", perf_counter() - probe_started)
 
+        apply_started = perf_counter()
         # Fence: probes (asyncio.gather above) are slow external calls. If
         # another backend took leadership while we awaited them, drop all
         # writes from this cycle.
@@ -182,6 +187,7 @@ class NodeHealthService:
                 observed_active_connection_target=request.observed_active_connection_target,
             )
             await db.commit()
+        record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
 
     async def _bounded_check_node_health(
         self,

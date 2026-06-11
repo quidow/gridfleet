@@ -27,6 +27,14 @@ BACKGROUND_LOOP_DURATION_SECONDS = Histogram(
     "Background loop iteration duration in seconds.",
     labelnames=("loop_name",),
 )
+BACKGROUND_LOOP_PHASE_DURATION_SECONDS = Histogram(
+    "background_loop_phase_duration_seconds",
+    "Duration of one named phase within a background loop iteration.",
+    labelnames=("loop_name", "phase"),
+    # Observation-loop cycles can far exceed the 10s ceiling of the default
+    # buckets; extend the range so slow phases land in real buckets, not +Inf.
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0),
+)
 BACKGROUND_LOOP_RUNS_TOTAL = Counter(
     "background_loop_runs_total",
     "Total successful background loop iterations.",
@@ -188,6 +196,10 @@ def record_agent_call(
 def record_background_loop_run(loop_name: str, duration_seconds: float) -> None:
     BACKGROUND_LOOP_RUNS_TOTAL.labels(loop_name=loop_name).inc()
     BACKGROUND_LOOP_DURATION_SECONDS.labels(loop_name=loop_name).observe(duration_seconds)
+
+
+def record_background_loop_phase(loop_name: str, phase: str, duration_seconds: float) -> None:
+    BACKGROUND_LOOP_PHASE_DURATION_SECONDS.labels(loop_name=loop_name, phase=phase).observe(duration_seconds)
 
 
 def record_background_loop_error(loop_name: str, duration_seconds: float) -> None:
