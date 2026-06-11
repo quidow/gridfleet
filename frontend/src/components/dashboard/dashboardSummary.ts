@@ -258,10 +258,13 @@ export function deriveAttentionRows(
 
   const rows: AttentionRow[] = [];
   for (const device of devices) {
+    // Membership is the backend needs_attention flag only — the same definition
+    // as the scorecard count and the devices?needs_attention=true filter.
+    // Lifecycle summaries and incidents merely enrich the row below.
+    if (!device.needs_attention) continue;
     const summary = device.lifecycle_policy_summary;
     const active = isLifecycleSummaryActive(summary);
     const incident = unresolvedByDevice.get(device.id);
-    if (!active && !device.needs_attention && !incident) continue;
     const tone = incident ? incidentToneFromEventType(incident.eventType) : 'warning';
     rows.push({
       deviceId: device.id,
